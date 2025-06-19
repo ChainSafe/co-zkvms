@@ -28,9 +28,9 @@ pub struct Args {
     #[argh(positional)]
     circuit_path: PathBuf,
 
-    /// path to witness file
-    #[argh(positional)]
-    witness_path: PathBuf,
+    // /// path to witness file
+    // #[argh(positional)]
+    // witness_path: PathBuf,
 }
 
 fn program_at_path(acir_path: String) -> Program<FieldElement> {

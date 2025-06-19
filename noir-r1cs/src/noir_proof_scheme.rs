@@ -2,7 +2,7 @@ use {
     crate::{
         noir_to_r1cs,
         utils::PrintAbi,
-        whir_r1cs::{WhirR1CSProof, WhirR1CSScheme},
+        // whir_r1cs::{WhirR1CSProof, WhirR1CSScheme},
         FieldElement, NoirWitnessGenerator, R1CS,
     },
     anyhow::{anyhow, ensure, Context as _, Result},
@@ -10,7 +10,7 @@ use {
     noirc_artifacts::program::ProgramArtifact,
     rand::{thread_rng, Rng as _},
     serde::{Deserialize, Serialize},
-    std::{fs::File, path::Path},
+    std::{fs::File, io::Read, path::Path},
     tracing::{info, instrument, span, Level},
 };
 
@@ -19,12 +19,12 @@ use {
 pub struct NoirProofScheme {
     pub r1cs:              R1CS,
     pub witness_generator: NoirWitnessGenerator,
-    pub whir:              WhirR1CSScheme,
+    // pub whir:              WhirR1CSScheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoirProof {
-    pub whir_r1cs_proof: WhirR1CSProof,
+    // pub whir_r1cs_proof: WhirR1CSProof,
 }
 
 impl NoirProofScheme {
@@ -74,13 +74,9 @@ impl NoirProofScheme {
         // Configure witness generator
         let witness_generator = NoirWitnessGenerator::new(&program, witness_map, r1cs.witnesses);
 
-        // Configure Whir
-        let whir = WhirR1CSScheme::new_for_r1cs(&r1cs);
-
         Ok(Self {
             r1cs,
             witness_generator,
-            whir,
         })
     }
 
@@ -88,9 +84,15 @@ impl NoirProofScheme {
         (self.r1cs.constraints, self.r1cs.witnesses)
     }
 
-    #[instrument(skip_all, fields(size=input_toml.len()))]
-    pub fn prove(&self, input_toml: &str) -> Result<NoirProof> {
+    #[instrument(skip_all)]
+    pub fn solve_witness(&self, input_path: &Path) -> Result<Vec<FieldElement>> {
         let span = span!(Level::INFO, "generate_witness").entered();
+
+        let mut file = File::open(input_path).context("while opening input file")?;
+        let mut input_toml =
+            String::with_capacity(file.metadata().map(|m| m.len() as usize).unwrap_or(0));
+        file.read_to_string(&mut input_toml)
+            .context("while reading input file")?;
 
         // Create partial witness
         let mut partial_witness = vec![None; self.r1cs.witnesses];
@@ -99,7 +101,7 @@ impl NoirProofScheme {
         // Create witness for provided input
         let input = self
             .witness_generator
-            .input_from_toml(input_toml)
+            .input_from_toml(&input_toml)
             .context("while reading input from toml")?;
         for (i, value) in input.into_iter().enumerate() {
             let j = self.witness_generator.witness_map()[i]
@@ -113,28 +115,32 @@ impl NoirProofScheme {
             .solve_witness(&mut partial_witness)
             .context("while solving R1CS witness")?;
         let witness = fill_witness(partial_witness).context("while filling witness")?;
-
-        // Verify witness (redudant with solve)
-        #[cfg(test)]
-        self.r1cs
-            .verify_witness(&witness)
-            .context("While verifying R1CS instance")?;
         drop(span);
 
-        // Prove R1CS instance
-        let whir_r1cs_proof = self
-            .whir
-            .prove(&self.r1cs, witness)
-            .context("While proving R1CS instance")?;
-
-        Ok(NoirProof { whir_r1cs_proof })
+        Ok(witness)
     }
 
-    #[instrument(skip_all)]
-    pub fn verify(&self, proof: &NoirProof) -> Result<()> {
-        self.whir.verify(&proof.whir_r1cs_proof)?;
-        Ok(())
-    }
+    //     // Verify witness (redudant with solve)
+    //     #[cfg(test)]
+    //     self.r1cs
+    //         .verify_witness(&witness)
+    //         .context("While verifying R1CS instance")?;
+    //     drop(span);
+
+    //     // Prove R1CS instance
+    //     let whir_r1cs_proof = self
+    //         .whir
+    //         .prove(&self.r1cs, witness)
+    //         .context("While proving R1CS instance")?;
+
+    //     Ok(NoirProof { whir_r1cs_proof })
+    // }
+
+    // #[instrument(skip_all)]
+    // pub fn verify(&self, proof: &NoirProof) -> Result<()> {
+    //     self.whir.verify(&proof.whir_r1cs_proof)?;
+    //     Ok(())
+    // }
 }
 
 /// Complete a partial witness with random values.
@@ -168,6 +174,5 @@ mod tests {
         .unwrap();
         test_serde(&proof_schema.r1cs);
         test_serde(&proof_schema.witness_generator);
-        test_serde(&proof_schema.whir);
     }
 }

@@ -3,11 +3,34 @@ name = "co-spartan-noir"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "co-spartan"
+path = "src/main.rs"
+
 [dependencies]
 dfs = { path = "../../dfs-artifact" }
-ark-linear-sumcheck = {version = "0.3.0", features = ["parallel"]} #pretty sure it's updated for 0.4.0
-ark-poly-commit = {version = "0.4.0", features = ["parallel"]}
+noir-r1cs = { path = "../noir-r1cs" }
 
+# Workspace dependencies
+ark-linear-sumcheck.workspace = true
+ark-poly-commit.workspace = true
+ark-std.workspace = true
+ark-ff.workspace = true
+# ark-bls12-381.workspace = true
+ark-bn254.workspace = true
+ark-serialize.workspace = true
+ark-poly.workspace = true
+ark-ec.workspace = true
+ark-crypto-primitives.workspace = true
+rand.workspace = true
+rayon.workspace = true
+itertools.workspace = true
+mpi.workspace = true
+clap.workspace = true
+mimalloc.workspace = true
+crossbeam.workspace = true
+merlin.workspace = true
+blake2.workspace = true
 
 [patch.crates-io]
 ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}

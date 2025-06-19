@@ -28,6 +28,7 @@ ark-ff.workspace = true
 ark-bls12-381.workspace = true
 ark-bn254.workspace = true
 ark-serialize.workspace = true
+num-bigint.workspace = true
 
 # Noir lang
 acir.workspace = true

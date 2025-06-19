@@ -1,7 +1,7 @@
 mod circuit_stats;
 // mod generate_gnark_inputs;
-// mod prepare;
-// mod prove;
+mod prepare;
+mod prove;
 // mod verify;
 
 use {anyhow::Result, argh::FromArgs};
@@ -20,8 +20,8 @@ pub struct Args {
 #[derive(FromArgs, PartialEq, Debug)]
 #[argh(subcommand)]
 enum Commands {
-    // Prepare(prepare::Args),
-    // Prove(prove::Args),
+    Prepare(prepare::Args),
+    Prove(prove::Args),
     CircuitStats(circuit_stats::Args),
     // Verify(verify::Args),
     // GenerateGnarkInputs(generate_gnark_inputs::Args),
@@ -36,8 +36,8 @@ impl Command for Args {
 impl Command for Commands {
     fn run(&self) -> Result<()> {
         match self {
-            // Commands::Prepare(args) => args.run(),
-            // Commands::Prove(args) => args.run(),
+            Commands::Prepare(args) => args.run(),
+            Commands::Prove(args) => args.run(),
             Commands::CircuitStats(args) => args.run(),
             // Commands::Verify(args) => args.run(),
             // Commands::GenerateGnarkInputs(args) => args.run(),

@@ -1,10 +1,13 @@
-// mod print_abi;
+mod print_abi;
 pub mod serde_ark;
 // pub mod serde_hex;
 pub mod serde_jsonify;
 // pub mod sumcheck;
 
-// pub use self::print_abi::PrintAbi;
+use acir::AcirField;
+use num_bigint::BigUint;
+
+pub use self::print_abi::PrintAbi;
 use {
     crate::{FieldElement, NoirElement},
     ark_ff::{BigInt, PrimeField},
@@ -61,8 +64,8 @@ pub const fn uint_to_field(i: U256) -> FieldElement {
 /// Convert a Noir field element to a native FieldElement
 #[inline(always)]
 pub fn noir_to_native(n: NoirElement) -> FieldElement {
-    let limbs = n.into_repr().0.0;
-    FieldElement::from(BigInt(limbs))
+    let number = BigUint::from_bytes_be(&n.to_be_bytes());
+    FieldElement::from(number)
 }
 
 /// Calculates the degree of the next smallest power of two

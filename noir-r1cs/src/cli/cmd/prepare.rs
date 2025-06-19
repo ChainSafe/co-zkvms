@@ -20,7 +20,7 @@ pub struct Args {
         option,
         long = "out",
         short = 'o',
-        default = "PathBuf::from(\"noir_proof_scheme.bin\")"
+        default = "PathBuf::from(\"noir_proof_scheme.json\")"
     )]
     output_path: PathBuf,
 }

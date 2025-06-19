@@ -54,18 +54,18 @@ impl Command for Args {
             .context("while reading input file")?;
 
         // Generate the proof
-        let proof = scheme
-            .prove(&input_toml)
-            .context("While proving Noir program statement")?;
+        let _ = scheme
+            .solve_witness(&self.input_path)
+            .context("While solving witness")?;
 
-        // Verify the proof (not in release build)
-        #[cfg(test)]
-        scheme
-            .verify(&proof)
-            .context("While verifying Noir proof")?;
+        // // Verify the proof (not in release build)
+        // #[cfg(test)]
+        // scheme
+        //     .verify(&proof)
+        //     .context("While verifying Noir proof")?;
 
-        // Store the proof to file
-        write(&proof, &self.proof_path).context("while writing proof")?;
+        // // Store the proof to file
+        // write(&proof, &self.proof_path).context("while writing proof")?;
 
         Ok(())
     }

@@ -3,7 +3,7 @@
 mod file;
 // mod gnark_config;
 mod interner;
-// mod noir_proof_scheme;
+mod noir_proof_scheme;
 mod noir_to_r1cs;
 mod noir_witness;
 mod r1cs;
@@ -15,7 +15,7 @@ mod utils;
 pub use {
     crate::{
         file::{read, write, FileFormat},
-        // noir_proof_scheme::{NoirProof, NoirProofScheme},
+        noir_proof_scheme::{NoirProof, NoirProofScheme},
         noir_to_r1cs::noir_to_r1cs,
         r1cs::R1CS,
         utils::human,
@@ -23,14 +23,16 @@ pub use {
     acir::FieldElement as NoirElement,
     // gnark_config::write_gnark_parameters_to_file,
     // whir::crypto::fields::Field256 as FieldElement,
+    // ark_bn254::Fr as FieldElement,
     ark_bn254::Fr as FieldElement,
+    sparse_matrix::SparseMatrix,
     // whir_r1cs::create_io_pattern,
 };
 use {
     crate::{
         interner::{InternedFieldElement, Interner},
         noir_witness::NoirWitnessGenerator,
-        sparse_matrix::{HydratedSparseMatrix, SparseMatrix},
+        sparse_matrix::{HydratedSparseMatrix},
         // utils::serde_ark,
         // whir_r1cs::WhirProof,
     },

@@ -3,33 +3,33 @@ use {
     anyhow::{bail, ensure, Result},
     ark_ff::One,
     ark_std::Zero,
+    itertools::Itertools,
     serde::{Deserialize, Serialize},
     tracing::instrument,
-    itertools::Itertools,
 };
 
 /// Represents a R1CS constraint system.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct R1CS {
     pub public_inputs: usize,
-    pub witnesses:     usize,
-    pub constraints:   usize,
-    pub interner:      Interner,
-    pub a:             SparseMatrix,
-    pub b:             SparseMatrix,
-    pub c:             SparseMatrix,
+    pub witnesses: usize,
+    pub constraints: usize,
+    pub interner: Interner,
+    pub a: SparseMatrix,
+    pub b: SparseMatrix,
+    pub c: SparseMatrix,
 }
 
 impl R1CS {
     pub fn new() -> Self {
         Self {
             public_inputs: 0,
-            witnesses:     0,
-            constraints:   0,
-            interner:      Interner::new(),
-            a:             SparseMatrix::new(0, 0),
-            b:             SparseMatrix::new(0, 0),
-            c:             SparseMatrix::new(0, 0),
+            witnesses: 0,
+            constraints: 0,
+            interner: Interner::new(),
+            a: SparseMatrix::new(0, 0),
+            b: SparseMatrix::new(0, 0),
+            c: SparseMatrix::new(0, 0),
         }
     }
 
@@ -135,6 +135,20 @@ impl R1CS {
             ensure!(a * b == c, "Constraint {row} failed");
         }
         Ok(())
+    }
+
+    /// Returns ⌈log₂(instance_size)⌉ where:
+    /// instance_size = max(#constraints M, #vars m, #nonzeros N)
+    pub fn log2_instance_size(&self) -> usize {
+        // Count non-zero entries across A, B, C
+        let nonzeros = self.a.num_entries() + self.b.num_entries() + self.c.num_entries();
+        // Determine maximal component
+        let max_size = *[self.constraints, self.witnesses, nonzeros]
+            .iter()
+            .max()
+            .unwrap();
+        // Compute ceil(log2(max_size))
+        (64 - (max_size - 1).leading_zeros()) as usize
     }
 }
 

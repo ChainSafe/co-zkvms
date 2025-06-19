@@ -1,0 +1,95 @@
+{
+  "r1cs": {
+    "public_inputs": 0,
+    "witnesses": 5,
+    "constraints": 1,
+    "interner": {
+      "values": "0400000000000000fbffff4f1c3496ac29cd609f9576fc362e4679786fa36e662fdf079ac1770a0e0100000000000000000000000000000000000000000000000000000000000000060000a077c14b9767a358dab27137f12e12080947a2e151fac02947b1d65922ccffff3ff31d1a367e22554647d174d5130dbab1edd6b18f8677eb41aa10a02b"
+    },
+    "a": {
+      "rows": 1,
+      "cols": 5,
+      "row_indices": [
+        0
+      ],
+      "col_indices": [
+        1
+      ],
+      "values": [
+        0
+      ]
+    },
+    "b": {
+      "rows": 1,
+      "cols": 5,
+      "row_indices": [
+        0
+      ],
+      "col_indices": [
+        2
+      ],
+      "values": [
+        1
+      ]
+    },
+    "c": {
+      "rows": 1,
+      "cols": 5,
+      "row_indices": [
+        0
+      ],
+      "col_indices": [
+        0,
+        3,
+        4
+      ],
+      "values": [
+        3,
+        2,
+        2
+      ]
+    }
+  },
+  "witness_generator": {
+    "abi": {
+      "parameters": [
+        {
+          "name": "a",
+          "type": {
+            "kind": "field"
+          },
+          "visibility": "private"
+        },
+        {
+          "name": "b",
+          "type": {
+            "kind": "field"
+          },
+          "visibility": "private"
+        },
+        {
+          "name": "c",
+          "type": {
+            "kind": "field"
+          },
+          "visibility": "private"
+        },
+        {
+          "name": "d",
+          "type": {
+            "kind": "field"
+          },
+          "visibility": "private"
+        }
+      ],
+      "return_type": null,
+      "error_types": {}
+    },
+    "witness_map": [
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+}

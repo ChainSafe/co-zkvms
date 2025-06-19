@@ -10,7 +10,7 @@ use {
         counting_writer::CountingWriter,
         json::{read_json, write_json},
     },
-    // crate::{noir_proof_scheme::NoirProof, NoirProofScheme},
+    crate::{noir_proof_scheme::NoirProof, NoirProofScheme},
     anyhow::Result,
     serde::{Deserialize, Serialize},
     std::{ffi::OsStr, path::PathBuf},
@@ -24,17 +24,17 @@ pub trait FileFormat: Serialize + for<'a> Deserialize<'a> {
     const VERSION: (u16, u16);
 }
 
-// impl FileFormat for NoirProofScheme {
-//     const FORMAT: [u8; 8] = *b"NrProScm";
-//     const EXTENSION: &'static str = "nps";
-//     const VERSION: (u16, u16) = (0, 0);
-// }
+impl FileFormat for NoirProofScheme {
+    const FORMAT: [u8; 8] = *b"NrProScm";
+    const EXTENSION: &'static str = "nps";
+    const VERSION: (u16, u16) = (0, 0);
+}
 
-// impl FileFormat for NoirProof {
-//     const FORMAT: [u8; 8] = *b"NPSProof";
-//     const EXTENSION: &'static str = "np";
-//     const VERSION: (u16, u16) = (0, 0);
-// }
+impl FileFormat for NoirProof {
+    const FORMAT: [u8; 8] = *b"NPSProof";
+    const EXTENSION: &'static str = "np";
+    const VERSION: (u16, u16) = (0, 0);
+}
 
 /// Write a file with format determined from extension.
 #[instrument(skip(value))]
