@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+members = [
+    "co-spartan",
+    "noir-r1cs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Co-Spartan implementation for Noir circuits"
+license = "MIT"
+
+[workspace.dependencies]
+ark-linear-sumcheck = {version = "0.3.0", features = ["parallel"]}
+ark-poly-commit = {version = "0.4.0", features = ["parallel"]}
+ark-std = { version = "0.4.0", features = ["std"] }
+ark-ff = {version = "0.4.0", features = ["parallel"]}
+ark-bls12-381 = {version = "^0.4.0", default-features = false, features = ["curve"]}
+ark-bn254 = {version = "^0.4.0", default-features = false, features = ["curve"]}
+ark-serialize = "0.4.0"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22.1"
+divan = "0.1.21"
+ruint = { version = "1.12.3", features = ["num-traits", "rand"] }
+rand = "0.9.1"
+subtle = "2.6.1"
+tracing = "0.1.41"
+bytemuck = "1.22.0"
+hex-literal = "0.4.1"
+hex = "0.4.3"
+itertools = "0.13.0"
+flate2 = "1.0"
+rayon = "1.10.0"
+bincode = "1.3"
+postcard = { version = "1.1.1", features = ["use-std"] }
+zstd = "0.13.3"
+bytes = "1.10.1"
+zeroize = "1.8.1"
+
+
+# Noir lang: make sure it matches installed version `noirup -C ceaa1986628197bd1170147f6a07f0f98d21030a`
+# Note: to simplify things, pick a version that has the same `ark_ff` version as `whir`.
+acir = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+acvm = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+acir_field = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+noirc_abi = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+noirc_artifacts = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+noirc_printable_type = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
+
+anyhow = "1.0.93"
+argh = "0.1.12"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "ansi"] }
+
+[patch.crates-io]
+ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}
+ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"} 

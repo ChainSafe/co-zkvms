@@ -1,0 +1,14 @@
+[package]
+name = "co-spartan-noir"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dfs = { path = "../../dfs-artifact" }
+ark-linear-sumcheck = {version = "0.3.0", features = ["parallel"]} #pretty sure it's updated for 0.4.0
+ark-poly-commit = {version = "0.4.0", features = ["parallel"]}
+
+
+[patch.crates-io]
+ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}
+ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"}
