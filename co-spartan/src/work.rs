@@ -100,6 +100,7 @@ pub fn work<E: Pairing>(
     let root_process = world.process_at_rank(root_rank);
     let rank = world.rank();
     let size = world.size();
+    println!("SIZE: {:?}", size);
 
     let mut log = Vec::new();
     let very_start = start_timer_buf!(log, || format!("Node {rank}: Beginning work"));

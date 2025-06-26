@@ -1,11 +1,5 @@
 use {
-    crate::{FieldElement, HydratedSparseMatrix, Interner, SparseMatrix},
-    anyhow::{bail, ensure, Result},
-    ark_ff::One,
-    ark_std::Zero,
-    itertools::Itertools,
-    serde::{Deserialize, Serialize},
-    tracing::instrument,
+    crate::{FieldElement, HydratedSparseMatrix, Interner, SparseMatrix}, anyhow::{bail, ensure, Result}, ark_ff::One, ark_std::Zero, itertools::Itertools, serde::{Deserialize, Serialize}, std::cmp::max, tracing::instrument
 };
 
 /// Represents a R1CS constraint system.
@@ -144,10 +138,7 @@ impl R1CS {
         println!("self.b.num_entries(): {:?}", self.b.num_entries());
         println!("self.c.num_entries(): {:?}", self.c.num_entries());
         // Count non-zero entries across A, B, C
-        let nonzeros = *[self.a.num_entries(), self.b.num_entries(), self.c.num_entries()]
-            .iter()
-            .max()
-            .unwrap();
+        let nonzeros = max(self.a.num_entries(), max(self.b.num_entries(), self.c.num_entries()));
         println!("nonzeros: {:?}", nonzeros);
         // Determine maximal component
         let max_size = *[self.constraints, self.witnesses, nonzeros]
@@ -155,8 +146,7 @@ impl R1CS {
             .max()
             .unwrap();
         // Compute ceil(log2(max_size))
-        // (64 - (max_size - 1).leading_zeros()) as usize
-        13
+        (64 - (max_size - 1).leading_zeros()) as usize
     }
 }
 
