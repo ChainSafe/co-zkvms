@@ -68,29 +68,6 @@ pub fn noir_to_native(n: NoirElement) -> FieldElement {
     FieldElement::from(number)
 }
 
-/// Calculates the degree of the next smallest power of two
-pub fn next_power_of_two(n: usize) -> usize {
-    let mut power = 1;
-    let mut ans = 0;
-    while power < n {
-        power <<= 1;
-        ans += 1;
-    }
-    ans
-}
-
-/// Pads the vector with 0 so that the number of elements in the vector is a
-/// power of 2
-#[instrument(skip_all)]
-pub fn pad_to_power_of_two<T: Default>(mut witness: Vec<T>) -> Vec<T> {
-    let target_len = 1 << next_power_of_two(witness.len());
-    witness.reserve_exact(target_len - witness.len());
-    while witness.len() < target_len {
-        witness.push(T::default());
-    }
-    witness
-}
-
 /// Pretty print a float using SI-prefixes.
 pub fn human(value: f64) -> impl Display {
     struct Human(f64);

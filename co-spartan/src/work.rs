@@ -3,6 +3,7 @@ use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
+use crate::{utils::current_num_threads, DistributedRootKey};
 use mpi::{
     datatype::{Partition, PartitionMut},
     topology::Process,
@@ -81,280 +82,10 @@ use dfs::snark::prover::ProverMessage;
 use dfs::snark::verifier::DFSVerifier;
 use dfs::snark::verifier::VerifierState;
 use dfs::snark::{batch_open_poly, batch_verify_poly, BatchOracleEval, OracleEval};
-use dfs::transcript::{get_scalar_challenge, get_vector_challenge};
+use dfs::transcript::{get_scalar_challenge, get_vector_challenge};  
 
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DistributedRootKey<E: Pairing> {
-    pub ipk: IndexProverKey<E>,
-    pub pub_ipk: IndexProverKey<E>,
-    pub ivk: IndexVerifierKey<E>,
-}
-
-#[derive(Parser)]
-struct Args {
-    #[clap(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    Setup {
-        #[clap(long, value_name = "DIR")]
-        r1cs_noir_instance_path: PathBuf,
-
-        #[clap(long, value_name = "DIR")]
-        r1cs_input_path: PathBuf,
-
-        // #[clap(long, value_name = "NUM")]
-        // log_instance_size: usize,
-
-        #[clap(long, value_name = "NUM")]
-        log_num_workers_per_party: usize,
-
-        #[clap(long, value_name = "NUM")]
-        log_num_public_workers: usize,
-
-        #[clap(long, value_name = "DIR")]
-        key_out: PathBuf,
-    },
-
-    Work {
-        /// Path to the coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_file: PathBuf,
-
-        #[clap(long, value_name = "NUM")]
-        log_instance_size: usize,
-
-        /// The number of workers who will do the committing and proving. Each worker has 1 core.
-        #[clap(long, value_name = "NUM")]
-        log_num_workers_per_party: usize,
-
-        #[clap(long, value_name = "NUM")]
-        log_num_public_workers: usize,
-
-        #[clap(long, value_name = "NUM")]
-        worker_id: usize,
-
-        #[clap(long, value_name = "NUM")]
-        local: usize,
-    },
-}
-
-fn main() {
-    println!("Rayon num threads: {}", current_num_threads());
-
-    let args = Args::parse();
-
-    match args.command {
-        Command::Setup {
-            // log_instance_size,
-            r1cs_noir_instance_path,
-            r1cs_input_path,
-            log_num_workers_per_party,
-            log_num_public_workers,
-            key_out,
-        } => setup(
-            key_out,
-            r1cs_noir_instance_path,
-            r1cs_input_path,
-            log_num_workers_per_party,
-            log_num_public_workers,
-        ),
-        Command::Work {
-            key_file,
-            log_num_workers_per_party,
-            log_num_public_workers,
-            log_instance_size,
-            worker_id,
-            local,
-        } => {
-            work::<Bn254>(
-                log_num_workers_per_party,
-                log_instance_size,
-                key_file,
-                worker_id,
-                log_num_public_workers,
-                local,
-            );
-        }
-    }
-}
-
-fn setup(
-    origin_key_out_path: PathBuf,
-    // log_instance_size: usize,
-    r1cs_noir_instance_path: PathBuf,
-    r1cs_input_path: PathBuf,
+pub fn work<E: Pairing>(
     log_num_workers_per_party: usize,
-    _log_num_public_workers: usize,
-) {
-    type E = Bn254;
-
-    let mut proof_scheme: NoirProofScheme = noir_r1cs::read(&r1cs_noir_instance_path).unwrap();
-    let z = proof_scheme.solve_witness(&r1cs_input_path).unwrap();
-    let r1cs_noir = proof_scheme.r1cs;
-    let log_instance_size = r1cs_noir.log2_instance_size();
-
-    let mut rng = StdRng::seed_from_u64(12);
-    let za = r1cs_noir.a() * &z;
-    let zb = r1cs_noir.b() * &z;
-    let zc = r1cs_noir.c() * &z;
-    let r1cs = from_noir_r1cs(&r1cs_noir);
-
-    // let (r1cs, z, za, zb, zc) = produce_test_r1cs(log_instance_size, &mut rng);
-
-    let srs = SRS::<E, _>::generate_srs(log_instance_size + 2, 4, &mut rng);
-
-    let (pk, vk) = Indexer::index_for_prover_and_verifier(&r1cs, &srs);
-
-    // let P: usize = log_num_public_workers;
-    // let P_W: usize = log_num_workers_per_party;
-    for P_W in 0..log_num_workers_per_party {
-        let P: usize = P_W + 1;
-
-        let mut key_out_path = origin_key_out_path.clone();
-
-        fs::create_dir(
-            "inst_folder/inst_".to_owned()
-                + &log_instance_size.to_string()
-                + "_"
-                + &P_W.to_string()
-                + "_"
-                + &P.to_string(),
-        );
-        key_out_path.push(
-            "inst_".to_owned()
-                + &log_instance_size.to_string()
-                + "_"
-                + &P_W.to_string()
-                + "_"
-                + &P.to_string()
-                + "/test",
-        );
-
-        let (ipk_vec, root_ipk) = split_ipk(&pk, P_W);
-
-        let (pub_ipk_vec, pub_root_ipk) = split_ipk(&pk, P);
-        // let r1cs_vec = split_r1cs(&r1cs, P);
-        let z_vec = split_vec(&z, P_W);
-        let za_vec = split_vec(&za, P_W);
-        let zb_vec = split_vec(&zb, P_W);
-        let zc_vec = split_vec(&zc, P_W);
-
-        let num_vars = log_instance_size - P_W;
-
-        let mut cnt = 0;
-
-        for i in 0..1 << P_W {
-            let z = DenseMultilinearExtension::from_evaluations_vec(num_vars, z_vec[i].clone());
-            let za = DenseMultilinearExtension::from_evaluations_vec(num_vars, za_vec[i].clone());
-            let zb = DenseMultilinearExtension::from_evaluations_vec(num_vars, zb_vec[i].clone());
-            let zc = DenseMultilinearExtension::from_evaluations_vec(num_vars, zc_vec[i].clone());
-
-            let (z_share_0, z_share_1, z_share_2) = generate_poly_shares_rss(&z, &mut rng);
-            let (za_share_0, za_share_1, za_share_2) = generate_poly_shares_rss(&za, &mut rng);
-            let (zb_share_0, zb_share_1, zb_share_2) = generate_poly_shares_rss(&zb, &mut rng);
-            let (zc_share_0, zc_share_1, zc_share_2) = generate_poly_shares_rss(&zc, &mut rng);
-
-            let z_0 = RssPoly::<E>::new(0, z_share_0.clone(), z_share_1.clone());
-            let za_0 = RssPoly::<E>::new(0, za_share_0.clone(), za_share_1.clone());
-            let zb_0 = RssPoly::<E>::new(0, zb_share_0.clone(), zb_share_1.clone());
-            let zc_0 = RssPoly::<E>::new(0, zc_share_0.clone(), zc_share_1.clone());
-
-            let z_1 = RssPoly::<E>::new(1, z_share_1.clone(), z_share_2.clone());
-            let za_1 = RssPoly::<E>::new(1, za_share_1.clone(), za_share_2.clone());
-            let zb_1 = RssPoly::<E>::new(1, zb_share_1.clone(), zb_share_2.clone());
-            let zc_1 = RssPoly::<E>::new(1, zc_share_1.clone(), zc_share_2.clone());
-
-            let z_2 = RssPoly::<E>::new(2, z_share_2.clone(), z_share_0.clone());
-            let za_2 = RssPoly::<E>::new(2, za_share_2.clone(), za_share_0.clone());
-            let zb_2 = RssPoly::<E>::new(2, zb_share_2.clone(), zb_share_0.clone());
-            let zc_2 = RssPoly::<E>::new(2, zc_share_2.clone(), zc_share_0.clone());
-
-            let pk_0 = DistributedRSSProverKey {
-                ipk: ipk_vec[i].clone(),
-                pub_ipk: pub_ipk_vec[cnt].clone(),
-                z: z_0,
-                za: za_0,
-                zb: zb_0,
-                zc: zc_0,
-                num_variables: r1cs.num_vars,
-                seed_0: "seed 0".to_string(),
-                seed_1: "seed 1".to_string(),
-            };
-            if cnt < (1 << P) - 1 {
-                cnt = cnt + 1;
-            }
-
-            let pk_1 = DistributedRSSProverKey {
-                ipk: ipk_vec[i].clone(),
-                pub_ipk: pub_ipk_vec[cnt].clone(),
-                z: z_1,
-                za: za_1,
-                zb: zb_1,
-                zc: zc_1,
-                num_variables: r1cs.num_vars,
-                seed_0: "seed 1".to_string(),
-                seed_1: "seed 2".to_string(),
-            };
-            if cnt < (1 << P) - 1 {
-                cnt = cnt + 1;
-            }
-
-            let pk_2 = DistributedRSSProverKey {
-                ipk: ipk_vec[i].clone(),
-                pub_ipk: pub_ipk_vec[cnt].clone(),
-                z: z_2,
-                za: za_2,
-                zb: zb_2,
-                zc: zc_2,
-                num_variables: r1cs.num_vars,
-                seed_0: "seed 2".to_string(),
-                seed_1: "seed 0".to_string(),
-            };
-            if cnt < (1 << P) - 1 {
-                cnt = cnt + 1;
-            }
-
-            let pk_vec = vec![pk_0, pk_1, pk_2];
-
-            for j in 0..3 {
-                let mut buf = Vec::new();
-                pk_vec[j].serialize_uncompressed(&mut buf).unwrap();
-
-                let mut file_name = key_out_path.clone();
-                file_name.set_extension((3 * i + j).to_string());
-
-                let mut f = File::create(&file_name)
-                    .expect(&format!("could not create file {:?}", file_name));
-                f.write_all(&buf).unwrap();
-            }
-        }
-
-        {
-            let mut buf = Vec::new();
-            let pk = DistributedRootKey {
-                ipk: root_ipk,
-                pub_ipk: pub_root_ipk,
-                ivk: vk.clone(),
-            };
-            pk.serialize_uncompressed(&mut buf).unwrap();
-            let mut file_name = key_out_path.clone();
-            file_name.set_extension("root");
-            let mut f =
-                File::create(&file_name).expect(&format!("could not create file {:?}", file_name));
-            f.write_all(&buf).unwrap();
-        }
-    }
-}
-
-fn work<E: Pairing>(
-    log_num_workers_per_party: usize,
-    log_instance_size: usize,
     key_file: PathBuf,
     mut worker_id: usize,
     log_num_public_workers: usize,
@@ -400,6 +131,8 @@ fn work<E: Pairing>(
                 DistributedRootKey::<E>::deserialize_uncompressed_unchecked(buf_slice).unwrap();
             pk
         };
+
+        let log_instance_size = proving_keys.log_instance_size;
 
         // Initial proof
         let start = start_timer_buf!(log, || format!("Coord: construct coordinator proof"));
@@ -466,7 +199,7 @@ fn work<E: Pairing>(
             file_name.set_extension(worker_id.to_string());
 
             let mut f =
-                File::open(&file_name).expect(&format!("couldn't open file {:?}", key_file));
+                File::open(&file_name).expect(&format!("couldn't open file {:?}", file_name));
             let _ = f.read_to_end(&mut buf);
             let buf_slice = buf.as_slice();
 
@@ -488,6 +221,8 @@ fn work<E: Pairing>(
         let start_eq = (1 << log_chunk_size) * (worker_id / 3);
 
         let pub_log_chunk_size = proving_keys.num_variables - log_num_public_workers;
+        println!("proving_keys.num_variables: {:?}", proving_keys.num_variables);
+
         let pub_start_eq = (1 << pub_log_chunk_size) * worker_id;
         let active = (worker_id < (1 << log_num_public_workers));
 
@@ -532,42 +267,6 @@ fn work<E: Pairing>(
     );
 }
 
-/// Convert from a noir-r1cs R1CS struct to this R1CSInstance struct.
-/// This method converts the sparse matrix format used by noir-r1cs to the
-/// SparseMatPolynomial format used by this implementation.
-pub fn from_noir_r1cs(noir_r1cs: &noir_r1cs::R1CS) -> R1CSInstance<FieldElement> {
-    // Convert sparse matrix entries from noir-r1cs format to our format
-    let convert_matrix = |matrix: &noir_r1cs::SparseMatrix| -> Vec<SparseMatEntry<FieldElement>> {
-        let hydrated = matrix.hydrate(&noir_r1cs.interner);
-        let mut entries = Vec::new();
-
-        for ((row, col), value) in hydrated.iter() {
-            entries.push(SparseMatEntry::new(row, col, value));
-        }
-
-        entries
-    };
-
-    // Convert the three matrices
-    let a_entries = convert_matrix(&noir_r1cs.a);
-    let b_entries = convert_matrix(&noir_r1cs.b);
-    let c_entries = convert_matrix(&noir_r1cs.c);
-
-    // Create SparseMatPolynomials
-    let poly_a = SparseMatPolynomial::new(noir_r1cs.constraints, noir_r1cs.witnesses, a_entries);
-    let poly_b = SparseMatPolynomial::new(noir_r1cs.constraints, noir_r1cs.witnesses, b_entries);
-    let poly_c = SparseMatPolynomial::new(noir_r1cs.constraints, noir_r1cs.witnesses, c_entries);
-
-    R1CSInstance {
-        num_cons: noir_r1cs.constraints,
-        num_vars: noir_r1cs.witnesses,
-        num_inputs: noir_r1cs.public_inputs,
-        A: poly_a,
-        B: poly_b,
-        C: poly_c,
-    }
-}
-
 #[cfg(feature = "parallel")]
 fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) -> T {
     let pool = rayon::ThreadPoolBuilder::new()
@@ -583,14 +282,6 @@ fn execute_in_pool<T: Send>(f: impl FnOnce() -> T + Send, num_threads: usize) ->
 #[cfg(not(feature = "parallel"))]
 fn execute_in_pool_with_all_threads<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     f()
-}
-
-#[cfg(feature = "parallel")]
-use rayon::current_num_threads;
-
-#[cfg(not(feature = "parallel"))]
-fn current_num_threads() -> usize {
-    1
 }
 
 fn pool_and_chunk_size(num_threads: usize, num_requests: usize) -> (usize, usize) {

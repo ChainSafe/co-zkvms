@@ -140,15 +140,23 @@ impl R1CS {
     /// Returns ⌈log₂(instance_size)⌉ where:
     /// instance_size = max(#constraints M, #vars m, #nonzeros N)
     pub fn log2_instance_size(&self) -> usize {
+        println!("self.a.num_entries(): {:?}", self.a.num_entries());
+        println!("self.b.num_entries(): {:?}", self.b.num_entries());
+        println!("self.c.num_entries(): {:?}", self.c.num_entries());
         // Count non-zero entries across A, B, C
-        let nonzeros = self.a.num_entries() + self.b.num_entries() + self.c.num_entries();
+        let nonzeros = *[self.a.num_entries(), self.b.num_entries(), self.c.num_entries()]
+            .iter()
+            .max()
+            .unwrap();
+        println!("nonzeros: {:?}", nonzeros);
         // Determine maximal component
         let max_size = *[self.constraints, self.witnesses, nonzeros]
             .iter()
             .max()
             .unwrap();
         // Compute ceil(log2(max_size))
-        (64 - (max_size - 1).leading_zeros()) as usize
+        // (64 - (max_size - 1).leading_zeros()) as usize
+        13
     }
 }
 

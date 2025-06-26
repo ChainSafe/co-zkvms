@@ -18,7 +18,7 @@ pub use {
         noir_proof_scheme::{NoirProof, NoirProofScheme},
         noir_to_r1cs::noir_to_r1cs,
         r1cs::R1CS,
-        utils::human,
+        utils::{human},
     },
     acir::FieldElement as NoirElement,
     // gnark_config::write_gnark_parameters_to_file,

@@ -112,6 +112,10 @@ impl NoirToR1CSCompiler {
         // Add constant by multipliying with constant value one.
         linear.push((noir_to_native(expr.q_c).neg(), self.witness_one()));
 
+        println!("a: {:?}", a.len());
+        println!("b: {:?}", b.len());
+        println!("linear: {:?}", linear.len());
+
         // Add a single linear constraint
         // We could avoid this by substituting back into the last multiplication
         // constraint.
