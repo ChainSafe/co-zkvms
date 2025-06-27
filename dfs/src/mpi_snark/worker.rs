@@ -601,60 +601,46 @@ impl<E: Pairing> PublicProver<E> {
 
         let q_num_vars = eq_tilde_rx.num_vars; //ipk.real_len_val.log_2();
 
-        println!("--------------------------------");
-        println!("rank: {:?}", rank);
-        println!(
-            "eq_tilde_ry: {:?}",
-            full_eq_tilde_y.evaluations[full_eq_tilde_y.evaluations.len() - 5..].to_vec()
-        );
-        println!("ipk.col: {:?}", ipk.col[ipk.col.len() - 5..].to_vec());
-        println!("v_msg: {:?}", v_msg);
-        println!("--------------------------------");
+        let mut q_row: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
+            DenseMultilinearExtension::from_evaluations_vec(
+                q_num_vars,
+                // `crate::utils::hash_tuple` method reindexes eq_tilde_rx based ipk.row
+                // which we did in third round is eq_tilde_rx =? reindex(eq_rx)
+                crate::utils::hash_tuple::<E::ScalarField>(
+                    &ipk.row[..ipk.real_len_val],
+                    full_eq_tilde_x,
+                    &v_msg,
+                ),
+            );
+        let first_row = *pk.row.iter().filter(|r| **r != usize::MAX).next().unwrap();
+        let full_q_row_first = E::ScalarField::from(first_row as u64) + v_msg * full_eq_tilde_x[first_row];
 
-        // let q_row: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
-        //     DenseMultilinearExtension::from_evaluations_vec(
-        //         q_num_vars,
-        //         // `crate::utils::hash_tuple` method reindexes eq_tilde_rx based ipk.row
-        //         // which we did in third round is eq_tilde_rx =? reindex(eq_rx)
-        //         crate::utils::hash_tuple::<E::ScalarField>(
-        //             &ipk.row[..ipk.num_variables_val.pow2()],
-        //             full_eq_tilde_x,
-        //             &v_msg,
-        //         ),
-        //     );
-        let q_row = DenseMultilinearExtension::from_evaluations_vec(
-            full_eq_tilde_x.num_vars,
-            crate::utils::hash_tuple::<E::ScalarField>(&pk.row, full_eq_tilde_x, &v_msg),
-        );
-        let q_row = split_poly(&q_row, log_num_workers)[(rank - 1) as usize].clone();
+        for i in ipk.real_len_val..q_num_vars.pow2() {
+            q_row.evaluations[i] = full_q_row_first;
+        }
+    
+        let mut q_col: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
+            DenseMultilinearExtension::from_evaluations_vec(
+                q_num_vars,
+                crate::utils::hash_tuple::<E::ScalarField>(
+                    &ipk.col[..ipk.num_variables_val.pow2()],
+                    full_eq_tilde_y,
+                    &v_msg,
+                ),
+            );
+        let first_col = *pk.col.iter().filter(|r| **r != usize::MAX).next().unwrap();
+        let full_q_col_first = E::ScalarField::from(first_col as u64) + v_msg * full_eq_tilde_y[first_col];
 
-        // if rank == ipk.
-        // pr
-        println!("---------------q_col-----------------");
+        for i in ipk.real_len_val..q_num_vars.pow2() {
+            q_col.evaluations[i] = full_q_col_first;
+        }
 
-        // let q_col = DenseMultilinearExtension::from_evaluations_vec(
-        //     q_num_vars,
-        //     crate::utils::hash_tuple::<E::ScalarField>(&ipk.col[..ipk.num_variables_val.pow2()], full_eq_tilde_y, &v_msg),
-        // );
-        let q_col = DenseMultilinearExtension::from_evaluations_vec(
-            full_eq_tilde_y.num_vars,
-            crate::utils::hash_tuple::<E::ScalarField>(&pk.col, full_eq_tilde_y, &v_msg),
-        );
-        println!("party_id: {:?}", pk.party_id);
-        println!("pk.num_parties.ilog2(): {:?}", pk.num_parties.ilog2());
-        println!("log_num_workers: {:?}", log_num_workers);
-        let q_col = split_poly(&q_col, log_num_workers)[(rank - 1) as usize].clone();
-
-        println!("rank: {:?}", rank);
-        println!("q_col: {:?}", q_col.evaluations[0]);
-        println!("---------------q_col-----------------");
         let domain = (start_eq..start_eq + (1 << log_chunk_size)).collect::<Vec<_>>();
         let t_row = DenseMultilinearExtension::from_evaluations_vec(
             eq_tilde_rx.num_vars,
             hash_tuple::<E::ScalarField>(&domain, eq_tilde_rx, &v_msg),
         );
-        println!("eq_rx.num_vars: {:?}", eq_tilde_rx.num_vars);
-        println!("ipk.num_variables_val: {:?}", ipk.num_variables_val);
+      
         assert!(eq_tilde_rx.num_vars == ipk.num_variables_val);
         let t_col: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
             DenseMultilinearExtension::from_evaluations_vec(
@@ -664,12 +650,12 @@ impl<E: Pairing> PublicProver<E> {
 
         let mut q_polys = ListOfProductsOfPolynomials::new(max(q_num_vars, ipk.num_variables_val));
 
-        println!("--------------------------------");
-        println!("rank: {:?}", rank);
-        println!("eq_rx: {:?}", eq_tilde_rx.evaluations[..5].to_vec());
-        println!("eq_ry: {:?}", eq_tilde_ry.evaluations[..5].to_vec());
-        println!("val_M: {:?}", val_M.evaluations[..5].to_vec());
-        println!("--------------------------------");
+        // println!("--------------------------------");
+        // println!("rank: {:?}", rank);
+        // println!("eq_rx: {:?}", eq_tilde_rx.evaluations[..5].to_vec());
+        // println!("eq_ry: {:?}", eq_tilde_ry.evaluations[..5].to_vec());
+        // println!("val_M: {:?}", val_M.evaluations[..5].to_vec());
+        // println!("--------------------------------");
 
         let prod = vec![
             Rc::new(eq_tilde_rx.clone()),
@@ -681,20 +667,20 @@ impl<E: Pairing> PublicProver<E> {
         let ((x_r, x_c), size1): ((E::ScalarField, E::ScalarField), usize) =
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
-        println!("--------------------------------");
-        println!("rank: {:?}", rank);
-        println!("x_c: {:?}", x_c);
-        // println!("q_row: {:?}", q_row.evaluations[..5].to_vec());
-        // println!("t_row: {:?}", t_row.evaluations[..5].to_vec());
-        println!(
-            "q_col: {:?}",
-            q_col.evaluations[q_col.evaluations.len() - 5..].to_vec()
-        );
-        println!(
-            "t_col: {:?}",
-            t_col.evaluations[t_col.evaluations.len() - 5..].to_vec()
-        );
-        println!("--------------------------------");
+        // println!("--------------------------------");
+        // println!("rank: {:?}", rank);
+        // println!("x_c: {:?}", x_c);
+        // // println!("q_row: {:?}", q_row.evaluations[..5].to_vec());
+        // // println!("t_row: {:?}", t_row.evaluations[..5].to_vec());
+        // println!(
+        //     "q_col: {:?}",
+        //     q_col.evaluations[q_col.evaluations.len() - 5..].to_vec()
+        // );
+        // println!(
+        //     "t_col: {:?}",
+        //     t_col.evaluations[t_col.evaluations.len() - 5..].to_vec()
+        // );
+        // println!("--------------------------------");
 
         let lookup_pf_row = LogLookupProof::prove(&q_row, &t_row, &ipk.freq_r, &ipk.ck_index, &x_r);
 
@@ -751,26 +737,26 @@ impl<E: Pairing> PublicProver<E> {
             log_chunk_size,
         );
 
-        println!("--------------------------------");
-        println!("rank: {:?}", rank);
-        println!("ipk.freq_c: {:?}", ipk.freq_c.evaluations[..5].to_vec());
-        println!(
-            "lookup_pf_col.0[0]: {:?}",
-            lookup_pf_col.0[0].evaluations[lookup_pf_col.0[0].evaluations.len() - 5..].to_vec()
-        );
-        println!(
-            "lookup_pf_col.0[1]: {:?}",
-            lookup_pf_col.0[1].evaluations[lookup_pf_col.0[1].evaluations.len() - 5..].to_vec()
-        );
-        println!(
-            "lookup_pf_col.2[0]: {:?}",
-            lookup_pf_col.2[0].evaluations[lookup_pf_col.2[0].evaluations.len() - 5..].to_vec()
-        );
-        println!(
-            "lookup_pf_col.2[1]: {:?}",
-            lookup_pf_col.2[1].evaluations[lookup_pf_col.2[1].evaluations.len() - 5..].to_vec()
-        );
-        println!("--------------------------------");
+        // println!("--------------------------------");
+        // println!("rank: {:?}", rank);
+        // println!("ipk.freq_c: {:?}", ipk.freq_c.evaluations[..5].to_vec());
+        // println!(
+        //     "lookup_pf_col.0[0]: {:?}",
+        //     lookup_pf_col.0[0].evaluations[lookup_pf_col.0[0].evaluations.len() - 5..].to_vec()
+        // );
+        // println!(
+        //     "lookup_pf_col.0[1]: {:?}",
+        //     lookup_pf_col.0[1].evaluations[lookup_pf_col.0[1].evaluations.len() - 5..].to_vec()
+        // );
+        // println!(
+        //     "lookup_pf_col.2[0]: {:?}",
+        //     lookup_pf_col.2[0].evaluations[lookup_pf_col.2[0].evaluations.len() - 5..].to_vec()
+        // );
+        // println!(
+        //     "lookup_pf_col.2[1]: {:?}",
+        //     lookup_pf_col.2[1].evaluations[lookup_pf_col.2[1].evaluations.len() - 5..].to_vec()
+        // );
+        // println!("--------------------------------");
 
         let (final_point, size1, size2) = mpi_sumcheck_worker(
             log,

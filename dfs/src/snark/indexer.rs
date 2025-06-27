@@ -35,8 +35,11 @@ use ark_serialize::CanonicalSerialize;
 pub struct IndexProverKey<E: Pairing> {
     pub row: Vec<usize>,
     pub col: Vec<usize>,
-    // pub row_reindex: Vec<usize>,
-    // pub col_reindex: Vec<usize>,
+    pub rows_indexed: Vec<usize>,
+    pub cols_indexed: Vec<usize>,
+    pub val_a_indexed: DenseMultilinearExtension<E::ScalarField>,
+    pub val_b_indexed: DenseMultilinearExtension<E::ScalarField>,
+    pub val_c_indexed: DenseMultilinearExtension<E::ScalarField>,
     pub val_a: DenseMultilinearExtension<E::ScalarField>,
     pub val_b: DenseMultilinearExtension<E::ScalarField>,
     pub val_c: DenseMultilinearExtension<E::ScalarField>,
@@ -253,6 +256,12 @@ impl<E: Pairing> Indexer<E> {
                 ck_w,
                 ck_index,
                 ck_mask,
+
+                rows_indexed: Vec::new(),
+                cols_indexed: Vec::new(),
+                val_a_indexed: Default::default(),
+                val_b_indexed: Default::default(),
+                val_c_indexed: Default::default(),
             },
             IndexVerifierKey {
                 // row: (row),

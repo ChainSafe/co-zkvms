@@ -43,6 +43,7 @@ use mpi::topology::Process;
 use mpi::traits::Communicator;
 use mpi::Count;
 use rand::RngCore;
+use std::cmp::min;
 use std::ops::Index;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -122,24 +123,38 @@ impl<E: Pairing> RssPrivateProver<E> {
         send_size = send_size + size1;
         recv_size = recv_size + size2;
 
-        let ((pub_eq_tilde_rx, pub_eq_tilde_ry, pub_val_M), full_eq_ry, size1, size2) = Self::prover_third_round(
-            pk,
-            &pk.pub_ipk,
-            log,
-            stage,
-            size,
-            rank,
-            root_process,
-            log_num_workers_per_party,
-            start_eq,
-            log_chunk_size,
-            &full_eq_rx,
-            random_rng,
-            active,
-            rx,
-            pub_start_eq,
-            pub_log_chunk_size,
-        );
+        // let mut eq_tilde_rx: Vec<E::ScalarField> =
+        //     vec![E::ScalarField::zero(); pk.ipk.num_variables_val.pow2()];
+
+        // for i in 0..min(pk.ipk.rows_indexed.len(), pk.ipk.num_variables_val.pow2()) {
+        //     if pk.row[i] != usize::MAX {
+        //         eq_tilde_rx[i] = *full_eq_rx.index(pk.ipk.rows[i]);
+        //     }
+        // }
+        // let eq_tilde_rx = DenseMultilinearExtension::from_evaluations_vec(
+        //     pk.ipk.num_variables_val,
+        //     eq_tilde_rx,
+        // );
+
+        let ((pub_eq_tilde_rx, pub_eq_tilde_ry, pub_val_M), full_eq_ry, size1, size2) =
+            Self::prover_third_round(
+                pk,
+                &pk.pub_ipk,
+                log,
+                stage,
+                size,
+                rank,
+                root_process,
+                log_num_workers_per_party,
+                start_eq,
+                log_chunk_size,
+                &full_eq_rx,
+                random_rng,
+                active,
+                rx,
+                pub_start_eq,
+                pub_log_chunk_size,
+            );
         send_size = send_size + size1;
         recv_size = recv_size + size2;
 
@@ -157,14 +172,10 @@ impl<E: Pairing> RssPrivateProver<E> {
         }
         println!("pk.num_variables.pow2(): {:?}", pk.num_variables.pow2());
 
-        let full_eq_tilde_rx = DenseMultilinearExtension::from_evaluations_vec(
-            pk.num_variables,
-            full_eq_tilde_rx,
-        );
-        let full_eq_tilde_ry = DenseMultilinearExtension::from_evaluations_vec(
-            pk.num_variables,
-            full_eq_tilde_ry,
-        );
+        let full_eq_tilde_rx =
+            DenseMultilinearExtension::from_evaluations_vec(pk.num_variables, full_eq_tilde_rx);
+        let full_eq_tilde_ry =
+            DenseMultilinearExtension::from_evaluations_vec(pk.num_variables, full_eq_tilde_ry);
 
         let (size1, size2) = Self::prover_fifth_round(
             pk,
@@ -328,67 +339,32 @@ impl<E: Pairing> RssPrivateProver<E> {
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
         end_timer_buf!(log, start);
-        println!("v_msg: {:?}", v_msg);
 
         let num_variables = pk.ipk.padded_num_var;
-        println!("padded_num_var num_variables: {:?}", num_variables);
+        let instance_size = pk.num_variables.pow2();
+        let chunk_size = pk.ipk.num_variables_val.pow2();
+        let c_start = pk.party_id * instance_size / pk.num_parties;
 
-        let mut A_rx = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
-        let mut B_rx = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
-        let mut C_rx = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
-        println!("eq_rx: {:?}", full_eq_rx.evaluations.len());
-        println!("pk.ipk.val_a: {:?}", pk.ipk.val_a.evaluations.len());
-        println!("pk.ipk.real_len_val: {:?}", pk.ipk.real_len_val);
+        let mut A_rx = vec![E::ScalarField::zero(); chunk_size];
+        let mut B_rx = vec![E::ScalarField::zero(); chunk_size];
+        let mut C_rx = vec![E::ScalarField::zero(); chunk_size];
 
-        // todo make 0..pk.ipk.real_len_val
-        for i in 0..pk.num_variables.pow2() {
-            // A_rx[i] += pk.ipk.val_a[i] * eq_rx[i];
-            // B_rx[i] += pk.ipk.val_b[i] * eq_rx[i];
-            // C_rx[i] += pk.ipk.val_c[i] * eq_rx[i];
+        for i in 0..pk.ipk.cols_indexed.len() {
+            let col = pk.ipk.cols_indexed[i] - c_start; // local offset 0..range_len-1
+            let row = pk.ipk.rows_indexed[i];
+            let v = full_eq_rx.index(row);
 
-            if pk.col[i] >= pk.num_variables.pow2() {
-                continue;
-            }
-
-            A_rx[pk.col[i]] += pk.val_a[i] * full_eq_rx.index(pk.row[i]);
-            B_rx[pk.col[i]] += pk.val_b[i] * full_eq_rx.index(pk.row[i]);
-            C_rx[pk.col[i]] += pk.val_c[i] * full_eq_rx.index(pk.row[i]);
+            A_rx[col] += pk.ipk.val_a_indexed[i] * v;
+            B_rx[col] += pk.ipk.val_b_indexed[i] * v;
+            C_rx[col] += pk.ipk.val_c_indexed[i] * v;
         }
-        println!("pk.num_parties: {:?}", pk.num_parties);
-        A_rx = split_vec(&A_rx, pk.num_parties.ilog2() as usize)[pk.party_id].clone();
-        B_rx = split_vec(&B_rx, pk.num_parties.ilog2() as usize)[pk.party_id].clone();
-        C_rx = split_vec(&C_rx, pk.num_parties.ilog2() as usize)[pk.party_id].clone();
 
-        println!("A_rx: {:?}", A_rx.len());
-
-        println!("--------------------------------");
-        println!("rank: {:?}", rank);
-
-        println!("eq_rx: {:?}", full_eq_rx.evaluations[..5].to_vec());
-        println!(
-            "eq_rx2: {:?}",
-            full_eq_rx.evaluations[num_variables.pow2()..num_variables.pow2() + 5].to_vec()
-        );
-        println!("pk.ipk.row: {:?}", pk.ipk.row[..5].to_vec());
-        println!(
-            "pk.ipk.row: {:?}",
-            pk.ipk.row[num_variables.pow2() - 5..].to_vec()
-        );
-
-        // println!("eq_rx: {:?}", eq_rx.evaluations[eq_rx.evaluations.len() - 5..].to_vec());
-
-        println!("val_a: {:?}", pk.ipk.val_a.evaluations[..5].to_vec());
-        println!("val_b: {:?}", pk.ipk.val_b.evaluations[..5].to_vec());
-        println!("val_c: {:?}", pk.ipk.val_c.evaluations[..5].to_vec());
-
-        // println!("val_a: {:?}", pk.ipk.val_a.evaluations[eq_rx.evaluations.len() - 5..].to_vec());
-        // println!("val_b: {:?}", pk.ipk.val_b.evaluations[eq_rx.evaluations.len() - 5..].to_vec());
-        // println!("val_c: {:?}", pk.ipk.val_c.evaluations[eq_rx.evaluations.len() - 5..].to_vec());
-
-        println!("A_rx: {:?}", A_rx[..5].to_vec());
-        println!("B_rx: {:?}", B_rx[..5].to_vec());
-        println!("C_rx: {:?}", C_rx[..5].to_vec());
-        println!("--------------------------------");
+        // println!("--------------------------------");
+        // println!("rank: {:?}", rank);
+        // println!("A_rx: {:?}", A_rx[..5].to_vec());
+        // println!("B_rx: {:?}", B_rx[..5].to_vec());
+        // println!("C_rx: {:?}", C_rx[..5].to_vec());
+        // println!("--------------------------------");
 
         let (final_point, size1, size2) = rss_second_sumcheck_worker(
             log,
@@ -424,30 +400,32 @@ impl<E: Pairing> RssPrivateProver<E> {
         recv_size = recv_size + size2;
         let r_y = final_point.to_vec();
 
-        let mut pub_eq_rx: DenseMultilinearExtension<E::ScalarField> = DenseMultilinearExtension {
-            evaluations: vec![E::ScalarField::zero()],
-            num_vars: 0,
-        };
-        let mut pub_eq_ry: DenseMultilinearExtension<E::ScalarField> = DenseMultilinearExtension {
-            evaluations: vec![E::ScalarField::zero()],
-            num_vars: 0,
-        };
+        let mut worker_eq_tilde_rx: DenseMultilinearExtension<E::ScalarField> =
+            DenseMultilinearExtension {
+                evaluations: vec![E::ScalarField::zero()],
+                num_vars: 0,
+            };
+        let mut worker_eq_tilde_ry: DenseMultilinearExtension<E::ScalarField> =
+            DenseMultilinearExtension {
+                evaluations: vec![E::ScalarField::zero()],
+                num_vars: 0,
+            };
         let mut pub_val_M: DenseMultilinearExtension<E::ScalarField> = DenseMultilinearExtension {
             evaluations: vec![E::ScalarField::zero()],
             num_vars: 0,
         };
-        println!("pub_log_chunk_size: {:?}", pub_log_chunk_size);
-        println!("pub_ipk.real_len_val: {:?}", pub_ipk.real_len_val);
+
         let full_eq_ry: DenseMultilinearExtension<<E as Pairing>::ScalarField> = generate_eq(&r_y);
         if active {
-            let mut pub_eq_rx_eval = vec![E::ScalarField::zero(); pub_log_chunk_size.pow2()];
-            let mut pub_eq_ry_eval = vec![E::ScalarField::zero(); pub_log_chunk_size.pow2()];
+            let mut worker_eq_tilde_rx_evals =
+                vec![E::ScalarField::zero(); pub_log_chunk_size.pow2()];
+            let mut worker_eq_tilde_ry_evals =
+                vec![E::ScalarField::zero(); pub_log_chunk_size.pow2()];
 
             let mut val_a = E::ScalarField::zero();
             let mut val_b = E::ScalarField::zero();
             let mut val_c = E::ScalarField::zero();
 
-            let mut chunk_size = 0;
             for (i, ((((v_a, v_b), v_c), row), col)) in pub_ipk
                 .val_a
                 .evaluations
@@ -458,31 +436,24 @@ impl<E: Pairing> RssPrivateProver<E> {
                 .zip(pub_ipk.col.iter())
                 .enumerate()
             {
-                if i < pub_log_chunk_size.pow2() && *row != usize::MAX && *col != usize::MAX {
+                if i < pub_ipk.real_len_val {
                     val_a += *v_a * full_eq_rx.index(*row) * full_eq_ry.index(*col);
                     val_b += *v_b * full_eq_rx.index(*row) * full_eq_ry.index(*col);
                     val_c += *v_c * full_eq_rx.index(*row) * full_eq_ry.index(*col);
-                    chunk_size += 1;
 
-                    pub_eq_rx_eval[i] = *full_eq_rx.index(*row);
-                    pub_eq_ry_eval[i] = *full_eq_ry.index(*col);
+                    worker_eq_tilde_rx_evals[i] = *full_eq_rx.index(*row);
+                    worker_eq_tilde_ry_evals[i] = *full_eq_ry.index(*col);
                 }
             }
 
-            pub_eq_rx =
-                DenseMultilinearExtension::from_evaluations_vec(pub_log_chunk_size, pub_eq_rx_eval);
-            pub_eq_ry =
-                DenseMultilinearExtension::from_evaluations_vec(pub_log_chunk_size, pub_eq_ry_eval);
-
-            println!("--------------------------------");
-            println!("{rank} chunk_size: {:?}", chunk_size);
-            println!("{rank} val_a: {:?}", val_a);
-            println!("{rank} val_b: {:?}", val_b);
-            println!("{rank} val_c: {:?}", val_c);
-            println!("pub_eq_rx: {:?}", pub_eq_rx.evaluations[..5].to_vec());
-            println!("pub_eq_ry: {:?}", pub_eq_ry.evaluations[..5].to_vec());
-
-            println!("--------------------------------");
+            worker_eq_tilde_rx = DenseMultilinearExtension::from_evaluations_vec(
+                pub_log_chunk_size,
+                worker_eq_tilde_rx_evals,
+            );
+            worker_eq_tilde_ry = DenseMultilinearExtension::from_evaluations_vec(
+                pub_log_chunk_size,
+                worker_eq_tilde_ry_evals,
+            );
 
             let response = (val_a, val_b, val_c);
             let size1 = send_responses(
@@ -509,7 +480,7 @@ impl<E: Pairing> RssPrivateProver<E> {
                 size,
                 rank,
                 root_process,
-                &vec![&pub_eq_rx, &pub_eq_ry],
+                &vec![&worker_eq_tilde_rx, &worker_eq_tilde_ry],
                 &pub_ipk.ck_index,
             );
             send_size = send_size + size1;
@@ -557,7 +528,12 @@ impl<E: Pairing> RssPrivateProver<E> {
         send_size = send_size + size1;
         recv_size = recv_size + size2;
 
-        ((pub_eq_rx, pub_eq_ry, pub_val_M), full_eq_ry, send_size, recv_size)
+        (
+            (worker_eq_tilde_rx, worker_eq_tilde_ry, pub_val_M),
+            full_eq_ry,
+            send_size,
+            recv_size,
+        )
     }
 
     pub fn prover_fifth_round<'a, C: 'a + Communicator>(
@@ -580,7 +556,7 @@ impl<E: Pairing> RssPrivateProver<E> {
     ) -> (usize, usize) {
         if active {
             return crate::mpi_snark::worker::PublicProver::prover_fifth_round(
-                &DistributedProverKey::<E>{
+                &DistributedProverKey::<E> {
                     party_id: pk.party_id,
                     num_parties: pk.num_parties,
                     ipk: pk.ipk.clone(),
@@ -622,7 +598,6 @@ impl<E: Pairing> RssPrivateProver<E> {
         return (0, 0);
     }
 }
-
 
 pub fn rss_first_sumcheck_worker<'a, E: Pairing, C: 'a + Communicator, R: RngCore + FeedableRNG>(
     log: &mut Vec<String>,

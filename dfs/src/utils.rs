@@ -223,7 +223,12 @@ pub fn hash_tuple<F: Field>(v: &[usize], eq: &DenseMultilinearExtension<F>, v_ms
         .filter(|v_i| **v_i != usize::MAX)
         .map(|v_i| F::from(*v_i as u64) + *v_msg * eq[*v_i])
         .collect::<Vec<_>>();
-    println!("result: {:?} -> {} <- {:?}", result.len(), result.len().next_power_of_two() - result.len(), result[0]);
+    println!(
+        "result: {:?} -> {} <- {:?}",
+        result.len(),
+        result.len().next_power_of_two() - result.len(),
+        result[0]
+    );
 
     for _ in 0..result.len().next_power_of_two() - result.len() {
         result.push(result[0]);
@@ -358,6 +363,7 @@ pub fn split_ipk<E: Pairing>(
     log_parties: usize,
 ) -> (Vec<IndexProverKey<E>>, IndexProverKey<E>) {
     let num_parties = 1 << log_parties;
+    let chunk_size = 1 << (pk.num_variables_val - log_parties);
 
     let mut res = Vec::new();
     let row_vec = split_vec(&pk.row, log_parties);
@@ -371,6 +377,24 @@ pub fn split_ipk<E: Pairing>(
     let val_c_vec = split_poly(&pk.val_c, log_parties);
     let freq_r_vec = split_poly(&pk.freq_r, log_parties);
     let freq_c_vec = split_poly(&pk.freq_c, log_parties);
+
+    let n_cols = pk.num_variables_val.pow2();
+    println!("n_cols: {:?}", n_cols);
+    let mut bucket_cols_index: Vec<Vec<usize>> = vec![Vec::new(); num_parties];
+    let mut bucket_rows_index: Vec<Vec<usize>> = vec![Vec::new(); num_parties];
+    let mut bucket_val_a_index: Vec<Vec<E::ScalarField>> = vec![Vec::new(); num_parties];
+    let mut bucket_val_b_index: Vec<Vec<E::ScalarField>> = vec![Vec::new(); num_parties];
+    let mut bucket_val_c_index: Vec<Vec<E::ScalarField>> = vec![Vec::new(); num_parties];
+
+    for i in 0..pk.real_len_val {
+        // scan once
+        let dest = pk.col[i] * num_parties / n_cols; // owner-computes-column rule
+        bucket_cols_index[dest].push(pk.col[i]);
+        bucket_rows_index[dest].push(pk.row[i]);
+        bucket_val_a_index[dest].push(pk.val_a[i]);
+        bucket_val_b_index[dest].push(pk.val_b[i]);
+        bucket_val_c_index[dest].push(pk.val_c[i]);
+    }
 
     println!("pk.ck_w.0.nv: {:?}", pk.ck_w.0.nv);
     println!("log_parties: {:?}", log_parties);
@@ -393,15 +417,44 @@ pub fn split_ipk<E: Pairing>(
         ck_w: (merge_w_ck, pk.ck_w.1.clone()),
         ck_index: merge_index_ck.clone(),
         ck_mask: pk.ck_mask.clone(),
+
+        rows_indexed: Vec::new(),
+        cols_indexed: Vec::new(),
+        val_a_indexed: default_poly.clone(),
+        val_b_indexed: default_poly.clone(),
+        val_c_indexed: default_poly.clone(),
     };
 
     println!("| num_parties: {:?}", num_parties);
 
     for i in 0..1 << log_parties {
+        println!("--------------------------------");
+        println!("party {:?}", i);
+        println!(
+            "bucket_rows_index[i].len(): {:?}",
+            bucket_rows_index[i].len()
+        );
+        println!(
+            "bucket_cols_index[i].len(): {:?}",
+            bucket_cols_index[i].len()
+        );
+        println!(
+            "bucket_val_a_index[i].len(): {:?}",
+            bucket_val_a_index[i].len()
+        );
+        println!(
+            "bucket_val_b_index[i].len(): {:?}",
+            bucket_val_b_index[i].len()
+        );
+        println!(
+            "bucket_val_c_index[i].len(): {:?}",
+            bucket_val_c_index[i].len()
+        );
+        println!("--------------------------------");
         let ipk = IndexProverKey {
             row: row_vec[i].clone(),
             col: col_vec[i].clone(),
-            real_len_val: pk.real_len_val / num_parties,
+            real_len_val: real_chunk_size(i, chunk_size, pk.real_len_val),
             padded_num_var: pk.padded_num_var - log_parties,
             val_a: val_a_vec[i].clone(),
             val_b: val_b_vec[i].clone(),
@@ -412,11 +465,38 @@ pub fn split_ipk<E: Pairing>(
             ck_w: (ck_w_vec[i].clone(), pk.ck_w.1.clone()),
             ck_index: ck_index_vec[i].clone(),
             ck_mask: pk.ck_mask.clone(),
+
+            rows_indexed: bucket_rows_index[i].clone(),
+            cols_indexed: bucket_cols_index[i].clone(),
+            val_a_indexed: DenseMultilinearExtension {
+                evaluations: bucket_val_a_index[i].clone(),
+                num_vars: bucket_val_a_index[i].len().log_2(),
+            },
+            val_b_indexed: DenseMultilinearExtension {
+                evaluations: bucket_val_b_index[i].clone(),
+                num_vars: bucket_val_b_index[i].len().log_2(),
+            },
+            val_c_indexed: DenseMultilinearExtension {
+                evaluations: bucket_val_c_index[i].clone(),
+                num_vars: bucket_val_c_index[i].len().log_2(),
+            },
         };
+        println!("ipk.real_len_val: {:?}", ipk.real_len_val);
         res.push(ipk);
     }
 
     (res, root_ipk)
+}
+
+fn real_chunk_size(i: usize, chunk_size: usize, n: usize) -> usize {
+    debug_assert!(chunk_size.is_power_of_two());
+    let start_index = i * chunk_size;
+
+    if start_index >= n {
+        0
+    } else {
+        (n - start_index).min(chunk_size)
+    }
 }
 
 pub fn split_sparse_poly<F: PrimeField>(
@@ -738,7 +818,6 @@ pub fn produce_test_r1cs<F: PrimeField>(
         zc_vec,
     )
 }
-
 
 #[test]
 fn test_serialize() {

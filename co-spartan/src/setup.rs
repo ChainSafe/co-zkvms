@@ -144,7 +144,7 @@ pub fn setup(
     // let P: usize = log_num_public_workers;
     // let P_W: usize = log_num_workers_per_party;
     for P_W in 1..log_num_workers_per_party {
-        let P: usize = P_W;
+        let P: usize = P_W + 1;
 
         let mut key_out_path = origin_key_out_path.clone();
 
