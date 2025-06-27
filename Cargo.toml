@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "co-spartan",
     "noir-r1cs",
+    "dfs",
 ]
 
 [workspace.package]

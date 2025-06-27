@@ -8,7 +8,7 @@ name = "co-spartan"
 path = "src/cli/main.rs"
 
 [dependencies]
-dfs = { path = "../../dfs-artifact" }
+dfs = { path = "../dfs" }
 noir-r1cs = { path = "../noir-r1cs" }
 
 # Workspace dependencies

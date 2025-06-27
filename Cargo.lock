@@ -456,6 +456,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-mnt4-298"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecb284f9f38cbedcae7e78f33e9a1f813db4e6b8103dacc3a143c2ddf32941aa"
+dependencies = [
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-r1cs-std",
+ "ark-std 0.4.0",
+]
+
+[[package]]
+name = "ark-mnt4-753"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d27256f8a5cfb4ac27f43cabfbadf45ab60a153a8f65a3474b4c89e48fd35e40"
+dependencies = [
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-r1cs-std",
+ "ark-std 0.4.0",
+]
+
+[[package]]
+name = "ark-mnt6-298"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b476521074ed1ccfec7277bbe5c6fcf76be15fe1aa63f23f2545f0c8ae6ae73"
+dependencies = [
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-mnt4-298",
+ "ark-r1cs-std",
+ "ark-std 0.4.0",
+]
+
+[[package]]
+name = "ark-mnt6-753"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380c58d43c24fd113d41094f5e183e9a2e6ef8bbc8a281e304bfd5076fda7e7f"
+dependencies = [
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-mnt4-753",
+ "ark-r1cs-std",
+ "ark-std 0.4.0",
+]
+
+[[package]]
 name = "ark-poly"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -499,6 +549,23 @@ dependencies = [
  "derivative",
  "digest 0.10.7",
  "rayon",
+]
+
+[[package]]
+name = "ark-r1cs-std"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de1d1472e5cb020cb3405ce2567c91c8d43f21b674aef37b0202f5c3304761db"
+dependencies = [
+ "ark-ec 0.4.2",
+ "ark-ff 0.4.2",
+ "ark-relations",
+ "ark-std 0.4.0",
+ "derivative",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "tracing",
 ]
 
 [[package]]
@@ -699,7 +766,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1262,10 +1329,15 @@ dependencies = [
 name = "dfs"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254 0.4.0",
  "ark-crypto-primitives",
  "ark-ec 0.4.2",
  "ark-ff 0.4.2",
  "ark-linear-sumcheck",
+ "ark-mnt4-298",
+ "ark-mnt4-753",
+ "ark-mnt6-298",
+ "ark-mnt6-753",
  "ark-poly 0.4.2",
  "ark-poly-commit",
  "ark-serialize 0.4.2",
@@ -1278,6 +1350,7 @@ dependencies = [
  "mimalloc",
  "mpi",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rayon",
 ]
 
