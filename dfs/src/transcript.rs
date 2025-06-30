@@ -2,12 +2,19 @@
 use ark_ff::Field;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::CanonicalSerialize;
-use merlin::Transcript;
 use rand::RngCore;
 use std::vec::Vec;
 
+pub struct TranscriptMerlin(merlin::Transcript);
+
+impl TranscriptMerlin {
+    pub fn new(label: &'static [u8]) -> Self {
+        Self(merlin::Transcript::new(label))
+    }
+}
+
 /// A Transcript with some shorthands for feeding scalars, group elements, and obtaining challenges as field elements.
-pub trait LookupTranscript {
+pub trait Transcript: RngCore {
     fn append_serializable<S: CanonicalSerialize>(&mut self, label: &'static [u8], msg: &S);
 
     /// Compute a `label`ed challenge scalar from the given commitments and the choice bit.
@@ -16,7 +23,30 @@ pub trait LookupTranscript {
     fn get_vector_challenge<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F>;
 }
 
-impl LookupTranscript for Transcript {
+impl RngCore for TranscriptMerlin {
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+        self.0.challenge_bytes(b"rand 32", &mut bytes);
+        u32::from_le_bytes(bytes)
+    }
+    
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+        self.0.challenge_bytes(b"rand 64", &mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+    
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.challenge_bytes(b"rand bytes", dest);
+    }
+    
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.0.challenge_bytes(b"rand bytes", dest);
+        Ok(())
+    }
+}
+
+impl Transcript for TranscriptMerlin {
     fn append_serializable<S: CanonicalSerialize>(
         &mut self,
         label: &'static [u8],
@@ -24,13 +54,13 @@ impl LookupTranscript for Transcript {
     ) {
         let mut message = Vec::new();
         serializable.serialize_uncompressed(&mut message).unwrap();
-        self.append_message(label, &message)
+        self.0.append_message(label, &message)
     }
 
     fn get_scalar_challenge<F: Field>(&mut self, label: &'static [u8]) -> F {
         loop {
             let mut bytes = [0; 64];
-            self.challenge_bytes(label, &mut bytes);
+            self.0.challenge_bytes(label, &mut bytes);
             if let Some(e) = F::from_random_bytes(&bytes) {
                 return e;
             }

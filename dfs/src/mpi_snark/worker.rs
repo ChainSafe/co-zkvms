@@ -33,7 +33,7 @@ use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
 use ark_linear_sumcheck::ml_sumcheck::protocol::{IPForMLSumcheck, ListOfProductsOfPolynomials};
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
 use ark_poly::DenseMultilinearExtension;
-use ark_poly::MultilinearExtension;
+use ark_poly::Polynomial;
 use ark_poly_commit::multilinear_pc::data_structures::{
     Commitment, CommitterKey, Proof, UniversalParams, VerifierKey,
 };
@@ -168,10 +168,7 @@ pub fn mpi_eval_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
 ) -> (usize, usize) {
     let mut res = Vec::new();
     for p in polys {
-        res.push(
-            p.evaluate(&final_point[0..num_vars - log_num_workers])
-                .unwrap(),
-        )
+        res.push(p.evaluate(&final_point[0..num_vars - log_num_workers].to_vec()));
     }
 
     (
@@ -207,7 +204,7 @@ pub fn mpi_batch_open_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
     let (pf, r) = distributed_open(&ck, &agg_poly, &point[0..num_var - log_num_workers]);
     let mut evals = Vec::new();
     for p in polys.iter() {
-        evals.push(p.evaluate(&point[0..num_var - log_num_workers]).unwrap());
+        evals.push(p.evaluate(&point[0..num_var - log_num_workers].to_vec()));
     }
 
     let response = PartialProof {
@@ -387,12 +384,12 @@ impl<E: Pairing> PublicProver<E> {
         send_size = send_size + size1;
         recv_size = recv_size + size2;
 
-        let randomness = &final_point[0..num_variables];
+        let randomness = final_point[0..num_variables].to_vec();
 
         let (val_a, val_b, val_c) = (
-            za.evaluate(randomness).unwrap(),
-            zb.evaluate(randomness).unwrap(),
-            zc.evaluate(randomness).unwrap(),
+            za.evaluate(&randomness),
+            zb.evaluate(&randomness),
+            zc.evaluate(&randomness),
         );
 
         let response = vec![val_a, val_b, val_c];
@@ -650,13 +647,6 @@ impl<E: Pairing> PublicProver<E> {
 
         let mut q_polys = ListOfProductsOfPolynomials::new(max(q_num_vars, ipk.num_variables_val));
 
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("eq_rx: {:?}", eq_tilde_rx.evaluations[..5].to_vec());
-        // println!("eq_ry: {:?}", eq_tilde_ry.evaluations[..5].to_vec());
-        // println!("val_M: {:?}", val_M.evaluations[..5].to_vec());
-        // println!("--------------------------------");
-
         let prod = vec![
             Rc::new(eq_tilde_rx.clone()),
             Rc::new(eq_tilde_ry.clone()),
@@ -667,20 +657,6 @@ impl<E: Pairing> PublicProver<E> {
         let ((x_r, x_c), size1): ((E::ScalarField, E::ScalarField), usize) =
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("x_c: {:?}", x_c);
-        // // println!("q_row: {:?}", q_row.evaluations[..5].to_vec());
-        // // println!("t_row: {:?}", t_row.evaluations[..5].to_vec());
-        // println!(
-        //     "q_col: {:?}",
-        //     q_col.evaluations[q_col.evaluations.len() - 5..].to_vec()
-        // );
-        // println!(
-        //     "t_col: {:?}",
-        //     t_col.evaluations[t_col.evaluations.len() - 5..].to_vec()
-        // );
-        // println!("--------------------------------");
 
         let lookup_pf_row = LogLookupProof::prove(&q_row, &t_row, &ipk.freq_r, &ipk.ck_index, &x_r);
 
@@ -698,15 +674,6 @@ impl<E: Pairing> PublicProver<E> {
         let ((z, lambda), size1): ((Vec<E::ScalarField>, E::ScalarField), usize) =
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
-
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("ipk.freq_r: {:?}", ipk.freq_r.evaluations[..5].to_vec());
-        // println!("lookup_pf_row.0[0]: {:?}", lookup_pf_row.0[0].evaluations[..5].to_vec());
-        // println!("lookup_pf_row.0[1]: {:?}", lookup_pf_row.0[1].evaluations[..5].to_vec());
-        // println!("lookup_pf_row.2[0]: {:?}", lookup_pf_row.2[0].evaluations[..5].to_vec());
-        // println!("lookup_pf_row.2[1]: {:?}", lookup_pf_row.2[1].evaluations[..5].to_vec());
-        // println!("--------------------------------");
 
         sumcheck_polynomial_list(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
@@ -737,27 +704,6 @@ impl<E: Pairing> PublicProver<E> {
             log_chunk_size,
         );
 
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("ipk.freq_c: {:?}", ipk.freq_c.evaluations[..5].to_vec());
-        // println!(
-        //     "lookup_pf_col.0[0]: {:?}",
-        //     lookup_pf_col.0[0].evaluations[lookup_pf_col.0[0].evaluations.len() - 5..].to_vec()
-        // );
-        // println!(
-        //     "lookup_pf_col.0[1]: {:?}",
-        //     lookup_pf_col.0[1].evaluations[lookup_pf_col.0[1].evaluations.len() - 5..].to_vec()
-        // );
-        // println!(
-        //     "lookup_pf_col.2[0]: {:?}",
-        //     lookup_pf_col.2[0].evaluations[lookup_pf_col.2[0].evaluations.len() - 5..].to_vec()
-        // );
-        // println!(
-        //     "lookup_pf_col.2[1]: {:?}",
-        //     lookup_pf_col.2[1].evaluations[lookup_pf_col.2[1].evaluations.len() - 5..].to_vec()
-        // );
-        // println!("--------------------------------");
-
         let (final_point, size1, size2) = mpi_sumcheck_worker(
             log,
             "stage1_sumcheck",
@@ -769,10 +715,6 @@ impl<E: Pairing> PublicProver<E> {
         );
         send_size = send_size + size1;
         recv_size = recv_size + size2;
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("final_point: {:?}", final_point[..5].to_vec());
-        // println!("--------------------------------");
 
         let (eta, size1): (E::ScalarField, usize) =
             receive_requests(log, rank, stage, &root_process, 0);

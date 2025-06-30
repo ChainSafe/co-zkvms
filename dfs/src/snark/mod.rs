@@ -10,7 +10,7 @@ use crate::utils::{
     aggregate_comm, aggregate_eval, aggregate_poly, boost_degree, generate_eq, map_poly, two_pow_n,
 };
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
-use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
+use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_poly_commit::multilinear_pc::{
     data_structures::CommitterKey, data_structures::VerifierKey, MultilinearPC,
 };
@@ -27,6 +27,7 @@ pub mod indexer;
 
 mod tests;
 pub mod zk;
+mod fixed_base;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct OracleEval<E: Pairing> {
@@ -101,10 +102,10 @@ pub fn batch_open_poly<E: Pairing>(
     let mut evals = Vec::new();
     let mut debug_evals = Vec::new();
     for p in &polys[0..comms.len()] {
-        evals.push(p.evaluate(&final_point).unwrap())
+        evals.push(p.evaluate(&final_point.to_vec()))
     }
     for p in &polys[comms.len()..] {
-        debug_evals.push(p.evaluate(&final_point).unwrap())
+        debug_evals.push(p.evaluate(&final_point.to_vec()))
     }
     let batch_oracle = BatchOracleEval {
         val: evals,

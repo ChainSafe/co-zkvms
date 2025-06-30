@@ -11,7 +11,7 @@ use crate::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{VerificationError, VerificationResult};
 use ark_ec::bls12::Bls12;
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, One, Zero};
+use ark_ff::{AdditiveGroup, Field, One, Zero};
 use ark_linear_sumcheck::ml_sumcheck::protocol::verifier::SubClaim;
 use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
 use ark_linear_sumcheck::ml_sumcheck::protocol::{prover, IPForMLSumcheck};

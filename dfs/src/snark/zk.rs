@@ -5,12 +5,12 @@ use std::ops::Div;
 use std::ops::Index;
 use std::ops::Mul;
 
+use super::fixed_base::FixedBase;
 use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
 use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
 use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ec::bls12::Bls12;
 use ark_ec::pairing::Pairing;
-use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
 use ark_ec::VariableBaseMSM;
@@ -30,7 +30,6 @@ use ark_poly::univariate::DensePolynomial;
 use ark_poly::MultilinearExtension;
 use ark_poly::Polynomial;
 use ark_poly::{DenseMVPolynomial, DenseMultilinearExtension};
-use ark_poly_commit::challenge::ChallengeGenerator;
 use ark_poly_commit::marlin_pc::Commitment as MaskCommitment;
 use ark_poly_commit::marlin_pc::CommitterKey;
 use ark_poly_commit::marlin_pst13_pc::CommitterKey as MaskCommitterKey;
@@ -49,8 +48,6 @@ use ark_poly_commit::multilinear_pc::MultilinearPC;
 use ark_poly_commit::Error;
 use ark_poly_commit::LabeledCommitment;
 use ark_poly_commit::LabeledPolynomial;
-use ark_poly_commit::PCRandomness;
-use ark_poly_commit::PolynomialLabel;
 use ark_std::{cfg_into_iter, test_rng};
 use rayon::iter::*;
 
@@ -689,8 +686,7 @@ where
             h: param.0.h,
             h_mask_random: (&param.0.h_mask[to_reduce..]).to_vec(),
         };
-        let (mut ck2, vk2) =
-            MarlinPST13::<E, P, Sponge<E>>::trim(&param.1, deg_for_mask, 0, None).unwrap();
+        let (mut ck2, vk2) = MarlinPST13::<E, P>::trim(&param.1, deg_for_mask, 0, None).unwrap();
         ck2.powers_of_g = ck2
             .powers_of_g
             .iter()
@@ -718,12 +714,13 @@ where
         rng: &mut impl Rng,
     ) -> <E as Pairing>::G1Affine {
         let polynomial_iter = std::iter::once(polynomial);
-        let (hiding_commitment, _) = MarlinPST13::<
-            E,
-            SparsePolynomial<E::ScalarField, SparseTerm>,
-            Sponge<E>,
-        >::commit(&ck, polynomial_iter, Some(rng))
-        .unwrap();
+        let (hiding_commitment, _) =
+            MarlinPST13::<E, SparsePolynomial<E::ScalarField, SparseTerm>>::commit(
+                &ck,
+                polynomial_iter,
+                Some(rng),
+            )
+            .unwrap();
         hiding_commitment[0].commitment().comm.0
     }
     pub fn commit(
@@ -857,11 +854,17 @@ fn eq_extension<F: Field>(t: &[F]) -> Vec<DenseMultilinearExtension<F>> {
 
     for i in 0..dim {
         let ti = t[i];
-        let poly = cfg_into_iter!(0..(1 << dim)).map(|x| {
-            let xi = if ((x >> i) & 1) == 1 { F::one() } else { F::zero() };
-            let ti_xi = if ((x >> i) & 1) == 1 { ti } else { F::zero() };
-            ti_xi + ti_xi - xi - ti + F::one()
-        }).collect();
+        let poly = cfg_into_iter!(0..(1 << dim))
+            .map(|x| {
+                let xi = if ((x >> i) & 1) == 1 {
+                    F::one()
+                } else {
+                    F::zero()
+                };
+                let ti_xi = if ((x >> i) & 1) == 1 { ti } else { F::zero() };
+                ti_xi + ti_xi - xi - ti + F::one()
+            })
+            .collect();
         result.push(DenseMultilinearExtension::from_evaluations_vec(dim, poly));
     }
 
@@ -888,7 +891,7 @@ pub fn zk_sumcheck_prover_wrapper<
     fs_rng: &mut R1,
     mask_rng: &mut R,
     mask_key: &MaskCommitterKey<E, SparsePolynomial<E::ScalarField, SparseTerm>>,
-    opening_challenge: &mut ChallengeGenerator<E::ScalarField, S>,
+    opening_challenge: &mut S,
 ) -> (ZKSumcheckProof<E>, ZKProverState<E::ScalarField>) {
     let mask_poly = generate_mask_polynomial(
         mask_rng,
@@ -903,7 +906,7 @@ pub fn zk_sumcheck_prover_wrapper<
         None,
     )];
     let (mask_commit, mask_randomness) =
-        MarlinPST13::<_, _, PoseidonSponge<E::ScalarField>>::commit(
+        MarlinPST13::<_, _>::commit(
             mask_key,
             &vec_mask_poly,
             Some(mask_rng),
@@ -915,7 +918,7 @@ pub fn zk_sumcheck_prover_wrapper<
     let (pf, randomness) =
         MLSumcheck::prove_as_subprotocol_zk(fs_rng, list_poly, &mask_poly, challenge).unwrap();
 
-    let opening = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>, _>::open(
+    let opening = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>>::open(
         &mask_key,
         &vec_mask_poly,
         &mask_commit,
@@ -944,7 +947,7 @@ pub fn zk_sumcheck_verifier_wrapper<
     mask_vk: &MaskVerifierKey<E>,
     proof: &ZKSumcheckProof<E>,
     fs_rng: &mut R,
-    opening_challenge: &mut ChallengeGenerator<E::ScalarField, S>,
+    opening_challenge: &mut S,
     claimed_sum: E::ScalarField,
 ) -> (bool, SubClaim<E::ScalarField>) {
     let _ = fs_rng.feed(&proof.g_commit);
@@ -965,7 +968,7 @@ pub fn zk_sumcheck_verifier_wrapper<
         proof.g_commit.clone(),
         None,
     )];
-    let flag = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>, _>::check(
+    let flag = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>>::check(
         mask_vk,
         &label_com,
         &subclaim.point,
@@ -1002,7 +1005,7 @@ pub(crate) fn test_zk() {
         &vk,
         &commitment,
         &point,
-        rand_poly.evaluate(&point).unwrap(),
+        rand_poly.evaluate(&point),
         &proof,
     );
 

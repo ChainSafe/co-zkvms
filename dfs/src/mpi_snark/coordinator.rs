@@ -46,7 +46,6 @@ use ark_poly::DenseMVPolynomial;
 use ark_poly::DenseMultilinearExtension;
 use ark_poly::MultilinearExtension;
 use ark_poly::Polynomial;
-use ark_poly_commit::challenge::ChallengeGenerator;
 use ark_poly_commit::marlin_pst13_pc::CommitterKey as MaskCommitterKey;
 use ark_poly_commit::marlin_pst13_pc::MarlinPST13;
 use ark_poly_commit::multilinear_pc::data_structures::{
@@ -220,7 +219,7 @@ pub fn mpi_zk_sumcheck_coordinators<
     log_num_workers: usize,
     mask_rng: &mut R,
     mask_key: &MaskCommitterKey<E, SparsePolynomial<E::ScalarField, SparseTerm>>,
-    opening_challenge: &mut ChallengeGenerator<E::ScalarField, S>,
+    opening_challenge: &mut S,
 ) -> (ZKSumcheckProof<E>, Vec<E::ScalarField>, Duration) {
     let time = Instant::now();
 
@@ -237,7 +236,7 @@ pub fn mpi_zk_sumcheck_coordinators<
         None,
     )];
     let (mask_commit, mut mask_randomness) =
-        MarlinPST13::<_, _, PoseidonSponge<E::ScalarField>>::commit(
+        MarlinPST13::<_, _>::commit(
             mask_key,
             &vec_mask_poly,
             Some(mask_rng),
@@ -366,7 +365,7 @@ pub fn mpi_zk_sumcheck_coordinators<
 
     let time = Instant::now();
 
-    let opening = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>, _>::open(
+    let opening = MarlinPST13::<_, SparsePolynomial<E::ScalarField, SparseTerm>>::open(
         &mask_key,
         &vec_mask_poly,
         &mask_commit,
@@ -529,15 +528,9 @@ pub fn mpi_batch_open_poly_coordinator<'a, E: Pairing, C: 'a + Communicator>(
         }
         let ep = DenseMultilinearExtension::from_evaluations_vec(log_num_workers, e);
         if i < comms.len() {
-            evals.push(
-                ep.evaluate(&final_point[num_var - log_num_workers..num_var])
-                    .unwrap(),
-            );
+            evals.push(ep.evaluate(&final_point[num_var - log_num_workers..num_var].to_vec()));
         } else {
-            debug_evals.push(
-                ep.evaluate(&final_point[num_var - log_num_workers..num_var])
-                    .unwrap(),
-            );
+            debug_evals.push(ep.evaluate(&final_point[num_var - log_num_workers..num_var].to_vec()));
         }
     }
 
@@ -566,7 +559,7 @@ pub fn mpi_zk_open_poly_coordinator<'a, E: Pairing, C: 'a + Communicator>(
     p_hat: &LabeledPolynomial<E::ScalarField, SparsePolynomial<E::ScalarField, SparseTerm>>, // TODO: Represent this as a prg seed? how many bits?
     log_num_pub_workers: usize,
 ) -> (ZKMLProof<E>, Duration) {
-    let (batch_oracle, mut tot_time) = mpi_batch_open_poly_coordinator(
+    let (batch_oracle, tot_time) = mpi_batch_open_poly_coordinator(
         log,
         stage,
         size,
@@ -640,8 +633,7 @@ pub fn mpi_eval_poly_coordinator<'a, E: Pairing, C: 'a + Communicator>(
         let ep = DenseMultilinearExtension::from_evaluations_vec(log_num_workers, e);
 
         evals.push(
-            ep.evaluate(&final_point[num_var - log_num_workers..num_var])
-                .unwrap(),
+            ep.evaluate(&final_point[num_var - log_num_workers..num_var].to_vec()),
         );
     }
 
@@ -669,8 +661,7 @@ impl<E: Pairing> PublicProver<E> {
         let mut mask_rng = Blake2s512Rng::setup();
         assert!(fs_rng.feed(&"initialize".as_bytes()).is_ok());
         assert!(mask_rng.feed(&"initialize".as_bytes()).is_ok());
-        let mut challenge_gen =
-            ChallengeGenerator::new_univariate(&mut generate_dumb_sponge::<E::ScalarField>());
+        let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
         let (mut prover_message, _, _num_variables, time) = Self::prove(
             log,
             stage,
@@ -740,7 +731,7 @@ impl<E: Pairing> PublicProver<E> {
         vk: &IndexVerifierKey<E>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
     ) -> (
         Vec<ProverMessage<E>>,
         Vec<VerifierMessage<E>>,
@@ -971,7 +962,7 @@ impl<E: Pairing> PublicProver<E> {
         v_msg: &Vec<E::ScalarField>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
         log: &mut Vec<String>,
         stage: &str,
         size: Count,
@@ -1072,7 +1063,7 @@ impl<E: Pairing> PublicProver<E> {
         v_msg: &Vec<E::ScalarField>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
         log: &mut Vec<String>,
         stage: &str,
         size: Count,

@@ -8,7 +8,7 @@ use ark_crypto_primitives::sponge::{
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, PrimeField};
 use ark_linear_sumcheck::rng::FeedableRNG;
-use ark_poly::{evaluations, DenseMultilinearExtension, MultilinearExtension};
+use ark_poly::{Polynomial, DenseMultilinearExtension, MultilinearExtension};
 use ark_poly_commit::multilinear_pc::data_structures::{
     Commitment, CommitterKey, Proof, UniversalParams, VerifierKey,
 };
@@ -619,7 +619,7 @@ fn test_generate_eq() {
         .map(|(a, b)| a * b)
         .sum();
 
-    assert_eq!(s, f.evaluate(&z).unwrap());
+    assert_eq!(s, f.evaluate(&z));
 }
 
 pub fn generate_dumb_sponge<F: PrimeField>() -> PoseidonSponge<F> {

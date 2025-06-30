@@ -16,13 +16,12 @@ use ark_ff::{One, Zero};
 use ark_linear_sumcheck::ml_sumcheck::{protocol::ListOfProductsOfPolynomials, MLSumcheck};
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
 use ark_poly::multivariate::{SparsePolynomial, SparseTerm};
-use ark_poly::polynomial;
+use ark_poly::Polynomial;
 use ark_poly::DenseMVPolynomial;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::{cfg_into_iter, cfg_iter, cfg_iter_mut, cmp::max};
 
 use crate::snark::{batch_open_poly, batch_verify_poly, BatchOracleEval, OracleEval};
-use ark_poly_commit::challenge::ChallengeGenerator;
 use ark_poly_commit::multilinear_pc::{
     data_structures::Commitment, data_structures::Proof, MultilinearPC,
 };
@@ -76,8 +75,7 @@ impl<E: Pairing> R1CSProof<E> {
         let mut mask_rng = Blake2s512Rng::setup();
         assert!(fs_rng.feed(&"initialize".as_bytes()).is_ok());
         assert!(mask_rng.feed(&"initialize".as_bytes()).is_ok());
-        let mut challenge_gen =
-            ChallengeGenerator::new_univariate(&mut generate_dumb_sponge::<E::ScalarField>());
+        let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
         let (mut prover_message, _, _num_variables) = R1CSProof::prove(
             pk,
             vk,
@@ -138,7 +136,7 @@ impl<E: Pairing> R1CSProof<E> {
         r1cs: R1CSInstance<E::ScalarField>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
     ) -> (Vec<ProverMessage<E>>, Vec<VerifierMessage<E>>, usize) {
         //todo: padding the R1CS instance, witness and io
         let init_time = start_timer!(|| "Prover init");
@@ -393,7 +391,7 @@ impl<E: Pairing> DFSProver<E> {
         v_msg: &Vec<E::ScalarField>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
     ) -> ProverMessage<E> {
         assert_eq!(state.prover_round, 1);
         let num_variables = state.num_variables;
@@ -420,9 +418,9 @@ impl<E: Pairing> DFSProver<E> {
 
         let randomness = &final_state.prover_state.randomness;
         let (val_a, val_b, val_c) = (
-            state.z_a.evaluate(randomness).unwrap(),
-            state.z_b.evaluate(randomness).unwrap(),
-            state.z_c.evaluate(randomness).unwrap(),
+            state.z_a.evaluate(randomness),
+            state.z_b.evaluate(randomness),
+            state.z_c.evaluate(randomness),
         );
 
         println!("val_a: {:?}", val_a);
@@ -456,7 +454,7 @@ impl<E: Pairing> DFSProver<E> {
         v_msg: &Vec<E::ScalarField>,
         fs_rng: &mut R,
         mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut ChallengeGenerator<E::ScalarField, S>,
+        mask_challenge_generator_for_open: &mut S,
     ) -> ProverMessage<E> {
         assert_eq!(state.prover_round, 2);
         println!("v_msg: {:?}", v_msg);
@@ -657,7 +655,7 @@ impl<E: Pairing> DFSProver<E> {
 
         let eq_ry = generate_eq(&state.r_y[..]);
 
-        let val_w = state.witness_poly.evaluate(&state.r_y[..]).unwrap();
+        let val_w = state.witness_poly.evaluate(&state.r_y);
 
         state.eq_ry = eq_ry;
 

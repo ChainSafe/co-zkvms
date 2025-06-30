@@ -225,7 +225,7 @@ impl<E: Pairing> Indexer<E> {
         let val_b_oracle = MultilinearPC::commit(&ck_index, &val_b);
         let val_c_oracle = MultilinearPC::commit(&ck_index, &val_c);
         let (ck_mask, vk_mask) =
-            MarlinPST13::<_, _, PoseidonSponge<E::ScalarField>>::trim(param_mask, 4, 1, None)
+            MarlinPST13::<_, _>::trim(param_mask, 4, 1, None)
                 .unwrap();
 
         let domain = (0usize..1 << num_non_zero_var).collect::<Vec<_>>();

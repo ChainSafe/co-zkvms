@@ -384,13 +384,34 @@ pub struct ProverState<E: Pairing> {
     pub coef: Vec<E::ScalarField>,
 }
 
+pub trait Rep3SumcheckProverMsg<E: Pairing>:
+    Sized + Default + CanonicalSerialize + CanonicalDeserialize + Clone
+{
+    fn open(msgs: &Vec<Self>) -> Vec<E::ScalarField>;
+    fn open_to_msg(msgs: &Vec<Self>) -> ProverMsg<E::ScalarField>;
+}
+
 #[derive(CanonicalDeserialize, CanonicalSerialize, Clone)]
 pub struct ProverFirstMsg<E: Pairing> {
     pub evaluations: Vec<AssShare<E>>,
 }
 
-impl<E: Pairing> ProverFirstMsg<E> {
-    pub fn open(msgs: &Vec<Self>) -> Vec<E::ScalarField> {
+impl<E: Pairing> Default for ProverFirstMsg<E> {
+    fn default() -> Self {
+        ProverFirstMsg {
+            evaluations: vec![
+                AssShare {
+                    party: 0,
+                    share_0: E::ScalarField::zero(),
+                };
+                3
+            ],
+        }
+    }
+}
+
+impl<E: Pairing> Rep3SumcheckProverMsg<E> for ProverFirstMsg<E> {
+    fn open(msgs: &Vec<Self>) -> Vec<E::ScalarField> {
         assert!(msgs.len() == 3);
         let mut sum = vec![E::ScalarField::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
@@ -401,7 +422,7 @@ impl<E: Pairing> ProverFirstMsg<E> {
         sum
     }
 
-    pub fn open_to_msg(msgs: &Vec<Self>) -> ProverMsg<E::ScalarField> {
+    fn open_to_msg(msgs: &Vec<Self>) -> ProverMsg<E::ScalarField> {
         assert!(msgs.len() == 3);
         let mut sum = vec![E::ScalarField::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
@@ -418,8 +439,23 @@ pub struct ProverSecondMsg<E: Pairing> {
     pub evaluations: Vec<RssShare<E>>,
 }
 
-impl<E: Pairing> ProverSecondMsg<E> {
-    pub fn open(msgs: &Vec<Self>) -> Vec<E::ScalarField> {
+impl<E: Pairing> Default for ProverSecondMsg<E> {
+    fn default() -> Self {
+        ProverSecondMsg {
+            evaluations: vec![
+                RssShare {
+                    party: 0,
+                    share_0: E::ScalarField::zero(),
+                    share_1: E::ScalarField::zero(),
+                };
+                3
+            ],
+        }
+    }
+}
+
+impl<E: Pairing> Rep3SumcheckProverMsg<E> for ProverSecondMsg<E> {
+    fn open(msgs: &Vec<Self>) -> Vec<E::ScalarField> {
         assert!(msgs.len() == 3);
         let mut sum = vec![E::ScalarField::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
@@ -430,7 +466,7 @@ impl<E: Pairing> ProverSecondMsg<E> {
         sum
     }
 
-    pub fn open_to_msg(msgs: &Vec<Self>) -> ProverMsg<E::ScalarField> {
+    fn open_to_msg(msgs: &Vec<Self>) -> ProverMsg<E::ScalarField> {
         assert!(msgs.len() == 3);
         let mut sum = vec![E::ScalarField::zero(); msgs[0].evaluations.len()];
         for msg in msgs {

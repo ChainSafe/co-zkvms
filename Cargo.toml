@@ -14,16 +14,17 @@ description = "Co-Spartan implementation for Noir circuits"
 license = "MIT"
 
 [workspace.dependencies]
-ark-linear-sumcheck = {version = "0.3.0", features = ["parallel"]}
-ark-poly-commit = {version = "0.4.0", features = ["parallel"]}
-ark-std = { version = "0.4.0", features = ["std"] }
-ark-ff = {version = "0.4.0", features = ["parallel"]}
-ark-bls12-381 = {version = "^0.4.0", default-features = false, features = ["curve"]}
-ark-bn254 = {version = "^0.4.0", default-features = false, features = ["curve"]}
-ark-serialize = "0.4.0"
-ark-poly = {version = "0.4.0", features = ["parallel"]}
-ark-ec = {version = "0.4.0", features = ["parallel"]}
-ark-crypto-primitives = {version = "^0.4.0", default-features = false, features = ["sponge"]}
+# ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
+ark-linear-sumcheck = { path = "../sumcheck", features = ["parallel"] }
+ark-poly-commit = {version = "0.5.0", features = ["parallel"]}
+ark-std = { version = "0.5.0", features = ["std"] }
+ark-ff = {version = "0.5.0", features = ["parallel"]}
+ark-bls12-381 = {version = "^0.5.0", default-features = false, features = ["curve"]}
+ark-bn254 = {version = "^0.5.0", default-features = false, features = ["curve"]}
+ark-serialize = "0.5.0"
+ark-poly = {version = "0.5.0", features = ["parallel"]}
+ark-ec = {version = "0.5.0", features = ["parallel"]}
+ark-crypto-primitives = {version = "^0.5.0", default-features = false, features = ["sponge"]}
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -69,5 +70,7 @@ argh = "0.1.12"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "ansi"] }
 
 [patch.crates-io]
-ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}
-ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"} 
+# ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}
+# ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"} 
+ark-linear-sumcheck = { path = "../sumcheck" }
+ark-poly-commit = { path = "../poly-commit/poly-commit" }

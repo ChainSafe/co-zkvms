@@ -8,7 +8,6 @@ use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
 use ark_linear_sumcheck::ml_sumcheck::MLSumcheck;
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
 use ark_poly::{MultilinearExtension, SparseMultilinearExtension};
-use ark_poly_commit::challenge::ChallengeGenerator;
 use ark_poly_commit::multilinear_pc::MultilinearPC;
 use ark_std::rand::RngCore;
 
@@ -21,7 +20,7 @@ use crate::utils::aggregate_comm;
 use crate::utils::aggregate_eval;
 use crate::utils::generate_dumb_sponge;
 use crate::utils::{eq_eval, generate_eq};
-use crate::{transcript::LookupTranscript, R1CSInstance};
+use crate::{transcript::Transcript, R1CSInstance};
 use crate::{VerificationResult, PROTOCOL_NAME};
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
@@ -41,8 +40,7 @@ impl<E: Pairing> R1CSProof<E> {
     ) -> VerificationResult {
         let mut rng = Blake2s512Rng::setup();
         assert!(rng.feed(&"initialize".as_bytes()).is_ok());
-        let mut challenge_gen =
-            ChallengeGenerator::new_univariate(&mut generate_dumb_sponge::<E::ScalarField>());
+        let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
         let mut v_state: VerifierState<E> = DFSVerifier::verifier_init(vk.padded_num_var);
         let mle_io_1_evals = assignment.iter().copied().enumerate().collect::<Vec<_>>();
         let mle_io_1 =

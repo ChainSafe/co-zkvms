@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 use ark_linear_sumcheck::gkr_round_sumcheck::start_phase1_sumcheck;
-use ark_poly::MultilinearExtension;
+use ark_poly::{MultilinearExtension, Polynomial};
 use ark_std::{end_timer, start_timer};
 use rand::Rng;
 
@@ -252,7 +252,7 @@ fn test_distributed_poly_open() {
         &vk,
         &commitment_ml,
         &point,
-        rand_poly.evaluate(&point).unwrap(),
+        rand_poly.evaluate(&point),
         &proof,
     );
 
@@ -275,7 +275,7 @@ fn test_distributed_poly_open() {
 
     let mut e = Vec::new();
     for p in rand_poly_list {
-        e.push(p.evaluate(&point[0..S - P]).unwrap())
+        e.push(p.evaluate(&point[0..S - P].to_vec()))
     }
     let ep = DenseMultilinearExtension::from_evaluations_vec(P, e);
 
@@ -284,7 +284,7 @@ fn test_distributed_poly_open() {
         &comm,
         &point,
         // rand_poly.evaluate(&point).unwrap(),
-        ep.evaluate(&point[S - P..S]).unwrap(),
+        ep.evaluate(&point[S - P..S].to_vec()),
         &pf,
     );
 

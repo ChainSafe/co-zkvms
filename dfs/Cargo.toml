@@ -23,7 +23,9 @@ clap.workspace = true
 mimalloc.workspace = true
 crossbeam.workspace = true
 itertools.workspace = true
+ark-bn254.workspace = true
 
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
 ark-bn254.workspace = true

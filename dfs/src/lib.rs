@@ -22,6 +22,9 @@ pub mod transcript;
 pub mod utils;
 pub mod mpc;
 pub mod mpc_snark;
+pub mod rep3_snark;
+mod co_spartan;
+mod network;
 
 /// The domain separator, used when proving statements on dfs.
 pub(crate) const PROTOCOL_NAME: &[u8] = b"DFS-v0";

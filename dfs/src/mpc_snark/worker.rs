@@ -30,7 +30,7 @@ use ark_linear_sumcheck::ml_sumcheck::protocol::verifier::VerifierMsg;
 use ark_linear_sumcheck::ml_sumcheck::protocol::IPForMLSumcheck;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_poly::DenseMultilinearExtension;
-use ark_poly::MultilinearExtension;
+use ark_poly::Polynomial;
 use ark_poly_commit::multilinear_pc::data_structures::Commitment;
 use ark_poly_commit::multilinear_pc::data_structures::CommitterKey;
 use ark_poly_commit::multilinear_pc::data_structures::Proof;
@@ -269,14 +269,14 @@ impl<E: Pairing> RssPrivateProver<E> {
         send_size = send_size + size1;
         recv_size = recv_size + size2;
 
-        let randomness = &final_point[0..num_variables];
+        let randomness = final_point[0..num_variables].to_vec();
         // println!("final_point: {:?}", final_point.len());
         // println!("num_variables: {:?}", num_variables);
 
         let (val_a, val_b, val_c) = (
-            pk.za.share_0.evaluate(randomness).unwrap(),
-            pk.zb.share_0.evaluate(randomness).unwrap(),
-            pk.zc.share_0.evaluate(randomness).unwrap(),
+            pk.za.share_0.evaluate(&randomness),
+            pk.zb.share_0.evaluate(&randomness),
+            pk.zc.share_0.evaluate(&randomness),
         );
 
         // let val_a_check = pk.za_poly.evaluate(&final_point);
@@ -358,13 +358,6 @@ impl<E: Pairing> RssPrivateProver<E> {
             B_rx[col] += pk.ipk.val_b_indexed[i] * v;
             C_rx[col] += pk.ipk.val_c_indexed[i] * v;
         }
-
-        // println!("--------------------------------");
-        // println!("rank: {:?}", rank);
-        // println!("A_rx: {:?}", A_rx[..5].to_vec());
-        // println!("B_rx: {:?}", B_rx[..5].to_vec());
-        // println!("C_rx: {:?}", C_rx[..5].to_vec());
-        // println!("--------------------------------");
 
         let (final_point, size1, size2) = rss_second_sumcheck_worker(
             log,
@@ -813,8 +806,7 @@ pub fn rss_eval_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
     for p in polys {
         res.push(
             p.share_0
-                .evaluate(&final_point[0..num_vars - log_num_workers_per_party])
-                .unwrap(),
+                .evaluate(&final_point[0..num_vars - log_num_workers_per_party].to_vec()),
         )
     }
 
@@ -854,7 +846,7 @@ pub fn rss_batch_open_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
     let (pf, r) = distributed_open(&ck, &agg_poly, &point[0..num_var - log_num_workers]);
     let mut evals = Vec::new();
     for p in polys.iter() {
-        evals.push(p.evaluate(&point[0..num_var - log_num_workers]).unwrap());
+        evals.push(p.evaluate(&point[0..num_var - log_num_workers].to_vec()));
     }
 
     let response = PartialProof {
