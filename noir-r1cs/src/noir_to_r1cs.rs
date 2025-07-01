@@ -1,16 +1,16 @@
-use {
-    crate::{utils::noir_to_native, FieldElement, NoirElement, R1CS},
-    acir::{
-        circuit::{Circuit, Opcode},
-        native_types::{Expression, Witness},
-    },
-    anyhow::{bail, Result},
-    ark_std::One,
-    std::{collections::BTreeMap, num::NonZeroU32, ops::Neg},
+use std::{collections::BTreeMap, num::NonZeroU32, ops::Neg};
+
+use acir::{
+    circuit::{Circuit, Opcode},
+    native_types::{Expression, Witness},
 };
+use anyhow::{bail, Result};
+use ark_std::One;
+
+use crate::{utils::noir_to_native, FieldElement, NoirElement, R1CS};
 
 struct NoirToR1CSCompiler {
-    r1cs:        R1CS,
+    r1cs: R1CS,
     witness_one: usize,
     witness_map: BTreeMap<usize, usize>,
 }

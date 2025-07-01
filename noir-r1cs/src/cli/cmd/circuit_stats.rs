@@ -1,24 +1,24 @@
 //! This binary analyzes ACIR circuit statistics and provides insights into
 //! constraints, witness size, and various operations used in the circuit.
 
-use {
-    super::Command,
-    acir::{
-        circuit::{opcodes::BlackBoxFuncCall, Opcode, Program},
-        native_types::Expression,
-    },
-    acir_field::FieldElement,
-    anyhow::Result,
-    argh::FromArgs,
-    base64::Engine,
-    std::{
-        collections::{hash_map::Entry, HashMap, HashSet},
-        fs,
-        ops::AddAssign,
-        path::PathBuf,
-    },
-    tracing::instrument,
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    fs,
+    ops::AddAssign,
+    path::PathBuf,
 };
+
+use acir::{
+    circuit::{opcodes::BlackBoxFuncCall, Opcode, Program},
+    native_types::Expression,
+};
+use acir_field::FieldElement;
+use anyhow::Result;
+use argh::FromArgs;
+use base64::Engine;
+use tracing::instrument;
+
+use super::Command;
 
 /// Simple program to show circuit statistics
 #[derive(FromArgs, PartialEq, Debug)]
@@ -27,7 +27,6 @@ pub struct Args {
     /// path to circuit file
     #[argh(positional)]
     circuit_path: PathBuf,
-
     // /// path to witness file
     // #[argh(positional)]
     // witness_path: PathBuf,

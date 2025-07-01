@@ -1,17 +1,17 @@
-use {
-    super::{BufExt as _, CountingWriter},
-    crate::utils::human,
-    anyhow::{ensure, Context as _, Result},
-    bytes::{Buf, BufMut as _, Bytes, BytesMut},
-    serde::{Deserialize, Serialize},
-    std::{
-        fs::File,
-        io::{Read, Write},
-        path::PathBuf,
-    },
-    tracing::{info, instrument},
-    zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder},
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
 };
+
+use anyhow::{ensure, Context as _, Result};
+use bytes::{Buf, BufMut as _, Bytes, BytesMut};
+use serde::{Deserialize, Serialize};
+use tracing::{info, instrument};
+use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
+
+use super::{BufExt as _, CountingWriter};
+use crate::utils::human;
 
 const ZSTD_COMPRESSION: i32 = zstd::DEFAULT_COMPRESSION_LEVEL;
 const HEADER_SIZE: usize = 20;

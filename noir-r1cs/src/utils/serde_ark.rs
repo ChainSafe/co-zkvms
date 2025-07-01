@@ -3,10 +3,8 @@
 //!
 //! See <https://github.com/arkworks-rs/algebra/pull/506>
 
-use {
-    ark_serialize::{CanonicalDeserialize, CanonicalSerialize},
-    serde::{de::Error as _, ser::Error as _, Deserialize as _, Deserializer, Serializer},
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{de::Error as _, ser::Error as _, Deserialize as _, Deserializer, Serializer};
 
 pub fn serialize<T, S>(obj: &T, serializer: S) -> Result<S::Ok, S::Error>
 where

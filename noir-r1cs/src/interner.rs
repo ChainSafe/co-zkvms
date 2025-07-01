@@ -1,7 +1,6 @@
-use {
-    crate::{utils::serde_ark, FieldElement},
-    serde::{Deserialize, Serialize},
-};
+use serde::{Deserialize, Serialize};
+
+use crate::{utils::serde_ark, FieldElement};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Interner {

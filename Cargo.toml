@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "co-spartan",
-    "noir-r1cs",
-    "dfs",
-]
+members = ["co-spartan", "noir-r1cs", "spartan"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,15 +12,21 @@ license = "MIT"
 [workspace.dependencies]
 # ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
 ark-linear-sumcheck = { path = "../sumcheck", features = ["parallel"] }
-ark-poly-commit = {version = "0.5.0", features = ["parallel"]}
+ark-poly-commit = { version = "0.5.0", features = ["parallel"] }
 ark-std = { version = "0.5.0", features = ["std"] }
-ark-ff = {version = "0.5.0", features = ["parallel"]}
-ark-bls12-381 = {version = "^0.5.0", default-features = false, features = ["curve"]}
-ark-bn254 = {version = "^0.5.0", default-features = false, features = ["curve"]}
+ark-ff = { version = "0.5.0", features = ["parallel"] }
+ark-bls12-381 = { version = "^0.5.0", default-features = false, features = [
+    "curve",
+] }
+ark-bn254 = { version = "^0.5.0", default-features = false, features = [
+    "curve",
+] }
 ark-serialize = "0.5.0"
-ark-poly = {version = "0.5.0", features = ["parallel"]}
-ark-ec = {version = "0.5.0", features = ["parallel"]}
-ark-crypto-primitives = {version = "^0.5.0", default-features = false, features = ["sponge"]}
+ark-poly = { version = "0.5.0", features = ["parallel"] }
+ark-ec = { version = "0.5.0", features = ["parallel"] }
+ark-crypto-primitives = { version = "^0.5.0", default-features = false, features = [
+    "sponge",
+] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

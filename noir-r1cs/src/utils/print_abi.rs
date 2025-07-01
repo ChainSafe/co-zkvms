@@ -1,7 +1,6 @@
-use {
-    noirc_abi::{Abi, AbiType, AbiVisibility, Sign},
-    std::fmt::{Display, Formatter, Result},
-};
+use std::fmt::{Display, Formatter, Result};
+
+use noirc_abi::{Abi, AbiType, AbiVisibility, Sign};
 
 pub struct PrintAbi<'a>(pub &'a Abi);
 

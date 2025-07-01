@@ -4,7 +4,8 @@ mod prepare;
 mod prove;
 // mod verify;
 
-use {anyhow::Result, argh::FromArgs};
+use anyhow::Result;
+use argh::FromArgs;
 
 pub trait Command {
     fn run(&self) -> Result<()>;

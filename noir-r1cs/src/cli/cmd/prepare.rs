@@ -1,11 +1,11 @@
-use {
-    super::Command,
-    anyhow::{Context, Result},
-    argh::FromArgs,
-    noir_r1cs::{write, NoirProofScheme},
-    std::path::PathBuf,
-    tracing::instrument,
-};
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use argh::FromArgs;
+use noir_r1cs::{write, NoirProofScheme};
+use tracing::instrument;
+
+use super::Command;
 
 /// Prepare a Noir program for proving
 #[derive(FromArgs, PartialEq, Debug)]

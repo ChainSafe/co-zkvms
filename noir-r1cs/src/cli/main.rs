@@ -3,11 +3,10 @@ mod cmd;
 mod measuring_alloc;
 mod span_stats;
 
-use {
-    self::{cmd::Command, measuring_alloc::MeasuringAllocator, span_stats::SpanStats},
-    anyhow::Result,
-    tracing_subscriber::{self, layer::SubscriberExt as _, Registry},
-};
+use anyhow::Result;
+use tracing_subscriber::{self, layer::SubscriberExt as _, Registry};
+
+use self::{cmd::Command, measuring_alloc::MeasuringAllocator, span_stats::SpanStats};
 
 #[global_allocator]
 static ALLOC: MeasuringAllocator = MeasuringAllocator::new();

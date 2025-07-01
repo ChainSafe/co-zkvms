@@ -1,36 +1,36 @@
 //! Using `tracing` spans to print performance statistics for the program.
 //!
 //! NOTE: This module is only included in the bin, not in the lib.
-use {
-    crate::ALLOC,
-    noir_r1cs::human,
-    std::{
-        cmp::max,
-        fmt::{self, Write as _},
-        time::Instant,
-    },
-    tracing::{
-        field::{Field, Visit},
-        span::{Attributes, Id},
-        Level, Subscriber,
-    },
-    tracing_subscriber::{self, layer::Context, registry::LookupSpan, Layer},
+use std::{
+    cmp::max,
+    fmt::{self, Write as _},
+    time::Instant,
 };
+
+use noir_r1cs::human;
+use tracing::{
+    field::{Field, Visit},
+    span::{Attributes, Id},
+    Level, Subscriber,
+};
+use tracing_subscriber::{self, layer::Context, registry::LookupSpan, Layer};
+
+use crate::ALLOC;
 
 const DIM: &'static str = "\x1b[2m";
 const UNDIM: &'static str = "\x1b[22m";
 
 // Span extension data
 pub(crate) struct Data {
-    depth:       usize,
-    time:        Instant,
-    memory:      usize,
+    depth: usize,
+    time: Instant,
+    memory: usize,
     allocations: usize,
 
     /// `peak_memory` will be updated as it is not monotonic
     peak_memory: usize,
-    children:    bool,
-    kvs:         Vec<(&'static str, String)>,
+    children: bool,
+    kvs: Vec<(&'static str, String)>,
 }
 
 impl Data {

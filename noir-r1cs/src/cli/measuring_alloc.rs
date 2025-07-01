@@ -7,16 +7,16 @@ use std::{
 /// consumption.
 pub struct MeasuringAllocator {
     current: AtomicUsize,
-    max:     AtomicUsize,
-    count:   AtomicUsize,
+    max: AtomicUsize,
+    count: AtomicUsize,
 }
 
 impl MeasuringAllocator {
     pub const fn new() -> Self {
         Self {
             current: AtomicUsize::new(0),
-            max:     AtomicUsize::new(0),
-            count:   AtomicUsize::new(0),
+            max: AtomicUsize::new(0),
+            count: AtomicUsize::new(0),
         }
     }
 

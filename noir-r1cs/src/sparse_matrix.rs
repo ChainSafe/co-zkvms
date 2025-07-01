@@ -1,12 +1,12 @@
-use {
-    crate::{FieldElement, InternedFieldElement, Interner},
-    ark_std::Zero,
-    serde::{Deserialize, Serialize},
-    std::{
-        fmt::Debug,
-        ops::{Mul, Range},
-    },
+use std::{
+    fmt::Debug,
+    ops::{Mul, Range},
 };
+
+use ark_std::Zero;
+use serde::{Deserialize, Serialize};
+
+use crate::{FieldElement, InternedFieldElement, Interner};
 /// A sparse matrix with interned field elements
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SparseMatrix {
@@ -29,7 +29,7 @@ pub struct SparseMatrix {
 /// A hydrated sparse matrix with uninterned field elements
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HydratedSparseMatrix<'a> {
-    matrix:   &'a SparseMatrix,
+    matrix: &'a SparseMatrix,
     interner: &'a Interner,
 }
 

@@ -3,7 +3,9 @@ use {
         noir_to_r1cs,
         utils::PrintAbi,
         // whir_r1cs::{WhirR1CSProof, WhirR1CSScheme},
-        FieldElement, NoirWitnessGenerator, R1CS,
+        FieldElement,
+        NoirWitnessGenerator,
+        R1CS,
     },
     anyhow::{anyhow, ensure, Context as _, Result},
     ark_ff::Field as _,
@@ -17,7 +19,7 @@ use {
 /// A scheme for proving a Noir program.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoirProofScheme {
-    pub r1cs:              R1CS,
+    pub r1cs: R1CS,
     pub witness_generator: NoirWitnessGenerator,
     // pub whir:              WhirR1CSScheme,
 }
@@ -164,7 +166,10 @@ fn fill_witness(witness: Vec<Option<FieldElement>>) -> Result<Vec<FieldElement>>
 
 #[cfg(test)]
 mod tests {
-    use {super::NoirProofScheme, crate::test_serde, std::path::PathBuf};
+    use std::path::PathBuf;
+
+    use super::NoirProofScheme;
+    use crate::test_serde;
 
     #[test]
     fn test_noir_proof_scheme_serde() {

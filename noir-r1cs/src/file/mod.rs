@@ -3,19 +3,19 @@ mod buf_ext;
 mod counting_writer;
 mod json;
 
-use {
-    self::{
-        bin::{read_bin, write_bin},
-        buf_ext::BufExt,
-        counting_writer::CountingWriter,
-        json::{read_json, write_json},
-    },
-    crate::{noir_proof_scheme::NoirProof, NoirProofScheme},
-    anyhow::Result,
-    serde::{Deserialize, Serialize},
-    std::{ffi::OsStr, path::PathBuf},
-    tracing::instrument,
+use std::{ffi::OsStr, path::PathBuf};
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use tracing::instrument;
+
+use self::{
+    bin::{read_bin, write_bin},
+    buf_ext::BufExt,
+    counting_writer::CountingWriter,
+    json::{read_json, write_json},
 };
+use crate::{noir_proof_scheme::NoirProof, NoirProofScheme};
 
 /// Trait for structures that can be serialized to and deserialized from files.
 pub trait FileFormat: Serialize + for<'a> Deserialize<'a> {

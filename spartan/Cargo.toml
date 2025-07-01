@@ -1,37 +1,33 @@
 [package]
-name = "co-spartan"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "co-spartan"
-path = "src/cli/main.rs"
+name = "spartan"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
 
 [dependencies]
-# Workspace dependencies
+# Arkworks dependencies
 ark-linear-sumcheck.workspace = true
-ark-crypto-primitives.workspace = true
 ark-poly-commit.workspace = true
 ark-std.workspace = true
 ark-ff.workspace = true
+ark-bls12-381.workspace = true
 ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-poly.workspace = true
 ark-ec.workspace = true
+ark-crypto-primitives.workspace = true
+merlin.workspace = true
+
+# Standard dependencies
+serde.workspace = true
+serde_json.workspace = true
 rand.workspace = true
-rayon = { version = "1.10.0", optional = true }
 itertools.workspace = true
-mpi.workspace = true
-clap.workspace = true
-mimalloc.workspace = true
-crossbeam.workspace = true
+rayon = { version = "1.8.0", optional = true }
+blake2.workspace = true
 
-spartan = { path = "../spartan" }
-noir-r1cs = { path = "../noir-r1cs" }
-
-[patch.crates-io]
-ark-linear-sumcheck = { git = "https://github.com/huyuncong/sumcheck" }
-ark-poly-commit = { git = "https://github.com/xjjj2/poly-commit" }
 
 [features]
 default = ["std", "parallel"]
@@ -42,6 +38,7 @@ std = [
     "ark-serialize/std",
     "ark-poly-commit/std",
 ]
+#print-trace = [ "ark-std/print-trace" ]
 parallel = [
     "std",
     "ark-ff/parallel",

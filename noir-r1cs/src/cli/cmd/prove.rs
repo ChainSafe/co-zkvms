@@ -1,11 +1,11 @@
-use {
-    super::Command,
-    anyhow::{Context, Result},
-    argh::FromArgs,
-    noir_r1cs::{self, read, write, NoirProofScheme},
-    std::{fs::File, io::Read, path::PathBuf},
-    tracing::{info, instrument},
-};
+use std::{fs::File, io::Read, path::PathBuf};
+
+use anyhow::{Context, Result};
+use argh::FromArgs;
+use noir_r1cs::{self, read, write, NoirProofScheme};
+use tracing::{info, instrument};
+
+use super::Command;
 
 /// Prove a prepared Noir program
 #[derive(FromArgs, PartialEq, Debug)]

@@ -1,11 +1,11 @@
-use {
-    super::CountingWriter,
-    crate::utils::human,
-    anyhow::{Context as _, Result},
-    serde::{Deserialize, Serialize},
-    std::{fs::File, path::PathBuf},
-    tracing::{info, instrument},
-};
+use std::{fs::File, path::PathBuf};
+
+use anyhow::{Context as _, Result};
+use serde::{Deserialize, Serialize};
+use tracing::{info, instrument};
+
+use super::CountingWriter;
+use crate::utils::human;
 
 /// Write a human readable JSON file (slow and large).
 #[instrument(skip(value))]

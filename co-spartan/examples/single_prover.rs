@@ -1,17 +1,7 @@
 #![allow(warnings)]
-use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
-
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use clap::{Parser, Subcommand};
-use mpi::{
-    datatype::{Partition, PartitionMut},
-    topology::Process,
-    Count,
-};
-use mpi::{request, traits::*};
-use noir_r1cs::NoirProofScheme;
+use core::num;
+use std::{collections::HashMap, mem, rc::Rc};
 // use mpi_snark::worker::WorkerState;
-
 use std::{
     fs::File,
     io::{Read, Write},
@@ -19,66 +9,73 @@ use std::{
     path::PathBuf,
 };
 
-use mimalloc::MiMalloc;
-
-use crossbeam::thread;
-use itertools::{merge, Itertools};
-use rayon::prelude::*;
-
-use ark_bn254::Config;
-use ark_bn254::{Bn254, Fr};
-use ark_ff::UniformRand;
-use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
-
-use core::num;
-use std::mem;
-use std::{collections::HashMap, rc::Rc};
-
-use ark_ec::bls12::Bls12;
-use ark_ec::pairing::Pairing;
-use ark_ff::{Field, One, Zero};
-use ark_linear_sumcheck::ml_sumcheck::protocol::verifier::SubClaim;
-use ark_linear_sumcheck::ml_sumcheck::protocol::IPForMLSumcheck;
-use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
-use ark_linear_sumcheck::ml_sumcheck::{protocol::ListOfProductsOfPolynomials, MLSumcheck};
-use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
+use ark_bn254::{Bn254, Config, Fr};
+use ark_ec::{bls12::Bls12, pairing::Pairing};
+use ark_ff::{Field, One, UniformRand, Zero};
+use ark_linear_sumcheck::{
+    ml_sumcheck::{
+        protocol::{
+            verifier::SubClaim, IPForMLSumcheck, ListOfProductsOfPolynomials, PolynomialInfo,
+        },
+        MLSumcheck,
+    },
+    rng::{Blake2s512Rng, FeedableRNG},
+};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
-use ark_poly_commit::challenge::ChallengeGenerator;
-
-use ark_poly_commit::multilinear_pc::{
-    data_structures::Commitment, data_structures::CommitterKey, data_structures::VerifierKey,
-    MultilinearPC,
+use ark_poly_commit::{
+    challenge::ChallengeGenerator,
+    multilinear_pc::{
+        data_structures::{Commitment, CommitterKey, VerifierKey},
+        MultilinearPC,
+    },
 };
-use dfs::mpi_snark::worker::PublicProver;
-use dfs::logup::loglookup::append_sumcheck_polys;
-use dfs::logup::loglookup::LogLookupProof;
-use dfs::utils::generate_dumb_sponge;
-use dfs::{mpi_snark::coordinator::mpi_batch_open_poly_coordinator, utils::produce_test_r1cs};
-use dfs::{mpi_utils::send_responses, utils::split_ipk};
-use dfs::{snark::indexer::Indexer, R1CSInstance};
-use dfs::{snark::zk::SRS, utils::split_r1cs};
-
-use dfs::utils::{
-    aggregate_comm, aggregate_eval, aggregate_poly, boost_degree, combine_comm, distributed_open,
-    generate_eq, map_poly, merge_list_of_distributed_poly, merge_proof, normalized_multiplicities,
-    partial_generate_eq, split_ck, split_poly, split_vec, two_pow_n,
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter};
+use clap::{Parser, Subcommand};
+use crossbeam::thread;
+use dfs::{
+    end_timer_buf,
+    logup::loglookup::{append_sumcheck_polys, LogLookupProof},
+    mpi_snark::{
+        coordinator::{
+            mpi_batch_open_poly_coordinator, mpi_poly_commit_coordinator, mpi_sumcheck_coordinator,
+        },
+        worker::{
+            mpi_batch_open_poly_worker, mpi_sumcheck_worker, DistributedProverKey, PublicProver,
+        },
+    },
+    mpi_utils::{gather_responses, receive_requests, scatter_requests, send_responses},
+    snark::{
+        batch_open_poly, batch_verify_poly,
+        indexer::{IndexProverKey, IndexVerifierKey, Indexer},
+        prover::ProverMessage,
+        verifier::{DFSVerifier, VerifierState},
+        zk::SRS,
+        BatchOracleEval, OracleEval, R1CSProof,
+    },
+    start_timer_buf,
+    transcript::{get_scalar_challenge, get_vector_challenge},
+    utils::{
+        aggregate_comm, aggregate_eval, aggregate_poly, boost_degree, combine_comm,
+        distributed_open, generate_dumb_sponge, generate_eq, map_poly,
+        merge_list_of_distributed_poly, merge_proof, normalized_multiplicities,
+        partial_generate_eq, produce_test_r1cs, split_ck, split_ipk, split_poly, split_r1cs,
+        split_vec, two_pow_n,
+    },
+    R1CSInstance, VerificationError, VerificationResult,
 };
-use dfs::{end_timer_buf, start_timer_buf};
-use dfs::{VerificationError, VerificationResult};
-use rand::RngCore;
-
-use dfs::mpi_snark::coordinator::{mpi_poly_commit_coordinator, mpi_sumcheck_coordinator};
-use dfs::mpi_snark::worker::DistributedProverKey;
-use dfs::mpi_snark::worker::{mpi_batch_open_poly_worker, mpi_sumcheck_worker};
-use dfs::mpi_utils::{gather_responses, receive_requests, scatter_requests};
-use dfs::snark::indexer::IndexProverKey;
-use dfs::snark::indexer::IndexVerifierKey;
-use dfs::snark::prover::ProverMessage;
-use dfs::snark::verifier::DFSVerifier;
-use dfs::snark::verifier::VerifierState;
-use dfs::snark::R1CSProof;
-use dfs::snark::{batch_open_poly, batch_verify_poly, BatchOracleEval, OracleEval};
-use dfs::transcript::{get_scalar_challenge, get_vector_challenge};
+use itertools::{merge, Itertools};
+use mimalloc::MiMalloc;
+use mpi::{
+    datatype::{Partition, PartitionMut},
+    request,
+    topology::Process,
+    traits::*,
+    Count,
+};
+use noir_r1cs::NoirProofScheme;
+use rand::{rngs::StdRng, seq::SliceRandom, RngCore, SeedableRng};
+use rayon::prelude::*;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -155,7 +152,6 @@ fn work(r1cs_noir_instance_path: PathBuf, r1cs_input_path: PathBuf) {
     // let mut rng = StdRng::seed_from_u64(12);
     // let (r1cs, z, za, zb, zc) = produce_test_r1cs(14, &mut rng);
 
-   
     // R1CSInstance::<$bench_field>::produce_synthetic_r1cs(num_cons, num_z, num_wit, rng);
     // let num_vars = 16 + 3;
     let num_vars = log_instance_size;
@@ -180,13 +176,11 @@ fn work(r1cs_noir_instance_path: PathBuf, r1cs_input_path: PathBuf) {
 
     println!(
         "proving time for 2^{:?} num_cons: {:?}",
-        num_vars,
-        prove_final_time
+        num_vars, prove_final_time
     );
 
     println!(
         "verification time for 2^{:?} num_cons: {:?}",
-        num_vars,
-        verify_final_time
+        num_vars, verify_final_time
     );
 }

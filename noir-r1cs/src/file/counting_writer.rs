@@ -3,7 +3,7 @@ use std::io::{Result, Write};
 /// Helper to count bytes written to a writer.
 pub struct CountingWriter<T: Write> {
     writer: T,
-    count:  usize,
+    count: usize,
 }
 
 impl<T: Write> CountingWriter<T> {

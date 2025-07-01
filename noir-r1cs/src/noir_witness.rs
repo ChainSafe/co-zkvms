@@ -1,18 +1,18 @@
-use {
-    crate::{
-        utils::{noir_to_native, serde_jsonify},
-        FieldElement,
-    },
-    anyhow::{anyhow, bail, ensure, Context, Result},
-    ark_ff::PrimeField,
-    noirc_abi::{
-        input_parser::{Format, InputValue},
-        Abi, AbiType,
-    },
-    noirc_artifacts::program::ProgramArtifact,
-    serde::{Deserialize, Serialize},
-    std::num::NonZeroU32,
-    tracing::instrument,
+use std::num::NonZeroU32;
+
+use anyhow::{anyhow, bail, ensure, Context, Result};
+use ark_ff::PrimeField;
+use noirc_abi::{
+    input_parser::{Format, InputValue},
+    Abi, AbiType,
+};
+use noirc_artifacts::program::ProgramArtifact;
+use serde::{Deserialize, Serialize};
+use tracing::instrument;
+
+use crate::{
+    utils::{noir_to_native, serde_jsonify},
+    FieldElement,
 };
 
 // TODO: Handling of the return value for the verifier.
