@@ -12,8 +12,8 @@ use crate::snark::indexer::IndexProverKey;
 use crate::snark::indexer::IndexVerifierKey;
 use crate::snark::BatchOracleEval;
 use crate::start_timer_buf;
-use crate::subprotocols::loglookup::sumcheck_polynomial_list;
-use crate::subprotocols::loglookup::LogLookupProof;
+use crate::logup::append_sumcheck_polys;
+use crate::logup::LogLookupProof;
 use crate::utils::aggregate_proof;
 use crate::utils::boost_degree;
 use crate::utils::combine_comm;
@@ -675,7 +675,7 @@ impl<E: Pairing> PublicProver<E> {
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
 
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
             (lookup_pf_row.2[0].clone(), lookup_pf_row.2[1].clone()),
             boost_degree(&ipk.freq_r.clone(), q_row.num_vars),
@@ -692,7 +692,7 @@ impl<E: Pairing> PublicProver<E> {
             receive_requests(log, rank, stage, &root_process, 0);
         recv_size = recv_size + size1;
 
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (lookup_pf_col.0[0].clone(), lookup_pf_col.0[1].clone()),
             (lookup_pf_col.2[0].clone(), lookup_pf_col.2[1].clone()),
             ipk.freq_c.clone(),

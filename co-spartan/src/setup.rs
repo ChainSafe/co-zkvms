@@ -43,7 +43,6 @@ use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
 use ark_linear_sumcheck::ml_sumcheck::{protocol::ListOfProductsOfPolynomials, MLSumcheck};
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
-use ark_poly_commit::challenge::ChallengeGenerator;
 
 use ark_poly_commit::multilinear_pc::{
     data_structures::Commitment, data_structures::CommitterKey, data_structures::VerifierKey,
@@ -53,12 +52,12 @@ use ark_std::fs;
 use dfs::utils::generate_dumb_sponge;
 use dfs::{mpc::rss::RssPoly, mpi_snark::worker::PublicProver};
 use dfs::{mpc::utils::generate_rss_share_randomness, mpc_snark::worker::DistributedRSSProverKey};
-use dfs::{mpc_snark::coordinator, subprotocols::loglookup::sumcheck_polynomial_list};
+use dfs::{mpc_snark::coordinator, logup::append_sumcheck_polys};
 use dfs::{mpi_snark::coordinator::mpi_batch_open_poly_coordinator, utils::produce_test_r1cs};
 use dfs::{mpi_utils::send_responses, utils::split_ipk};
 use dfs::{snark::indexer::Indexer, R1CSInstance};
 use dfs::{snark::zk::SRS, utils::split_r1cs};
-use dfs::{subprotocols::loglookup::LogLookupProof, SparseMatEntry, SparseMatPolynomial};
+use dfs::{logup::LogLookupProof, SparseMatEntry, SparseMatPolynomial};
 
 use dfs::utils::{
     aggregate_comm, aggregate_eval, aggregate_poly, boost_degree, combine_comm, distributed_open,
@@ -249,7 +248,7 @@ pub fn setup(
             let zb_2 = RssPoly::<E>::new(2, zb_share_2.clone(), zb_share_0.clone());
             let zc_2 = RssPoly::<E>::new(2, zc_share_2.clone(), zc_share_0.clone());
 
-            let pk_0 = DistributedRSSProverKey {
+            let pk_0 = dfs::co_spartan::Rep3ProverKey {
                 party_id: i,
                 num_parties: P,
                 ipk: ipk_vec[i].clone(),
@@ -266,16 +265,12 @@ pub fn setup(
                 num_variables: r1cs.num_vars,
                 seed_0: "seed 0".to_string(),
                 seed_1: "seed 1".to_string(),
-                // todo: remove
-                za_poly: Some(za_poly.clone()),
-                zb_poly: Some(zb_poly.clone()),
-                zc_poly: Some(zc_poly.clone()),
             };
             if cnt < (1 << P) - 1 {
                 cnt = cnt + 1;
             }
 
-            let pk_1 = DistributedRSSProverKey {
+            let pk_1 = dfs::co_spartan::Rep3ProverKey {
                 party_id: i,
                 num_parties: P,
                 ipk: ipk_vec[i].clone(),
@@ -292,17 +287,12 @@ pub fn setup(
                 num_variables: r1cs.num_vars,
                 seed_0: "seed 1".to_string(),
                 seed_1: "seed 2".to_string(),
-
-                // todo: remove
-                za_poly: Some(za_poly.clone()),
-                zb_poly: Some(zb_poly.clone()),
-                zc_poly: Some(zc_poly.clone()),
             };
             if cnt < (1 << P) - 1 {
                 cnt = cnt + 1;
             }
 
-            let pk_2 = DistributedRSSProverKey {
+            let pk_2 = dfs::co_spartan::Rep3ProverKey {
                 party_id: i,
                 num_parties: P,
                 ipk: ipk_vec[i].clone(),
@@ -319,11 +309,6 @@ pub fn setup(
                 num_variables: r1cs.num_vars,
                 seed_0: "seed 2".to_string(),
                 seed_1: "seed 0".to_string(),
-
-                // todo: remove
-                za_poly: Some(za_poly.clone()),
-                zb_poly: Some(zb_poly.clone()),
-                zc_poly: Some(zc_poly.clone()),
             };
             if cnt < (1 << P) - 1 {
                 cnt = cnt + 1;

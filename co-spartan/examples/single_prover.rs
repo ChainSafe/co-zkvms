@@ -50,8 +50,8 @@ use ark_poly_commit::multilinear_pc::{
     MultilinearPC,
 };
 use dfs::mpi_snark::worker::PublicProver;
-use dfs::subprotocols::loglookup::sumcheck_polynomial_list;
-use dfs::subprotocols::loglookup::LogLookupProof;
+use dfs::logup::loglookup::append_sumcheck_polys;
+use dfs::logup::loglookup::LogLookupProof;
 use dfs::utils::generate_dumb_sponge;
 use dfs::{mpi_snark::coordinator::mpi_batch_open_poly_coordinator, utils::produce_test_r1cs};
 use dfs::{mpi_utils::send_responses, utils::split_ipk};

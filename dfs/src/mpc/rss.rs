@@ -404,7 +404,7 @@ impl<E: Pairing> Default for ProverFirstMsg<E> {
                     party: 0,
                     share_0: E::ScalarField::zero(),
                 };
-                3
+                4
             ],
         }
     }

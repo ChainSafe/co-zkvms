@@ -16,15 +16,14 @@ mod math;
 pub mod mpi_snark;
 pub mod mpi_utils;
 pub mod snark;
-pub mod subprotocols;
+pub mod logup;
 pub mod transcript;
 #[macro_use]
 pub mod utils;
 pub mod mpc;
 pub mod mpc_snark;
-pub mod rep3_snark;
-mod co_spartan;
-mod network;
+pub mod co_spartan;
+pub mod network;
 
 /// The domain separator, used when proving statements on dfs.
 pub(crate) const PROTOCOL_NAME: &[u8] = b"DFS-v0";

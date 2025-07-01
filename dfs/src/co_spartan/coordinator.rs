@@ -1,3 +1,6 @@
+use crate::logup::default_sumcheck_poly_list;
+use crate::logup::poly_list_to_prover_state;
+use crate::logup::LogLookupProof;
 use crate::math::Math;
 use crate::mpc::ass::AssShare;
 use crate::mpc::rss::ProverFirstMsg;
@@ -28,9 +31,6 @@ use crate::snark::zk::ZKMLProof;
 use crate::snark::zk::ZKSumcheckProof;
 use crate::snark::BatchOracleEval;
 use crate::snark::R1CSProof;
-use crate::subprotocols::loglookup::default_sumcheck_poly_list;
-use crate::subprotocols::loglookup::poly_list_to_prover_state;
-use crate::subprotocols::loglookup::LogLookupProof;
 use crate::transcript::Transcript;
 use crate::utils::aggregate_proof;
 use crate::utils::combine_comm;
@@ -72,19 +72,15 @@ use ark_std::rc::Rc;
 use ark_std::time::Duration;
 use ark_std::time::Instant;
 use ark_std::{end_timer, start_timer};
-use mpi::topology::Process;
-use mpi::traits::Communicator;
-use mpi::Count;
 use rand::Rng;
 use rand::RngCore;
 
 pub struct SpartanProverCoordinator<E: Pairing, N: NetworkCoordinator> {
-    pub num_variables: usize,
-    pub size: Count,
     _network: PhantomData<N>,
     _pairing: PhantomData<E>,
 }
 
+#[derive(Clone)]
 struct ProverState<E: Pairing> {
     pub val_a: E::ScalarField,
     pub val_b: E::ScalarField,
@@ -104,10 +100,9 @@ struct ProverState<E: Pairing> {
     pub time_elapsed: Duration,
 }
 
-impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
-    //using little endian as ml_sumcheck, i.e. io[0,0,0,0,1] = F_{io}(1,0,0,0,0).
-    fn init_state() -> ProverState<E> {
-        ProverState {
+impl<E: Pairing> Default for ProverState<E> {
+    fn default() -> Self {
+        Self {
             witness_mask: LabeledPolynomial::<E::ScalarField, MaskPolynomial<E>>::new(
                 "init_mask".into(),
                 MaskPolynomial::<E>::zero(),
@@ -130,9 +125,10 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             time_elapsed: Duration::from_secs(0),
         }
     }
+}
 
+impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     pub fn prove(
-        &self,
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
         vk: &IndexVerifierKey<E>,
@@ -142,8 +138,8 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     where
         E: Pairing,
     {
-        let mut state = Self::init_state();
-        let mut mask_rng = &mut Blake2s512Rng::setup();
+        let mut state = ProverState::default();
+        let mask_rng = &mut Blake2s512Rng::setup();
         transcript.append_serializable(b"initialize", &());
         assert!(mask_rng.feed(&"initialize".as_bytes()).is_ok());
         let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
@@ -151,19 +147,11 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         //todo: padding the R1CS instance, witness and io
 
         let time = Instant::now();
-        let mut verifier_state: VerifierState<E> = DFSVerifier::verifier_init(self.num_variables);
+        let mut verifier_state: VerifierState<E> = DFSVerifier::verifier_init(index.padded_num_var);
         state.time_elapsed += time.elapsed();
 
         // let mut prover_first_message: ProverMessage<E>;
-        self.first_round(
-            &mut state,
-            &index,
-            2,
-            None,
-            mask_rng,
-            network,
-            transcript,
-        );
+        Self::first_round(&mut state, &index, 2, None, mask_rng, network, transcript);
 
         // This first challenge is used for checking the hadamard product of AB - C ?= 0.
         // The following sumcheck, in prover_second_round, doesn't verify the well formedness of its components, which future rounds will do.
@@ -171,12 +159,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         let verifier_first_message =
             DFSVerifier::verifier_first_round(&mut verifier_state, transcript);
 
-        println!(
-            "verifier_first_message: {:?}",
-            verifier_first_message.verifier_message
-        );
-
-        self.second_round(
+        Self::second_round(
             &index,
             &mut state,
             &verifier_first_message.verifier_message,
@@ -191,7 +174,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         let verifier_second_message =
             DFSVerifier::verifier_second_round(&mut verifier_state, transcript);
 
-        self.third_round(
+        Self::third_round(
             &index,
             &pub_index,
             &mut state,
@@ -207,7 +190,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         let holo_time = Instant::now();
 
-        let lookup_proof = self.fifth_round(
+        let lookup_proof = Self::fifth_round(
             pub_index,
             vk,
             &mut state,
@@ -240,7 +223,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
     // hiding_poly_commit
     fn first_round<'a>(
-        &self,
         state: &mut ProverState<E>,
         index: &IndexProverKey<E>,
         hiding_bound: usize,
@@ -260,30 +242,31 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         if let Some(mask_num_vars) = mask_num_var {
             p_hat = generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false);
         } else {
-            p_hat = generate_mask_polynomial(rng, self.num_variables, hiding_bound, false);
+            p_hat = generate_mask_polynomial(rng, index.padded_num_var, hiding_bound, false);
         }
         let labeled_p_hat =
             LabeledPolynomial::new("p_hat".to_owned(), p_hat, Some(hiding_bound), None);
         let hiding_commitment: E::G1Affine = ZKMLCommit::<
             E,
             SparsePolynomial<E::ScalarField, SparseTerm>,
-        >::commit_mask(&index.ck_w.1, &labeled_p_hat, rng);
+        >::commit_mask(
+            &index.ck_w.1, &labeled_p_hat, rng
+        );
 
         let hidden_commitment: E::G1Affine =
             (base_commitment_vec[0].g_product + hiding_commitment).into();
         let commitment = Commitment {
             g_product: hidden_commitment,
-            nv: self.num_variables,
+            nv: index.padded_num_var,
         };
 
-        transcript.append_serializable(b"commitment", &commitment);
+        transcript.append_serializable(b"w_commitment", &commitment);
         state.witness_comm = Some(commitment.clone());
         state.witness_mask = labeled_p_hat.clone();
         state.time_elapsed += time.elapsed();
     }
 
-    pub fn second_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
-        &self,
+    fn second_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
         index: &IndexProverKey<E>,
         state: &mut ProverState<E>,
         v_msg: &Vec<E::ScalarField>,
@@ -294,7 +277,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     ) {
         network.broadcast_requests(v_msg.clone());
 
-        let num_variables = self.num_variables;
+        let num_variables = index.padded_num_var;
         let poly_info = PolynomialInfo {
             max_multiplicands: 3,
             num_variables: num_variables,
@@ -364,19 +347,18 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time1) =
-            rep3_zk_sumcheck_coordinator::<ProverFirstMsg<E>, E, N, R, _>(
-                poly_info,
-                mask_rng,
-                &index.ck_mask,
-                mask_challenge_generator_for_open,
-                network,
-                transcript,
-                sumcheck_polys_builder,
-            );
+        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<ProverFirstMsg<E>, E, N, R, _>(
+            poly_info,
+            mask_rng,
+            &index.ck_mask,
+            mask_challenge_generator_for_open,
+            network,
+            transcript,
+            sumcheck_polys_builder,
+        );
 
         let (evals, time2) =
-            rep3_eval_poly_coordinator::<E, _>(self.num_variables, 3, &final_point, network);
+            rep3_eval_poly_coordinator::<E, _>(index.padded_num_var, 3, &final_point, network);
 
         let (val_a, val_b, val_c) = (evals[0].clone(), evals[1].clone(), evals[2].clone());
 
@@ -392,8 +374,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time1 + time2;
     }
 
-    pub fn third_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
-        &self,
+    fn third_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
         state: &mut ProverState<E>,
@@ -405,7 +386,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     ) {
         network.broadcast_requests(v_msg.clone());
 
-        let num_variables = self.num_variables;
+        let num_variables = index.padded_num_var;
         let poly_info = PolynomialInfo {
             max_multiplicands: 2,
             num_variables: num_variables,
@@ -466,23 +447,22 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time) =
-            rep3_zk_sumcheck_coordinator::<ProverSecondMsg<E>, E, N, R, _>(
-                poly_info,
-                mask_rng,
-                &index.ck_mask,
-                mask_challenge_generator_for_open,
-                network,
-                transcript,
-                sumcheck_polys_builder,
-            );
+        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<ProverSecondMsg<E>, E, N, R, _>(
+            poly_info,
+            mask_rng,
+            &index.ck_mask,
+            mask_challenge_generator_for_open,
+            network,
+            transcript,
+            sumcheck_polys_builder,
+        );
         state.second_sumcheck_msgs = Some(pf);
 
         state.r_y = final_point.to_vec();
         state.time_elapsed += time;
 
         let (val_ws, time) =
-            rep3_eval_poly_coordinator::<E, N>(self.num_variables, 1, &final_point, network);
+            rep3_eval_poly_coordinator::<E, N>(index.padded_num_var, 1, &final_point, network);
         state.val_w = val_ws[0];
         state.time_elapsed += time;
         transcript.append_serializable(b"val_w", &state.val_w);
@@ -511,7 +491,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
 
         let (zk_open_pf, time) = rep3_zk_open_poly_coordinator(
-            self.num_variables,
+            index.padded_num_var,
             &state.witness_comm.clone().unwrap(),
             &state.r_y[..],
             &index.ck_w,
@@ -523,8 +503,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
     }
 
-    pub fn fifth_round(
-        &self,
+    fn fifth_round(
         pub_index: &IndexProverKey<E>,
         vk: &IndexVerifierKey<E>,
         state: &mut ProverState<E>,
@@ -595,7 +574,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         };
 
         let (prover_msgs, final_point, time) =
-            sumcheck_coordinator(&poly_info, &q_polys, network, transcript);
+            distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript);
 
         state.time_elapsed += time;
 
@@ -685,9 +664,10 @@ pub fn rep3_zk_sumcheck_coordinator<
     let mut tot_time = time.elapsed();
     // assert!(1 << log_num_workers == size);
 
+    println!("coordinator sumcheck start");
     for _round in 0..poly_info.num_variables - network.log_num_workers_per_party() {
         let responses_chunked: Vec<_> = network.receive_responses(M::default());
-
+        println!("coordinator sumcheck received responses for round {}", _round);
         let time = Instant::now();
 
         let mut prover_message = M::open_to_msg(&vec![
@@ -726,6 +706,10 @@ pub fn rep3_zk_sumcheck_coordinator<
 
         tot_time += time.elapsed();
 
+        println!(
+            "coordinator sumcheck broadcast requests for round {}",
+            _round
+        );
         network.broadcast_requests(r);
 
         v_msg = verifier_msg.clone();
@@ -791,7 +775,7 @@ pub fn rep3_zk_sumcheck_coordinator<
     )
 }
 
-pub fn sumcheck_coordinator<'a, F: Field, N: NetworkCoordinator>(
+pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
     poly_info: &PolynomialInfo,
     q_polys: &ListOfProductsOfPolynomials<F>,
     network: &mut N,

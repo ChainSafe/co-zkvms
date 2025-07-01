@@ -16,7 +16,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use rand::RngCore;
 
-use crate::subprotocols::loglookup::LogLookupProof;
+use crate::logup::LogLookupProof;
 
 use self::zk::{ZKMLProof, ZKSumcheckProof};
 pub mod prover;

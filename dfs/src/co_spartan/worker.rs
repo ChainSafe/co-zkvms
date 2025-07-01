@@ -1,18 +1,19 @@
+use crate::logup::default_sumcheck_poly_list;
+use crate::logup::poly_list_to_prover_state;
+use crate::logup::LogLookupProof;
 use crate::math::Math;
 use crate::mpc::rss::RssPoly;
 use crate::mpc::rss::RssSumcheck;
 use crate::mpc::rss::SSRandom;
 use crate::mpi_snark::coordinator::PartialProof;
-use crate::mpi_snark::worker::DistributedProverKey;
+use crate::mpi_utils::obtain_distrbuted_sumcheck_prover_state;
 use crate::mpi_utils::receive_requests;
 use crate::mpi_utils::send_responses;
 use crate::mpi_utils::DistrbutedSumcheckProverState;
 use crate::network::NetworkWorker;
 use crate::snark::indexer::IndexProverKey;
-use crate::subprotocols::loglookup::default_sumcheck_poly_list;
-use crate::subprotocols::loglookup::poly_list_to_prover_state;
-use crate::subprotocols::loglookup::LogLookupProof;
 use crate::utils::aggregate_poly;
+use crate::utils::boost_degree;
 use crate::utils::dense_scalar_prod;
 use crate::utils::distributed_open;
 use crate::utils::generate_eq;
@@ -24,6 +25,7 @@ use ark_ff::Zero;
 use ark_linear_sumcheck::ml_sumcheck::data_structures::ListOfProductsOfPolynomials;
 use ark_linear_sumcheck::ml_sumcheck::protocol::prover::ProverMsg;
 use ark_linear_sumcheck::ml_sumcheck::protocol::verifier::VerifierMsg;
+use ark_linear_sumcheck::ml_sumcheck::protocol::IPForMLSumcheck;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_poly_commit::multilinear_pc::data_structures::Commitment;
@@ -39,6 +41,7 @@ use mpi::traits::Communicator;
 use mpi::Count;
 use rand::RngCore;
 use std::cmp::max;
+use std::iter;
 use std::ops::Index;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -63,18 +66,15 @@ pub struct Rep3ProverKey<E: Pairing> {
 }
 
 pub struct SpartanProverWorker<E: Pairing, N: NetworkWorker> {
-    pub num_variables: usize,
-    pub size: Count,
     pub log_chunk_size: usize,
     pub start_eq: usize,
     pub pub_log_chunk_size: usize,
     pub pub_start_eq: usize,
-
     _network: PhantomData<N>,
     _pairing: PhantomData<E>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ProverState<E: Pairing> {
     pub r_x: Vec<E::ScalarField>,
     pub r_y: Vec<E::ScalarField>,
@@ -87,8 +87,40 @@ struct ProverState<E: Pairing> {
     pub val_m_poly_chunk: Option<DenseMultilinearExtension<E::ScalarField>>,
 }
 
+impl<E: Pairing> Default for ProverState<E> {
+    fn default() -> Self {
+        Self {
+            r_x: vec![],
+            r_y: vec![],
+            eq_rx: None,
+            eq_ry: None,
+            eq_tilde_rx: None,
+            eq_tilde_ry: None,
+            eq_tilde_rx_chunk: None,
+            eq_tilde_ry_chunk: None,
+            val_m_poly_chunk: None,
+        }
+    }
+}
+
 impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
-    pub fn prove<'a, C: 'a + Communicator, R: RngCore + FeedableRNG>(
+    pub fn new(
+        log_chunk_size: usize,
+        start_eq: usize,
+        pub_log_chunk_size: usize,
+        pub_start_eq: usize,
+    ) -> Self {
+        Self {
+            log_chunk_size,
+            start_eq,
+            pub_log_chunk_size,
+            pub_start_eq,
+            _network: PhantomData,
+            _pairing: PhantomData,
+        }
+    }
+
+    pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
         random_rng: &mut SSRandom<R>,
@@ -97,31 +129,29 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     ) -> (usize, usize) {
         let mut state = ProverState::default();
 
+        println!("worker first round");
         self.first_round(&vec![&pk.z], &pk.ipk.ck_w.0, network);
 
+        println!("worker second round");
         self.second_round(pk, &mut state, random_rng, network);
 
+        println!("worker third round");
         self.third_round(pk, &mut state, random_rng, active, network);
 
-        let (size1, size2) = Self::prover_fifth_round(
-            pk,
-            &mut state,
-            &pub_eq_tilde_rx,
-            &pub_eq_tilde_ry,
-            &pub_val_M,
-            active,
-        );
-        // send_size = send_size + size1;
-        // recv_size = recv_size + size2;
+        if active {
+            self.prover_fifth_round(pk, &mut state, network);
+        } else {
+            dummy_fifth_round(&pk.pub_ipk, network);
+        }
 
         (0, 0)
     }
 
-    pub fn first_round(&self, polys: &Vec<&RssPoly<E>>, ck: &CommitterKey<E>, network: &mut N) {
+    fn first_round(&self, polys: &Vec<&RssPoly<E>>, ck: &CommitterKey<E>, network: &mut N) {
         poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
     }
 
-    pub fn second_round<R: RngCore + FeedableRNG>(
+    fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
         state: &mut ProverState<E>,
@@ -152,7 +182,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         state.r_x = final_point;
     }
 
-    pub fn third_round<R: RngCore + FeedableRNG>(
+    fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
         state: &mut ProverState<E>,
@@ -269,15 +299,15 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             network.send_response(default_response);
         }
 
-        batch_open_poly_worker(
-            self.num_variables,
+        distributed_batch_open_poly_worker(
+            iter::once(&pk.z).map(|p| &p.share_0),
             &pk.ipk.ck_w.0,
-            1,
-            &[&pk.z],
             &state.r_y,
             E::ScalarField::one(),
+            1,
+            pk.num_variables,
+            network.log_num_workers_per_party(),
             network,
-            true,
         );
 
         let mut eq_tilde_rx_evals = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
@@ -301,36 +331,23 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         ));
     }
 
-    pub fn prover_fifth_round(
+    fn prover_fifth_round(
         &self,
         pk: &Rep3ProverKey<E>,
         state: &mut ProverState<E>,
-        active: bool,
         network: &mut N,
     ) {
-        if !active {
-            // return dummy_fifth_round(
-            //     &pub_ipk,
-            //     log,
-            //     stage,
-            //     size,
-            //     rank,
-            //     root_process,
-            //     pub_log_num_workers,
-            // );
-
-            return todo!();
-        }
-
         let start_eq = self.pub_start_eq;
         let log_chunk_size = self.pub_log_chunk_size;
         let eq_tilde_rx = state.eq_tilde_rx.as_ref().unwrap();
         let eq_tilde_ry = state.eq_tilde_ry.as_ref().unwrap();
+        let eq_tilde_rx_chunk = state.eq_tilde_rx_chunk.as_ref().unwrap();
+        let eq_tilde_ry_chunk = state.eq_tilde_ry_chunk.as_ref().unwrap();
         let val_m_poly_chunk = state.val_m_poly_chunk.as_ref().unwrap();
 
         let v_msg = network.receive_request();
 
-        let q_num_vars = eq_tilde_rx.num_vars; //ipk.real_len_val.log_2();
+        let q_num_vars = pk.pub_ipk.num_variables_val;
 
         let mut q_row: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
             DenseMultilinearExtension::from_evaluations_vec(
@@ -338,7 +355,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
                 // `crate::utils::hash_tuple` method reindexes eq_tilde_rx based ipk.row
                 // which we did in third round is eq_tilde_rx =? reindex(eq_rx)
                 crate::utils::hash_tuple::<E::ScalarField>(
-                    &pk.row[..pk.ipk.real_len_val],
+                    &pk.pub_ipk.row[..pk.pub_ipk.real_len_val],
                     eq_tilde_rx,
                     &v_msg,
                 ),
@@ -347,7 +364,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let full_q_row_first =
             E::ScalarField::from(first_row as u64) + v_msg * eq_tilde_rx[first_row];
 
-        for i in pk.ipk.real_len_val..q_num_vars.pow2() {
+        for i in pk.pub_ipk.real_len_val..q_num_vars.pow2() {
             q_row.evaluations[i] = full_q_row_first;
         }
 
@@ -355,7 +372,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             DenseMultilinearExtension::from_evaluations_vec(
                 q_num_vars,
                 crate::utils::hash_tuple::<E::ScalarField>(
-                    &pk.col[..pk.ipk.num_variables_val.pow2()],
+                    &pk.pub_ipk.col[..pk.pub_ipk.num_variables_val.pow2()],
                     eq_tilde_ry,
                     &v_msg,
                 ),
@@ -364,37 +381,57 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let full_q_col_first =
             E::ScalarField::from(first_col as u64) + v_msg * eq_tilde_ry[first_col];
 
-        for i in pk.ipk.real_len_val..q_num_vars.pow2() {
+        for i in pk.pub_ipk.real_len_val..q_num_vars.pow2() {
             q_col.evaluations[i] = full_q_col_first;
         }
 
-        let domain = (start_eq..start_eq + (1 << log_chunk_size)).collect::<Vec<_>>();
-        let t_row = DenseMultilinearExtension::from_evaluations_vec(
-            eq_tilde_rx.num_vars,
-            crate::mpi_utils::hash_tuple::<E::ScalarField>(&domain, eq_tilde_rx, &v_msg),
+        println!("eq_tilde_rx_chunk num_vars: {}", eq_tilde_rx_chunk.num_vars);
+        println!("eq_tilde_ry_chunk num_vars: {}", eq_tilde_ry_chunk.num_vars);
+        println!(
+            "pk.pub_ipk.num_variables_val: {}",
+            pk.pub_ipk.num_variables_val
         );
 
-        assert!(eq_tilde_rx.num_vars == pk.ipk.num_variables_val);
+        let domain = (start_eq..start_eq + (1 << log_chunk_size)).collect::<Vec<_>>();
+        let t_row = DenseMultilinearExtension::from_evaluations_vec(
+            pk.pub_ipk.num_variables_val,
+            crate::mpi_utils::hash_tuple::<E::ScalarField>(&domain, eq_tilde_rx_chunk, &v_msg),
+        );
+
+        assert!(eq_tilde_rx_chunk.num_vars == pk.pub_ipk.num_variables_val);
         let t_col: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
             DenseMultilinearExtension::from_evaluations_vec(
-                pk.ipk.num_variables_val,
-                crate::mpi_utils::hash_tuple::<E::ScalarField>(&domain, eq_tilde_ry, &v_msg),
+                pk.pub_ipk.num_variables_val,
+                crate::mpi_utils::hash_tuple::<E::ScalarField>(&domain, eq_tilde_ry_chunk, &v_msg),
             );
 
-        let mut q_polys = ListOfProductsOfPolynomials::new(max(q_num_vars, pk.ipk.num_variables_val));
+        let mut q_polys =
+            ListOfProductsOfPolynomials::new(max(q_num_vars, pk.pub_ipk.num_variables_val));
 
         let prod = vec![
-            Rc::new(eq_tilde_rx.clone()),
-            Rc::new(eq_tilde_ry.clone()),
+            Rc::new(eq_tilde_rx_chunk.clone()),
+            Rc::new(eq_tilde_ry_chunk.clone()),
             Rc::new(val_m_poly_chunk.clone()),
         ];
         q_polys.add_product(prod, E::ScalarField::one());
 
         let (x_r, x_c) = network.receive_request();
 
-        let lookup_pf_row = LogLookupProof::prove(&q_row, &t_row, &pk.ipk.freq_r, &pk.ipk.ck_index, &x_r);
+        let lookup_pf_row = LogLookupProof::prove(
+            &q_row,
+            &t_row,
+            &pk.pub_ipk.freq_r,
+            &pk.pub_ipk.ck_index,
+            &x_r,
+        );
 
-        let lookup_pf_col = LogLookupProof::prove(&q_col, &t_col, &pk.ipk.freq_c, &pk.ipk.ck_index, &x_c);
+        let lookup_pf_col = LogLookupProof::prove(
+            &q_col,
+            &t_col,
+            &pk.pub_ipk.freq_c,
+            &pk.pub_ipk.ck_index,
+            &x_c,
+        );
 
         let responses = vec![
             lookup_pf_row.1[0].clone(),
@@ -406,11 +443,10 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
 
         let (z, lambda) = network.receive_request();
 
-        sumcheck_polynomial_list(
+        crate::logup::append_sumcheck_polys(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
             (lookup_pf_row.2[0].clone(), lookup_pf_row.2[1].clone()),
-            boost_degree(&ipk.freq_r.clone(), q_row.num_vars),
-            // ipk.freq_r.clone(),
+            boost_degree(&pk.pub_ipk.freq_r.clone(), q_row.num_vars),
             q_row.num_vars - t_row.num_vars,
             &mut q_polys,
             &z,
@@ -419,14 +455,12 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let ((z, lambda), size1): ((Vec<E::ScalarField>, E::ScalarField), usize) =
-            receive_requests(log, rank, stage, &root_process, 0);
-        recv_size = recv_size + size1;
+        let (z, lambda) = network.receive_request();
 
-        sumcheck_polynomial_list(
+        crate::logup::append_sumcheck_polys(
             (lookup_pf_col.0[0].clone(), lookup_pf_col.0[1].clone()),
             (lookup_pf_col.2[0].clone(), lookup_pf_col.2[1].clone()),
-            ipk.freq_c.clone(),
+            pk.pub_ipk.freq_c.clone(),
             q_col.num_vars - t_col.num_vars,
             &mut q_polys,
             &z,
@@ -435,51 +469,35 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let (final_point, size1, size2) = mpi_sumcheck_worker(
-            log,
-            "stage1_sumcheck",
-            size,
-            rank,
-            &root_process,
-            &q_polys,
-            log_num_workers,
-        );
-        send_size = send_size + size1;
-        recv_size = recv_size + size2;
+        let final_point = distributed_sumcheck_worker(&q_polys, network);
 
-        let (eta, size1): (E::ScalarField, usize) =
-            receive_requests(log, rank, stage, &root_process, 0);
-        recv_size = recv_size + size1;
+        let eta = network.receive_request();
 
-        let (size1, size2) = mpi_batch_open_poly_worker(
-            log,
-            "stage5_poly_open",
-            size,
-            rank,
-            &root_process,
-            log_num_workers,
-            pk_num_variables,
-            &ipk.ck_index,
-            9,
-            &[
+        distributed_batch_open_poly_worker(
+            [
                 &lookup_pf_row.0[0],
                 &lookup_pf_row.0[1],
                 &lookup_pf_col.0[0],
                 &lookup_pf_col.0[1],
-                &eq_tilde_rx,
-                &eq_tilde_ry,
-                &ipk.val_a,
-                &ipk.val_b,
-                &ipk.val_c,
-                &ipk.freq_r,
+                &eq_tilde_rx_chunk,
+                &eq_tilde_ry_chunk,
+                &pk.pub_ipk.val_a,
+                &pk.pub_ipk.val_b,
+                &pk.pub_ipk.val_c,
+                &pk.pub_ipk.freq_r,
                 &q_row,
                 &t_row,
-                &ipk.freq_c,
+                &pk.pub_ipk.freq_c,
                 &q_col,
                 &t_col,
             ],
+            &pk.pub_ipk.ck_index,
             &final_point,
             eta,
+            9,
+            pk.num_variables,
+            network.log_num_pub_workers(),
+            network,
         );
     }
 }
@@ -519,7 +537,6 @@ pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netwo
             random_rng,
         );
         network.send_response(prover_message.clone());
-
         let r = network.receive_request();
 
         verifier_msg = Some(VerifierMsg { randomness: r });
@@ -584,6 +601,31 @@ pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netw
     final_point
 }
 
+pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
+    distributed_q_polys: &ListOfProductsOfPolynomials<F>,
+    network: &mut N,
+) -> Vec<F> {
+    let mut prover_state = IPForMLSumcheck::prover_init(&distributed_q_polys);
+    let mut verifier_msg = None;
+    let mut final_point = Vec::new();
+
+    for _round in 0..distributed_q_polys.num_variables {
+        let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
+        network.send_response(prover_message.clone());
+        let r = network.receive_request();
+        verifier_msg = Some(VerifierMsg { randomness: r });
+        final_point.push(r);
+    }
+
+    let _ = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
+    let responses = obtain_distrbuted_sumcheck_prover_state(&prover_state);
+    network.send_response(responses);
+
+    let final_point = network.receive_request();
+
+    final_point
+}
+
 pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
     polys: Vec<&RssPoly<E>>,
     final_point: &[E::ScalarField],
@@ -602,30 +644,25 @@ pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
     network.send_response(res);
 }
 
-pub fn batch_open_poly_worker<E: Pairing, N: NetworkWorker>(
-    num_var: usize,
+pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
+    polys: impl IntoIterator<Item = &'a DenseMultilinearExtension<E::ScalarField>>,
     ck: &CommitterKey<E>,
-    num_comms: usize,
-    rss_polys: &[&RssPoly<E>],
     point: &[E::ScalarField],
     eta: E::ScalarField,
+    num_comms: usize,
+    num_var: usize,
+    log_num_workers: usize,
     network: &mut N,
-    rep3: bool,
 ) {
-    let log_num_workers = if rep3 {
-        network.log_num_workers_per_party()
-    } else {
-        network.log_num_pub_workers()
-    };
-    let mut polys = Vec::new();
-    for i in 0..rss_polys.len() {
-        polys.push(&rss_polys[i].share_0)
-    }
+    let polys = polys.into_iter().collect::<Vec<_>>();
+
     let agg_poly = aggregate_poly(eta, &polys[0..num_comms]);
 
     let (pf, r) = distributed_open(&ck, &agg_poly, &point[0..num_var - log_num_workers]);
     let mut evals = Vec::new();
+    println!("distributed_batch_open_poly_worker num_var: {} log_num_workers: {}", num_var, log_num_workers);
     for p in polys.iter() {
+        println!("distributed_batch_open_poly_worker p num_vars: {}", p.num_vars);
         evals.push(p.evaluate(&point[0..num_var - log_num_workers].to_vec()));
     }
 
@@ -638,70 +675,33 @@ pub fn batch_open_poly_worker<E: Pairing, N: NetworkWorker>(
     network.send_response(response);
 }
 
-pub fn dummy_sumcheck_worker<'a, F: Field, C: 'a + Communicator>(
-    log: &mut Vec<String>,
-    stage: &str,
-    size: i32,
-    rank: i32,
-    root_process: &Process<'a, C>,
+fn dummy_sumcheck_worker<F: Field, N: NetworkWorker>(
     default_last_sumcheck_state: DistrbutedSumcheckProverState<F>,
     num_variables: usize,
     max_multiplicands: usize,
-    log_num_workers: usize,
+    network: &mut N,
 ) {
-    for round in 0..num_variables {
+    for _ in 0..num_variables {
         let default_response = ProverMsg {
             evaluations: vec![F::zero(); max_multiplicands + 1],
         };
 
-        send_responses(
-            log,
-            rank,
-            &(stage.to_owned() + "round " + &round.to_string()),
-            &root_process,
-            &default_response,
-            1,
-        );
+        network.send_response(default_response);
 
-        let r: (F, usize) = receive_requests(
-            log,
-            rank,
-            &(stage.to_owned() + "round " + &round.to_string()),
-            &root_process,
-            1,
-        );
+        let _: F = network.receive_request();
     }
 
-    if log_num_workers != 0 {
-        let default_response = default_last_sumcheck_state;
-        send_responses(
-            log,
-            rank,
-            &(stage.to_owned() + "final_round "),
-            &root_process,
-            &default_response,
-            1,
-        );
-    }
+    let default_response = default_last_sumcheck_state;
+    network.send_response(default_response);
 
-    let _: (Vec<F>, usize) = receive_requests(
-        log,
-        rank,
-        &(stage.to_owned() + "_final_point"),
-        &root_process,
-        1,
-    );
+    let _: Vec<F> = network.receive_request();
 }
 
-pub fn dummy_batch_open_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
-    log: &mut Vec<String>,
-    stage: &str,
-    size: i32,
-    rank: i32,
-    root_process: &Process<'a, C>,
+fn dummy_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
     num_var: usize,
     num_poly: usize,
     g: E::G1Affine,
+    network: &mut N,
 ) {
     let default_response: PartialProof<E> = PartialProof {
         proofs: Proof {
@@ -710,31 +710,16 @@ pub fn dummy_batch_open_poly_worker<'a, E: Pairing, C: 'a + Communicator>(
         val: E::ScalarField::zero(),
         evals: vec![E::ScalarField::one(); num_poly],
     };
-    send_responses(
-        log,
-        rank,
-        &(stage.to_owned() + "round 1"),
-        &root_process,
-        &default_response,
-        1,
-    );
+    network.send_response(default_response);
 }
 
-pub fn dummy_fifth_round<'a, E: Pairing, C: 'a + Communicator>(
+fn dummy_fifth_round<'a, E: Pairing, N: NetworkWorker>(
     ipk: &IndexProverKey<E>,
-    log: &mut Vec<String>,
-    stage: &str,
-    size: Count,
-    rank: i32,
-    root_process: &Process<'a, C>,
-    log_num_workers: usize,
+    network: &mut N,
 ) {
-    let start = start_timer_buf!(log, || format!("Coord: receiving stage1 requests"));
-    let (v_msg, _): (E::ScalarField, usize) = receive_requests(log, rank, stage, &root_process, 1);
-    end_timer_buf!(log, start);
+    let v_msg: E::ScalarField = network.receive_request();
 
-    let ((x_r, x_c), _): ((E::ScalarField, E::ScalarField), usize) =
-        receive_requests(log, rank, stage, &root_process, 1);
+    let (x_r, x_c): (E::ScalarField, E::ScalarField) = network.receive_request();
 
     let default_response = vec![
         Commitment::<E> {
@@ -744,13 +729,10 @@ pub fn dummy_fifth_round<'a, E: Pairing, C: 'a + Communicator>(
         4
     ];
 
-    send_responses(log, rank, "round 5", &root_process, &default_response, 1);
+    network.send_response(default_response);
 
-    let ((z, lambda), _): ((Vec<E::ScalarField>, E::ScalarField), usize) =
-        receive_requests(log, rank, stage, &root_process, 1);
-
-    let ((z, lambda), _): ((Vec<E::ScalarField>, E::ScalarField), usize) =
-        receive_requests(log, rank, stage, &root_process, 1);
+    let (z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
+    let (z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
 
     let mut q_polys = ListOfProductsOfPolynomials::new(1);
     let default_poly = DenseMultilinearExtension::from_evaluations_vec(
@@ -771,27 +753,18 @@ pub fn dummy_fifth_round<'a, E: Pairing, C: 'a + Communicator>(
     let default_last_sumcheck_state = poly_list_to_prover_state(&q_polys);
 
     dummy_sumcheck_worker(
-        log,
-        "stage1_sumcheck",
-        size,
-        rank,
-        &root_process,
         default_last_sumcheck_state,
         ipk.real_len_val.log_2(),
         3,
-        log_num_workers,
+        network,
     );
 
-    let (eta, _): (E::ScalarField, usize) = receive_requests(log, rank, stage, &root_process, 1);
+    let eta: E::ScalarField = network.receive_request();
 
-    dummy_batch_open_poly_worker::<E, C>(
-        log,
-        "stage5_poly_open",
-        size,
-        rank,
-        &root_process,
+    dummy_batch_open_poly_worker::<E, N>(
         ipk.real_len_val.log_2(),
         15,
         ipk.ck_index.g,
+        network,
     );
 }

@@ -56,8 +56,6 @@ pub fn boost_degree<F: Field>(
     g: &DenseMultilinearExtension<F>,
     new_dim: usize,
 ) -> DenseMultilinearExtension<F> {
-    // println!("g.num_vars: {:?}", g.num_vars);
-    // println!("new_dim: {:?}", new_dim);
     assert!(new_dim >= g.num_vars);
     //The factor will be count many times when used in product
     let factor = two_pow_n::<F>(new_dim - g.num_vars).inverse().unwrap();

@@ -15,7 +15,7 @@ use crate::snark::indexer::*;
 use crate::snark::zk::zk_sumcheck_verifier_wrapper;
 use crate::snark::zk::ZKMLCommit;
 use crate::snark::OracleEval;
-use crate::subprotocols::loglookup::LogLookupProof;
+use crate::logup::LogLookupProof;
 use crate::utils::aggregate_comm;
 use crate::utils::aggregate_eval;
 use crate::utils::generate_dumb_sponge;

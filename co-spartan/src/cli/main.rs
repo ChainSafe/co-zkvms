@@ -44,18 +44,17 @@ use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
 use ark_linear_sumcheck::ml_sumcheck::{protocol::ListOfProductsOfPolynomials, MLSumcheck};
 use ark_linear_sumcheck::rng::{Blake2s512Rng, FeedableRNG};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
-use ark_poly_commit::challenge::ChallengeGenerator;
 
 use ark_poly_commit::multilinear_pc::{
     data_structures::Commitment, data_structures::CommitterKey, data_structures::VerifierKey,
     MultilinearPC,
 };
 use ark_std::fs;
-use dfs::{subprotocols::loglookup::LogLookupProof, SparseMatEntry, SparseMatPolynomial};
 use dfs::utils::generate_dumb_sponge;
+use dfs::{logup::append_sumcheck_polys, mpc_snark::coordinator};
+use dfs::{logup::LogLookupProof, SparseMatEntry, SparseMatPolynomial};
 use dfs::{mpc::rss::RssPoly, mpi_snark::worker::PublicProver};
 use dfs::{mpc::utils::generate_rss_share_randomness, mpc_snark::worker::DistributedRSSProverKey};
-use dfs::{mpc_snark::coordinator, subprotocols::loglookup::sumcheck_polynomial_list};
 use dfs::{mpi_snark::coordinator::mpi_batch_open_poly_coordinator, utils::produce_test_r1cs};
 use dfs::{mpi_utils::send_responses, utils::split_ipk};
 use dfs::{snark::indexer::Indexer, R1CSInstance};
@@ -82,7 +81,7 @@ use dfs::snark::prover::ProverMessage;
 use dfs::snark::verifier::DFSVerifier;
 use dfs::snark::verifier::VerifierState;
 use dfs::snark::{batch_open_poly, batch_verify_poly, BatchOracleEval, OracleEval};
-use dfs::transcript::{get_scalar_challenge, get_vector_challenge};  
+use dfs::transcript::{get_scalar_challenge, get_vector_challenge};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -104,7 +103,6 @@ enum Command {
 
         // #[clap(long, value_name = "NUM")]
         // log_instance_size: usize,
-
         #[clap(long, value_name = "NUM")]
         log_num_workers_per_party: usize,
 
@@ -136,7 +134,10 @@ enum Command {
 }
 
 fn main() {
-    println!("Rayon num threads: {}", co_spartan_noir::current_num_threads());
+    println!(
+        "Rayon num threads: {}",
+        co_spartan_noir::current_num_threads()
+    );
 
     let args = Args::parse();
 

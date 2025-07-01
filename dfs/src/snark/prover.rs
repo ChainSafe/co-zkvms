@@ -44,8 +44,8 @@ use crate::snark::zk::zk_sumcheck_prover_wrapper;
 use crate::snark::zk::ZKSumcheckProof;
 
 use super::zk::{ZKMLCommitment, ZKMLCommitterKey, ZKMLProof};
-use crate::subprotocols::loglookup::sumcheck_polynomial_list;
-use crate::subprotocols::loglookup::LogLookupProof;
+use crate::logup::append_sumcheck_polys;
+use crate::logup::LogLookupProof;
 use crate::transcript::{get_scalar_challenge, get_vector_challenge};
 use crate::utils::generate_dumb_sponge;
 use crate::utils::{
@@ -1003,7 +1003,7 @@ impl<E: Pairing> DFSProver<E> {
         println!("pf_col21_3: {:?}", pf_col21_3.evaluations[pf_col21_3.evaluations.len() - 5..].to_vec());
         println!("--------------------------------");
 
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
             (lookup_pf_row.2[0].clone(), lookup_pf_row.2[1].clone()),
             boost_degree(&state.index.freq_r.clone(), q_row.num_vars),
@@ -1017,7 +1017,7 @@ impl<E: Pairing> DFSProver<E> {
 
         let z = get_vector_challenge(rng, q_col.num_vars);
         let lambda = get_scalar_challenge(rng);
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (lookup_pf_col.0[0].clone(), lookup_pf_col.0[1].clone()),
             (lookup_pf_col.2[0].clone(), lookup_pf_col.2[1].clone()),
             boost_degree(&state.index.freq_c.clone(), q_col.num_vars),

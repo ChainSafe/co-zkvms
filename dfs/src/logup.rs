@@ -46,7 +46,7 @@ pub struct LogLookupProof<E: Pairing> {
     pub degree_diff: usize,
 }
 
-pub fn sumcheck_polynomial_list<F: Field>(
+pub fn append_sumcheck_polys<F: Field>(
     h: (DenseMultilinearExtension<F>, DenseMultilinearExtension<F>),
     phi: (DenseMultilinearExtension<F>, DenseMultilinearExtension<F>),
     m: DenseMultilinearExtension<F>,
@@ -394,7 +394,7 @@ fn test_end_to_end() {
 
     let z = get_vector_challenge(&mut prover_transcript, query_valid.num_vars);
     let lambda = get_scalar_challenge(&mut prover_transcript);
-    sumcheck_polynomial_list(
+    append_sumcheck_polys(
         (pf.0[0].clone(), pf.0[1].clone()),
         (pf.2[0].clone(), pf.2[1].clone()),
         freq.clone(),
@@ -522,7 +522,7 @@ fn test_distributed_end_to_end() {
     let mut start = 0;
     let log_chunk_size = z.len() - P;
     for i in 0..1 << P {
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (
                 distributed_pf[i].0[0].clone(),
                 distributed_pf[i].0[1].clone(),
@@ -711,7 +711,7 @@ fn test_batch_end_to_end() {
 
     let z = get_vector_challenge(&mut prover_transcript, query_valid.num_vars);
     let lambda = get_scalar_challenge(&mut prover_transcript);
-    sumcheck_polynomial_list(
+    append_sumcheck_polys(
         (pf.0[0].clone(), pf.0[1].clone()),
         (pf.2[0].clone(), pf.2[1].clone()),
         freq.clone(),
@@ -725,7 +725,7 @@ fn test_batch_end_to_end() {
 
     let z = get_vector_challenge(&mut prover_transcript, query_valid.num_vars);
     let lambda = get_scalar_challenge(&mut prover_transcript);
-    sumcheck_polynomial_list(
+    append_sumcheck_polys(
         (pf_2.0[0].clone(), pf_2.0[1].clone()),
         (pf_2.2[0].clone(), pf_2.2[1].clone()),
         freq_2.clone(),
@@ -873,7 +873,7 @@ fn test_mpi_distributed_end_to_end() {
     let mut start = 0;
     let log_chunk_size = z.len() - P;
     for i in 0..1 << P {
-        sumcheck_polynomial_list(
+        append_sumcheck_polys(
             (
                 distributed_pf[i].0[0].clone(),
                 distributed_pf[i].0[1].clone(),
