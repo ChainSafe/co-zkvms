@@ -10,6 +10,7 @@ use std::{
 };
 
 use ark_bn254::{Bn254, Config, Fr};
+use co_spartan::setup::CoordinatorKey;
 // use ark_ec::bn::Bls12;
 use crate::current_num_threads;
 use ark_ec::pairing::Pairing;
@@ -29,7 +30,7 @@ use ark_poly_commit::multilinear_pc::{
     MultilinearPC,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs};
+use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Instant};
 use clap::{Parser, Subcommand};
 use co_spartan::{
     mpc::{rep3::RssPoly, SSRandom},
@@ -50,23 +51,15 @@ use mpi::{
 use rayon::prelude::*;
 use spartan::{transcript::TranscriptMerlin, IndexProverKey, IndexVerifierKey, Indexer, SRS};
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DistributedRootKey<E: Pairing> {
-    pub log_instance_size: usize,
-    pub ipk: IndexProverKey<E>,
-    pub pub_ipk: IndexProverKey<E>,
-    pub ivk: IndexVerifierKey<E>,
-}
-
 pub fn work<E: Pairing>(
+    artifacts_dir: PathBuf,
     log_num_workers_per_party: usize,
-    key_file: PathBuf,
-    mut worker_id: usize,
-    log_num_public_workers: usize,
-    local: usize,
+    log_num_public_workers: Option<usize>,
+    local: bool,
+    worker_id: Option<usize>,
 ) {
-    let mut send_size = 0;
-    let mut recv_size = 0;
+    let log_num_public_workers = log_num_public_workers
+        .unwrap_or(((1 << log_num_workers_per_party) * 3 as u64).ilog2() as usize);
 
     let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Funneled).unwrap();
     let world = universe.world();
@@ -74,32 +67,37 @@ pub fn work<E: Pairing>(
     let root_process = world.process_at_rank(root_rank);
     let rank = world.rank();
     let size = world.size();
-    println!("SIZE: {:?}", size);
 
     let mut log = Vec::new();
 
-    println!("running mode: {}", local);
+    let keys_dir = artifacts_dir.join(format!(
+        "keys_{}_{}",
+        log_num_workers_per_party, log_num_public_workers
+    ));
 
-    if local == 0 {
-        println!("worker id: {}", worker_id);
-    } else {
-        println!("worker id: {}", rank);
+    if !keys_dir.exists() {
+        eprintln!(
+            "keys directory for this configuration does not exist: {:?}",
+            keys_dir
+        );
+        std::process::exit(1);
     }
 
-    if (local == 0 && worker_id == 0) || (local == 1 && rank == root_rank) {
+    let is_coordinator =
+        (!local && worker_id.map(|x| x == 0).unwrap_or(false)) || (local && rank == root_rank);
+
+    if is_coordinator {
         let proving_keys = {
             let mut buf = Vec::new();
 
-            let mut file_name = key_file.clone();
-            file_name.set_extension("root");
+            let mut file_name = keys_dir.join("coordinator.key");
 
             let mut f =
-                File::open(&file_name).expect(&format!("couldn't open file {:?}", key_file));
+                File::open(&file_name).expect(&format!("couldn't open file {:?}", artifacts_dir));
             let _ = f.read_to_end(&mut buf);
             let buf_slice = buf.as_slice();
 
-            let pk =
-                DistributedRootKey::<E>::deserialize_uncompressed_unchecked(buf_slice).unwrap();
+            let pk = CoordinatorKey::<E>::deserialize_uncompressed_unchecked(buf_slice).unwrap();
             pk
         };
 
@@ -116,7 +114,6 @@ pub fn work<E: Pairing>(
 
         let responses_chunked: Vec<_> = network.receive_responses("ready".to_string());
 
-        use ark_std::time::Instant;
         let time = Instant::now();
 
         let mut transcript = TranscriptMerlin::new(b"dfs");
@@ -133,9 +130,6 @@ pub fn work<E: Pairing>(
         println!("proving time: {:?}", final_time);
         println!("coordinator time: {:?}", coordinator_time);
 
-        /***************************************************************************/
-        /***************************************************************************/
-
         {
             let time = Instant::now();
             assert!(proof.verify(&proving_keys.ivk, &Vec::new()).is_ok());
@@ -146,22 +140,18 @@ pub fn work<E: Pairing>(
             println!("proof size: {:?}", bytes);
         }
     } else {
-        // Deserialize the proving keys
-
         // Worker code
 
-        if local == 1 {
-            worker_id = (rank as usize) - 1;
+        let worker_id = if local {
+            rank as usize - 1
         } else {
-            worker_id = worker_id - 1;
-        }
+            worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
+        };
 
         let proving_keys = {
             let mut buf = Vec::new();
 
-            let mut file_name = key_file.clone();
-
-            file_name.set_extension(worker_id.to_string());
+            let mut file_name = keys_dir.join(format!("worker_{}.key", worker_id));
 
             let mut f =
                 File::open(&file_name).expect(&format!("couldn't open file {:?}", file_name));
@@ -186,10 +176,6 @@ pub fn work<E: Pairing>(
         let start_eq = (1 << log_chunk_size) * (worker_id / 3);
 
         let pub_log_chunk_size = proving_keys.num_variables - log_num_public_workers;
-        println!(
-            "proving_keys.num_variables: {:?}",
-            proving_keys.num_variables
-        );
 
         let pub_start_eq = (1 << pub_log_chunk_size) * worker_id;
         let active = (worker_id < (1 << log_num_public_workers));
@@ -211,25 +197,21 @@ pub fn work<E: Pairing>(
 
         network.send_response("ready".to_string());
 
-        let (size1, size2) = co_spartan::SpartanProverWorker::new(
+        co_spartan::SpartanProverWorker::new(
             log_chunk_size,
             start_eq,
             pub_log_chunk_size,
             pub_start_eq,
         )
         .prove(&proving_keys, &mut random, active, &mut network);
-        send_size = send_size + size1;
-        recv_size = recv_size + size2;
-        /***************************************************************************/
-        /***************************************************************************/
     }
 
-    println!(
-        "Rank {rank} log: {}\nsend_msg_size: {}\nrecv_msg_size: {}\n",
-        log.join(";"),
-        send_size,
-        recv_size
-    );
+    // println!(
+    //     "Rank {rank} log: {}\nsend_msg_size: {}\nrecv_msg_size: {}\n",
+    //     log.join(";"),
+    //     send_size,
+    //     recv_size
+    // );
 }
 
 #[cfg(feature = "parallel")]

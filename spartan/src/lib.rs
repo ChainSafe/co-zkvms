@@ -14,8 +14,7 @@ pub use indexer::{IndexProverKey, IndexVerifierKey, Indexer};
 pub use logup::LogLookupProof;
 pub use zk::SRS;
 use zk::{ZKMLProof, ZKSumcheckProof};
-
-pub use r1cs::R1CSInstance;
+pub use r1cs::R1CS;
 
 /// The SNARK proof, composed of all prover's messages sent throughout the protocol.
 #[derive(CanonicalSerialize)]

@@ -22,12 +22,13 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 
 use super::zk::{ZKMLCommit, ZKMLCommitterKey, ZKMLVerifierKey, SRS};
+use crate::math::SparseMatEntry;
 use crate::{
+    math::Math,
     utils::{hash_usize, normalized_multiplicities},
-    math::Math, R1CSInstance,
 };
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct IndexProverKey<E: Pairing> {
     pub row: Vec<usize>,
     pub col: Vec<usize>,
@@ -74,15 +75,36 @@ impl<E: Pairing> Indexer<E> {
     /// For the time the padding is not implemented.
     #[allow(non_snake_case)]
     pub fn index_for_prover_and_verifier(
-        relation: &R1CSInstance<E::ScalarField>,
+        r1cs: &crate::r1cs::R1CS<E::ScalarField>,
         srs: &SRS<E, SparsePolynomial<E::ScalarField, SparseTerm>>,
     ) -> (IndexProverKey<E>, IndexVerifierKey<E>) {
-        let mut padded_num_var = max(relation.num_cons, relation.num_vars);
-        println!("padded_num_var: {:?}", padded_num_var);
+        let log_instance_size = r1cs.log2_instance_size();
+
+        // Convert sparse matrix entries from noir-r1cs format to our format
+        let convert_matrix =
+            |matrix: &noir_r1cs::SparseMatrix| -> Vec<SparseMatEntry<E::ScalarField>> {
+                let hydrated = matrix.hydrate(&r1cs.interner);
+                let mut entries = Vec::new();
+
+                for ((row, col), value) in hydrated.iter() {
+                    entries.push(SparseMatEntry::new(row, col, value));
+                }
+
+                entries
+            };
+
+        let num_cons = 1 << log_instance_size;
+        let num_vars = log_instance_size;
+
+        // Convert the three matrices
+        let a_entries = convert_matrix(&r1cs.a);
+        let b_entries = convert_matrix(&r1cs.b);
+        let c_entries = convert_matrix(&r1cs.c);
+
+        let padded_num_var = max(num_cons, num_vars).log_2();
         let param = &srs.poly_srs;
         let param_index = &srs.poly_srs.0;
         let param_mask = &srs.mask_srs;
-        padded_num_var = padded_num_var.log_2();
         let mut row: Vec<usize> = Vec::new();
         let mut col: Vec<usize> = Vec::new();
         let mut v_a: Vec<E::ScalarField> = Vec::new();
@@ -90,26 +112,14 @@ impl<E: Pairing> Indexer<E> {
         let mut v_c: Vec<E::ScalarField> = Vec::new();
         let mut count: usize = 0;
         let mut evaluation_point: HashMap<(usize, usize), usize> = HashMap::new();
-        let mat_A = &relation.A.M;
-        let mat_B = &relation.B.M;
-        let mat_C = &relation.C.M;
-        println!(
-            "mat_A.len: {:?}",
-            (relation.A.num_vars_x, relation.A.num_vars_y)
-        );
-        println!(
-            "mat_B.len: {:?}",
-            (relation.B.num_vars_x, relation.B.num_vars_y)
-        );
-        println!(
-            "mat_C.len: {:?}",
-            (relation.C.num_vars_x, relation.C.num_vars_y)
-        );
+        let mat_A = &a_entries;
+        let mat_B = &b_entries;
+        let mat_C = &c_entries;
+
         // seems like this the only place where second sumcheck can be corrupted
         // eq_rx is generated from first sumcheck challange
         // checksum2 is val_a(r2) * r2 + val_b(r2) * r2 + val_c(r2) * r2 ?check?
         let mut iter = 0;
-        println!("mat_C.len: {:?}", mat_C.len());
         let max_len = max(mat_A.len(), max(mat_B.len(), mat_C.len()));
         mat_A
             .iter()
@@ -138,13 +148,6 @@ impl<E: Pairing> Indexer<E> {
                         evaluation_point.insert((e_a.row, e_a.col), count);
                         count += 1;
                     } else {
-                        if e_a.val != v_a[evaluation_point[&(e_a.row, e_a.col)]] {
-                            println!(
-                                "e_a.val: {:?} v_a: {:?}",
-                                e_a.val,
-                                v_a[evaluation_point[&(e_a.row, e_a.col)]]
-                            );
-                        }
                         v_a[evaluation_point[&(e_a.row, e_a.col)]] = e_a.val;
                     }
                 }
@@ -158,9 +161,6 @@ impl<E: Pairing> Indexer<E> {
                         evaluation_point.insert((e_b.row, e_b.col), count);
                         count += 1;
                     } else {
-                        // if e_b.val != v_b[evaluation_point[&(e_b.row, e_b.col)]] {
-                        //     println!("e_b.val: {:?} v_b: {:?}", e_b.val, v_b[evaluation_point[&(e_b.row, e_b.col)]]);
-                        // }
                         v_b[evaluation_point[&(e_b.row, e_b.col)]] = e_b.val;
                     }
                 }
@@ -175,30 +175,18 @@ impl<E: Pairing> Indexer<E> {
                         evaluation_point.insert((e_c.row, e_c.col), count);
                         count += 1;
                     } else {
-                        // if e_c.val != v_c[evaluation_point[&(e_c.row, e_c.col)]] {
-                        //     println!("e_c.val: {:?} v_c: {:?}", e_c.val, v_c[evaluation_point[&(e_c.row, e_c.col)]]);
-                        // }
                         v_c[evaluation_point[&(e_c.row, e_c.col)]] = e_c.val;
                     }
                 }
             });
-        println!("iter: {:?}", iter);
         let real_len_val = count;
-        println!("real_len_val: {:?}", real_len_val);
         count = count.next_power_of_two();
         let num_non_zero_var = Math::log_2(count) as usize;
-        println!("v_a.len: {:?}", v_a.len());
-        println!("v_b.len: {:?}", v_b.len());
-        println!("v_c.len: {:?}", v_c.len());
-        println!("row.len: {:?}", row.len());
-        println!("col.len: {:?}", col.len());
-        println!("count: {:?}", count);
         v_a.resize(count, E::ScalarField::zero());
         v_b.resize(count, E::ScalarField::zero());
         v_c.resize(count, E::ScalarField::zero());
         row.resize(count, usize::MAX);
         col.resize(count, usize::MAX);
-        println!("param.0.num_vars: {:?}", param.0.num_vars);
         let (ck_w, vk_w) = ZKMLCommit::<E, SparsePolynomial<E::ScalarField, SparseTerm>>::trim(
             param,
             padded_num_var,

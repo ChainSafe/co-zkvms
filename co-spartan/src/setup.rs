@@ -1,12 +1,130 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, Zero};
 use ark_poly::DenseMultilinearExtension;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rand::RngCore;
 
-use crate::utils::{split_ck, split_poly, split_vec};
-use spartan::{
-    math::Math,
-    IndexProverKey,
+use crate::{
+    mpc::rep3::{generate_poly_shares_rss, RssPoly},
+    utils::{pad_to_power_of_two, split_ck, split_poly, split_vec},
+    Rep3ProverKey,
 };
+use spartan::{math::Math, IndexProverKey, IndexVerifierKey, Indexer, R1CS, SRS};
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct CoordinatorKey<E: Pairing> {
+    pub log_instance_size: usize,
+    pub ipk: IndexProverKey<E>,
+    pub pub_ipk: IndexProverKey<E>,
+    pub ivk: IndexVerifierKey<E>,
+}
+
+pub fn setup_rep3<E: Pairing>(
+    r1cs: &R1CS<E::ScalarField>,
+    mut z: Vec<E::ScalarField>,
+    log_num_workers_per_party: usize,
+    log_num_public_workers: usize,
+    rng: &mut impl RngCore,
+) -> (CoordinatorKey<E>, Vec<[Rep3ProverKey<E>; 3]>) {
+    let log_instance_size = r1cs.log2_instance_size();
+    let srs = SRS::<E, _>::generate_srs(log_instance_size + 2, 4, rng);
+
+    let (pk, vk) = Indexer::index_for_prover_and_verifier(&r1cs, &srs);
+
+    let mut za = r1cs.a() * &z;
+    let mut zb = r1cs.b() * &z;
+    let mut zc = r1cs.c() * &z;
+
+    pad_to_power_of_two(&mut z, log_instance_size);
+    pad_to_power_of_two(&mut za, log_instance_size);
+    pad_to_power_of_two(&mut zb, log_instance_size);
+    pad_to_power_of_two(&mut zc, log_instance_size);
+
+    let mut prover_keys = Vec::new();
+
+    let (ipk_vec, root_ipk) = split_ipk(&pk, log_num_workers_per_party);
+    let (pub_ipk_vec, pub_root_ipk) = split_ipk(&pk, log_num_public_workers);
+
+    let mut z_vec = split_vec(&z, log_num_workers_per_party);
+    let mut za_vec = split_vec(&za, log_num_workers_per_party);
+    let mut zb_vec = split_vec(&zb, log_num_workers_per_party);
+    let mut zc_vec = split_vec(&zc, log_num_workers_per_party);
+
+    let num_vars = log_instance_size - log_num_workers_per_party;
+
+    let mut cnt = 0;
+    for i in 0..1 << log_num_workers_per_party {
+        let z = DenseMultilinearExtension::from_evaluations_vec(
+            num_vars,
+            std::mem::take(&mut z_vec[i]),
+        );
+        let za = DenseMultilinearExtension::from_evaluations_vec(
+            num_vars,
+            std::mem::take(&mut za_vec[i]),
+        );
+        let zb = DenseMultilinearExtension::from_evaluations_vec(
+            num_vars,
+            std::mem::take(&mut zb_vec[i]),
+        );
+        let zc = DenseMultilinearExtension::from_evaluations_vec(
+            num_vars,
+            std::mem::take(&mut zc_vec[i]),
+        );
+
+        let z_shares = generate_poly_shares_rss(&z, rng);
+        let za_shares = generate_poly_shares_rss(&za, rng);
+        let zb_shares = generate_poly_shares_rss(&zb, rng);
+        let zc_shares = generate_poly_shares_rss(&zc, rng);
+
+        let mut pk_vec = Vec::new();
+        for j in 0..3 {
+            let next = (j + 1) % 3;
+            let z = RssPoly::<E>::new(j, z_shares[j].clone(), z_shares[next].clone());
+            let za = RssPoly::<E>::new(j, za_shares[j].clone(), za_shares[next].clone());
+            let zb = RssPoly::<E>::new(j, zb_shares[j].clone(), zb_shares[next].clone());
+            let zc = RssPoly::<E>::new(j, zc_shares[j].clone(), zc_shares[next].clone());
+
+            let seed_0 = format!("seed_{j}");
+            let seed_1 = format!("seed_{next}");
+
+            let pk = Rep3ProverKey {
+                party_id: i,
+                num_parties: log_num_public_workers,
+                ipk: ipk_vec[i].clone(),
+                pub_ipk: pub_ipk_vec[cnt].clone(),
+                row: pk.row.clone(),
+                col: pk.col.clone(),
+                val_a: pk.val_a.clone(),
+                val_b: pk.val_b.clone(),
+                val_c: pk.val_c.clone(),
+                z,
+                za,
+                zb,
+                zc,
+                num_variables: pk.num_variables_val,
+                seed_0,
+                seed_1,
+            };
+
+            if cnt < (1 << log_num_public_workers) - 1 {
+                cnt = cnt + 1;
+            }
+
+            pk_vec.push(pk);
+        }
+
+        prover_keys.push(pk_vec.try_into().unwrap());
+    }
+
+    let pk = CoordinatorKey {
+        log_instance_size,
+        ipk: root_ipk,
+        pub_ipk: pub_root_ipk,
+        ivk: vk.clone(),
+    };
+
+    (pk, prover_keys)
+}
 
 pub fn split_ipk<E: Pairing>(
     pk: &IndexProverKey<E>,

@@ -21,7 +21,7 @@ ark-bls12-381 = { version = "^0.5.0", default-features = false, features = [
 ark-bn254 = { version = "^0.5.0", default-features = false, features = [
     "curve",
 ] }
-ark-serialize = "0.5.0"
+ark-serialize = { version = "0.5.0" }
 ark-poly = { version = "0.5.0", features = ["parallel"] }
 ark-ec = { version = "0.5.0", features = ["parallel"] }
 ark-crypto-primitives = { version = "^0.5.0", default-features = false, features = [

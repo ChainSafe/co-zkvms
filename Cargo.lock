@@ -3002,6 +3002,7 @@ dependencies = [
  "blake2 0.9.2",
  "itertools 0.12.1",
  "merlin",
+ "noir-r1cs",
  "rand 0.8.5",
  "rayon",
  "serde",

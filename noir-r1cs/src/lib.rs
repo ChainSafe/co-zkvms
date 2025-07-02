@@ -12,31 +12,29 @@ mod sparse_matrix;
 mod utils;
 // mod whir_r1cs;
 
+use crate::{
+    interner::InternedFieldElement,
+    noir_witness::NoirWitnessGenerator,
+    // utils::serde_ark,
+    // whir_r1cs::WhirProof,
+};
 pub use {
     crate::{
         file::{read, write, FileFormat},
         noir_proof_scheme::{NoirProof, NoirProofScheme},
         noir_to_r1cs::noir_to_r1cs,
         r1cs::R1CS,
-        utils::human,
+        utils::{human, serde_ark},
     },
     acir::FieldElement as NoirElement,
     // gnark_config::write_gnark_parameters_to_file,
     // whir::crypto::fields::Field256 as FieldElement,
     // ark_bn254::Fr as FieldElement,
     ark_bn254::Fr as FieldElement,
-    sparse_matrix::SparseMatrix,
+    interner::Interner,
     // whir_r1cs::create_io_pattern,
-};
-use {
-    crate::{
-        interner::{InternedFieldElement, Interner},
-        noir_witness::NoirWitnessGenerator,
-        sparse_matrix::HydratedSparseMatrix,
-        // utils::serde_ark,
-        // whir_r1cs::WhirProof,
-    },
-    serde::{Deserialize, Serialize},
+    sparse_matrix::SparseMatrix,
+    sparse_matrix::HydratedSparseMatrix,
 };
 
 // #[derive(Clone, Serialize, Deserialize)]

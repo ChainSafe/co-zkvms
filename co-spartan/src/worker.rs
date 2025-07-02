@@ -40,7 +40,7 @@ use spartan::{
     IndexProverKey,
 };
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3ProverKey<E: Pairing> {
     pub party_id: usize,
     pub num_parties: usize,
@@ -122,7 +122,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
-    ) -> (usize, usize) {
+    ) {
         let mut state = ProverState::default();
 
         println!("worker first round");
@@ -139,8 +139,6 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         } else {
             dummy_fifth_round(&pk.pub_ipk, network);
         }
-
-        (0, 0)
     }
 
     fn first_round(&self, polys: &Vec<&RssPoly<E>>, ck: &CommitterKey<E>, network: &mut N) {

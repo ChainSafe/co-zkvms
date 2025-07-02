@@ -1,7 +1,7 @@
 #!/bin/bash
-cd ./noir-examples/poseidon-rounds && nargo compile && nargo check && cd ../..
-cargo run --bin noir-r1cs -- circuit_stats ./noir-examples/poseidon-rounds/target/basic.json
-cargo run --bin noir-r1cs -- prepare ./noir-examples/poseidon-rounds/target/basic.json -o ./artifacts/noir_proof_scheme.json
+cd ./noir-r1cs/noir-examples/poseidon-rounds && nargo compile && nargo check && cd ../../..
+cargo run --bin noir-r1cs -- circuit_stats ./noir-r1cs/noir-examples/poseidon-rounds/target/basic.json
+cargo run --bin noir-r1cs -- prepare ./noir-r1cs/noir-examples/poseidon-rounds/target/basic.json -o ./artifacts/noir_proof_scheme.json
 
 cargo run --bin co-spartan -- setup --r1cs-noir-instance-path ./artifacts/noir_proof_scheme.json --r1cs-input-path ./noir-examples/poseidon-rounds/Prover.toml --log-num-workers-per-party 3 --log-num-public-workers 3 --key-out ./artifacts
 

@@ -3,36 +3,9 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::DenseMultilinearExtension;
 use ark_poly_commit::multilinear_pc::data_structures::CommitterKey;
 use ark_std::cfg_iter_mut;
-use spartan::{
-    math::{SparseMatEntry, SparseMatPolynomial},
-    R1CSInstance,
-};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-pub fn split_r1cs<F: PrimeField>(
-    r1cs: &R1CSInstance<F>,
-    log_parties: usize,
-) -> Vec<R1CSInstance<F>> {
-    let mut res = Vec::new();
-    let a_vec = split_sparse_poly(&r1cs.A, log_parties);
-    let b_vec = split_sparse_poly(&r1cs.B, log_parties);
-    let c_vec = split_sparse_poly(&r1cs.C, log_parties);
-    for i in 0..1 << log_parties {
-        let r = R1CSInstance {
-            num_cons: r1cs.num_cons / (1 << log_parties),
-            num_vars: r1cs.num_vars / (1 << log_parties),
-            num_inputs: r1cs.num_inputs / (1 << log_parties),
-            A: a_vec[i].clone(),
-            B: b_vec[i].clone(),
-            C: c_vec[i].clone(),
-        };
-        res.push(r);
-    }
-
-    res
-}
 
 pub fn split_poly<F: Field>(
     polys: &DenseMultilinearExtension<F>,
@@ -132,25 +105,6 @@ pub fn aggregate_poly<F: Field>(
         evaluations: evals,
         num_vars: vars,
     }
-}
-
-pub fn split_sparse_poly<F: PrimeField>(
-    poly: &SparseMatPolynomial<F>,
-    log_parties: usize,
-) -> Vec<SparseMatPolynomial<F>> {
-    let mut res = Vec::new();
-    let len = poly.num_entries();
-    let chunk_size = len / (1 << log_parties);
-    for i in 0..(1 << log_parties) {
-        let p = SparseMatPolynomial::new(
-            poly.num_vars_x(),
-            poly.num_vars_y(),
-            poly.entries()[i * chunk_size..(i + 1) * chunk_size].to_vec(),
-        );
-        res.push(p);
-    }
-
-    res
 }
 
 /// Pads the vector with 0 so that the number of elements in the vector is a

@@ -1,25 +1,10 @@
-use std::{
-    marker::PhantomData,
-    ops::{Add, AddAssign, Index, Mul, Neg, Sub, SubAssign},
-    rc::Rc,
-};
-
-use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
-use ark_linear_sumcheck::{
-    ml_sumcheck::{
-        protocol::{
-            prover, prover::ProverMsg, verifier::VerifierMsg, IPForMLSumcheck,
-            ListOfProductsOfPolynomials,
-        },
-        Proof,
-    },
-    rng::{FeedableRNG},
-};
+use ark_ec::pairing::Pairing;
+use ark_ff::{Field, UniformRand, Zero};
+use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{Rng, RngCore};
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use std::ops::{Add, AddAssign, Mul, Sub, Index};
 
 use crate::mpc::{additive::AdditiveShare, SSOpen, SSRandom};
 
@@ -36,7 +21,7 @@ pub struct Rep3GroupShare<E: Pairing> {
     pub share_1: E::G1,
 }
 
-#[derive(CanonicalDeserialize, CanonicalSerialize, Clone)]
+#[derive(Debug, CanonicalDeserialize, CanonicalSerialize, Clone)]
 pub struct RssPoly<E: Pairing> {
     pub party: usize,
     pub share_0: DenseMultilinearExtension<E::ScalarField>,
@@ -243,17 +228,13 @@ impl<E: Pairing> RssPoly<E> {
 pub fn generate_poly_shares_rss<F: Field, R: Rng>(
     poly: &DenseMultilinearExtension<F>,
     rng: &mut R,
-) -> (
-    DenseMultilinearExtension<F>,
-    DenseMultilinearExtension<F>,
-    DenseMultilinearExtension<F>,
-) {
+) -> [DenseMultilinearExtension<F>; 3] {
     let num_vars = poly.num_vars;
     let p_share_0 = DenseMultilinearExtension::<F>::rand(num_vars, rng);
     let p_share_1 = DenseMultilinearExtension::<F>::rand(num_vars, rng);
     let p_share_2 = (poly - &p_share_0) - p_share_1.clone();
 
-    (p_share_0, p_share_1, p_share_2)
+    [p_share_0, p_share_1, p_share_2]
 }
 
 pub fn generate_rss_share_randomness<R: RngCore + FeedableRNG>() -> Vec<SSRandom<R>> {

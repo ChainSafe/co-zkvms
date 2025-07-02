@@ -3,10 +3,12 @@ use std::{
     ops::{Mul, Range},
 };
 
+use ark_ff::{Field, PrimeField};
 use ark_std::Zero;
 use serde::{Deserialize, Serialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use crate::{InternedFieldElement, Interner};
 
-use crate::{FieldElement, InternedFieldElement, Interner};
 /// A sparse matrix with interned field elements
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SparseMatrix {
@@ -28,9 +30,9 @@ pub struct SparseMatrix {
 
 /// A hydrated sparse matrix with uninterned field elements
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HydratedSparseMatrix<'a> {
+pub struct HydratedSparseMatrix<'a, F: Field> {
     matrix: &'a SparseMatrix,
-    interner: &'a Interner,
+    interner: &'a Interner<F>,
 }
 
 impl SparseMatrix {
@@ -44,7 +46,7 @@ impl SparseMatrix {
         }
     }
 
-    pub fn hydrate<'a>(&'a self, interner: &'a Interner) -> HydratedSparseMatrix<'a> {
+    pub fn hydrate<'a, F: Field>(&'a self, interner: &'a Interner<F>) -> HydratedSparseMatrix<'a, F> {
         HydratedSparseMatrix {
             matrix: self,
             interner,
@@ -121,9 +123,9 @@ impl SparseMatrix {
     }
 }
 
-impl<'a> HydratedSparseMatrix<'a> {
+impl<'a, F: Field> HydratedSparseMatrix<'a, F> {
     /// Iterate over the non-default entries of a row of the matrix.
-    pub fn iter_row(&self, row: usize) -> impl Iterator<Item = (usize, FieldElement)> + use<'_> {
+    pub fn iter_row(&self, row: usize) -> impl Iterator<Item = (usize, F)> + use<'_, F> {
         self.matrix.iter_row(row).map(|(col, value)| {
             (
                 col,
@@ -133,7 +135,7 @@ impl<'a> HydratedSparseMatrix<'a> {
     }
 
     /// Iterate over the non-default entries of the matrix.
-    pub fn iter(&self) -> impl Iterator<Item = ((usize, usize), FieldElement)> + use<'_> {
+    pub fn iter(&self) -> impl Iterator<Item = ((usize, usize), F)> + use<'_, F> {
         self.matrix.iter().map(|((i, j), v)| {
             (
                 (i, j),
@@ -145,16 +147,16 @@ impl<'a> HydratedSparseMatrix<'a> {
 
 /// Right multiplication by vector
 // OPT: Paralelize
-impl Mul<&[FieldElement]> for HydratedSparseMatrix<'_> {
-    type Output = Vec<FieldElement>;
+impl<F: Field> Mul<&[F]> for HydratedSparseMatrix<'_, F> {
+    type Output = Vec<F>;
 
-    fn mul(self, rhs: &[FieldElement]) -> Self::Output {
+    fn mul(self, rhs: &[F]) -> Self::Output {
         assert_eq!(
             self.matrix.cols,
             rhs.len(),
             "Vector length does not match number of columns."
         );
-        let mut result = vec![FieldElement::zero(); self.matrix.rows];
+        let mut result = vec![F::zero(); self.matrix.rows];
         for ((i, j), value) in self.iter() {
             result[i] += value * &rhs[j];
         }
@@ -164,16 +166,16 @@ impl Mul<&[FieldElement]> for HydratedSparseMatrix<'_> {
 
 /// Left multiplication by vector
 // OPT: Paralelize
-impl Mul<HydratedSparseMatrix<'_>> for &[FieldElement] {
-    type Output = Vec<FieldElement>;
+impl<F: Field> Mul<HydratedSparseMatrix<'_, F>> for &[F] {
+    type Output = Vec<F>;
 
-    fn mul(self, rhs: HydratedSparseMatrix<'_>) -> Self::Output {
+    fn mul(self, rhs: HydratedSparseMatrix<'_, F>) -> Self::Output {
         assert_eq!(
             self.len(),
             rhs.matrix.rows,
             "Vector length does not match number of rows."
         );
-        let mut result = vec![FieldElement::zero(); rhs.matrix.cols];
+        let mut result = vec![F::zero(); rhs.matrix.cols];
         for ((i, j), value) in rhs.iter() {
             result[j] += value * &self[i];
         }

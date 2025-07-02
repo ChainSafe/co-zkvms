@@ -530,8 +530,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         network.broadcast_requests((x_r, x_c));
 
-        println!("pub_index.ck_index.g: {:?}", pub_index.ck_index.g);
-
         let (comms, time) = rep3_poly_commit_coordinator(
             4,
             pub_index.ck_index.g,

@@ -7,7 +7,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use crate::{FieldElement, HydratedSparseMatrix, Interner, SparseMatrix};
+use crate::{FieldElement, HydratedSparseMatrix, Interner, SparseMatrix, utils::serde_ark};
 
 /// Represents a R1CS constraint system.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,7 +15,8 @@ pub struct R1CS {
     pub public_inputs: usize,
     pub witnesses: usize,
     pub constraints: usize,
-    pub interner: Interner,
+    #[serde(with = "serde_ark")]
+    pub interner: Interner<FieldElement>,
     pub a: SparseMatrix,
     pub b: SparseMatrix,
     pub c: SparseMatrix,
@@ -27,22 +28,22 @@ impl R1CS {
             public_inputs: 0,
             witnesses: 0,
             constraints: 0,
-            interner: Interner::new(),
+            interner: Interner::default(),
             a: SparseMatrix::new(0, 0),
             b: SparseMatrix::new(0, 0),
             c: SparseMatrix::new(0, 0),
         }
     }
 
-    pub fn a(&self) -> HydratedSparseMatrix<'_> {
+    pub fn a(&self) -> HydratedSparseMatrix<'_, FieldElement> {
         self.a.hydrate(&self.interner)
     }
 
-    pub fn b(&self) -> HydratedSparseMatrix<'_> {
+    pub fn b(&self) -> HydratedSparseMatrix<'_, FieldElement> {
         self.b.hydrate(&self.interner)
     }
 
-    pub fn c(&self) -> HydratedSparseMatrix<'_> {
+    pub fn c(&self) -> HydratedSparseMatrix<'_, FieldElement> {
         self.c.hydrate(&self.interner)
     }
 
@@ -136,27 +137,6 @@ impl R1CS {
             ensure!(a * b == c, "Constraint {row} failed");
         }
         Ok(())
-    }
-
-    /// Returns ⌈log₂(instance_size)⌉ where:
-    /// instance_size = max(#constraints M, #vars m, #nonzeros N)
-    pub fn log2_instance_size(&self) -> usize {
-        println!("self.a.num_entries(): {:?}", self.a.num_entries());
-        println!("self.b.num_entries(): {:?}", self.b.num_entries());
-        println!("self.c.num_entries(): {:?}", self.c.num_entries());
-        // Count non-zero entries across A, B, C
-        let nonzeros = max(
-            self.a.num_entries(),
-            max(self.b.num_entries(), self.c.num_entries()),
-        );
-        println!("nonzeros: {:?}", nonzeros);
-        // Determine maximal component
-        let max_size = *[self.constraints, self.witnesses, nonzeros]
-            .iter()
-            .max()
-            .unwrap();
-        // Compute ceil(log2(max_size))
-        (64 - (max_size - 1).leading_zeros()) as usize
     }
 }
 

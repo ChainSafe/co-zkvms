@@ -32,29 +32,28 @@ enum Command {
         log_num_workers_per_party: usize,
 
         #[clap(long, value_name = "NUM")]
-        log_num_public_workers: usize,
+        log_num_public_workers: Option<usize>,
 
-        #[clap(long, value_name = "DIR")]
-        key_out: PathBuf,
+        #[clap(long, value_name = "DIR", default_value = "./artifacts")]
+        artifacts_dir: PathBuf,
     },
 
     Work {
-        /// Path to the coordinator key package
-        #[clap(long, value_name = "DIR")]
-        key_file: PathBuf,
-
         /// The number of workers who will do the committing and proving. Each worker has 1 core.
         #[clap(long, value_name = "NUM")]
         log_num_workers_per_party: usize,
 
         #[clap(long, value_name = "NUM")]
-        log_num_public_workers: usize,
+        log_num_public_workers: Option<usize>,
 
         #[clap(long, value_name = "NUM")]
-        worker_id: usize,
+        worker_id: Option<usize>,
 
-        #[clap(long, value_name = "NUM")]
-        local: usize,
+        #[clap(long, value_name = "NUM", default_value = "true")]
+        local: bool,
+
+        #[clap(long, value_name = "DIR", default_value = "./artifacts")]
+        artifacts_dir: PathBuf,
     },
 }
 
@@ -68,8 +67,8 @@ fn main() {
             r1cs_input_path,
             log_num_workers_per_party,
             log_num_public_workers,
-            key_out,
-        } => setup(
+            artifacts_dir: key_out,
+        } => setup::<Bn254>(
             key_out,
             r1cs_noir_instance_path,
             r1cs_input_path,
@@ -77,18 +76,18 @@ fn main() {
             log_num_public_workers,
         ),
         Command::Work {
-            key_file,
+            artifacts_dir,
             log_num_workers_per_party,
             log_num_public_workers,
             worker_id,
             local,
         } => {
             work::<Bn254>(
+                artifacts_dir,
                 log_num_workers_per_party,
-                key_file,
-                worker_id,
                 log_num_public_workers,
                 local,
+                worker_id,
             );
         }
     }

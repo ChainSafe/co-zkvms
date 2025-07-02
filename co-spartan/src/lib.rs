@@ -7,11 +7,5 @@ pub mod utils;
 pub mod worker;
 
 pub use coordinator::SpartanProverCoordinator;
-pub use setup::split_ipk;
+pub use setup::setup_rep3;
 pub use worker::{Rep3ProverKey, SpartanProverWorker};
-
-use noir_r1cs::FieldElement;
-use spartan::{
-    math::{SparseMatEntry, SparseMatPolynomial},
-    R1CSInstance,
-};

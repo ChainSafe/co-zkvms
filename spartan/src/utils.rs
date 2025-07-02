@@ -20,7 +20,7 @@ use ark_std::{cfg_into_iter, cfg_iter, cfg_iter_mut, test_rng};
 use rand::{Rng, RngCore};
 use rayon::prelude::*;
 
-use crate::{math::{Math, SparseMatPolynomial}, R1CSInstance};
+use crate::{math::Math};
 
 pub fn map_poly<F: Field, MapFn>(
     poly: &DenseMultilinearExtension<F>,
@@ -390,54 +390,6 @@ pub fn merge_list_of_distributed_poly<F: Field>(
     }
 
     merge_poly
-}
-
-pub fn produce_test_r1cs<F: PrimeField>(
-    log_dim: usize,
-    mut prng: &mut impl Rng,
-) -> (R1CSInstance<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>) {
-    let mut z_vec = Vec::new();
-    let mut a_vec = Vec::new();
-    let mut b_vec = Vec::new();
-    let mut c_vec = Vec::new();
-
-    let mut za_vec = Vec::new();
-    let mut zb_vec = Vec::new();
-    let mut zc_vec = Vec::new();
-
-    // use ark_std::time::{Duration, Instant};
-    // let mut tot_time = Duration::ZERO;
-    for i in 0..1 << log_dim {
-        let a = F::rand(&mut prng);
-        let b = F::rand(&mut prng);
-        let z = F::rand(&mut prng);
-        let c = a * b * z;
-        z_vec.push(z);
-        a_vec.push((i, i, a));
-        b_vec.push((i, i, b));
-        c_vec.push((i, i, c));
-
-        // let time = Instant::now();
-        za_vec.push(a * z);
-        zb_vec.push(b * z);
-        zc_vec.push(c * z);
-        // let final_time = time.elapsed();
-        // tot_time += final_time;
-    }
-    // println!(
-    //     "Time to compute za_zb_zc_vec: {:?} for {:?} elements",
-    //     tot_time,
-    //     1 << log_dim
-    // );
-    // std::process::exit(0);
-
-    (
-        R1CSInstance::new(1 << log_dim, log_dim, 0, &a_vec, &b_vec, &c_vec),
-        z_vec,
-        za_vec,
-        zb_vec,
-        zc_vec,
-    )
 }
 
 #[test]
