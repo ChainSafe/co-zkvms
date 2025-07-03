@@ -28,12 +28,9 @@ rayon = { version = "1.10.0" }
 
 # Noir lang
 acir.workspace = true
-# acvm.workspace = true
 acir_field.workspace = true
 noirc_artifacts.workspace = true
 noirc_abi.workspace = true
-# noirc_printable_type.workspace = true
-# bn254_blackbox_solver.workspace = true
 
 
 # Binary 
