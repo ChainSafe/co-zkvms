@@ -49,24 +49,9 @@ use spartan::{
     IndexProverKey, IndexVerifierKey, Indexer, SRS,
 };
 
-// use dfs::mpc_snark::worker::DistributedRSSProverKey as Rep3ProverKey;
-// use dfs::{snark::zk::SRS, utils::split_r1cs};
-// use dfs::snark::indexer::{IndexProverKey, IndexVerifierKey, Indexer};
-// use dfs::utils::split_ipk;
-
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DistributedRootKey<E: Pairing> {
-    pub log_instance_size: usize,
-    pub ipk: IndexProverKey<E>,
-    pub pub_ipk: IndexProverKey<E>,
-    pub ivk: IndexVerifierKey<E>,
-}
-
 pub fn setup<E: Pairing>(
     artifacts_dir_path: PathBuf,
-    // log_instance_size: usize,
-    r1cs_noir_instance_path: PathBuf,
-    r1cs_input_path: PathBuf,
+    r1cs_noir_scheme_path: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: Option<usize>,
 ) where
@@ -77,18 +62,11 @@ pub fn setup<E: Pairing>(
 
     let mut rng = StdRng::seed_from_u64(12);
 
-    let mut proof_scheme: NoirProofScheme = noir_r1cs::read(&r1cs_noir_instance_path).unwrap();
-    let mut z: Vec<E::ScalarField> = proof_scheme
-        .solve_witness(&r1cs_input_path)
-        .unwrap()
-        .iter()
-        .map(|v| E::ScalarField::from_bigint(v.into_bigint()).unwrap())
-        .collect();
+    let mut proof_scheme: NoirProofScheme = noir_r1cs::read(&r1cs_noir_scheme_path).unwrap();
     let r1cs: spartan::R1CS<E::ScalarField> = proof_scheme.r1cs.into();
 
     let (coordinator_key, prover_keys) = co_spartan::setup_rep3::<E>(
         &r1cs,
-        z,
         log_num_workers_per_party,
         log_num_public_workers,
         &mut rng,

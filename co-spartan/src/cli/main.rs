@@ -21,13 +21,8 @@ struct Args {
 enum Command {
     Setup {
         #[clap(long, value_name = "DIR")]
-        r1cs_noir_instance_path: PathBuf,
+        r1cs_noir_scheme_path: PathBuf,
 
-        #[clap(long, value_name = "DIR")]
-        r1cs_input_path: PathBuf,
-
-        // #[clap(long, value_name = "NUM")]
-        // log_instance_size: usize,
         #[clap(long, value_name = "NUM")]
         log_num_workers_per_party: usize,
 
@@ -39,6 +34,12 @@ enum Command {
     },
 
     Work {
+        #[clap(long, value_name = "DIR")]
+        r1cs_noir_scheme_path: PathBuf,
+
+        #[clap(long, value_name = "DIR")]
+        r1cs_input_path: PathBuf,
+
         /// The number of workers who will do the committing and proving. Each worker has 1 core.
         #[clap(long, value_name = "NUM")]
         log_num_workers_per_party: usize,
@@ -62,20 +63,19 @@ fn main() {
 
     match args.command {
         Command::Setup {
-            // log_instance_size,
-            r1cs_noir_instance_path,
-            r1cs_input_path,
+            r1cs_noir_scheme_path,
             log_num_workers_per_party,
             log_num_public_workers,
-            artifacts_dir: key_out,
+            artifacts_dir,
         } => setup::<Bn254>(
-            key_out,
-            r1cs_noir_instance_path,
-            r1cs_input_path,
+            artifacts_dir,
+            r1cs_noir_scheme_path,
             log_num_workers_per_party,
             log_num_public_workers,
         ),
         Command::Work {
+            r1cs_noir_scheme_path,
+            r1cs_input_path,
             artifacts_dir,
             log_num_workers_per_party,
             log_num_public_workers,
@@ -84,6 +84,8 @@ fn main() {
         } => {
             work::<Bn254>(
                 artifacts_dir,
+                r1cs_noir_scheme_path,
+                r1cs_input_path,
                 log_num_workers_per_party,
                 log_num_public_workers,
                 local,

@@ -7,7 +7,8 @@ pub trait NetworkCoordinator {
         &self,
         default_response: T,
     ) -> Vec<T>;
-    fn broadcast_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: T);
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: T);
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: Vec<T>);
 
     fn log_num_pub_workers(&self) -> usize;
     fn log_num_workers_per_party(&self) -> usize;

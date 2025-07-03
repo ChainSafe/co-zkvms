@@ -28,15 +28,13 @@ use crate::{
         poly_list_to_prover_state, DistrbutedSumcheckProverState,
     },
     utils::aggregate_poly,
+    witness::WitnessShare,
 };
 
 use spartan::{
     logup::LogLookupProof,
     math::Math,
-    utils::{
-        boost_degree, dense_scalar_prod, distributed_open, generate_eq,
-        partial_generate_eq,
-    },
+    utils::{boost_degree, dense_scalar_prod, distributed_open, generate_eq, partial_generate_eq},
     IndexProverKey,
 };
 
@@ -46,16 +44,11 @@ pub struct Rep3ProverKey<E: Pairing> {
     pub num_parties: usize,
     pub ipk: IndexProverKey<E>,
     pub pub_ipk: IndexProverKey<E>,
-
     pub row: Vec<usize>,
     pub col: Vec<usize>,
     pub val_a: DenseMultilinearExtension<E::ScalarField>,
     pub val_b: DenseMultilinearExtension<E::ScalarField>,
     pub val_c: DenseMultilinearExtension<E::ScalarField>,
-    pub z: RssPoly<E>,
-    pub za: RssPoly<E>,
-    pub zb: RssPoly<E>,
-    pub zc: RssPoly<E>,
     pub num_variables: usize,
     pub seed_0: String,
     pub seed_1: String,
@@ -119,6 +112,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
+        witness_share: WitnessShare<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
@@ -126,13 +120,13 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let mut state = ProverState::default();
 
         println!("worker first round");
-        self.first_round(&vec![&pk.z], &pk.ipk.ck_w.0, network);
+        self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network);
 
         println!("worker second round");
-        self.second_round(pk, &mut state, random_rng, network);
+        self.second_round(pk, &witness_share, &mut state, random_rng, network);
 
         println!("worker third round");
-        self.third_round(pk, &mut state, random_rng, active, network);
+        self.third_round(pk, &witness_share, &mut state, random_rng, active, network);
 
         if active {
             self.prover_fifth_round(pk, &mut state, network);
@@ -148,6 +142,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
+        witness_share: &WitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         network: &mut N,
@@ -159,14 +154,14 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let eq_func = partial_generate_eq(&v_msg, self.start_eq, self.log_chunk_size);
 
         let final_point =
-            rep3_first_sumcheck_worker(&pk.za, &pk.zb, &pk.zc, &eq_func, random_rng, network);
+            rep3_first_sumcheck_worker(&witness_share.za, &witness_share.zb, &witness_share.zc, &eq_func, random_rng, network);
 
         let randomness = &final_point[0..num_variables].to_vec();
 
         let (val_a, val_b, val_c) = (
-            pk.za.share_0.evaluate(&randomness),
-            pk.zb.share_0.evaluate(&randomness),
-            pk.zc.share_0.evaluate(&randomness),
+            witness_share.za.share_0.evaluate(&randomness),
+            witness_share.zb.share_0.evaluate(&randomness),
+            witness_share.zc.share_0.evaluate(&randomness),
         );
 
         let response = vec![val_a, val_b, val_c];
@@ -179,6 +174,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
+        witness_share: &WitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
@@ -210,13 +206,13 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             &DenseMultilinearExtension::from_evaluations_vec(num_variables, A_rx),
             &DenseMultilinearExtension::from_evaluations_vec(num_variables, B_rx),
             &DenseMultilinearExtension::from_evaluations_vec(num_variables, C_rx),
-            &pk.z,
+            &witness_share.z,
             random_rng,
             &v_msg,
             network,
         );
 
-        rep3_eval_poly_worker(vec![&pk.z], &final_point, 1, pk.num_variables, network);
+        rep3_eval_poly_worker(vec![&witness_share.z], &final_point, 1, pk.num_variables, network);
         state.r_y = final_point.to_vec();
         state.eq_ry = Some(generate_eq(&final_point));
         let eq_ry = state.eq_ry.as_ref().unwrap();
@@ -294,7 +290,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         }
 
         distributed_batch_open_poly_worker(
-            iter::once(&pk.z).map(|p| &p.share_0),
+            iter::once(&witness_share.z).map(|p| &p.share_0),
             &pk.ipk.ck_w.0,
             &state.r_y,
             E::ScalarField::one(),

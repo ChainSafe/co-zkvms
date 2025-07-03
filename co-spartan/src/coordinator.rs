@@ -261,7 +261,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         network: &mut N,
         transcript: &mut impl Transcript,
     ) {
-        network.broadcast_requests(v_msg.clone());
+        network.broadcast_request(v_msg.clone());
 
         let num_variables = index.padded_num_var;
         let poly_info = PolynomialInfo {
@@ -371,7 +371,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         network: &mut N,
         transcript: &mut impl Transcript,
     ) {
-        network.broadcast_requests(v_msg.clone());
+        network.broadcast_request(v_msg.clone());
         let num_variables = index.padded_num_var;
         let poly_info = PolynomialInfo {
             max_multiplicands: 2,
@@ -504,7 +504,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         network: &mut N,
         transcript: &mut impl Transcript,
     ) -> LogLookupProof<E> {
-        network.broadcast_requests(v_msg.clone());
+        network.broadcast_request(v_msg.clone());
 
         let time = Instant::now();
 
@@ -528,7 +528,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         state.time_elapsed += time.elapsed();
 
-        network.broadcast_requests((x_r, x_c));
+        network.broadcast_request((x_r, x_c));
 
         let (comms, time) = rep3_poly_commit_coordinator(
             4,
@@ -547,7 +547,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         let z: Vec<E::ScalarField> = transcript.get_vector_challenge(b"z", q_num_vars);
         let lambda: E::ScalarField = transcript.get_scalar_challenge(b"lambda");
 
-        network.broadcast_requests((z.clone(), lambda.clone()));
+        network.broadcast_request((z.clone(), lambda.clone()));
 
         default_sumcheck_poly_list(
             &lambda,
@@ -558,7 +558,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         let z: Vec<E::ScalarField> = transcript.get_vector_challenge(b"z", q_num_vars);
         let lambda: E::ScalarField = transcript.get_scalar_challenge(b"lambda");
 
-        network.broadcast_requests((z.clone(), lambda.clone()));
+        network.broadcast_request((z.clone(), lambda.clone()));
 
         default_sumcheck_poly_list(
             &lambda,
@@ -577,7 +577,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
         println!("final_point: {:?}", final_point);
         let eta: E::ScalarField = transcript.get_scalar_challenge(b"eta");
-        network.broadcast_requests(eta.clone());
+        network.broadcast_request(eta.clone());
 
         println!("comms: {:?}", comms);
         println!(
@@ -716,7 +716,7 @@ pub fn rep3_zk_sumcheck_coordinator<
 
         tot_time += time.elapsed();
 
-        network.broadcast_requests(r);
+        network.broadcast_request(r);
 
         v_msg = Some(verifier_msg);
     }
@@ -757,7 +757,7 @@ pub fn rep3_zk_sumcheck_coordinator<
 
     tot_time += time.elapsed();
 
-    network.broadcast_requests(final_point.clone());
+    network.broadcast_request(final_point.clone());
 
     let time = Instant::now();
 
@@ -826,7 +826,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
         let r = verifier_msg.randomness;
         final_point.push(r);
         tot_time += time.elapsed();
-        network.broadcast_requests(r);
+        network.broadcast_request(r);
     }
 
     let default_response = poly_list_to_prover_state(q_polys);
@@ -849,7 +849,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
 
     tot_time += time.elapsed();
 
-    network.broadcast_requests(final_point.clone());
+    network.broadcast_request(final_point.clone());
 
     (prover_msgs, final_point, tot_time)
 }
