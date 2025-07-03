@@ -108,6 +108,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::prove")]
     pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
@@ -118,26 +119,25 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     ) {
         let mut state = ProverState::default();
 
-        println!("worker first round");
         self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network);
 
-        println!("worker second round");
         self.second_round(pk, &witness_share, &mut state, random_rng, network);
 
-        println!("worker third round");
         self.third_round(pk, &witness_share, &mut state, random_rng, active, network);
 
         if active {
-            self.prover_fifth_round(pk, &mut state, network);
+            self.fifth_round(pk, &mut state, network);
         } else {
             dummy_fifth_round(&pk.pub_ipk, network);
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::first_round")]
     fn first_round(&self, polys: &Vec<&RssPoly<E>>, ck: &CommitterKey<E>, network: &mut N) {
         poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::second_round")]
     fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
@@ -176,6 +176,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         state.r_x = final_point;
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::third_round")]
     fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
@@ -220,7 +221,6 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         rep3_eval_poly_worker(
             vec![&witness_share.z],
             &final_point,
-            1,
             pk.num_variables,
             network,
         );
@@ -332,7 +332,8 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         ));
     }
 
-    fn prover_fifth_round(
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::fifth_round")]
+    fn fifth_round(
         &self,
         pk: &Rep3ProverKey<E>,
         state: &mut ProverState<E>,
@@ -468,8 +469,6 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
 
         let eta = network.receive_request();
 
-        println!("eta: {:?}", eta);
-
         distributed_batch_open_poly_worker(
             [
                 &lookup_pf_row.0[0],
@@ -514,6 +513,7 @@ pub fn poly_commit_worker<'a, E: Pairing, N: NetworkWorker>(
     network.send_response(res);
 }
 
+#[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
 pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: NetworkWorker>(
     za: &RssPoly<E>,
     zb: &RssPoly<E>,
@@ -556,6 +556,7 @@ pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netwo
     final_point
 }
 
+#[tracing::instrument(skip_all, name = "rep3_second_sumcheck_worker")]
 pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: NetworkWorker>(
     a_r: &DenseMultilinearExtension<E::ScalarField>,
     b_r: &DenseMultilinearExtension<E::ScalarField>,
@@ -598,6 +599,7 @@ pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netw
     final_point
 }
 
+#[tracing::instrument(skip_all, name = "distributed_sumcheck_worker")]
 pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
     distributed_q_polys: &ListOfProductsOfPolynomials<F>,
     network: &mut N,
@@ -623,10 +625,10 @@ pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
     final_point
 }
 
+#[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
 pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
     polys: Vec<&RssPoly<E>>,
     final_point: &[E::ScalarField],
-    num_poly: usize,
     num_vars: usize,
     network: &mut N,
 ) {
@@ -641,6 +643,7 @@ pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
     network.send_response(res);
 }
 
+#[tracing::instrument(skip_all, name = "distributed_batch_open_poly_worker")]
 pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
     polys: impl IntoIterator<Item = &'a DenseMultilinearExtension<E::ScalarField>>,
     ck: &CommitterKey<E>,

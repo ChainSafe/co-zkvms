@@ -18,7 +18,7 @@ use rayon::prelude::*;
 use crate::{
     transcript::Transcript,
     utils::{boost_degree, eq_eval, map_poly, two_pow_n},
-    verifier::{batch_verify_poly, BatchOracleEval, VerificationError},
+    verifier::{batch_verify_poly, BatchOracleEval, VerificationResult},
 };
 
 type SumcheckProof<E> = ark_linear_sumcheck::ml_sumcheck::Proof<<E as Pairing>::ScalarField>;
@@ -33,6 +33,7 @@ pub struct LogLookupProof<E: Pairing> {
 }
 
 impl<E: Pairing> LogLookupProof<E> {
+    #[tracing::instrument(skip_all, name = "LogLookupProof::prove")]
     pub fn prove(
         query: &DenseMultilinearExtension<E::ScalarField>,
         table: &DenseMultilinearExtension<E::ScalarField>,
@@ -45,15 +46,6 @@ impl<E: Pairing> LogLookupProof<E> {
         Vec<Commitment<E>>,
         Vec<DenseMultilinearExtension<E::ScalarField>>,
     ) {
-        // let query_com = MultilinearPC::commit(ck, query);
-
-        // let degree_diff = query.num_vars - table.num_vars;
-        // rng.feed(&query_com);
-
-        // let tmp: DenseMultilinearExtension<<E as Pairing>::ScalarField> =
-        //     normalized_multiplicities(&query, &table);
-        // let x: E::ScalarField = get_scalar_challenge(rng);
-
         let phi_0 = map_poly(&table, |t| *x + t);
 
         let phi_1 = map_poly(&query, |q| *x + q);
@@ -68,19 +60,9 @@ impl<E: Pairing> LogLookupProof<E> {
             table.num_vars(),
             cfg_iter!(m.evaluations)
                 .zip(&phi_0_inv)
-                .map(|(m_val, inv)| {
-                    // let phi_0_inv = phi_0_val.inverse().unwrap();
-                    *m_val * inv
-                })
+                .map(|(m_val, inv)| *m_val * inv)
                 .collect(),
         );
-
-        // let table = boost_degree(&table, query.num_vars);
-        // let table_com = MultilinearPC::commit(&ck, &table);
-        // rng.feed(&table_com);
-
-        println!("h_0.num_vars: {:?}", h_0.num_vars);
-        println!("query.num_vars: {:?}", query.num_vars);
 
         let h_0 = boost_degree(&h_0, query.num_vars);
         let phi_0 = boost_degree(&phi_0, query.num_vars);
@@ -91,8 +73,6 @@ impl<E: Pairing> LogLookupProof<E> {
         let h_0_commitment = MultilinearPC::commit(&ck, &h_0);
         let h_1_commitment = MultilinearPC::commit(&ck, &h_1);
 
-        // let m_commitment = MultilinearPC::commit(&ck, &m);
-
         (
             [h_0, h_1].to_vec(),
             [h_0_commitment, h_1_commitment].to_vec(),
@@ -100,7 +80,7 @@ impl<E: Pairing> LogLookupProof<E> {
         )
     }
 
-    pub fn verify_before_sumcheck<T: Transcript>(
+    pub fn get_sumcheck_verifier_challenges<T: Transcript>(
         info: &PolynomialInfo,
         batch_oracle: &BatchOracleEval<E>,
         num_instance: usize,
@@ -112,7 +92,6 @@ impl<E: Pairing> LogLookupProof<E> {
     ) {
         let dimension = info.num_variables;
 
-        // assert!(rng.feed(&self.batch_oracle.commitment[3]).is_ok());
         let mut lookup_x = Vec::new();
         let labels = [b"x_r", b"x_c"];
         for i in 0..num_instance {
@@ -134,6 +113,7 @@ impl<E: Pairing> LogLookupProof<E> {
         (lookup_x, z, lambda)
     }
 
+    #[tracing::instrument(skip_all, name = "LogLookupProof::verify")]
     pub fn verify<T: Transcript>(
         info: &PolynomialInfo,
         sumcheck_pfs: &SumcheckProof<E>,
@@ -146,16 +126,15 @@ impl<E: Pairing> LogLookupProof<E> {
         transcript: &mut T,
         aux_eval: E::ScalarField,
         aux_sum: E::ScalarField,
-    ) -> Result<(), VerificationError> {
+    ) -> VerificationResult {
         let subclaim = MLSumcheck::verify_as_subprotocol(
             transcript,
             &info,
             E::ScalarField::zero() + aux_sum,
             &sumcheck_pfs,
         );
-        if subclaim.is_err() {
-            println!("{:?}", subclaim.unwrap().expected_evaluation);
-            return Err(VerificationError);
+        if let Err(err) = subclaim {
+            return Err(anyhow::anyhow!(err).context("sumcheck claim error"));
         };
 
         let subclaim = subclaim.unwrap();
@@ -163,9 +142,6 @@ impl<E: Pairing> LogLookupProof<E> {
         let point = subclaim.point;
 
         let mut res = aux_eval;
-        // E::ScalarField::zero();
-
-        println!("final_point: {:?}", point);
 
         for i in 0..z.len() {
             let batch_oracle_val = &batch_oracle.val[2 * i..2 * i + 2];
@@ -192,7 +168,6 @@ impl<E: Pairing> LogLookupProof<E> {
         }
 
         let eta = transcript.get_scalar_challenge(b"eta");
-        // let poly_oracle_verifications = self.batch_oracle.verify(eta, vk, &self.point);
         let poly_oracle_verifications = batch_verify_poly(
             &batch_oracle.commitment,
             &batch_oracle.val,
@@ -203,15 +178,19 @@ impl<E: Pairing> LogLookupProof<E> {
         );
 
         if !poly_oracle_verifications {
-            println!("poly_oracle_verifications failed");
-            return Err(VerificationError);
+            return Err(anyhow::anyhow!("poly oracle verification error")
+                .context("poly oracle verification error"));
         }
 
         if res == subclaim.expected_evaluation {
             Ok(())
         } else {
-            println!("res != subclaim.expected_evaluation");
-            Err(VerificationError)
+            Err(anyhow::anyhow!(
+                "unexpected evaluation. expected: {:?}, actual: {:?}",
+                subclaim.expected_evaluation,
+                res
+            )
+            .context("unexpected evaluation"))
         }
     }
 }

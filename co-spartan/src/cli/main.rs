@@ -7,6 +7,8 @@ use ark_bn254::Bn254;
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
 use setup::setup;
+use tracing_forest::ForestLayer;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 use work::work;
 
 #[global_allocator]
@@ -60,6 +62,7 @@ enum Command {
 }
 
 fn main() {
+    init_tracing();
     let args = Args::parse();
 
     match args.command {
@@ -102,4 +105,16 @@ pub use rayon::current_num_threads;
 #[cfg(not(feature = "parallel"))]
 pub fn current_num_threads() -> usize {
     1
+}
+
+fn init_tracing() {
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy();
+
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(ForestLayer::default());
+
+    let _ = tracing::subscriber::set_global_default(subscriber);
 }

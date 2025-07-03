@@ -5,6 +5,7 @@ use std::{
     ops::{Div, Index, Mul},
 };
 
+use anyhow::Context;
 use ark_crypto_primitives::sponge::{
     poseidon::{PoseidonConfig, PoseidonSponge},
     CryptographicSponge,
@@ -772,13 +773,14 @@ fn eq_extension<F: Field>(t: &[F]) -> Vec<DenseMultilinearExtension<F>> {
 
 }*/
 
+#[tracing::instrument(skip_all, name = "zk_sumcheck_verifier")]
 pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
     mask_vk: &MaskVerifierKey<E>,
     proof: &ZKSumcheckProof<E>,
     transcript: &mut impl Transcript,
     opening_challenge: &mut S,
     claimed_sum: E::ScalarField,
-) -> (bool, SubClaim<E::ScalarField>) {
+) -> anyhow::Result<SubClaim<E::ScalarField>> {
     let _ = transcript.append_serializable(b"g_commit", &proof.g_commit);
     let challenge = transcript.get_scalar_challenge(b"r1");
 
@@ -789,8 +791,7 @@ pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
         &proof.sumcheck_proof,
         challenge,
         proof.g_value,
-    )
-    .unwrap();
+    ).context("while verifying zk sumcheck")?;
 
     let label_com = vec![LabeledCommitment::new(
         String::from("mask_poly_for_sumcheck"),
@@ -805,10 +806,13 @@ pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
         &proof.g_proof,
         opening_challenge,
         None,
-    )
-    .unwrap();
+    ).context("while verifying PCS openning")?;
 
-    (flag, subclaim)
+    if !flag {
+        return Err(anyhow::anyhow!("PCS openning failed"));
+    }
+
+    Ok(subclaim)
 }
 
 #[test]

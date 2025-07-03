@@ -100,6 +100,7 @@ impl<E: Pairing> Default for ProverState<E> {
 }
 
 impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::prove")]
     pub fn prove(
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
@@ -115,13 +116,10 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         assert!(mask_rng.feed(&"initialize".as_bytes()).is_ok());
         let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
 
-        //todo: padding the R1CS instance, witness and io
-
         let time = Instant::now();
         let mut verifier_state: VerifierState<E> = DFSVerifier::verifier_init(index.padded_num_var);
         state.time_elapsed += time.elapsed();
 
-        // let mut prover_first_message: ProverMessage<E>;
         Self::first_round(&mut state, &index, 2, None, mask_rng, network, transcript);
 
         // This first challenge is used for checking the hadamard product of AB - C ?= 0.
@@ -129,11 +127,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         let verifier_first_message =
             DFSVerifier::verifier_first_round(&mut verifier_state, transcript);
-
-        println!(
-            "verifier_first_message: {:?}",
-            verifier_first_message.verifier_message
-        );
 
         Self::second_round(
             &index,
@@ -164,18 +157,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         let verifier_fifth_message =
             DFSVerifier::verifier_fifth_round(&mut verifier_state, transcript);
 
-        println!(
-            "verifier_second_message: {:?}",
-            verifier_second_message.verifier_message
-        );
-
-        println!(
-            "verifier_fifth_message: {:?}",
-            verifier_fifth_message.verifier_message
-        );
-
-        let holo_time = Instant::now();
-
         let lookup_proof = Self::fifth_round(
             pub_index,
             vk,
@@ -185,8 +166,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             transcript,
         );
         transcript.append_serializable(b"lookup_proof", &lookup_proof);
-
-        println!("holography time: {:?}", holo_time.elapsed());
 
         (
             R1CSProof {
@@ -208,6 +187,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     }
 
     // hiding_poly_commit
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::first_round")]
     fn first_round<'a>(
         state: &mut ProverState<E>,
         index: &IndexProverKey<E>,
@@ -224,12 +204,11 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         let time = Instant::now();
 
-        let mut p_hat = SparsePolynomial::<E::ScalarField, SparseTerm>::zero();
-        if let Some(mask_num_vars) = mask_num_var {
-            p_hat = generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false);
+        let p_hat = if let Some(mask_num_vars) = mask_num_var {
+            generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false)
         } else {
-            p_hat = generate_mask_polynomial(rng, index.padded_num_var, hiding_bound, false);
-        }
+            generate_mask_polynomial(rng, index.padded_num_var, hiding_bound, false)
+        };
         let labeled_p_hat =
             LabeledPolynomial::new("p_hat".to_owned(), p_hat, Some(hiding_bound), None);
         let hiding_commitment: E::G1Affine = ZKMLCommit::<
@@ -252,6 +231,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time.elapsed();
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::second_round")]
     fn second_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
         index: &IndexProverKey<E>,
         state: &mut ProverState<E>,
@@ -361,6 +341,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time1 + time2;
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::third_round")]
     fn third_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
@@ -466,8 +447,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         }
 
         state.val_m = val_a * v_msg[0] + val_b * v_msg[1] + val_c * v_msg[2];
-        println!("v_msg: {:?}", v_msg);
-        println!("val_m: {:?}", state.val_m);
         transcript.append_serializable(b"witness_eval", &[state.val_w, state.val_m]);
 
         let (comms, time) = rep3_poly_commit_coordinator(
@@ -496,6 +475,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::fifth_round")]
     fn fifth_round(
         pub_index: &IndexProverKey<E>,
         vk: &IndexVerifierKey<E>,
@@ -575,22 +555,8 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript);
 
         state.time_elapsed += time;
-        println!("final_point: {:?}", final_point);
         let eta: E::ScalarField = transcript.get_scalar_challenge(b"eta");
         network.broadcast_request(eta.clone());
-
-        println!("comms: {:?}", comms);
-        println!(
-            "state.eq_tilde_rx_comm: {:?}",
-            state.eq_tilde_rx_comm.clone().unwrap()
-        );
-        println!(
-            "state.eq_tilde_ry_comm: {:?}",
-            state.eq_tilde_ry_comm.clone().unwrap()
-        );
-        println!("vk.val_a_oracle: {:?}", vk.val_a_oracle);
-        println!("vk.val_b_oracle: {:?}", vk.val_b_oracle);
-        println!("vk.val_c_oracle: {:?}", vk.val_c_oracle);
 
         let (batch_oracle, time) = batch_open_poly_coordinator(
             poly_info.num_variables,
@@ -625,6 +591,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     }
 }
 
+#[tracing::instrument(skip_all, name = "rep3_zk_sumcheck_coordinator")]
 pub fn rep3_zk_sumcheck_coordinator<
     M: Rep3SumcheckProverMsg<E>,
     E: Pairing,
@@ -659,7 +626,6 @@ pub fn rep3_zk_sumcheck_coordinator<
     let g_commit = mask_commit[0].commitment();
     let _ = transcript.append_serializable(b"g_commit", g_commit);
     let challenge = transcript.get_scalar_challenge(b"r1");
-    println!("r1 challenge: {:?}", challenge);
 
     transcript.feed(&poly_info.clone()).unwrap(); // feed same as in ark_linear_sumcheck
     let mut prover_zk_state = IPForMLSumcheck::mask_init(
@@ -750,11 +716,6 @@ pub fn rep3_zk_sumcheck_coordinator<
         v_msg = verifier_msg.clone();
     }
 
-    println!(
-        "verifier_msg: {:?}",
-        verifier_msg.clone().unwrap().randomness
-    );
-
     tot_time += time.elapsed();
 
     network.broadcast_request(final_point.clone());
@@ -786,6 +747,7 @@ pub fn rep3_zk_sumcheck_coordinator<
     )
 }
 
+#[tracing::instrument(skip_all, name = "distributed_sumcheck_coordinator")]
 pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
     poly_info: &PolynomialInfo,
     q_polys: &ListOfProductsOfPolynomials<F>,
@@ -854,6 +816,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
     (prover_msgs, final_point, tot_time)
 }
 
+#[tracing::instrument(skip_all, name = "rep3_poly_commit_coordinator")]
 fn rep3_poly_commit_coordinator<E: Pairing, N: NetworkCoordinator>(
     num_comms: usize,
     g: E::G1Affine,
@@ -888,6 +851,7 @@ fn rep3_poly_commit_coordinator<E: Pairing, N: NetworkCoordinator>(
     (res, time.elapsed())
 }
 
+#[tracing::instrument(skip_all, name = "rep3_eval_poly_coordinator")]
 pub fn rep3_eval_poly_coordinator<E: Pairing, N: NetworkCoordinator>(
     num_var: usize,
     num_poly: usize,
@@ -920,6 +884,7 @@ pub fn rep3_eval_poly_coordinator<E: Pairing, N: NetworkCoordinator>(
     (evals, time.elapsed())
 }
 
+#[tracing::instrument(skip_all, name = "batch_open_poly_coordinator")]
 pub fn batch_open_poly_coordinator<'a, E: Pairing, N: NetworkCoordinator>(
     num_var: usize,
     num_poly: usize,
@@ -1000,6 +965,7 @@ pub fn batch_open_poly_coordinator<'a, E: Pairing, N: NetworkCoordinator>(
     (batch_oracle, time.elapsed())
 }
 
+#[tracing::instrument(skip_all, name = "rep3_zk_open_poly_coordinator")]
 pub fn rep3_zk_open_poly_coordinator<'a, E: Pairing, N: NetworkCoordinator>(
     num_var: usize,
     comm: &Commitment<E>,

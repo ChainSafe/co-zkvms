@@ -31,7 +31,6 @@ pub fn write_json<T: Serialize>(value: &T, path: &PathBuf) -> Result<()> {
 }
 
 /// Read a JSON file.
-#[instrument(fields(size = path.metadata().map(|m| m.len()).ok()))]
 pub fn read_json<T: for<'a> Deserialize<'a>>(path: &PathBuf) -> Result<T> {
     let mut file = File::open(path).context("while opening input file")?;
     serde_json::from_reader(&mut file).context("while reading JSON")

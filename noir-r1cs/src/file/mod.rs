@@ -50,7 +50,6 @@ pub fn write<T: FileFormat>(value: &T, path: &PathBuf) -> Result<()> {
 }
 
 /// Read a file with format determined from extension.
-#[instrument()]
 pub fn read<T: FileFormat>(path: &PathBuf) -> Result<T> {
     match path.extension().and_then(OsStr::to_str) {
         Some("json") => read_json(path),

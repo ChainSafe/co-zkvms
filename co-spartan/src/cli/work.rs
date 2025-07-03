@@ -28,6 +28,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Instant};
+use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
 use co_spartan::{
     mpc::{rep3::RssPoly, SSRandom},
@@ -101,17 +102,23 @@ pub fn work<E: Pairing>(
             communicator,
         );
     } else {
+        let worker_id = if local {
+            rank as usize - 1
+        } else {
+            worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
+        };
+
         worker_work::<E, _>(
             keys_dir,
             log_num_workers_per_party,
             log_num_public_workers,
             communicator,
-            local,
             worker_id,
         );
     }
 }
 
+#[tracing::instrument(skip_all, name = "coordinator_work")]
 fn coordinator_work<E: Pairing, C: Communicator>(
     keys_dir: PathBuf,
     r1cs_noir_scheme_path: PathBuf,
@@ -148,13 +155,8 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         .collect();
     let r1cs = proof_scheme.r1cs.into();
 
-    let witness_shares = co_spartan::split_witness::<E>(
-        &r1cs,
-        z,
-        log_num_workers_per_party,
-        log_num_public_workers,
-        &mut rng,
-    );
+    let witness_shares =
+        co_spartan::split_witness::<E>(&r1cs, z, log_num_workers_per_party, &mut rng);
 
     let log_instance_size = pk.log_instance_size;
 
@@ -177,6 +179,11 @@ fn coordinator_work<E: Pairing, C: Communicator>(
 
     // todo: send witness shares to workers
     network.send_requests(witness_shares);
+    let (send_bytes, _) = network.total_bandwidth_used();
+    tracing::info!(
+        "bandwidth to send witness shares: {}",
+        ByteSize(send_bytes as u64)
+    );
 
     let time = Instant::now();
 
@@ -190,28 +197,31 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         &mut network,
     );
 
-    let final_time = time.elapsed();
-    println!("proving time: {:?}", final_time);
-    println!("coordinator time: {:?}", coordinator_time);
-
     {
         let time = Instant::now();
         assert!(proof.verify(&pk.ivk, &Vec::new()).is_ok());
         let final_time = time.elapsed();
-        println!("verification time: {:?}", final_time);
+        tracing::info!("verification time: {:?}", final_time);
 
         let bytes = proof.serialized_size(ark_serialize::Compress::Yes);
-        println!("proof size: {:?}", bytes);
+        tracing::info!("proof size: {:?}", bytes);
     }
+    
+    let (send_bytes, recv_bytes) = network.total_bandwidth_used();
+    tracing::info!(
+        "bandwidth used: send {}, recv {}",
+        ByteSize(send_bytes as u64),
+        ByteSize(recv_bytes as u64)
+    );
 }
 
+#[tracing::instrument(skip_all, name = "worker_work", fields(worker_id = %worker_id))]
 fn worker_work<E: Pairing, C: Communicator>(
     keys_dir: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: usize,
     communicator: C,
-    local: bool,
-    worker_id: Option<usize>,
+    worker_id: usize,
 ) where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {
@@ -219,12 +229,6 @@ fn worker_work<E: Pairing, C: Communicator>(
     let size = communicator.size();
     let root_process = communicator.process_at_rank(ROOT_RANK);
     let mut log = Vec::new();
-
-    let worker_id = if local {
-        rank as usize - 1
-    } else {
-        worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
-    };
 
     let pk = {
         let mut buf = Vec::new();
@@ -239,7 +243,7 @@ fn worker_work<E: Pairing, C: Communicator>(
     };
 
     let current_num_threads = current_num_threads();
-    println!(
+    tracing::info!(
         "Rayon num threads in worker {rank}: {}",
         current_num_threads
     );
@@ -280,4 +284,11 @@ fn worker_work<E: Pairing, C: Communicator>(
         pub_start_eq,
     )
     .prove(&pk, witness_share, &mut random, active, &mut network);
+
+    let (send_bytes, recv_bytes) = network.total_bandwidth_used();
+    tracing::info!(
+        "bandwidth used: send {}, recv {}",
+        ByteSize(send_bytes as u64),
+        ByteSize(recv_bytes as u64)
+    );
 }

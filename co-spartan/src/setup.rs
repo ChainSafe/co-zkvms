@@ -18,6 +18,7 @@ pub struct CoordinatorKey<E: Pairing> {
     pub ivk: IndexVerifierKey<E>,
 }
 
+#[tracing::instrument(skip_all, name = "setup_rep3")]
 pub fn setup_rep3<E: Pairing>(
     r1cs: &R1CS<E::ScalarField>,
     log_num_workers_per_party: usize,

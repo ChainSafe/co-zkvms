@@ -18,11 +18,11 @@ pub struct WitnessShare<E: Pairing> {
     pub zc: RssPoly<E>,
 }
 
+#[tracing::instrument(skip_all, name = "split_witness")]
 pub fn split_witness<E: Pairing>(
     r1cs: &R1CS<E::ScalarField>,
     mut z: Vec<E::ScalarField>,
     log_num_workers_per_party: usize,
-    log_num_public_workers: usize,
     rng: &mut impl RngCore,
 ) -> Vec<[WitnessShare<E>; 3]> {
     let log_instance_size = r1cs.log2_instance_size();

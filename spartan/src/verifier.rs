@@ -1,12 +1,9 @@
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
+use anyhow::{ensure, Context};
 use ark_ec::pairing::Pairing;
 use ark_ff::{UniformRand, Zero};
-use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
-use ark_poly::{
-    multivariate::{SparsePolynomial, SparseTerm},
-    SparseMultilinearExtension,
-};
+use ark_poly::SparseMultilinearExtension;
 use ark_poly_commit::multilinear_pc::{
     data_structures::{Commitment, Proof as PCProof, VerifierKey},
     MultilinearPC,
@@ -26,23 +23,14 @@ use crate::{
     utils::{aggregate_comm, aggregate_eval, eq_eval, generate_dumb_sponge},
 };
 
-/// Error identifying a failure in the proof verification.
-#[derive(Debug, Clone)]
-pub struct VerificationError;
-
-impl fmt::Display for VerificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Verification Error.")
-    }
-}
-
 /// Verification result.
-pub type VerificationResult = std::result::Result<(), VerificationError>;
+pub type VerificationResult = anyhow::Result<()>;
 
 impl<E: Pairing> R1CSProof<E> {
     /// Verification function for SNARK proof.
     /// The input contains the R1CS instance and the verification key
     /// of polynomial commitment.
+    #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
     pub fn verify(
         &self,
         vk: &IndexVerifierKey<E>,
@@ -59,22 +47,26 @@ impl<E: Pairing> R1CSProof<E> {
         transcript.append_serializable(b"w_commitment", w_commitment);
         let _ = DFSVerifier::verifier_first_round(&mut v_state, &mut transcript);
 
-        let r1_aux = PolynomialInfo {
-            max_multiplicands: 3,
-            num_variables: v_state.num_variables,
-        };
-
-        let (flag_wrap_1, sub_claim_1) = zk_sumcheck_verifier_wrapper(
+        let sub_claim_1 = zk_sumcheck_verifier_wrapper(
             &vk.vk_mask,
             &self.first_sumcheck_msgs,
             &mut transcript,
             &mut challenge_gen,
             E::ScalarField::zero(),
-        );
+        )
+        .context("while verifying first sumcheck")?;
         let r_x = sub_claim_1.point;
-        let flag_1: bool = sub_claim_1.expected_evaluation
-            == (self.va * self.vb - self.vc) * eq_eval(&v_state.self_randomness[0][..], &r_x[..]);
-        assert!(flag_1 && flag_wrap_1);
+        let actual_eval =
+            (self.va * self.vb - self.vc) * eq_eval(&v_state.self_randomness[0][..], &r_x[..]);
+        ensure!(
+            sub_claim_1.expected_evaluation == actual_eval,
+            anyhow::anyhow!(
+                "unexpected evaluation. expected: {:?}, actual: {:?}",
+                sub_claim_1.expected_evaluation,
+                actual_eval
+            )
+            .context("while verifying first sumcheck")
+        );
 
         let val_r1 = vec![self.va, self.vb, self.vc];
         transcript.append_serializable(b"val_r1", &val_r1);
@@ -89,19 +81,20 @@ impl<E: Pairing> R1CSProof<E> {
             .map(|(x, y)| *x * y)
             .sum();
 
-        let (flag_wrap_2, sub_claim_2) = zk_sumcheck_verifier_wrapper(
+        let sub_claim_2 = zk_sumcheck_verifier_wrapper(
             &vk.vk_mask,
             &sumcheck_second_round,
             &mut transcript,
             &mut challenge_gen,
             checksum_2,
-        );
+        )
+        .context("while verifying second sumcheck")?;
         transcript.append_serializable(b"second_sumcheck_msgs", &self.second_sumcheck_msgs);
         let r_y = sub_claim_2.point;
 
         let w_proof = &self.witness_proof;
         let w_value = self.witness_eval;
-        let flag_2 = ZKMLCommit::<E, MaskPolynomial<E>>::check(
+        let flag_zkml = ZKMLCommit::<E, MaskPolynomial<E>>::check(
             &vk.vk_w,
             &w_commitment,
             &r_y,
@@ -109,13 +102,22 @@ impl<E: Pairing> R1CSProof<E> {
             &w_proof,
         );
 
-        assert!(flag_2 && flag_wrap_2);
+        ensure!(
+            flag_zkml,
+            anyhow::anyhow!("zkml openning check failed")
+                .context("while verifying second sumcheck")
+        );
 
-        // let z = mle_io_1.evaluate(&r_y[..]).unwrap() + w_value;
         let z = crate::utils::eval_sparse_mle(&mle_io_1, &r_y[..]) + w_value;
-
-        let flag_3 = sub_claim_2.expected_evaluation == self.val_M * z;
-        assert!(flag_3);
+        ensure!(
+            sub_claim_2.expected_evaluation == self.val_M * z,
+            anyhow::anyhow!(
+                "unexpected evaluation. expected: {:?}, actual: {:?}",
+                sub_claim_2.expected_evaluation,
+                self.val_M * z
+            )
+            .context("while verifying second sumcheck")
+        );
 
         transcript.append_serializable(b"witness_eval", &[self.witness_eval, self.val_M]);
         transcript.append_serializable(b"eq_tilde_rx_comm", &self.eq_tilde_rx_commitment);
@@ -124,7 +126,7 @@ impl<E: Pairing> R1CSProof<E> {
 
         let _ = DFSVerifier::verifier_fifth_round(&mut v_state, &mut transcript);
 
-        let (lookup_x, z, lambda) = LogLookupProof::<E>::verify_before_sumcheck(
+        let (lookup_x, z, lambda) = LogLookupProof::<E>::get_sumcheck_verifier_challenges(
             &self.lookup_proof.info,
             &self.lookup_proof.batch_oracle,
             2,
@@ -137,7 +139,7 @@ impl<E: Pairing> R1CSProof<E> {
                 + self.lookup_proof.batch_oracle.val[7] * v_state.self_randomness[1][1]
                 + self.lookup_proof.batch_oracle.val[8] * v_state.self_randomness[1][2]);
 
-        assert!(LogLookupProof::<E>::verify(
+        LogLookupProof::<E>::verify(
             &self.lookup_proof.info,
             &self.lookup_proof.sumcheck_pfs,
             &self.lookup_proof.batch_oracle,
@@ -150,7 +152,7 @@ impl<E: Pairing> R1CSProof<E> {
             aux_eval,
             self.val_M,
         )
-        .is_ok());
+        .context("while verifying lookup proof")?;
 
         Ok(())
     }

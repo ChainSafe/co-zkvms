@@ -63,6 +63,7 @@ pub fn two_pow_n<F: Field>(n: usize) -> F {
 }
 
 // TODO: generate via hyperplonk code
+#[tracing::instrument(skip_all, name = "generate_eq")]
 pub fn generate_eq<F: Field>(z: &[F]) -> DenseMultilinearExtension<F> {
     let mut evals = vec![F::one(); 1 << z.len()];
     evals[0] = z.iter().map(|z_i| F::one() - z_i).product();
@@ -91,6 +92,7 @@ pub fn generate_eq_point<F: Field>(z: &[F], point: usize) -> F {
     res
 }
 
+#[tracing::instrument(skip_all, name = "partial_generate_eq")]
 pub fn partial_generate_eq<F: Field>(
     z: &[F],
     start: usize,
@@ -103,14 +105,8 @@ pub fn partial_generate_eq<F: Field>(
 
     evals[0] = generate_eq_point(z, start);
 
-    println!("log_chunk_size: {:?}", log_chunk_size);
-
-    for i in 1usize..length {
-        // if i.trailing_zeros() >= z.len() as u32 {
-        //     continue;
-        // }
+    for i in 1..length {
         let prev: F = evals[i - (1 << i.trailing_zeros())];
-        // let factor = z[i.trailing_zeros() as usize] / (F::one() - z[i.trailing_zeros() as usize]);
         let factor = z[i.trailing_zeros() as usize] * z_inv[i.trailing_zeros() as usize];
         evals[i] = prev * factor;
     }

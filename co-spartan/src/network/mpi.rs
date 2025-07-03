@@ -18,6 +18,8 @@ pub struct Rep3CoordinatorMPI<'a, C: 'a + Communicator> {
     pub log_num_workers_per_party: usize,
     pub log_num_public_workers: usize,
     pub size: Count,
+    pub total_send_bytes: usize,
+    pub total_recv_bytes: usize,
 }
 
 impl<'a, C: 'a + Communicator> Rep3CoordinatorMPI<'a, C> {
@@ -34,13 +36,15 @@ impl<'a, C: 'a + Communicator> Rep3CoordinatorMPI<'a, C> {
             log_num_workers_per_party,
             log_num_public_workers,
             size,
+            total_send_bytes: 0,
+            total_recv_bytes: 0,
         }
     }
 }
 
 impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &self,
+        &mut self,
         default_response: T,
     ) -> Vec<T> {
         let mut response_bytes = vec![];
@@ -54,11 +58,11 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
             .gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
 
         let ret = deserialize_flattened_bytes!(response_bytes, default_response, T).unwrap();
-
+        self.total_recv_bytes += response_bytes.len();
         ret
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: T) {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: T) {
         let requests_chunked = vec![data; (1 << self.log_num_workers_per_party) * 3];
         let mut request_bytes = vec![];
         let request_bytes_buf =
@@ -69,9 +73,10 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
         let mut _recv_buf: Vec<u8> = vec![];
         self.root_process
             .scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
+        self.total_send_bytes += request_bytes.len();
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: Vec<T>) {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: Vec<T>) {
         let mut request_bytes = vec![];
         let request_bytes_buf = construct_partitioned_buffer_for_scatter!(data, &mut request_bytes);
 
@@ -80,6 +85,7 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
         let mut _recv_buf: Vec<u8> = vec![];
         self.root_process
             .scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
+        self.total_send_bytes += request_bytes.len();
     }
 
     fn log_num_workers_per_party(&self) -> usize {
@@ -88,6 +94,10 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
 
     fn log_num_pub_workers(&self) -> usize {
         self.log_num_public_workers
+    }
+
+    fn total_bandwidth_used(&self) -> (usize, usize) {
+        (self.total_send_bytes, self.total_recv_bytes)
     }
 }
 
@@ -98,6 +108,8 @@ pub struct Rep3WorkerMPI<'a, C: 'a + Communicator> {
     pub log_num_public_workers: usize,
     pub size: Count,
     pub rank: usize,
+    pub total_send_bytes: usize,
+    pub total_recv_bytes: usize,
 }
 
 impl<'a, C: 'a + Communicator> Rep3WorkerMPI<'a, C> {
@@ -116,17 +128,20 @@ impl<'a, C: 'a + Communicator> Rep3WorkerMPI<'a, C> {
             log_num_public_workers,
             size,
             rank,
+            total_send_bytes: 0,
+            total_recv_bytes: 0,
         }
     }
 }
 
 impl<'a, C: 'a + Communicator> NetworkWorker for Rep3WorkerMPI<'a, C> {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&self, data: T) {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) {
         let responses_bytes = serialize_to_vec(&data);
         self.root_process.gather_varcount_into(&responses_bytes);
+        self.total_send_bytes += responses_bytes.len();
     }
 
-    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&self) -> T {
+    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> T {
         let mut size = 0 as Count;
         self.root_process.scatter_into(&mut size);
 
@@ -134,6 +149,7 @@ impl<'a, C: 'a + Communicator> NetworkWorker for Rep3WorkerMPI<'a, C> {
         self.root_process.scatter_varcount_into(&mut request_bytes);
 
         let ret = T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap();
+        self.total_recv_bytes += request_bytes.len();
         ret
     }
 
@@ -147,6 +163,10 @@ impl<'a, C: 'a + Communicator> NetworkWorker for Rep3WorkerMPI<'a, C> {
 
     fn rank(&self) -> usize {
         self.rank
+    }
+
+    fn total_bandwidth_used(&self) -> (usize, usize) {
+        (self.total_send_bytes, self.total_recv_bytes)
     }
 }
 

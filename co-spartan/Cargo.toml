@@ -25,6 +25,10 @@ mpi.workspace = true
 clap.workspace = true
 mimalloc.workspace = true
 crossbeam.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-forest.workspace = true
+bytesize = "2.0.1"
 
 spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }

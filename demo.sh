@@ -1,10 +1,17 @@
 #!/bin/bash
 cd ./noir-r1cs/noir-examples/poseidon-rounds && nargo compile && nargo check && cd ../../..
-cargo run --bin noir-r1cs -- circuit_stats ./noir-r1cs/noir-examples/poseidon-rounds/target/basic.json
-cargo run --bin noir-r1cs -- prepare ./noir-r1cs/noir-examples/poseidon-rounds/target/basic.json -o ./artifacts/noir_proof_scheme.json
+mkdir -p ./artifacts/poseidon-rounds-10
 
-cargo run --bin co-spartan -- setup --r1cs-noir-instance-path ./artifacts/noir_proof_scheme.json --r1cs-input-path ./noir-examples/poseidon-rounds/Prover.toml --log-num-workers-per-party 3 --log-num-public-workers 3 --key-out ./artifacts
+cargo build --release --bin co-spartan --bin noir-r1cs
 
-# RUST_BACKTRACE=1 cargo run --bin co-spartan -- work --log-num-workers-per-party 1 --log-num-public-workers 3 --key-file ./artifacts/inst_3_0_1/test --worker-id 1 --local 0
-# RUST_BACKTRACE=1 cargo run --bin co-spartan -- work --log-num-workers-per-party 1 --log-num-public-workers 3 --key-file ./artifacts/inst_3_0_1/test --worker-id 1 --local 1
-mpirun -np 7 cargo run --bin co-spartan -- work --log-num-workers-per-party 1 --log-num-public-workers 2 --key-file ./artifacts/inst_3_1_2/test --worker-id 1 --local 0
+echo "Compiling Noir proof scheme..."
+./target/release/noir-r1cs prepare ./noir-r1cs/noir-examples/poseidon-rounds/target/basic.json -o ./artifacts/poseidon-rounds-10/noir_proof_scheme.json
+
+echo "Generating keys..."
+./target/release/co-spartan setup --r1cs-noir-scheme-path ./artifacts/poseidon-rounds-10/noir_proof_scheme.json --artifacts-dir ./artifacts/poseidon-rounds-10 \
+    --log-num-workers-per-party 1 
+
+echo "Running coordinator and workers..."
+RUST_BACKTRACE=1 mpirun -np 7 ./target/release/co-spartan  work  --artifacts-dir ./artifacts/poseidon-rounds-10 \
+    --r1cs-noir-scheme-path ./artifacts/poseidon-rounds-10/noir_proof_scheme.json --r1cs-input-path ./noir-r1cs/noir-examples/poseidon-rounds/Prover.toml \
+    --log-num-workers-per-party 1
