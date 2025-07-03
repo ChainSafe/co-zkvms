@@ -1,10 +1,11 @@
+use std::ops::{Add, AddAssign, Index, Mul, Sub};
+
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, UniformRand, Zero};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{Rng, RngCore};
-use std::ops::{Add, AddAssign, Mul, Sub, Index};
 
 use crate::mpc::{additive::AdditiveShare, SSOpen, SSRandom};
 

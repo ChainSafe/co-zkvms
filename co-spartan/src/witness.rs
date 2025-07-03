@@ -1,12 +1,13 @@
-use crate::{
-    mpc::rep3::{generate_poly_shares_rss, RssPoly},
-    utils::{pad_to_power_of_two, split_vec},
-};
 use ark_ec::pairing::Pairing;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
 use spartan::R1CS;
+
+use crate::{
+    mpc::rep3::{generate_poly_shares_rss, RssPoly},
+    utils::{pad_to_power_of_two, split_vec},
+};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct WitnessShare<E: Pairing> {
@@ -76,7 +77,13 @@ pub fn split_witness<E: Pairing>(
             let zb = RssPoly::<E>::new(j, zb_shares[j].clone(), zb_shares[next].clone());
             let zc = RssPoly::<E>::new(j, zc_shares[j].clone(), zc_shares[next].clone());
 
-            wit_vec.push(WitnessShare { worker_id, z, za, zb, zc });
+            wit_vec.push(WitnessShare {
+                worker_id,
+                z,
+                za,
+                zb,
+                zc,
+            });
         }
 
         witness_shares.push(wit_vec.try_into().unwrap());

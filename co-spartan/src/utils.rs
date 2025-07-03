@@ -3,7 +3,6 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::DenseMultilinearExtension;
 use ark_poly_commit::multilinear_pc::data_structures::CommitterKey;
 use ark_std::cfg_iter_mut;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

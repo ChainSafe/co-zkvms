@@ -1,11 +1,12 @@
 mod setup;
 mod work;
 
+use std::path::PathBuf;
+
 use ark_bn254::Bn254;
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
 use setup::setup;
-use std::path::PathBuf;
 use work::work;
 
 #[global_allocator]

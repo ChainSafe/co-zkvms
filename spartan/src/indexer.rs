@@ -22,9 +22,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 
 use super::zk::{ZKMLCommit, ZKMLCommitterKey, ZKMLVerifierKey, SRS};
-use crate::math::SparseMatEntry;
 use crate::{
-    math::Math,
+    math::{Math, SparseMatEntry},
     utils::{hash_usize, normalized_multiplicities},
 };
 

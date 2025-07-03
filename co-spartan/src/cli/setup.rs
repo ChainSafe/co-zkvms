@@ -1,7 +1,6 @@
 #![allow(warnings)]
 use core::num;
-use std::fmt::format;
-use std::{collections::HashMap, mem, rc::Rc};
+use std::{collections::HashMap, fmt::format, mem, rc::Rc};
 // use mpi_snark::worker::WorkerState;
 use std::{
     fs::File,
@@ -43,8 +42,8 @@ use mpi::{
 use noir_r1cs::{FieldElement, NoirProofScheme};
 use rand::{rngs::StdRng, seq::SliceRandom, RngCore, SeedableRng};
 use rayon::prelude::*;
-use spartan::math::{SparseMatEntry, SparseMatPolynomial};
 use spartan::{
+    math::{SparseMatEntry, SparseMatPolynomial},
     transcript::{get_scalar_challenge, get_vector_challenge},
     IndexProverKey, IndexVerifierKey, Indexer, SRS,
 };

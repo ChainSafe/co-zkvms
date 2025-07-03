@@ -70,11 +70,10 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
         self.root_process
             .scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
     }
-        
+
     fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&self, data: Vec<T>) {
         let mut request_bytes = vec![];
-        let request_bytes_buf =
-            construct_partitioned_buffer_for_scatter!(data, &mut request_bytes);
+        let request_bytes_buf = construct_partitioned_buffer_for_scatter!(data, &mut request_bytes);
 
         let counts = request_bytes_buf.counts().to_vec();
         self.root_process.scatter_into_root(&counts, &mut 0i32);

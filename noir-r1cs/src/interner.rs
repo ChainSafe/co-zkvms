@@ -1,11 +1,19 @@
 use ark_ff::Field;
-use serde::{Deserialize, Serialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{utils::serde_ark, FieldElement};
 
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct Interner<F: Field> {
     values: Vec<F>,
 }

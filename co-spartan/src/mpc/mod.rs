@@ -30,4 +30,3 @@ impl<R: RngCore + FeedableRNG> SSRandom<R> {
         }
     }
 }
-

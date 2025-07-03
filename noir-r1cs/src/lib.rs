@@ -12,12 +12,6 @@ mod sparse_matrix;
 mod utils;
 // mod whir_r1cs;
 
-use crate::{
-    interner::InternedFieldElement,
-    noir_witness::NoirWitnessGenerator,
-    // utils::serde_ark,
-    // whir_r1cs::WhirProof,
-};
 pub use {
     crate::{
         file::{read, write, FileFormat},
@@ -32,9 +26,16 @@ pub use {
     // ark_bn254::Fr as FieldElement,
     ark_bn254::Fr as FieldElement,
     interner::Interner,
+    sparse_matrix::HydratedSparseMatrix,
     // whir_r1cs::create_io_pattern,
     sparse_matrix::SparseMatrix,
-    sparse_matrix::HydratedSparseMatrix,
+};
+
+use crate::{
+    interner::InternedFieldElement,
+    noir_witness::NoirWitnessGenerator,
+    // utils::serde_ark,
+    // whir_r1cs::WhirProof,
 };
 
 // #[derive(Clone, Serialize, Deserialize)]

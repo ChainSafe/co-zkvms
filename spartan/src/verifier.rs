@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
-use std::fmt;
+use std::{fmt, marker::PhantomData};
+
 use ark_ec::pairing::Pairing;
 use ark_ff::{UniformRand, Zero};
 use ark_linear_sumcheck::ml_sumcheck::protocol::PolynomialInfo;
@@ -21,9 +21,9 @@ use super::{
     R1CSProof,
 };
 use crate::{
+    math::MaskPolynomial,
     transcript::{Transcript, TranscriptMerlin},
     utils::{aggregate_comm, aggregate_eval, eq_eval, generate_dumb_sponge},
-    math::MaskPolynomial,
 };
 
 /// Error identifying a failure in the proof verification.
@@ -38,7 +38,6 @@ impl fmt::Display for VerificationError {
 
 /// Verification result.
 pub type VerificationResult = std::result::Result<(), VerificationError>;
-
 
 impl<E: Pairing> R1CSProof<E> {
     /// Verification function for SNARK proof.

@@ -1,8 +1,7 @@
 use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
-use ark_ff::Field;
-use ark_ff::Zero;
+use ark_ff::{Field, Zero};
 use ark_linear_sumcheck::{
     ml_sumcheck::{
         protocol::{
@@ -414,8 +413,9 @@ impl<E: Pairing> RssSumcheck<E> {
 }
 
 mod test {
-    use super::*;
     use ark_linear_sumcheck::Error;
+
+    use super::*;
 
     #[test]
     pub(crate) fn test() {

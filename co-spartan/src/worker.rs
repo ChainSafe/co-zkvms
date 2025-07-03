@@ -19,6 +19,12 @@ use ark_std::{cfg_iter, marker::PhantomData, rc::Rc};
 use rand::RngCore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use spartan::{
+    logup::LogLookupProof,
+    math::Math,
+    utils::{boost_degree, dense_scalar_prod, distributed_open, generate_eq, partial_generate_eq},
+    IndexProverKey,
+};
 
 use crate::{
     mpc::{rep3::RssPoly, sumcheck::rep3::RssSumcheck, SSRandom},
@@ -29,13 +35,6 @@ use crate::{
     },
     utils::aggregate_poly,
     witness::WitnessShare,
-};
-
-use spartan::{
-    logup::LogLookupProof,
-    math::Math,
-    utils::{boost_degree, dense_scalar_prod, distributed_open, generate_eq, partial_generate_eq},
-    IndexProverKey,
 };
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -153,8 +152,14 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
 
         let eq_func = partial_generate_eq(&v_msg, self.start_eq, self.log_chunk_size);
 
-        let final_point =
-            rep3_first_sumcheck_worker(&witness_share.za, &witness_share.zb, &witness_share.zc, &eq_func, random_rng, network);
+        let final_point = rep3_first_sumcheck_worker(
+            &witness_share.za,
+            &witness_share.zb,
+            &witness_share.zc,
+            &eq_func,
+            random_rng,
+            network,
+        );
 
         let randomness = &final_point[0..num_variables].to_vec();
 
@@ -212,7 +217,13 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             network,
         );
 
-        rep3_eval_poly_worker(vec![&witness_share.z], &final_point, 1, pk.num_variables, network);
+        rep3_eval_poly_worker(
+            vec![&witness_share.z],
+            &final_point,
+            1,
+            pk.num_variables,
+            network,
+        );
         state.r_y = final_point.to_vec();
         state.eq_ry = Some(generate_eq(&final_point));
         let eq_ry = state.eq_ry.as_ref().unwrap();

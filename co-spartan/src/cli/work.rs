@@ -10,11 +10,6 @@ use std::{
 };
 
 use ark_bn254::{Bn254, Config, Fr};
-use co_spartan::setup::CoordinatorKey;
-use noir_r1cs::NoirProofScheme;
-use rand::RngCore;
-// use ark_ec::bn::Bls12;
-use crate::current_num_threads;
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInt, Field, One, PrimeField, UniformRand, Zero};
 use ark_linear_sumcheck::{
@@ -40,6 +35,7 @@ use co_spartan::{
         mpi::{Rep3CoordinatorMPI, Rep3WorkerMPI},
         NetworkCoordinator, NetworkWorker,
     },
+    setup::CoordinatorKey,
 };
 use crossbeam::thread;
 use itertools::{merge, Itertools};
@@ -50,8 +46,13 @@ use mpi::{
     traits::*,
     Count,
 };
+use noir_r1cs::NoirProofScheme;
+use rand::RngCore;
 use rayon::prelude::*;
 use spartan::{transcript::TranscriptMerlin, IndexProverKey, IndexVerifierKey, Indexer, SRS};
+
+// use ark_ec::bn::Bls12;
+use crate::current_num_threads;
 
 const ROOT_RANK: i32 = 0;
 

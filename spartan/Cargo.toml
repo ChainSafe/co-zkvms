@@ -12,7 +12,6 @@ ark-linear-sumcheck.workspace = true
 ark-poly-commit.workspace = true
 ark-std.workspace = true
 ark-ff.workspace = true
-ark-bls12-381.workspace = true
 ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-poly.workspace = true
@@ -22,7 +21,6 @@ merlin.workspace = true
 
 # Standard dependencies
 serde.workspace = true
-serde_json.workspace = true
 rand.workspace = true
 itertools.workspace = true
 rayon = { version = "1.8.0", optional = true }

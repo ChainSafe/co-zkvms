@@ -3,12 +3,12 @@ use ark_ff::Zero;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
+use spartan::{math::Math, IndexProverKey, IndexVerifierKey, Indexer, R1CS, SRS};
 
 use crate::{
     utils::{split_ck, split_poly, split_vec},
     Rep3ProverKey,
 };
-use spartan::{math::Math, IndexProverKey, IndexVerifierKey, Indexer, R1CS, SRS};
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CoordinatorKey<E: Pairing> {

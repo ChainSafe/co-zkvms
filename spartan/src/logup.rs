@@ -1,11 +1,5 @@
 use std::rc::Rc;
 
-use crate::{
-    transcript::Transcript,
-    utils::{boost_degree, eq_eval, map_poly, two_pow_n},
-    verifier::VerificationError,
-    verifier::{batch_verify_poly, BatchOracleEval},
-};
 use ark_ec::pairing::Pairing;
 use ark_ff::{AdditiveGroup, Field, One, Zero};
 use ark_linear_sumcheck::ml_sumcheck::{
@@ -20,6 +14,12 @@ use ark_poly_commit::multilinear_pc::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
 use rayon::prelude::*;
+
+use crate::{
+    transcript::Transcript,
+    utils::{boost_degree, eq_eval, map_poly, two_pow_n},
+    verifier::{batch_verify_poly, BatchOracleEval, VerificationError},
+};
 
 type SumcheckProof<E> = ark_linear_sumcheck::ml_sumcheck::Proof<<E as Pairing>::ScalarField>;
 

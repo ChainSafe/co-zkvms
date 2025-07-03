@@ -1,21 +1,19 @@
 use std::cmp::max;
 
-use crate::math::{SparseMatEntry, SparseMatPolynomial};
 use ark_ff::{Field, PrimeField};
 use ark_poly::{
     multivariate::{SparsePolynomial, SparseTerm},
     DenseMultilinearExtension,
 };
-use ark_serialize::SerializationError;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::cfg_iter;
-use noir_r1cs::{HydratedSparseMatrix, Interner, SparseMatrix};
+use noir_r1cs::{serde_ark, HydratedSparseMatrix, Interner, SparseMatrix};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
-
-use noir_r1cs::serde_ark;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::math::{SparseMatEntry, SparseMatPolynomial};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct R1CS<F: PrimeField> {

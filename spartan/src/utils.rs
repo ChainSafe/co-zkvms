@@ -20,7 +20,7 @@ use ark_std::{cfg_into_iter, cfg_iter, cfg_iter_mut, test_rng};
 use rand::{Rng, RngCore};
 use rayon::prelude::*;
 
-use crate::{math::Math};
+use crate::math::Math;
 
 pub fn map_poly<F: Field, MapFn>(
     poly: &DenseMultilinearExtension<F>,

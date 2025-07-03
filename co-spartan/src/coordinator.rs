@@ -28,15 +28,6 @@ use ark_std::{
     time::{Duration, Instant},
 };
 use rand::{Rng, RngCore};
-
-use crate::{
-    mpc::sumcheck::rep3::{ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg},
-    network::NetworkCoordinator,
-    sumcheck::{
-        default_sumcheck_poly_list, merge_list_of_distributed_poly, poly_list_to_prover_state,
-    },
-    worker::PartialProof,
-};
 use spartan::{
     logup::LogLookupProof,
     math::{MaskPolynomial, Math},
@@ -45,6 +36,15 @@ use spartan::{
     verifier::{BatchOracleEval, DFSVerifier, VerifierState},
     zk::{generate_mask_polynomial, ZKMLCommit, ZKMLCommitterKey, ZKMLProof, ZKSumcheckProof},
     IndexProverKey, IndexVerifierKey, R1CSProof,
+};
+
+use crate::{
+    mpc::sumcheck::rep3::{ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg},
+    network::NetworkCoordinator,
+    sumcheck::{
+        default_sumcheck_poly_list, merge_list_of_distributed_poly, poly_list_to_prover_state,
+    },
+    worker::PartialProof,
 };
 
 pub struct SpartanProverCoordinator<E: Pairing, N: NetworkCoordinator> {

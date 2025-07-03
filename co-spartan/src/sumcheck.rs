@@ -6,7 +6,6 @@ use ark_linear_sumcheck::ml_sumcheck::{
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rc::Rc;
-
 use spartan::utils::{partial_generate_eq, two_pow_n};
 
 /// Prover State

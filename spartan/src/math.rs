@@ -39,7 +39,6 @@ impl Math for usize {
     }
 }
 
-
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct SparseMatEntry<F: Field> {
     pub(crate) row: usize,

@@ -4,9 +4,10 @@ use std::{
 };
 
 use ark_ff::{Field, PrimeField};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::Zero;
 use serde::{Deserialize, Serialize};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
 use crate::{InternedFieldElement, Interner};
 
 /// A sparse matrix with interned field elements
@@ -46,7 +47,10 @@ impl SparseMatrix {
         }
     }
 
-    pub fn hydrate<'a, F: Field>(&'a self, interner: &'a Interner<F>) -> HydratedSparseMatrix<'a, F> {
+    pub fn hydrate<'a, F: Field>(
+        &'a self,
+        interner: &'a Interner<F>,
+    ) -> HydratedSparseMatrix<'a, F> {
         HydratedSparseMatrix {
             matrix: self,
             interner,

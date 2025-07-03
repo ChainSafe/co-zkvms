@@ -7,7 +7,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use crate::{FieldElement, HydratedSparseMatrix, Interner, SparseMatrix, utils::serde_ark};
+use crate::{utils::serde_ark, FieldElement, HydratedSparseMatrix, Interner, SparseMatrix};
 
 /// Represents a R1CS constraint system.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
