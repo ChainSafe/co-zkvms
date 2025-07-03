@@ -185,7 +185,6 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         ByteSize(send_bytes as u64)
     );
 
-    let time = Instant::now();
 
     let mut transcript = TranscriptMerlin::new(b"dfs");
 
@@ -197,16 +196,12 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         &mut network,
     );
 
-    {
-        let time = Instant::now();
-        assert!(proof.verify(&pk.ivk, &Vec::new()).is_ok());
-        let final_time = time.elapsed();
-        tracing::info!("verification time: {:?}", final_time);
+    assert!(proof.verify(&pk.ivk, &Vec::new()).is_ok());
 
-        let bytes = proof.serialized_size(ark_serialize::Compress::Yes);
-        tracing::info!("proof size: {:?}", bytes);
-    }
-    
+    let bytes = proof.serialized_size(ark_serialize::Compress::Yes);
+    tracing::info!("coordinator time: {:?}", coordinator_time);
+    tracing::info!("proof size: {}", ByteSize(bytes as u64));
+
     let (send_bytes, recv_bytes) = network.total_bandwidth_used();
     tracing::info!(
         "bandwidth used: send {}, recv {}",
