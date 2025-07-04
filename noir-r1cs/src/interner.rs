@@ -2,8 +2,6 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{utils::serde_ark, FieldElement};
-
 #[derive(
     Debug,
     Clone,

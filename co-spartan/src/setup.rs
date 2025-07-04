@@ -48,8 +48,8 @@ pub fn setup_rep3<E: Pairing>(
                 num_parties: log_num_public_workers,
                 ipk: ipk_vec[i].clone(),
                 pub_ipk: pub_ipk_vec[cnt].clone(),
-                row: pk.row.clone(),
-                col: pk.col.clone(),
+                row: pk.rows.clone(),
+                col: pk.cols.clone(),
                 val_a: pk.val_a.clone(),
                 val_b: pk.val_b.clone(),
                 val_c: pk.val_c.clone(),
@@ -86,15 +86,15 @@ pub fn split_ipk<E: Pairing>(
     let chunk_size = 1 << (pk.num_variables_val - log_parties);
 
     let mut res = Vec::new();
-    let row_vec = split_vec(&pk.row, log_parties);
-    let col_vec = split_vec(&pk.col, log_parties);
+    let row_vec = split_vec(&pk.rows, log_parties);
+    let col_vec = split_vec(&pk.cols, log_parties);
     let val_a_vec = split_poly(&pk.val_a, log_parties);
     let val_b_vec = split_poly(&pk.val_b, log_parties);
     let val_c_vec = split_poly(&pk.val_c, log_parties);
     let freq_r_vec = split_poly(&pk.freq_r, log_parties);
     let freq_c_vec = split_poly(&pk.freq_c, log_parties);
 
-    let n_cols = pk.num_variables_val.pow2();
+    let n_cols = pk.num_variables_val.exp2();
     let mut bucket_cols_index: Vec<Vec<usize>> = vec![Vec::new(); num_parties];
     let mut bucket_rows_index: Vec<Vec<usize>> = vec![Vec::new(); num_parties];
     let mut bucket_val_a_index: Vec<Vec<E::ScalarField>> = vec![Vec::new(); num_parties];
@@ -102,10 +102,9 @@ pub fn split_ipk<E: Pairing>(
     let mut bucket_val_c_index: Vec<Vec<E::ScalarField>> = vec![Vec::new(); num_parties];
 
     for i in 0..pk.real_len_val {
-        // scan once
-        let dest = pk.col[i] * num_parties / n_cols; // owner-computes-column rule
-        bucket_cols_index[dest].push(pk.col[i]);
-        bucket_rows_index[dest].push(pk.row[i]);
+        let dest = pk.cols[i] * num_parties / n_cols; // owner-computes-column rule
+        bucket_cols_index[dest].push(pk.cols[i]);
+        bucket_rows_index[dest].push(pk.rows[i]);
         bucket_val_a_index[dest].push(pk.val_a[i]);
         bucket_val_b_index[dest].push(pk.val_b[i]);
         bucket_val_c_index[dest].push(pk.val_c[i]);
@@ -117,8 +116,8 @@ pub fn split_ipk<E: Pairing>(
     let default_poly =
         DenseMultilinearExtension::from_evaluations_vec(0, vec![E::ScalarField::zero()]);
     let root_ipk = IndexProverKey {
-        row: Vec::new(),
-        col: Vec::new(),
+        rows: Vec::new(),
+        cols: pk.cols.clone(),
         real_len_val: pk.real_len_val,
         padded_num_var: pk.padded_num_var,
         val_a: default_poly.clone(),
@@ -140,8 +139,8 @@ pub fn split_ipk<E: Pairing>(
 
     for i in 0..1 << log_parties {
         let ipk = IndexProverKey {
-            row: row_vec[i].clone(),
-            col: col_vec[i].clone(),
+            rows: row_vec[i].clone(),
+            cols: col_vec[i].clone(),
             real_len_val: real_chunk_size(i, chunk_size, pk.real_len_val),
             padded_num_var: pk.padded_num_var - log_parties,
             val_a: val_a_vec[i].clone(),

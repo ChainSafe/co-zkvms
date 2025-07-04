@@ -154,14 +154,14 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             transcript,
         );
 
-        let verifier_fifth_message =
-            DFSVerifier::verifier_fifth_round(&mut verifier_state, transcript);
+        let verifier_fourth_message =
+            DFSVerifier::verifier_fourth_round(&mut verifier_state, transcript);
 
-        let lookup_proof = Self::fifth_round(
+        let lookup_proof = Self::fourth_round(
             pub_index,
             vk,
             &mut state,
-            verifier_fifth_message.verifier_message[0],
+            verifier_fourth_message.verifier_message[0],
             network,
             transcript,
         );
@@ -177,7 +177,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
                 second_sumcheck_msgs: state.second_sumcheck_msgs.unwrap(),
                 witness_eval: state.val_w,
                 witness_proof: state.zk_open_pf.unwrap(),
-                val_M: state.val_m,
+                val_m: state.val_m,
                 eq_tilde_rx_commitment: state.eq_tilde_rx_comm.unwrap(),
                 eq_tilde_ry_commitment: state.eq_tilde_ry_comm.unwrap(),
                 lookup_proof: lookup_proof,
@@ -288,7 +288,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
                 log_num_workers_per_party,
                 eq.clone(),
             );
-            let A_B_hat = vec![
+            let a_b_hat = vec![
                 Rc::new(DenseMultilinearExtension::from_evaluations_vec(
                     log_num_workers_per_party,
                     za.clone(),
@@ -299,7 +299,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
                 )),
                 Rc::new(eq_func.clone()),
             ];
-            let C_hat = vec![
+            let c_hat = vec![
                 Rc::new(DenseMultilinearExtension::from_evaluations_vec(
                     log_num_workers_per_party,
                     zc.clone(),
@@ -307,8 +307,8 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
                 Rc::new(eq_func.clone()),
             ];
 
-            merge_poly.add_product(A_B_hat, E::ScalarField::one());
-            merge_poly.add_product(C_hat, E::ScalarField::one().neg());
+            merge_poly.add_product(a_b_hat, E::ScalarField::one());
+            merge_poly.add_product(c_hat, E::ScalarField::one().neg());
 
             merge_poly
         };
@@ -368,15 +368,15 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
                                       log_num_workers_per_party: usize|
          -> ListOfProductsOfPolynomials<E::ScalarField> {
             let mut merge_poly = ListOfProductsOfPolynomials::new(log_num_workers_per_party);
-            let mut A_rx = Vec::new();
-            let mut B_rx = Vec::new();
-            let mut C_rx = Vec::new();
+            let mut a_rx = Vec::new();
+            let mut b_rx = Vec::new();
+            let mut c_rx = Vec::new();
             let mut z = Vec::new();
 
             for i in 0..1 << log_num_workers_per_party {
-                A_rx.push(responses_chunked[3 * i].0);
-                B_rx.push(responses_chunked[3 * i].1);
-                C_rx.push(responses_chunked[3 * i].2);
+                a_rx.push(responses_chunked[3 * i].0);
+                b_rx.push(responses_chunked[3 * i].1);
+                c_rx.push(responses_chunked[3 * i].2);
                 z.push(
                     responses_chunked[3 * i].3
                         + responses_chunked[3 * i + 1].3
@@ -385,31 +385,31 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             }
 
             let z = DenseMultilinearExtension::from_evaluations_vec(log_num_workers_per_party, z);
-            let A_hat = vec![
+            let a_hat = vec![
                 Rc::new(DenseMultilinearExtension {
-                    evaluations: (A_rx),
+                    evaluations: (a_rx),
                     num_vars: (log_num_workers_per_party),
                 }),
                 Rc::new(z.clone()),
             ];
-            let B_hat = vec![
+            let b_hat = vec![
                 Rc::new(DenseMultilinearExtension {
-                    evaluations: (B_rx),
+                    evaluations: (b_rx),
                     num_vars: (log_num_workers_per_party),
                 }),
                 Rc::new(z.clone()),
             ];
-            let C_hat = vec![
+            let c_hat = vec![
                 Rc::new(DenseMultilinearExtension {
-                    evaluations: (C_rx),
+                    evaluations: (c_rx),
                     num_vars: (log_num_workers_per_party),
                 }),
                 Rc::new(z.clone()),
             ];
 
-            merge_poly.add_product(A_hat, v_msg[0]);
-            merge_poly.add_product(B_hat, v_msg[1]);
-            merge_poly.add_product(C_hat, v_msg[2]);
+            merge_poly.add_product(a_hat, v_msg[0]);
+            merge_poly.add_product(b_hat, v_msg[1]);
+            merge_poly.add_product(c_hat, v_msg[2]);
 
             merge_poly
         };
@@ -475,8 +475,8 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::fifth_round")]
-    fn fifth_round(
+    #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::fourth_round")]
+    fn fourth_round(
         pub_index: &IndexProverKey<E>,
         vk: &IndexVerifierKey<E>,
         state: &mut ProverState<E>,
@@ -805,7 +805,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: NetworkCoordinator>(
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
         assert!(transcript.feed(&prover_message).is_ok()); // feed same as in ark_linear_sumcheck
         prover_msgs.push(prover_message.clone());
-        verifier_msg.insert(IPForMLSumcheck::sample_round(transcript));
+        verifier_msg = Some(IPForMLSumcheck::sample_round(transcript));
         final_point.push(verifier_msg.clone().unwrap().randomness);
     }
 

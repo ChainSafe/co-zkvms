@@ -110,21 +110,21 @@ impl<E: Pairing> R1CSProof<E> {
 
         let z = crate::utils::eval_sparse_mle(&mle_io_1, &r_y[..]) + w_value;
         ensure!(
-            sub_claim_2.expected_evaluation == self.val_M * z,
+            sub_claim_2.expected_evaluation == self.val_m * z,
             anyhow::anyhow!(
                 "unexpected evaluation. expected: {:?}, actual: {:?}",
                 sub_claim_2.expected_evaluation,
-                self.val_M * z
+                self.val_m * z
             )
             .context("while verifying second sumcheck")
         );
 
-        transcript.append_serializable(b"witness_eval", &[self.witness_eval, self.val_M]);
+        transcript.append_serializable(b"witness_eval", &[self.witness_eval, self.val_m]);
         transcript.append_serializable(b"eq_tilde_rx_comm", &self.eq_tilde_rx_commitment);
         transcript.append_serializable(b"eq_tilde_ry_comm", &self.eq_tilde_ry_commitment);
         transcript.append_serializable(b"w_proof", &w_proof.clone());
 
-        let _ = DFSVerifier::verifier_fifth_round(&mut v_state, &mut transcript);
+        let _ = DFSVerifier::verifier_fourth_round(&mut v_state, &mut transcript);
 
         let (lookup_x, z, lambda) = LogLookupProof::<E>::get_sumcheck_verifier_challenges(
             &self.lookup_proof.info,
@@ -150,7 +150,7 @@ impl<E: Pairing> R1CSProof<E> {
             &vk.vk_index,
             &mut transcript,
             aux_eval,
-            self.val_M,
+            self.val_m,
         )
         .context("while verifying lookup proof")?;
 
@@ -212,7 +212,7 @@ impl<E: Pairing> DFSVerifier<E> {
     }
     // verifier do nothing in round 3
 
-    pub fn verifier_fifth_round<R: RngCore>(
+    pub fn verifier_fourth_round<R: RngCore>(
         state: &mut VerifierState<E>,
         rng: &mut R,
     ) -> VerifierMessage<E> {

@@ -1,44 +1,29 @@
 use std::{
     collections::LinkedList,
-    io::empty,
     marker::PhantomData,
-    ops::{Div, Index, Mul},
+    ops::{Index, Mul},
 };
 
 use anyhow::Context;
-use ark_crypto_primitives::sponge::{
-    poseidon::{PoseidonConfig, PoseidonSponge},
-    CryptographicSponge,
-};
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ec::{
-    bls12::Bls12, pairing::Pairing, scalar_mul::BatchMulPreprocessing, AffineRepr, CurveGroup,
-    VariableBaseMSM,
+    pairing::Pairing, scalar_mul::BatchMulPreprocessing, AffineRepr, CurveGroup, VariableBaseMSM,
 };
-use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
-// use ark_poly_commit::marlin_pc::MarlinKZG10;
-use ark_linear_sumcheck::ml_sumcheck::MLSumcheck;
-use ark_linear_sumcheck::{
-    ml_sumcheck::protocol::{
-        prover::{ProverMsg, ProverState, ZKProverState},
-        verifier::SubClaim,
-        ListOfProductsOfPolynomials, PolynomialInfo,
-    },
-    rng::{Blake2s512Rng, FeedableRNG},
+use ark_ff::{Field, One, PrimeField, UniformRand};
+use ark_linear_sumcheck::ml_sumcheck::{
+    protocol::{verifier::SubClaim, PolynomialInfo},
+    MLSumcheck,
 };
 use ark_poly::{
-    evaluations,
     multivariate::{SparsePolynomial, SparseTerm, Term},
-    polynomial,
-    univariate::DensePolynomial,
-    DenseMVPolynomial, DenseMultilinearExtension, MultilinearExtension, Polynomial,
+    DenseMVPolynomial, DenseMultilinearExtension, MultilinearExtension,
 };
 use ark_poly_commit::{
-    marlin_pc::{Commitment as MaskCommitment, CommitterKey},
+    marlin_pc::Commitment as MaskCommitment,
     marlin_pst13_pc::{
         CommitterKey as MaskCommitterKey, MarlinPST13, Proof as MaskProof, Randomness,
         UniversalParams as MaskParam, VerifierKey as MaskVerifierKey,
     },
-    multilinear_pc,
     multilinear_pc::{
         data_structures::{
             Commitment as MLCommitment, CommitterKey as MLCommitterKey, Proof as MLProof,
@@ -46,11 +31,10 @@ use ark_poly_commit::{
         },
         MultilinearPC,
     },
-    DenseUVPolynomial, Error, LabeledCommitment, LabeledPolynomial, PolynomialCommitment,
+    Error, LabeledCommitment, LabeledPolynomial, PolynomialCommitment,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_into_iter, end_timer, start_timer, test_rng};
-use blake2::digest::generic_array::typenum::Sum;
+use ark_std::{cfg_into_iter, end_timer, start_timer};
 use rand::{Rng, RngCore};
 use rayon::iter::*;
 
@@ -243,7 +227,6 @@ where
             })
             .unzip();
 
-        let scalar_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
         let g_time = start_timer!(|| "Generating powers of G");
         let g_table = BatchMulPreprocessing::new(g, max_degree + 1);
         let mut powers_of_g = g_table.batch_mul(&powers_of_beta);
@@ -501,7 +484,6 @@ where
         let mut powers_of_g = Vec::new();
         let mut powers_of_h = Vec::new();
         let t: Vec<_> = (0..num_vars).map(|_| E::ScalarField::rand(rng)).collect();
-        let scalar_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
 
         let mut eq: LinkedList<DenseMultilinearExtension<E::ScalarField>> =
             LinkedList::from_iter(eq_extension(&t).into_iter());
@@ -588,7 +570,7 @@ where
             .iter()
             .filter(|(k, _)| k.is_constant() || k.vars()[0] >= to_reduce)
             .map(|(k, v)| {
-                if (k.is_constant()) {
+                if k.is_constant() {
                     (k.clone(), v.clone())
                 } else {
                     (
@@ -625,13 +607,12 @@ where
         hiding_bound: usize,
         mask_num_var: Option<usize>,
         rng: &mut impl Rng,
-    ) -> (ZKMLCommitment<E, SparsePolynomial<E::ScalarField, SparseTerm>>) {
-        let mut p_hat = SparsePolynomial::<E::ScalarField, SparseTerm>::zero();
-        if let Some(mask_num_vars) = mask_num_var {
-            p_hat = generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false);
+    ) -> ZKMLCommitment<E, SparsePolynomial<E::ScalarField, SparseTerm>> {
+        let p_hat = if let Some(mask_num_vars) = mask_num_var {
+            generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false)
         } else {
-            p_hat = generate_mask_polynomial(rng, polynomial.num_vars(), hiding_bound, false);
-        }
+            generate_mask_polynomial(rng, polynomial.num_vars(), hiding_bound, false)
+        };
         let labeled_p_hat =
             LabeledPolynomial::new("p_hat".to_owned(), p_hat, Some(hiding_bound), None);
         //let labeled_p_hat_iter = std::iter::once(&labeled_p_hat);
@@ -791,7 +772,8 @@ pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
         &proof.sumcheck_proof,
         challenge,
         proof.g_value,
-    ).context("while verifying zk sumcheck")?;
+    )
+    .context("while verifying zk sumcheck")?;
 
     let label_com = vec![LabeledCommitment::new(
         String::from("mask_poly_for_sumcheck"),
@@ -806,7 +788,8 @@ pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
         &proof.g_proof,
         opening_challenge,
         None,
-    ).context("while verifying PCS openning")?;
+    )
+    .context("while verifying PCS openning")?;
 
     if !flag {
         return Err(anyhow::anyhow!("PCS openning failed"));

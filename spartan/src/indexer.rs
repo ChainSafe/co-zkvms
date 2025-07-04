@@ -1,19 +1,17 @@
 use std::{cmp::max, collections::HashMap, marker::PhantomData};
 
-use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, Zero};
+use ark_ff::Zero;
 use ark_poly::{
     multivariate::{SparsePolynomial, SparseTerm},
     DenseMultilinearExtension,
 };
 use ark_poly_commit::{
     marlin_pst13_pc::{
-        CommitterKey as MaskCommitterKey, MarlinPST13, UniversalParams as MaskParam,
-        VerifierKey as MaskVerifierKey,
+        CommitterKey as MaskCommitterKey, MarlinPST13, VerifierKey as MaskVerifierKey,
     },
     multilinear_pc::{
-        data_structures::{Commitment, CommitterKey, UniversalParams, VerifierKey},
+        data_structures::{Commitment, CommitterKey, VerifierKey},
         MultilinearPC,
     },
     PolynomialCommitment,
@@ -24,13 +22,13 @@ use itertools::Itertools;
 use super::zk::{ZKMLCommit, ZKMLCommitterKey, ZKMLVerifierKey, SRS};
 use crate::{
     math::{Math, SparseMatEntry},
-    utils::{hash_usize, normalized_multiplicities},
+    utils::{normalized_multiplicities, pad_with_first_term},
 };
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct IndexProverKey<E: Pairing> {
-    pub row: Vec<usize>,
-    pub col: Vec<usize>,
+    pub rows: Vec<usize>,
+    pub cols: Vec<usize>,
     pub rows_indexed: Vec<usize>,
     pub cols_indexed: Vec<usize>,
     pub val_a_indexed: DenseMultilinearExtension<E::ScalarField>,
@@ -92,13 +90,13 @@ impl<E: Pairing> Indexer<E> {
                 entries
             };
 
-        let num_cons = 1 << log_instance_size;
-        let num_vars = log_instance_size;
-
         // Convert the three matrices
         let a_entries = convert_matrix(&r1cs.a);
         let b_entries = convert_matrix(&r1cs.b);
         let c_entries = convert_matrix(&r1cs.c);
+
+        let num_cons = 1 << log_instance_size;
+        let num_vars = log_instance_size;
 
         let padded_num_var = max(num_cons, num_vars).log_2();
         let param = &srs.poly_srs;
@@ -111,27 +109,23 @@ impl<E: Pairing> Indexer<E> {
         let mut v_c: Vec<E::ScalarField> = Vec::new();
         let mut count: usize = 0;
         let mut evaluation_point: HashMap<(usize, usize), usize> = HashMap::new();
-        let mat_A = &a_entries;
-        let mat_B = &b_entries;
-        let mat_C = &c_entries;
 
         // seems like this the only place where second sumcheck can be corrupted
         // eq_rx is generated from first sumcheck challange
         // checksum2 is val_a(r2) * r2 + val_b(r2) * r2 + val_c(r2) * r2 ?check?
-        let mut iter = 0;
-        let max_len = max(mat_A.len(), max(mat_B.len(), mat_C.len()));
-        mat_A
+        let max_len = max(a_entries.len(), max(b_entries.len(), c_entries.len()));
+        a_entries
             .iter()
             .map(|e| Some(e.clone()))
             .pad_using(max_len, |_| None)
             .zip(
-                mat_B
+                b_entries
                     .iter()
                     .map(|e| Some(e.clone()))
                     .pad_using(max_len, |_| None),
             )
             .zip(
-                mat_C
+                c_entries
                     .iter()
                     .map(|e| Some(e.clone()))
                     .pad_using(max_len, |_| None),
@@ -210,12 +204,12 @@ impl<E: Pairing> Indexer<E> {
         let (ck_mask, vk_mask) = MarlinPST13::<_, _>::trim(param_mask, 4, 1, None).unwrap();
 
         let domain = (0usize..1 << num_non_zero_var).collect::<Vec<_>>();
-        let domain_vec = hash_usize(&domain.as_slice());
+        let domain_vec = pad_with_first_term(&domain.as_slice());
         let domain_poly =
             DenseMultilinearExtension::from_evaluations_vec(num_non_zero_var, domain_vec);
 
-        let row_vec = hash_usize(&row[..real_len_val]);
-        let col_vec = hash_usize(&col[..real_len_val]);
+        let row_vec = pad_with_first_term(&row[..real_len_val]);
+        let col_vec = pad_with_first_term(&col[..real_len_val]);
         let row_poly = DenseMultilinearExtension::from_evaluations_vec(num_non_zero_var, row_vec);
         let col_poly = DenseMultilinearExtension::from_evaluations_vec(num_non_zero_var, col_vec);
         let freq_row = normalized_multiplicities(&row_poly, &domain_poly);
@@ -224,8 +218,8 @@ impl<E: Pairing> Indexer<E> {
         //let (ck, vk) = MultilinearPC::trim(param, num_non_zero_var);
         (
             IndexProverKey {
-                row: (row.clone()),
-                col: (col.clone()),
+                rows: (row.clone()),
+                cols: (col.clone()),
                 real_len_val,
                 padded_num_var,
                 val_a: val_a.clone(),

@@ -1,29 +1,23 @@
 use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, Zero};
+use ark_ff::Zero;
 use ark_linear_sumcheck::{
-    ml_sumcheck::{
-        protocol::{
-            prover, prover::ProverMsg, verifier::VerifierMsg, IPForMLSumcheck,
-            ListOfProductsOfPolynomials,
-        },
-        Proof,
-    },
+    ml_sumcheck::protocol::{prover::ProverMsg, verifier::VerifierMsg},
     rng::FeedableRNG,
 };
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter_mut;
-use rand::{Rng, RngCore};
+use rand::RngCore;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
 
 use crate::mpc::{
     additive::AdditiveShare,
-    rep3::{Rep3Share, RssPoly},
-    SSOpen, SSRandom,
+    rep3::{Rep3Poly, Rep3Share},
+    SSRandom,
 };
 
 pub struct RssSumcheck<E: Pairing> {
@@ -33,7 +27,7 @@ pub struct RssSumcheck<E: Pairing> {
 // 1st round: pub * priv * priv
 // 2nd round:
 pub struct ProverState<E: Pairing> {
-    pub secret_polys: Vec<RssPoly<E>>,
+    pub secret_polys: Vec<Rep3Poly<E>>,
     pub pub_polys: Vec<DenseMultilinearExtension<E::ScalarField>>,
     pub randomness: Vec<E::ScalarField>,
     pub round: usize,
@@ -138,9 +132,9 @@ impl<E: Pairing> Rep3SumcheckProverMsg<E> for ProverSecondMsg<E> {
 
 impl<E: Pairing> RssSumcheck<E> {
     pub fn first_sumcheck_init(
-        v_a: &RssPoly<E>,
-        v_b: &RssPoly<E>,
-        v_c: &RssPoly<E>,
+        v_a: &Rep3Poly<E>,
+        v_b: &Rep3Poly<E>,
+        v_c: &Rep3Poly<E>,
         pub1: &DenseMultilinearExtension<E::ScalarField>,
     ) -> ProverState<E> {
         let secret_polys = vec![v_a.clone(), v_b.clone(), v_c.clone()];
@@ -151,7 +145,7 @@ impl<E: Pairing> RssSumcheck<E> {
             randomness: Vec::with_capacity(pub1.num_vars),
             round: 0,
             num_vars: pub1.num_vars,
-            party: v_a.party,
+            party: v_a.party_id,
             coef: vec![],
         }
     }
@@ -159,7 +153,7 @@ impl<E: Pairing> RssSumcheck<E> {
         v_a: &DenseMultilinearExtension<E::ScalarField>,
         v_b: &DenseMultilinearExtension<E::ScalarField>,
         v_c: &DenseMultilinearExtension<E::ScalarField>,
-        z: &RssPoly<E>,
+        z: &Rep3Poly<E>,
         v_msg: &Vec<E::ScalarField>,
     ) -> ProverState<E> {
         let pub_polys = vec![v_a.clone(), v_b.clone(), v_c.clone()];
@@ -169,7 +163,7 @@ impl<E: Pairing> RssSumcheck<E> {
             randomness: Vec::with_capacity(v_a.num_vars),
             round: 0,
             num_vars: v_a.num_vars,
-            party: z.party,
+            party: z.party_id,
             coef: v_msg.clone(),
         }
     }
@@ -259,7 +253,7 @@ impl<E: Pairing> RssSumcheck<E> {
                 let step_pub1 = prover_state.pub_polys[0][(b << 1) + 1] - start_pub1;
 
                 for p in product.iter_mut() {
-                    *p -= (start_c * start_pub1).to_additive();
+                    *p -= (start_c * start_pub1).into_additive();
                     start_c += step_c;
                     start_pub1 += step_pub1;
                 }
@@ -436,31 +430,31 @@ mod test {
         let pub1 = DenseMultilinearExtension::<Fr>::rand(num_vars, &mut rng);
 
         let mut product_list = ListOfProductsOfPolynomials::new(num_vars);
-        let A_B_hat = vec![
+        let a_b_hat = vec![
             Rc::new(v_a.clone()),
             Rc::new(v_b.clone()),
             Rc::new(pub1.clone()),
         ];
-        let C_hat = vec![Rc::new(v_c.clone()), Rc::new(pub1.clone())];
+        let c_hat = vec![Rc::new(v_c.clone()), Rc::new(pub1.clone())];
 
-        product_list.add_product(A_B_hat, SCALAR::one());
-        product_list.add_product(C_hat, SCALAR::one().neg());
+        product_list.add_product(a_b_hat, SCALAR::one());
+        product_list.add_product(c_hat, SCALAR::one().neg());
 
         let (v_a_share_0, v_a_share_1, v_a_share_2) = generate_poly_shares_rss(&v_a, &mut rng);
         let (v_b_share_0, v_b_share_1, v_b_share_2) = generate_poly_shares_rss(&v_b, &mut rng);
         let (v_c_share_0, v_c_share_1, v_c_share_2) = generate_poly_shares_rss(&v_c, &mut rng);
 
-        let va_0 = RssPoly::<PAIR>::new(0, v_a_share_0.clone(), v_a_share_1.clone());
-        let vb_0 = RssPoly::<PAIR>::new(0, v_b_share_0.clone(), v_b_share_1.clone());
-        let vc_0 = RssPoly::<PAIR>::new(0, v_c_share_0.clone(), v_c_share_1.clone());
+        let va_0 = Rep3Poly::<PAIR>::new(0, v_a_share_0.clone(), v_a_share_1.clone());
+        let vb_0 = Rep3Poly::<PAIR>::new(0, v_b_share_0.clone(), v_b_share_1.clone());
+        let vc_0 = Rep3Poly::<PAIR>::new(0, v_c_share_0.clone(), v_c_share_1.clone());
 
-        let va_1 = RssPoly::<PAIR>::new(1, v_a_share_1.clone(), v_a_share_2.clone());
-        let vb_1 = RssPoly::<PAIR>::new(1, v_b_share_1.clone(), v_b_share_2.clone());
-        let vc_1 = RssPoly::<PAIR>::new(1, v_c_share_1.clone(), v_c_share_2.clone());
+        let va_1 = Rep3Poly::<PAIR>::new(1, v_a_share_1.clone(), v_a_share_2.clone());
+        let vb_1 = Rep3Poly::<PAIR>::new(1, v_b_share_1.clone(), v_b_share_2.clone());
+        let vc_1 = Rep3Poly::<PAIR>::new(1, v_c_share_1.clone(), v_c_share_2.clone());
 
-        let va_2 = RssPoly::<PAIR>::new(2, v_a_share_2.clone(), v_a_share_0.clone());
-        let vb_2 = RssPoly::<PAIR>::new(2, v_b_share_2.clone(), v_b_share_0.clone());
-        let vc_2 = RssPoly::<PAIR>::new(2, v_c_share_2.clone(), v_c_share_0.clone());
+        let va_2 = Rep3Poly::<PAIR>::new(2, v_a_share_2.clone(), v_a_share_0.clone());
+        let vb_2 = Rep3Poly::<PAIR>::new(2, v_b_share_2.clone(), v_b_share_0.clone());
+        let vc_2 = Rep3Poly::<PAIR>::new(2, v_c_share_2.clone(), v_c_share_0.clone());
 
         let mut prover_state_0 =
             RssSumcheck::<PAIR>::first_sumcheck_init(&va_0, &vb_0, &vc_0, &pub1);
@@ -510,23 +504,23 @@ mod test {
         }
 
         let mut product_list = ListOfProductsOfPolynomials::new(num_vars);
-        let A_hat = vec![Rc::new(v_a.clone()), Rc::new(z.clone())];
-        let B_hat = vec![Rc::new(v_b.clone()), Rc::new(z.clone())];
-        let C_hat = vec![Rc::new(v_c.clone()), Rc::new(z.clone())];
+        let a_hat = vec![Rc::new(v_a.clone()), Rc::new(z.clone())];
+        let b_hat = vec![Rc::new(v_b.clone()), Rc::new(z.clone())];
+        let c_hat = vec![Rc::new(v_c.clone()), Rc::new(z.clone())];
 
-        product_list.add_product(A_hat, v_msg[0]);
-        product_list.add_product(B_hat, v_msg[1]);
-        product_list.add_product(C_hat, v_msg[2]);
+        product_list.add_product(a_hat, v_msg[0]);
+        product_list.add_product(b_hat, v_msg[1]);
+        product_list.add_product(c_hat, v_msg[2]);
 
         let z_share_0 = DenseMultilinearExtension::<Fr>::rand(num_vars, &mut rng);
         let z_share_1 = DenseMultilinearExtension::<Fr>::rand(num_vars, &mut rng);
         let z_share_2 = z - z_share_0.clone() - z_share_1.clone();
 
-        let z_0 = RssPoly::<PAIR>::new(0, z_share_0.clone(), z_share_1.clone());
+        let z_0 = Rep3Poly::<PAIR>::new(0, z_share_0.clone(), z_share_1.clone());
 
-        let z_1 = RssPoly::<PAIR>::new(1, z_share_1.clone(), z_share_2.clone());
+        let z_1 = Rep3Poly::<PAIR>::new(1, z_share_1.clone(), z_share_2.clone());
 
-        let z_2 = RssPoly::<PAIR>::new(2, z_share_2.clone(), z_share_0.clone());
+        let z_2 = Rep3Poly::<PAIR>::new(2, z_share_2.clone(), z_share_0.clone());
 
         let mut prover_state_0 =
             RssSumcheck::<PAIR>::second_sumcheck_init(&v_a, &v_b, &v_c, &z_0, &v_msg);
@@ -575,101 +569,5 @@ mod test {
             .zip(prover_msg_2.iter())
             .for_each(|(x, y)| assert_eq!(x.evaluations, y.evaluations));
         //let point: Vec<_> = (0..10).map(|_| Fr::one()).collect();
-    }
-
-    pub fn prove_as_subprotocol_first_round<E: Pairing, R: RngCore + FeedableRNG>(
-        fs_rng: &mut impl FeedableRNG<Error = Error>,
-        mut prover_state: Vec<ProverState<E>>,
-        random_rng: &mut Vec<SSRandom<R>>,
-    ) -> Result<(Proof<E::ScalarField>, Vec<ProverState<E>>), Error> {
-        //fs_rng.feed(&polynomial.info())?;
-
-        let num_vars = prover_state[0].num_vars;
-        let mut verifier_msg = None;
-        let mut prover_msgs = Vec::with_capacity(num_vars);
-        for _ in 0..num_vars {
-            let mut prover_msg = vec![];
-            for party in 0..=2 {
-                prover_msg.push(RssSumcheck::<E>::first_sumcheck_prove_round(
-                    &mut prover_state[party],
-                    &verifier_msg,
-                    &mut random_rng[party],
-                ));
-            }
-            // let prover_msg = ProverFirstMsg::<E>::open(&prover_msg);
-            // let prover_msg = ProverMsg {
-            //     evaluations: prover_msg,
-            // };
-            let prover_msg = ProverFirstMsg::<E>::open_to_msg(&prover_msg);
-            fs_rng.feed(&prover_msg)?;
-            prover_msgs.push(prover_msg);
-            verifier_msg = Some(IPForMLSumcheck::sample_round(fs_rng));
-        }
-        if let Some(msg) = verifier_msg {
-            prover_state
-                .iter_mut()
-                .for_each(|x| x.randomness.push(msg.randomness));
-        }
-        Ok((prover_msgs, prover_state))
-    }
-
-    pub fn prove_as_subprotocol_second_round<E: Pairing, R: RngCore + FeedableRNG>(
-        fs_rng: &mut impl FeedableRNG<Error = Error>,
-        mut prover_state: Vec<ProverState<E>>,
-        random_rng: &mut Vec<SSRandom<R>>,
-    ) -> Result<(Proof<E::ScalarField>, Vec<ProverState<E>>), Error> {
-        //fs_rng.feed(&polynomial.info())?;
-
-        let num_vars = prover_state[0].num_vars;
-        let mut verifier_msg = None;
-        let mut prover_msgs = Vec::with_capacity(num_vars);
-        for _ in 0..num_vars {
-            let mut prover_msg = vec![];
-            for party in 0..=2 {
-                prover_msg.push(RssSumcheck::<E>::second_sumcheck_prove_round(
-                    &mut prover_state[party],
-                    &verifier_msg,
-                    &mut random_rng[party],
-                ));
-            }
-            let prover_msg = ProverSecondMsg::<E>::open(&prover_msg);
-            let prover_msg = ProverMsg {
-                evaluations: prover_msg,
-            };
-            fs_rng.feed(&prover_msg)?;
-            prover_msgs.push(prover_msg);
-            verifier_msg = Some(IPForMLSumcheck::sample_round(fs_rng));
-        }
-        if let Some(msg) = verifier_msg {
-            prover_state
-                .iter_mut()
-                .for_each(|x| x.randomness.push(msg.randomness));
-        }
-        Ok((prover_msgs, prover_state))
-    }
-
-    pub fn prove_as_subprotocol_test<F: Field>(
-        fs_rng: &mut impl FeedableRNG<Error = Error>,
-        polynomial: &ListOfProductsOfPolynomials<F>,
-    ) -> Result<
-        (
-            Proof<F>,
-            ark_linear_sumcheck::ml_sumcheck::protocol::prover::ProverState<F>,
-        ),
-        Error,
-    > {
-        let mut prover_state = IPForMLSumcheck::prover_init(polynomial);
-        let mut verifier_msg = None;
-        let mut prover_msgs = Vec::with_capacity(polynomial.num_variables);
-        for _ in 0..polynomial.num_variables {
-            let prover_msg = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
-            fs_rng.feed(&prover_msg)?;
-            prover_msgs.push(prover_msg);
-            verifier_msg = Some(IPForMLSumcheck::sample_round(fs_rng));
-        }
-        if let Some(msg) = verifier_msg {
-            prover_state.randomness.push(msg.randomness);
-        }
-        Ok((prover_msgs, prover_state))
     }
 }

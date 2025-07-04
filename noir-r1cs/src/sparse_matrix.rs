@@ -3,9 +3,7 @@ use std::{
     ops::{Mul, Range},
 };
 
-use ark_ff::{Field, PrimeField};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
+use ark_ff::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{InternedFieldElement, Interner};

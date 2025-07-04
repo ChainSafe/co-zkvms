@@ -4,16 +4,10 @@ pub mod serde_ark;
 pub mod serde_jsonify;
 // pub mod sumcheck;
 
-use std::{
-    fmt::{Display, Formatter, Result as FmtResult},
-    mem::MaybeUninit,
-};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use acir::AcirField;
-use ark_ff::{BigInt, PrimeField};
 use num_bigint::BigUint;
-use ruint::{aliases::U256, uint};
-use tracing::instrument;
 
 pub use self::print_abi::PrintAbi;
 use crate::{FieldElement, NoirElement};

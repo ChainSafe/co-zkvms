@@ -269,7 +269,7 @@ fn test_distributed_end_to_end() {
             let _ = IPForMLSumcheck::prove_round(&mut prover_states[i], &verifier_msg);
         }
         // println!("start");
-        let merge_poly = merge_list_of_distributed_poly(prover_states, poly_info, D, P);
+        let merge_poly = merge_list_of_distributed_poly(prover_states, poly_info, P);
 
         // println!("pass");
         let mut prover_state = IPForMLSumcheck::prover_init(&merge_poly);

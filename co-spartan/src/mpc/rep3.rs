@@ -1,7 +1,7 @@
 use std::ops::{Add, AddAssign, Index, Mul, Sub};
 
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, UniformRand, Zero};
+use ark_ff::{Field, UniformRand as _, Zero};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -22,13 +22,6 @@ pub struct Rep3GroupShare<E: Pairing> {
     pub share_1: E::G1,
 }
 
-#[derive(Debug, CanonicalDeserialize, CanonicalSerialize, Clone)]
-pub struct RssPoly<E: Pairing> {
-    pub party: usize,
-    pub share_0: DenseMultilinearExtension<E::ScalarField>,
-    pub share_1: DenseMultilinearExtension<E::ScalarField>,
-}
-
 impl<E: Pairing> Add<Self> for Rep3Share<E> {
     type Output = Self;
     fn add(self, rhs: Rep3Share<E>) -> <Self as Add<Rep3Share<E>>>::Output {
@@ -47,7 +40,7 @@ impl<E: Pairing> Add<Rep3Share<E>> for AdditiveShare<E> {
         assert_eq!(self.party, rhs.party);
         AdditiveShare {
             party: self.party,
-            share_0: self.share_0 + rhs.to_additive().share_0,
+            share_0: self.share_0 + rhs.into_additive().share_0,
         }
     }
 }
@@ -70,7 +63,7 @@ impl<'a, E: Pairing> Add<&'a Rep3Share<E>> for AdditiveShare<E> {
         assert_eq!(self.party, rhs.party);
         AdditiveShare {
             party: self.party,
-            share_0: self.share_0 + rhs.to_additive().share_0,
+            share_0: self.share_0 + rhs.into_additive().share_0,
         }
     }
 }
@@ -172,7 +165,7 @@ impl<E: Pairing> Rep3Share<E> {
     }
 
     /// Only for addition of Additive and Rep3
-    pub(crate) fn to_additive(&self) -> AdditiveShare<E> {
+    pub(crate) fn into_additive(&self) -> AdditiveShare<E> {
         AdditiveShare {
             party: self.party,
             share_0: (self.share_0 + self.share_1) / E::ScalarField::from(2u8),
@@ -180,42 +173,49 @@ impl<E: Pairing> Rep3Share<E> {
     }
 }
 
-impl<E: Pairing> RssPoly<E> {
+#[derive(Debug, CanonicalDeserialize, CanonicalSerialize, Clone)]
+pub struct Rep3Poly<E: Pairing> {
+    pub party_id: usize,
+    pub share_0: DenseMultilinearExtension<E::ScalarField>,
+    pub share_1: DenseMultilinearExtension<E::ScalarField>,
+}
+
+impl<E: Pairing> Rep3Poly<E> {
     pub fn new(
         party: usize,
         share_0: DenseMultilinearExtension<E::ScalarField>,
         share_1: DenseMultilinearExtension<E::ScalarField>,
     ) -> Self {
-        RssPoly {
-            party,
+        Rep3Poly {
+            party_id: party,
             share_0,
             share_1,
         }
     }
     pub fn get_share_by_idx(&self, i: usize) -> Rep3Share<E> {
         Rep3Share {
-            party: self.party,
+            party: self.party_id,
             share_0: self.share_0.index(i).clone(),
             share_1: self.share_1.index(i).clone(),
         }
     }
     pub fn fix_variables(&self, partial_point: &[E::ScalarField]) -> Self {
-        RssPoly {
-            party: self.party,
+        Rep3Poly {
+            party_id: self.party_id,
             share_0: self.share_0.fix_variables(partial_point),
             share_1: self.share_1.fix_variables(partial_point),
         }
     }
-    pub fn from_rep3_evals(RssVec: &Vec<Rep3Share<E>>, num_vars: usize) -> Self {
+    pub fn from_rep3_evals(evals_rep3: &Vec<Rep3Share<E>>, num_vars: usize) -> Self {
         let mut share_0 = Vec::with_capacity(1 << num_vars);
         let mut share_1 = Vec::with_capacity(1 << num_vars);
-        let party = RssVec[0].party;
-        for share in RssVec {
+        let party = evals_rep3[0].party;
+        for share in evals_rep3 {
             share_0.push(share.share_0);
             share_1.push(share.share_1);
         }
-        RssPoly {
-            party,
+        Rep3Poly {
+            party_id: party,
             share_0: DenseMultilinearExtension::<E::ScalarField>::from_evaluations_vec(
                 num_vars, share_0,
             ),
@@ -230,33 +230,17 @@ pub fn generate_poly_shares_rss<F: Field, R: Rng>(
     poly: &DenseMultilinearExtension<F>,
     rng: &mut R,
 ) -> [DenseMultilinearExtension<F>; 3] {
+    if poly.num_vars == 0 {
+        return [
+            DenseMultilinearExtension::<F>::zero(),
+            DenseMultilinearExtension::<F>::zero(),
+            DenseMultilinearExtension::<F>::zero(),
+        ];
+    }
     let num_vars = poly.num_vars;
     let p_share_0 = DenseMultilinearExtension::<F>::rand(num_vars, rng);
     let p_share_1 = DenseMultilinearExtension::<F>::rand(num_vars, rng);
     let p_share_2 = (poly - &p_share_0) - p_share_1.clone();
 
     [p_share_0, p_share_1, p_share_2]
-}
-
-pub fn generate_rss_share_randomness<R: RngCore + FeedableRNG>() -> Vec<SSRandom<R>> {
-    let mut seed_0 = R::setup();
-    seed_0.feed(&"seed 0".as_bytes());
-    let mut seed_1 = R::setup();
-    seed_1.feed(&"seed 1".as_bytes());
-    let mut random_0 = SSRandom::<R>::new(seed_0, seed_1);
-
-    let mut seed_1 = R::setup();
-    seed_1.feed(&"seed 1".as_bytes());
-    let mut seed_2 = R::setup();
-    seed_2.feed(&"seed 2".as_bytes());
-    let mut random_1 = SSRandom::<R>::new(seed_1, seed_2);
-
-    let mut seed_2 = R::setup();
-    seed_2.feed(&"seed 2".as_bytes());
-    let mut seed_0 = R::setup();
-    seed_0.feed(&"seed 0".as_bytes());
-    let mut random_2 = SSRandom::<R>::new(seed_2, seed_0);
-
-    let mut vec_random = vec![random_0, random_1, random_2];
-    vec_random
 }

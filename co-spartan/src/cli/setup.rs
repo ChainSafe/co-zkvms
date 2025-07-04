@@ -23,7 +23,7 @@ use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs};
 use clap::{Parser, Subcommand};
 use co_spartan::{
     mpc::{
-        rep3::{generate_poly_shares_rss, RssPoly},
+        rep3::{generate_poly_shares_rss, Rep3Poly},
         SSRandom,
     },
     utils::{pad_to_power_of_two, split_vec},
@@ -43,7 +43,7 @@ use noir_r1cs::{FieldElement, NoirProofScheme};
 use rand::{rngs::StdRng, seq::SliceRandom, RngCore, SeedableRng};
 use rayon::prelude::*;
 use spartan::{
-    math::{SparseMatEntry, SparseMatPolynomial},
+    math::SparseMatEntry,
     transcript::{get_scalar_challenge, get_vector_challenge},
     IndexProverKey, IndexVerifierKey, Indexer, SRS,
 };

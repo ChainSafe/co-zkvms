@@ -1,15 +1,20 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufWriter, Read},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result};
 use argh::FromArgs;
-use noir_r1cs::{self, read, write, NoirProofScheme};
+use ark_serialize::CanonicalSerialize;
+use noir_r1cs::{self, read, NoirProofScheme};
 use tracing::{info, instrument};
 
 use super::Command;
 
 /// Prove a prepared Noir program
 #[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand, name = "prove")]
+#[argh(subcommand, name = "solve-witness")]
 pub struct Args {
     /// path to the compiled Noir program
     #[argh(positional)]
@@ -19,22 +24,14 @@ pub struct Args {
     #[argh(positional)]
     input_path: PathBuf,
 
-    /// path to store proof file
+    /// path to store witness file
     #[argh(
         option,
         long = "out",
         short = 'o',
-        default = "PathBuf::from(\"./proof.np\")"
+        default = "PathBuf::from(\"./witness.np\")"
     )]
-    proof_path: PathBuf,
-
-    /// path to store Gnark proof file
-    #[argh(
-        option,
-        long = "gnark-out",
-        default = "PathBuf::from(\"./gnark_proof.bin\")"
-    )]
-    gnark_out: PathBuf,
+    witness_path: PathBuf,
 }
 
 impl Command for Args {
@@ -54,18 +51,16 @@ impl Command for Args {
             .context("while reading input file")?;
 
         // Generate the proof
-        let _ = scheme
+        let witness = scheme
             .solve_witness(&self.input_path)
             .context("While solving witness")?;
 
-        // // Verify the proof (not in release build)
-        // #[cfg(test)]
-        // scheme
-        //     .verify(&proof)
-        //     .context("While verifying Noir proof")?;
-
-        // // Store the proof to file
-        // write(&proof, &self.proof_path).context("while writing proof")?;
+        let mut buf = BufWriter::new(
+            File::create(&self.witness_path).context("while creating witness file")?,
+        );
+        witness
+            .serialize_compressed(&mut buf)
+            .context("while serializing witness")?;
 
         Ok(())
     }

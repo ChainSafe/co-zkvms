@@ -51,7 +51,7 @@ impl FeedableRNG for TranscriptMerlin {
     type Error = ark_linear_sumcheck::Error;
 
     fn feed<M: CanonicalSerialize>(&mut self, msg: &M) -> Result<(), Self::Error> {
-        // self.append_serializable(b"", msg);
+        self.append_serializable(b"", msg);
         Ok(())
     }
 
@@ -68,7 +68,7 @@ impl Transcript for TranscriptMerlin {
     ) {
         let mut message = Vec::new();
         serializable.serialize_uncompressed(&mut message).unwrap();
-        // self.0.append_message(label, &message)
+        self.0.append_message(label, &message)
     }
 
     fn get_scalar_challenge<F: Field>(&mut self, label: &'static [u8]) -> F {

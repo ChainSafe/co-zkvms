@@ -1,29 +1,10 @@
-use std::{
-    marker::PhantomData,
-    ops::{Add, AddAssign, Index, Mul, Neg, Sub, SubAssign},
-    rc::Rc,
-};
+use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
-use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
-use ark_linear_sumcheck::{
-    ml_sumcheck::{
-        protocol::{
-            prover, prover::ProverMsg, verifier::VerifierMsg, IPForMLSumcheck,
-            ListOfProductsOfPolynomials,
-        },
-        Proof,
-    },
-    rng::{Blake2s512Rng, FeedableRNG},
-    Error,
-};
-use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
+use ark_ec::pairing::Pairing;
+use ark_ff::{UniformRand, Zero};
+use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter_mut, test_rng};
 use rand::RngCore;
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
-};
 
 use crate::mpc::{SSOpen, SSRandom};
 

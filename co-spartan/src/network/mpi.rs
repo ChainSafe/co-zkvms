@@ -76,7 +76,10 @@ impl<'a, C: 'a + Communicator> NetworkCoordinator for Rep3CoordinatorMPI<'a, C> 
         self.total_send_bytes += request_bytes.len();
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: Vec<T>) {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        data: Vec<T>,
+    ) {
         let mut request_bytes = vec![];
         let request_bytes_buf = construct_partitioned_buffer_for_scatter!(data, &mut request_bytes);
 

@@ -1,9 +1,6 @@
-use std::cmp::max;
-
 use anyhow::{bail, ensure, Result};
 use ark_ff::One;
 use ark_std::Zero;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 

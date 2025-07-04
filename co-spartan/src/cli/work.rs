@@ -31,7 +31,7 @@ use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Ins
 use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
 use co_spartan::{
-    mpc::{rep3::RssPoly, SSRandom},
+    mpc::{rep3::Rep3Poly, SSRandom},
     network::{
         mpi::{Rep3CoordinatorMPI, Rep3WorkerMPI},
         NetworkCoordinator, NetworkWorker,
@@ -153,10 +153,14 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         .iter()
         .map(|v| E::ScalarField::from_bigint(v.into_bigint()).unwrap())
         .collect();
-    let r1cs = proof_scheme.r1cs.into();
+    let r1cs: spartan::R1CS<E::ScalarField> = proof_scheme.r1cs.into();
 
-    let witness_shares =
-        co_spartan::split_witness::<E>(&r1cs, z, log_num_workers_per_party, &mut rng);
+    let witness_shares = co_spartan::split_witness::<E>(
+        z,
+        r1cs.log2_instance_size(),
+        log_num_workers_per_party,
+        &mut rng,
+    );
 
     let log_instance_size = pk.log_instance_size;
 
@@ -174,7 +178,8 @@ fn coordinator_work<E: Pairing, C: Communicator>(
     let witness_shares = witness_shares
         .into_iter()
         .flatten()
-        .sorted_by_key(|s| s.worker_id)
+        .sorted_by_key(|(worker_id, _)| *worker_id)
+        .map(|(_, z)| z)
         .collect();
 
     // todo: send witness shares to workers
@@ -184,7 +189,6 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         "bandwidth to send witness shares: {}",
         ByteSize(send_bytes as u64)
     );
-
 
     let mut transcript = TranscriptMerlin::new(b"dfs");
 
@@ -196,7 +200,10 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         &mut network,
     );
 
-    assert!(proof.verify(&pk.ivk, &Vec::new()).is_ok());
+    if let Err(e) = proof.verify(&pk.ivk, &Vec::new()) {
+        println!("proof verification failed: {:?}", e);
+        std::process::exit(1);
+    }
 
     let bytes = proof.serialized_size(ark_serialize::Compress::Yes);
     tracing::info!("coordinator time: {:?}", coordinator_time);

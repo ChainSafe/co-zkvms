@@ -1,11 +1,6 @@
-use std::rc::Rc;
-
 use ark_ec::pairing::Pairing;
 use ark_ff::{AdditiveGroup, Field, One, Zero};
-use ark_linear_sumcheck::ml_sumcheck::{
-    protocol::{ListOfProductsOfPolynomials, PolynomialInfo},
-    MLSumcheck,
-};
+use ark_linear_sumcheck::ml_sumcheck::{protocol::PolynomialInfo, MLSumcheck};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_poly_commit::multilinear_pc::{
     data_structures::{Commitment, CommitterKey, VerifierKey},
@@ -21,7 +16,7 @@ use crate::{
     verifier::{batch_verify_poly, BatchOracleEval, VerificationResult},
 };
 
-type SumcheckProof<E> = ark_linear_sumcheck::ml_sumcheck::Proof<<E as Pairing>::ScalarField>;
+type SumcheckProof<E: Pairing> = ark_linear_sumcheck::ml_sumcheck::Proof<E::ScalarField>;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct LogLookupProof<E: Pairing> {

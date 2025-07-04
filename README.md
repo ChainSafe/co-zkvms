@@ -26,5 +26,4 @@ This prototype builds up on the following works:
 ## Known issues
 
 - Delegator acts as coordinator (with logarithmic communication overhead).
-- Delegator must compute sparse matrix multiplication ($Az, Bz, Cz$) and send them to workers (majority of communication cost).
 - No private shared witness.

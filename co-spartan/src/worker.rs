@@ -1,7 +1,7 @@
 use std::{cmp::max, iter, ops::Index};
 
-use ark_ec::pairing::Pairing;
-use ark_ff::{Field, One, Zero};
+use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
+use ark_ff::{Field, One, PrimeField, Zero};
 use ark_linear_sumcheck::{
     ml_sumcheck::{
         data_structures::ListOfProductsOfPolynomials,
@@ -9,7 +9,7 @@ use ark_linear_sumcheck::{
     },
     rng::FeedableRNG,
 };
-use ark_poly::{DenseMultilinearExtension, Polynomial};
+use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
 use ark_poly_commit::multilinear_pc::{
     data_structures::{Commitment, CommitterKey, Proof},
     MultilinearPC,
@@ -22,19 +22,23 @@ use rayon::prelude::*;
 use spartan::{
     logup::LogLookupProof,
     math::Math,
-    utils::{boost_degree, dense_scalar_prod, distributed_open, generate_eq, partial_generate_eq},
+    utils::{boost_degree, dense_scalar_prod, generate_eq, partial_generate_eq},
     IndexProverKey,
 };
 
 use crate::{
-    mpc::{rep3::RssPoly, sumcheck::rep3::RssSumcheck, SSRandom},
+    mpc::{
+        rep3::{Rep3Poly, Rep3Share},
+        sumcheck::rep3::RssSumcheck,
+        SSRandom,
+    },
     network::NetworkWorker,
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
         poly_list_to_prover_state, DistrbutedSumcheckProverState,
     },
     utils::aggregate_poly,
-    witness::WitnessShare,
+    witness::{R1CSWitnessShare, WitnessShare},
 };
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -112,12 +116,14 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
-        witness_share: WitnessShare<E>,
+        z: WitnessShare<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
     ) {
         let mut state = ProverState::default();
+
+        let witness_share = self.zero_round(pk, &z);
 
         self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network);
 
@@ -126,14 +132,43 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         self.third_round(pk, &witness_share, &mut state, random_rng, active, network);
 
         if active {
-            self.fifth_round(pk, &mut state, network);
+            self.fourth_round(pk, &mut state, network);
         } else {
-            dummy_fifth_round(&pk.pub_ipk, network);
+            dummy_fourth_round(&pk.pub_ipk, network);
+        }
+    }
+
+    // Compute Az, Bz, Cz
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::zero_round")]
+    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &WitnessShare<E>) -> R1CSWitnessShare<E> {
+        let chunk_size = pk.ipk.num_variables_val.exp2();
+        let mut za = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
+        let mut zb = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
+        let mut zc = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
+
+        let c_start = pk.party_id * pk.num_variables.exp2() / pk.num_parties;
+
+        assert_eq!(pk.ipk.cols_indexed.len(), pk.ipk.rows_indexed.len());
+
+        for i in 0..pk.ipk.cols_indexed.len() {
+            let row = pk.ipk.rows_indexed[i] - c_start;
+            let col = pk.ipk.cols_indexed[i] - c_start;
+            let z_share = z.get_share_by_idx(col);
+            za[row] += z_share * pk.ipk.val_a_indexed[i];
+            zb[row] += z_share * pk.ipk.val_b_indexed[i];
+            zc[row] += z_share * pk.ipk.val_c_indexed[i];
+        }
+
+        R1CSWitnessShare {
+            z: z.clone(),
+            za: Rep3Poly::from_rep3_evals(&za, pk.ipk.num_variables_val),
+            zb: Rep3Poly::from_rep3_evals(&zb, pk.ipk.num_variables_val),
+            zc: Rep3Poly::from_rep3_evals(&zc, pk.ipk.num_variables_val),
         }
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::first_round")]
-    fn first_round(&self, polys: &Vec<&RssPoly<E>>, ck: &CommitterKey<E>, network: &mut N) {
+    fn first_round(&self, polys: &Vec<&Rep3Poly<E>>, ck: &CommitterKey<E>, network: &mut N) {
         poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
     }
 
@@ -141,7 +176,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &WitnessShare<E>,
+        witness_share: &R1CSWitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         network: &mut N,
@@ -180,7 +215,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &WitnessShare<E>,
+        witness_share: &R1CSWitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
@@ -190,28 +225,28 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let eq_rx = state.eq_rx.as_ref().unwrap();
 
         let num_variables = pk.ipk.padded_num_var;
-        let instance_size = pk.num_variables.pow2();
-        let chunk_size = pk.ipk.num_variables_val.pow2();
+        let instance_size = pk.num_variables.exp2();
+        let chunk_size = pk.ipk.num_variables_val.exp2();
         let c_start = pk.party_id * instance_size / pk.num_parties;
 
-        let mut A_rx = vec![E::ScalarField::zero(); chunk_size];
-        let mut B_rx = vec![E::ScalarField::zero(); chunk_size];
-        let mut C_rx = vec![E::ScalarField::zero(); chunk_size];
+        let mut a_rx = vec![E::ScalarField::zero(); chunk_size];
+        let mut b_rx = vec![E::ScalarField::zero(); chunk_size];
+        let mut c_rx = vec![E::ScalarField::zero(); chunk_size];
 
         for i in 0..pk.ipk.cols_indexed.len() {
             let col = pk.ipk.cols_indexed[i] - c_start; // local offset 0..range_len-1
             let row = pk.ipk.rows_indexed[i];
-            let v = eq_rx.index(row);
+            let eq = eq_rx.index(row);
 
-            A_rx[col] += pk.ipk.val_a_indexed[i] * v;
-            B_rx[col] += pk.ipk.val_b_indexed[i] * v;
-            C_rx[col] += pk.ipk.val_c_indexed[i] * v;
+            a_rx[col] += pk.ipk.val_a_indexed[i] * eq;
+            b_rx[col] += pk.ipk.val_b_indexed[i] * eq;
+            c_rx[col] += pk.ipk.val_c_indexed[i] * eq;
         }
 
         let final_point = rep3_second_sumcheck_worker(
-            &DenseMultilinearExtension::from_evaluations_vec(num_variables, A_rx),
-            &DenseMultilinearExtension::from_evaluations_vec(num_variables, B_rx),
-            &DenseMultilinearExtension::from_evaluations_vec(num_variables, C_rx),
+            &DenseMultilinearExtension::from_evaluations_vec(num_variables, a_rx),
+            &DenseMultilinearExtension::from_evaluations_vec(num_variables, b_rx),
+            &DenseMultilinearExtension::from_evaluations_vec(num_variables, c_rx),
             &witness_share.z,
             random_rng,
             &v_msg,
@@ -228,7 +263,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         state.eq_ry = Some(generate_eq(&final_point));
         let eq_ry = state.eq_ry.as_ref().unwrap();
 
-        let chunk_size = self.pub_log_chunk_size.pow2();
+        let chunk_size = self.pub_log_chunk_size.exp2();
         if active {
             let mut eq_tilde_rx_chunk_evals = vec![E::ScalarField::zero(); chunk_size];
             let mut eq_tilde_ry_chunk_evals = vec![E::ScalarField::zero(); chunk_size];
@@ -244,8 +279,8 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
                 .iter()
                 .zip(pk.pub_ipk.val_b.evaluations.iter())
                 .zip(pk.pub_ipk.val_c.evaluations.iter())
-                .zip(pk.pub_ipk.row.iter())
-                .zip(pk.pub_ipk.col.iter())
+                .zip(pk.pub_ipk.rows.iter())
+                .zip(pk.pub_ipk.cols.iter())
                 .enumerate()
             {
                 if i < pk.pub_ipk.real_len_val {
@@ -311,9 +346,9 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             network,
         );
 
-        let mut eq_tilde_rx_evals = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
-        let mut eq_tilde_ry_evals = vec![E::ScalarField::zero(); pk.num_variables.pow2()];
-        for i in 0..pk.num_variables.pow2() {
+        let mut eq_tilde_rx_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
+        let mut eq_tilde_ry_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
+        for i in 0..pk.num_variables.exp2() {
             if pk.row[i] != usize::MAX {
                 eq_tilde_rx_evals[i] = *eq_rx.index(pk.row[i]);
             }
@@ -332,13 +367,8 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         ));
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanProverWorker::fifth_round")]
-    fn fifth_round(
-        &self,
-        pk: &Rep3ProverKey<E>,
-        state: &mut ProverState<E>,
-        network: &mut N,
-    ) {
+    #[tracing::instrument(skip_all, name = "SpartanProverWorker::fourth_round")]
+    fn fourth_round(&self, pk: &Rep3ProverKey<E>, state: &mut ProverState<E>, network: &mut N) {
         let start_eq = self.pub_start_eq;
         let log_chunk_size = self.pub_log_chunk_size;
         let eq_tilde_rx = state.eq_tilde_rx.as_ref().unwrap();
@@ -357,7 +387,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
                 // `hash_tuple` method reindexes eq_tilde_rx based ipk.row
                 // which we did in third round is eq_tilde_rx =? reindex(eq_rx)
                 hash_tuple::<E::ScalarField>(
-                    &pk.pub_ipk.row[..pk.pub_ipk.real_len_val],
+                    &pk.pub_ipk.rows[..pk.pub_ipk.real_len_val],
                     eq_tilde_rx,
                     &v_msg,
                 ),
@@ -366,7 +396,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
         let full_q_row_first =
             E::ScalarField::from(first_row as u64) + v_msg * eq_tilde_rx[first_row];
 
-        for i in pk.pub_ipk.real_len_val..q_num_vars.pow2() {
+        for i in pk.pub_ipk.real_len_val..q_num_vars.exp2() {
             q_row.evaluations[i] = full_q_row_first;
         }
 
@@ -374,16 +404,18 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             DenseMultilinearExtension::from_evaluations_vec(
                 q_num_vars,
                 hash_tuple::<E::ScalarField>(
-                    &pk.pub_ipk.col[..pk.pub_ipk.num_variables_val.pow2()],
+                    &pk.pub_ipk.cols[..pk.pub_ipk.num_variables_val.exp2()],
                     eq_tilde_ry,
                     &v_msg,
                 ),
             );
+
+        // TODO: we just need first_col value in pk -- can avoid storing entire col, eq_tilde_ry vector?
         let first_col = *pk.col.iter().filter(|r| **r != usize::MAX).next().unwrap();
         let full_q_col_first =
             E::ScalarField::from(first_col as u64) + v_msg * eq_tilde_ry[first_col];
 
-        for i in pk.pub_ipk.real_len_val..q_num_vars.pow2() {
+        for i in pk.pub_ipk.real_len_val..q_num_vars.exp2() {
             q_col.evaluations[i] = full_q_col_first;
         }
 
@@ -515,9 +547,9 @@ pub fn poly_commit_worker<'a, E: Pairing, N: NetworkWorker>(
 
 #[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
 pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: NetworkWorker>(
-    za: &RssPoly<E>,
-    zb: &RssPoly<E>,
-    zc: &RssPoly<E>,
+    za: &Rep3Poly<E>,
+    zb: &Rep3Poly<E>,
+    zc: &Rep3Poly<E>,
     eq: &DenseMultilinearExtension<E::ScalarField>,
     random_rng: &mut SSRandom<R>,
     network: &mut N,
@@ -561,7 +593,7 @@ pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netw
     a_r: &DenseMultilinearExtension<E::ScalarField>,
     b_r: &DenseMultilinearExtension<E::ScalarField>,
     c_r: &DenseMultilinearExtension<E::ScalarField>,
-    z: &RssPoly<E>,
+    z: &Rep3Poly<E>,
     random_rng: &mut SSRandom<R>,
     v_msg: &Vec<E::ScalarField>,
     network: &mut N,
@@ -627,7 +659,7 @@ pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
 
 #[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
 pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
-    polys: Vec<&RssPoly<E>>,
+    polys: Vec<&Rep3Poly<E>>,
     final_point: &[E::ScalarField],
     num_vars: usize,
     network: &mut N,
@@ -671,6 +703,43 @@ pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
     };
 
     network.send_response(response);
+}
+
+fn distributed_open<E: Pairing>(
+    ck: &CommitterKey<E>,
+    polynomial: &impl MultilinearExtension<E::ScalarField>,
+    point: &[E::ScalarField],
+) -> (Proof<E>, E::ScalarField) {
+    assert_eq!(polynomial.num_vars(), ck.nv, "Invalid size of polynomial");
+    let nv = polynomial.num_vars();
+    let mut r: Vec<Vec<E::ScalarField>> = (0..nv + 1).map(|_| Vec::new()).collect();
+    let mut q: Vec<Vec<E::ScalarField>> = (0..nv + 1).map(|_| Vec::new()).collect();
+
+    r[nv] = polynomial.to_evaluations();
+
+    let mut proofs = Vec::new();
+    for i in 0..nv {
+        let k = nv - i;
+        let point_at_k = point[i];
+        q[k] = (0..(1 << (k - 1)))
+            .map(|_| E::ScalarField::zero())
+            .collect();
+        r[k - 1] = (0..(1 << (k - 1)))
+            .map(|_| E::ScalarField::zero())
+            .collect();
+        for b in 0..(1 << (k - 1)) {
+            q[k][b] = r[k][(b << 1) + 1] - &r[k][b << 1];
+            r[k - 1][b] = r[k][b << 1] * &(E::ScalarField::one() - &point_at_k)
+                + &(r[k][(b << 1) + 1] * &point_at_k);
+        }
+        let scalars: Vec<_> = (0..(1 << k)).map(|x| q[k][x >> 1].into_bigint()).collect();
+
+        let pi_g =
+            <E::G1 as VariableBaseMSM>::msm_bigint(&ck.powers_of_g[i], &scalars).into_affine(); // no need to move outside and partition
+        proofs.push(pi_g);
+    }
+
+    (Proof { proofs }, r[0][0])
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -748,10 +817,10 @@ fn dummy_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
     network.send_response(default_response);
 }
 
-fn dummy_fifth_round<'a, E: Pairing, N: NetworkWorker>(ipk: &IndexProverKey<E>, network: &mut N) {
-    let v_msg: E::ScalarField = network.receive_request();
+fn dummy_fourth_round<'a, E: Pairing, N: NetworkWorker>(ipk: &IndexProverKey<E>, network: &mut N) {
+    let _v_msg: E::ScalarField = network.receive_request();
 
-    let (x_r, x_c): (E::ScalarField, E::ScalarField) = network.receive_request();
+    let (_x_r, _x_c): (E::ScalarField, E::ScalarField) = network.receive_request();
 
     let default_response = vec![
         Commitment::<E> {
@@ -763,8 +832,8 @@ fn dummy_fifth_round<'a, E: Pairing, N: NetworkWorker>(ipk: &IndexProverKey<E>, 
 
     network.send_response(default_response);
 
-    let (z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
-    let (z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
+    let (_z, _lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
+    let (_z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
 
     let mut q_polys = ListOfProductsOfPolynomials::new(1);
     let default_poly = DenseMultilinearExtension::from_evaluations_vec(
@@ -791,7 +860,7 @@ fn dummy_fifth_round<'a, E: Pairing, N: NetworkWorker>(ipk: &IndexProverKey<E>, 
         network,
     );
 
-    let eta: E::ScalarField = network.receive_request();
+    let _eta: E::ScalarField = network.receive_request();
 
     dummy_batch_open_poly_worker::<E, N>(ipk.real_len_val.log_2(), 15, ipk.ck_index.g, network);
 }
