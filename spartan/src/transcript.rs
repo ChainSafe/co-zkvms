@@ -1,11 +1,13 @@
 //! Transcript utilities, mostly taken from
 use std::vec::Vec;
 
-use ark_ff::Field;
+use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge, FieldElementSize};
+use ark_ff::{BigInteger, Field, PrimeField};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::CanonicalSerialize;
 use rand::RngCore;
 
+#[derive(Clone)]
 pub struct TranscriptMerlin(merlin::Transcript);
 
 impl TranscriptMerlin {
@@ -22,6 +24,8 @@ pub trait Transcript: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error> 
     fn get_scalar_challenge<F: Field>(&mut self, label: &'static [u8]) -> F;
 
     fn get_vector_challenge<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F>;
+
+    fn fork(&self) -> Self;
 }
 
 impl RngCore for TranscriptMerlin {
@@ -85,6 +89,69 @@ impl Transcript for TranscriptMerlin {
         (0..size)
             .map(|_| self.get_scalar_challenge(label))
             .collect()
+    }
+
+    fn fork(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl CryptographicSponge for TranscriptMerlin {
+    type Config = ();
+
+    fn new(_params: &Self::Config) -> Self {
+        unimplemented!()
+    }
+
+    fn absorb(&mut self, input: &impl Absorb) {
+        self.0.append_message(b"", &input.to_sponge_bytes_as_vec());
+    }
+
+    fn squeeze_bytes(&mut self, num_bytes: usize) -> Vec<u8> {
+        let mut bytes = vec![0; num_bytes];
+        self.0.challenge_bytes(b"", &mut bytes);
+        bytes
+    }
+
+    fn squeeze_field_elements_with_sizes<F: PrimeField>(
+        &mut self,
+        sizes: &[FieldElementSize],
+    ) -> Vec<F> {
+        if sizes.len() == 0 {
+            return Vec::new();
+        }
+
+        let field_elements = self.get_vector_challenge::<F>(b"", sizes.len());
+
+        let mut output = Vec::with_capacity(sizes.len());
+        for (elem, size) in field_elements.into_iter().zip(sizes.iter()) {
+            if let FieldElementSize::Truncated(num_bits) = *size {
+                let mut bits: Vec<bool> = elem.into_bigint().to_bits_le();
+                bits.truncate(num_bits);
+                let emulated_bytes = bits
+                    .chunks(8)
+                    .map(|bits| {
+                        let mut byte = 0u8;
+                        for (i, &bit) in bits.into_iter().enumerate() {
+                            if bit {
+                                byte += 1 << i;
+                            }
+                        }
+                        byte
+                    })
+                    .collect::<Vec<_>>();
+
+                output.push(F::from_le_bytes_mod_order(emulated_bytes.as_slice()));
+            } else {
+                output.push(elem);
+            }
+        }
+
+        output
+    }
+
+    fn squeeze_bits(&mut self, _num_bits: usize) -> Vec<bool> {
+        unimplemented!()
     }
 }
 

@@ -1,14 +1,10 @@
 use std::collections::HashMap;
 
-use ark_crypto_primitives::sponge::{
-    poseidon::{PoseidonConfig, PoseidonSponge},
-    CryptographicSponge,
-};
 use ark_ec::pairing::Pairing;
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, SparseMultilinearExtension};
 use ark_poly_commit::multilinear_pc::data_structures::{Commitment, Proof};
-use ark_std::{cfg_into_iter, cfg_iter, test_rng};
+use ark_std::{cfg_into_iter, cfg_iter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -223,35 +219,6 @@ pub fn normalized_multiplicities<F: Field>(
         *n *= table_invs.get(&table[i]).unwrap();
     }
     DenseMultilinearExtension::from_evaluations_vec(table.num_vars, numerator)
-}
-
-pub fn generate_dumb_sponge<F: PrimeField>() -> PoseidonSponge<F> {
-    PoseidonSponge::new(&poseidon_parameters_for_test())
-}
-
-pub fn poseidon_parameters_for_test<F: PrimeField>() -> PoseidonConfig<F> {
-    let full_rounds = 8;
-    let partial_rounds = 31;
-    let alpha = 17;
-
-    let mds = vec![
-        vec![F::one(), F::zero(), F::one()],
-        vec![F::one(), F::one(), F::zero()],
-        vec![F::zero(), F::one(), F::one()],
-    ];
-
-    let mut ark = Vec::new();
-    let mut ark_rng = test_rng();
-
-    for _ in 0..(full_rounds + partial_rounds) {
-        let mut res = Vec::new();
-
-        for _ in 0..3 {
-            res.push(F::rand(&mut ark_rng));
-        }
-        ark.push(res);
-    }
-    PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, ark, 2, 1)
 }
 
 pub fn map_poly<F: Field, MapFn>(

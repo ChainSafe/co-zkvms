@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use anyhow::{ensure, Context};
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ec::pairing::Pairing;
 use ark_ff::{UniformRand, Zero};
 use ark_poly::SparseMultilinearExtension;
@@ -19,8 +20,8 @@ use super::{
 };
 use crate::{
     math::MaskPolynomial,
-    transcript::{Transcript, TranscriptMerlin},
-    utils::{aggregate_comm, aggregate_eval, eq_eval, generate_dumb_sponge},
+    transcript::Transcript,
+    utils::{aggregate_comm, aggregate_eval, eq_eval},
 };
 
 /// Verification result.
@@ -31,13 +32,12 @@ impl<E: Pairing> R1CSProof<E> {
     /// The input contains the R1CS instance and the verification key
     /// of polynomial commitment.
     #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
-    pub fn verify(
+    pub fn verify<T: Transcript + CryptographicSponge>(
         &self,
         vk: &IndexVerifierKey<E>,
         assignment: &Vec<E::ScalarField>,
+        transcript: &mut T,
     ) -> VerificationResult {
-        let mut transcript = TranscriptMerlin::new(b"dfs");
-        let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
         let mut v_state: VerifierState<E> = DFSVerifier::verifier_init(vk.padded_num_var);
         let mle_io_1_evals = assignment.iter().copied().enumerate().collect::<Vec<_>>();
         let mle_io_1 =
@@ -45,13 +45,12 @@ impl<E: Pairing> R1CSProof<E> {
         let w_commitment = &self.witness_commitment;
 
         transcript.append_serializable(b"w_commitment", w_commitment);
-        let _ = DFSVerifier::verifier_first_round(&mut v_state, &mut transcript);
+        let _ = DFSVerifier::verifier_first_round(&mut v_state, transcript);
 
         let sub_claim_1 = zk_sumcheck_verifier_wrapper(
             &vk.vk_mask,
             &self.first_sumcheck_msgs,
-            &mut transcript,
-            &mut challenge_gen,
+            transcript,
             E::ScalarField::zero(),
         )
         .context("while verifying first sumcheck")?;
@@ -72,7 +71,7 @@ impl<E: Pairing> R1CSProof<E> {
         transcript.append_serializable(b"val_r1", &val_r1);
         transcript.append_serializable(b"first_sumcheck_msgs", &self.first_sumcheck_msgs);
 
-        let _ = DFSVerifier::verifier_second_round(&mut v_state, &mut transcript);
+        let _ = DFSVerifier::verifier_second_round(&mut v_state, transcript);
 
         let sumcheck_second_round = &self.second_sumcheck_msgs;
         let checksum_2: E::ScalarField = val_r1
@@ -84,8 +83,7 @@ impl<E: Pairing> R1CSProof<E> {
         let sub_claim_2 = zk_sumcheck_verifier_wrapper(
             &vk.vk_mask,
             &sumcheck_second_round,
-            &mut transcript,
-            &mut challenge_gen,
+            transcript,
             checksum_2,
         )
         .context("while verifying second sumcheck")?;
@@ -124,13 +122,13 @@ impl<E: Pairing> R1CSProof<E> {
         transcript.append_serializable(b"eq_tilde_ry_comm", &self.eq_tilde_ry_commitment);
         transcript.append_serializable(b"w_proof", &w_proof.clone());
 
-        let _ = DFSVerifier::verifier_fourth_round(&mut v_state, &mut transcript);
+        let _ = DFSVerifier::verifier_fourth_round(&mut v_state, transcript);
 
         let (lookup_x, z, lambda) = LogLookupProof::<E>::get_sumcheck_verifier_challenges(
             &self.lookup_proof.info,
             &self.lookup_proof.batch_oracle,
             2,
-            &mut transcript,
+            transcript,
         );
 
         let aux_eval = self.lookup_proof.batch_oracle.val[4]
@@ -148,7 +146,7 @@ impl<E: Pairing> R1CSProof<E> {
             &z,
             &lambda,
             &vk.vk_index,
-            &mut transcript,
+            transcript,
             aux_eval,
             self.val_m,
         )

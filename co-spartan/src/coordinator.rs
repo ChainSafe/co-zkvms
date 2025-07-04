@@ -1,12 +1,9 @@
 use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ec::pairing::Pairing;
 use ark_ff::{Field, One, Zero};
-use ark_linear_sumcheck::{
-    ml_sumcheck::{
-        data_structures::{ListOfProductsOfPolynomials, PolynomialInfo},
-        protocol::{prover::ProverMsg, IPForMLSumcheck},
-    },
-    rng::{Blake2s512Rng, FeedableRNG},
+use ark_linear_sumcheck::ml_sumcheck::{
+    data_structures::{ListOfProductsOfPolynomials, PolynomialInfo},
+    protocol::{prover::ProverMsg, IPForMLSumcheck},
 };
 use ark_poly::{
     multivariate::{SparsePolynomial, SparseTerm},
@@ -32,7 +29,7 @@ use spartan::{
     logup::LogLookupProof,
     math::{MaskPolynomial, Math},
     transcript::Transcript,
-    utils::{aggregate_proof, combine_comm, generate_dumb_sponge, merge_proof},
+    utils::{aggregate_proof, combine_comm, merge_proof},
     verifier::{BatchOracleEval, DFSVerifier, VerifierState},
     zk::{generate_mask_polynomial, ZKMLCommit, ZKMLCommitterKey, ZKMLProof, ZKSumcheckProof},
     IndexProverKey, IndexVerifierKey, R1CSProof,
@@ -101,67 +98,56 @@ impl<E: Pairing> Default for ProverState<E> {
 
 impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::prove")]
-    pub fn prove(
+    pub fn prove<T: Transcript + CryptographicSponge>(
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
         vk: &IndexVerifierKey<E>,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
         network: &mut N,
     ) -> (R1CSProof<E>, Duration)
     where
         E: Pairing,
     {
         let mut state = ProverState::default();
-        let mask_rng = &mut Blake2s512Rng::setup();
-        assert!(mask_rng.feed(&"initialize".as_bytes()).is_ok());
-        let mut challenge_gen = generate_dumb_sponge::<E::ScalarField>();
 
         let time = Instant::now();
         let mut verifier_state: VerifierState<E> = DFSVerifier::verifier_init(index.padded_num_var);
         state.time_elapsed += time.elapsed();
 
-        Self::first_round(&mut state, &index, 2, None, mask_rng, network, transcript);
+        Self::first_round(&mut state, &index, 2, None, network, transcript);
 
         // This first challenge is used for checking the hadamard product of AB - C ?= 0.
-        // The following sumcheck, in prover_second_round, doesn't verify the well formedness of its components, which future rounds will do.
-
-        let verifier_first_message =
-            DFSVerifier::verifier_first_round(&mut verifier_state, transcript);
+        // The following sumcheck, in second_round, doesn't verify the well formedness of its components, which future rounds will do.
+        let v_msg1 = DFSVerifier::verifier_first_round(&mut verifier_state, transcript);
 
         Self::second_round(
             &index,
             &mut state,
-            &verifier_first_message.verifier_message,
-            mask_rng,
-            &mut challenge_gen,
+            &v_msg1.verifier_message,
             network,
             transcript,
         );
 
         // This challenge is used for verifying the well formedness of the subclaim evaluation from the previous round.
         // In particular, this challenge batches a, b, and c polynomials using 3 scalars
-        let verifier_second_message =
-            DFSVerifier::verifier_second_round(&mut verifier_state, transcript);
+        let v_msg2 = DFSVerifier::verifier_second_round(&mut verifier_state, transcript);
 
         Self::third_round(
             &index,
             &pub_index,
             &mut state,
-            &verifier_second_message.verifier_message,
-            mask_rng,
-            &mut challenge_gen,
+            &v_msg2.verifier_message,
             network,
             transcript,
         );
 
-        let verifier_fourth_message =
-            DFSVerifier::verifier_fourth_round(&mut verifier_state, transcript);
+        let v_msg4 = DFSVerifier::verifier_fourth_round(&mut verifier_state, transcript);
 
         let lookup_proof = Self::fourth_round(
             pub_index,
             vk,
             &mut state,
-            verifier_fourth_message.verifier_message[0],
+            v_msg4.verifier_message[0],
             network,
             transcript,
         );
@@ -193,7 +179,6 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
         index: &IndexProverKey<E>,
         hiding_bound: usize,
         mask_num_var: Option<usize>,
-        rng: &mut impl Rng,
         network: &mut N,
         transcript: &mut impl Transcript,
     ) {
@@ -204,10 +189,11 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
         let time = Instant::now();
 
+        let mut mask_rng = transcript.fork();
         let p_hat = if let Some(mask_num_vars) = mask_num_var {
-            generate_mask_polynomial(rng, mask_num_vars, hiding_bound, false)
+            generate_mask_polynomial(&mut mask_rng, mask_num_vars, hiding_bound, false)
         } else {
-            generate_mask_polynomial(rng, index.padded_num_var, hiding_bound, false)
+            generate_mask_polynomial(&mut mask_rng, index.padded_num_var, hiding_bound, false)
         };
         let labeled_p_hat =
             LabeledPolynomial::new("p_hat".to_owned(), p_hat, Some(hiding_bound), None);
@@ -215,7 +201,7 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             E,
             SparsePolynomial<E::ScalarField, SparseTerm>,
         >::commit_mask(
-            &index.ck_w.1, &labeled_p_hat, rng
+            &index.ck_w.1, &labeled_p_hat, &mut mask_rng
         );
 
         let hidden_commitment: E::G1Affine =
@@ -232,14 +218,12 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::second_round")]
-    fn second_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
+    fn second_round<'a, T: Transcript + CryptographicSponge>(
         index: &IndexProverKey<E>,
         state: &mut ProverState<E>,
         v_msg: &Vec<E::ScalarField>,
-        mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut impl CryptographicSponge,
         network: &mut N,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) {
         network.broadcast_request(v_msg.clone());
 
@@ -313,11 +297,9 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<ProverFirstMsg<E>, E, N, R, _>(
+        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<E, ProverFirstMsg<E>, N, T, _>(
             poly_info,
-            mask_rng,
             &index.ck_mask,
-            mask_challenge_generator_for_open,
             network,
             transcript,
             sumcheck_polys_builder,
@@ -342,15 +324,13 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverCoordinator::third_round")]
-    fn third_round<'a, R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>>(
+    fn third_round<T: Transcript + CryptographicSponge>(
         index: &IndexProverKey<E>,
         pub_index: &IndexProverKey<E>,
         state: &mut ProverState<E>,
         v_msg: &Vec<E::ScalarField>,
-        mask_rng: &mut R,
-        mask_challenge_generator_for_open: &mut impl CryptographicSponge,
         network: &mut N,
-        transcript: &mut impl Transcript,
+        transcript: &mut T,
     ) {
         network.broadcast_request(v_msg.clone());
         let num_variables = index.padded_num_var;
@@ -414,11 +394,9 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<ProverSecondMsg<E>, E, N, R, _>(
+        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<E, ProverSecondMsg<E>, N, T, _>(
             poly_info,
-            mask_rng,
             &index.ck_mask,
-            mask_challenge_generator_for_open,
             network,
             transcript,
             sumcheck_polys_builder,
@@ -593,24 +571,23 @@ impl<E: Pairing, N: NetworkCoordinator> SpartanProverCoordinator<E, N> {
 
 #[tracing::instrument(skip_all, name = "rep3_zk_sumcheck_coordinator")]
 pub fn rep3_zk_sumcheck_coordinator<
-    M: Rep3SumcheckProverMsg<E>,
     E: Pairing,
+    M: Rep3SumcheckProverMsg<E>,
     N: NetworkCoordinator,
-    R: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error>,
-    T: CanonicalSerialize + CanonicalDeserialize + Clone + Default,
+    T: Transcript + CryptographicSponge,
+    U: CanonicalSerialize + CanonicalDeserialize + Clone + Default,
 >(
     poly_info: PolynomialInfo,
-    mask_rng: &mut R,
     mask_key: &MaskCommitterKey<E, SparsePolynomial<E::ScalarField, SparseTerm>>,
-    opening_challenge: &mut impl CryptographicSponge,
     network: &mut N,
-    transcript: &mut impl Transcript,
-    sumcheck_polys_builder: impl Fn(&[T], usize) -> ListOfProductsOfPolynomials<E::ScalarField>,
+    transcript: &mut T,
+    sumcheck_polys_builder: impl Fn(&[U], usize) -> ListOfProductsOfPolynomials<E::ScalarField>,
 ) -> (ZKSumcheckProof<E>, Vec<E::ScalarField>, Duration) {
     let time = Instant::now();
 
+    let mut mask_rng = <T as Transcript>::fork(transcript);
     let mask_poly = generate_mask_polynomial(
-        mask_rng,
+        &mut mask_rng,
         poly_info.num_variables,
         poly_info.max_multiplicands,
         true,
@@ -622,7 +599,7 @@ pub fn rep3_zk_sumcheck_coordinator<
         None,
     )];
     let (mask_commit, mask_randomness) =
-        MarlinPST13::<_, _>::commit(mask_key, &vec_mask_poly, Some(mask_rng)).unwrap();
+        MarlinPST13::<_, _>::commit(mask_key, &vec_mask_poly, Some(&mut mask_rng)).unwrap();
     let g_commit = mask_commit[0].commitment();
     let _ = transcript.append_serializable(b"g_commit", g_commit);
     let challenge = transcript.get_scalar_challenge(b"r1");
@@ -727,7 +704,7 @@ pub fn rep3_zk_sumcheck_coordinator<
         &vec_mask_poly,
         &mask_commit,
         &final_point,
-        opening_challenge,
+        transcript,
         &mask_randomness,
         None,
     );

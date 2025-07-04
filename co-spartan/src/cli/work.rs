@@ -200,7 +200,8 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         &mut network,
     );
 
-    if let Err(e) = proof.verify(&pk.ivk, &Vec::new()) {
+    let mut verifier_transcript = TranscriptMerlin::new(b"dfs");
+    if let Err(e) = proof.verify(&pk.ivk, &Vec::new(), &mut verifier_transcript) {
         println!("proof verification failed: {:?}", e);
         std::process::exit(1);
     }

@@ -755,11 +755,10 @@ fn eq_extension<F: Field>(t: &[F]) -> Vec<DenseMultilinearExtension<F>> {
 }*/
 
 #[tracing::instrument(skip_all, name = "zk_sumcheck_verifier")]
-pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
+pub fn zk_sumcheck_verifier_wrapper<E: Pairing, T: Transcript + CryptographicSponge>(
     mask_vk: &MaskVerifierKey<E>,
     proof: &ZKSumcheckProof<E>,
-    transcript: &mut impl Transcript,
-    opening_challenge: &mut S,
+    transcript: &mut T,
     claimed_sum: E::ScalarField,
 ) -> anyhow::Result<SubClaim<E::ScalarField>> {
     let _ = transcript.append_serializable(b"g_commit", &proof.g_commit);
@@ -786,7 +785,7 @@ pub fn zk_sumcheck_verifier_wrapper<E: Pairing, S: CryptographicSponge>(
         &subclaim.point,
         vec![proof.g_value],
         &proof.g_proof,
-        opening_challenge,
+        transcript,
         None,
     )
     .context("while verifying PCS openning")?;
