@@ -206,9 +206,11 @@ fn coordinator_work<E: Pairing, C: Communicator>(
         std::process::exit(1);
     }
 
-    let bytes = proof.serialized_size(ark_serialize::Compress::Yes);
     tracing::info!("coordinator time: {:?}", coordinator_time);
-    tracing::info!("proof size: {}", ByteSize(bytes as u64));
+    tracing::info_span!("proof size").in_scope(|| {
+        proof.log_size_report();
+        tracing::info!("total size: {}", ByteSize(proof.compressed_size() as u64));
+    });
 
     let (send_bytes, recv_bytes) = network.total_bandwidth_used();
     tracing::info!(

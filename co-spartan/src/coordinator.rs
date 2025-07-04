@@ -24,7 +24,6 @@ use ark_std::{
     rc::Rc,
     time::{Duration, Instant},
 };
-use rand::{Rng, RngCore};
 use spartan::{
     logup::LogLookupProof,
     math::{MaskPolynomial, Math},

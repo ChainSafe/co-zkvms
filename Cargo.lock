@@ -2552,6 +2552,7 @@ dependencies = [
  "ark-poly-commit",
  "ark-serialize",
  "ark-std",
+ "bytesize",
  "itertools 0.12.1",
  "merlin",
  "noir-r1cs",
