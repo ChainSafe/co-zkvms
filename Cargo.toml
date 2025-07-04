@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["co-spartan", "noir-r1cs", "spartan"]
+members = ["co-noir", "co-spartan", "mpc-net", "noir-r1cs", "spartan"]
 
 [workspace.package]
 version = "0.1.0"
@@ -49,9 +49,10 @@ zstd = "0.13.3"
 bytes = "1.10.1"
 zeroize = "1.8.1"
 num-bigint = "0.4.3"
+color-eyre = "0.6.3"
+
 
 # Additional dependencies for co-spartan
-mpi = { version = "0.7.0", features = ["user-operations", "derive"] }
 clap = { version = "4.4.13", features = ["derive"] }
 mimalloc = { version = "*", default-features = false }
 crossbeam = "0.8.3"
@@ -77,3 +78,4 @@ argh = "0.1.12"
 # ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"} 
 ark-linear-sumcheck = { path = "../sumcheck" }
 ark-poly-commit = { path = "../poly-commit/poly-commit" }
+# mpc-net = { path = "./mpc-net" }

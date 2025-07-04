@@ -8,10 +8,10 @@ use crate::{
     utils::{pad_to_power_of_two, split_vec},
 };
 
-pub type WitnessShare<E> = Rep3Poly<E>;
+pub type Rep3WitnessShare<E> = Rep3Poly<E>;
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSWitnessShare<E: Pairing> {
+pub struct Rep3R1CSWitnessShare<E: Pairing> {
     pub z: Rep3Poly<E>,
     pub za: Rep3Poly<E>,
     pub zb: Rep3Poly<E>,
@@ -24,7 +24,7 @@ pub fn split_witness<E: Pairing>(
     log_instance_size: usize,
     log_num_workers_per_party: usize,
     rng: &mut impl RngCore,
-) -> Vec<[(usize, WitnessShare<E>); 3]> {
+) -> Vec<[(usize, Rep3WitnessShare<E>); 3]> {
     pad_to_power_of_two(&mut z, log_instance_size);
 
     let mut z_vec = split_vec(&z, log_num_workers_per_party);

@@ -25,6 +25,7 @@ use spartan::{
     utils::{boost_degree, dense_scalar_prod, generate_eq, partial_generate_eq},
     IndexProverKey,
 };
+use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     mpc::{
@@ -32,13 +33,12 @@ use crate::{
         sumcheck::rep3::RssSumcheck,
         SSRandom,
     },
-    network::NetworkWorker,
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
         poly_list_to_prover_state, DistrbutedSumcheckProverState,
     },
     utils::aggregate_poly,
-    witness::{R1CSWitnessShare, WitnessShare},
+    witness::{Rep3R1CSWitnessShare, Rep3WitnessShare},
 };
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -57,7 +57,7 @@ pub struct Rep3ProverKey<E: Pairing> {
     pub seed_1: String,
 }
 
-pub struct SpartanProverWorker<E: Pairing, N: NetworkWorker> {
+pub struct SpartanProverWorker<E: Pairing, N: MpcStarNetWorker> {
     pub log_chunk_size: usize,
     pub start_eq: usize,
     pub pub_log_chunk_size: usize,
@@ -95,7 +95,7 @@ impl<E: Pairing> Default for ProverState<E> {
     }
 }
 
-impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
+impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     pub fn new(
         log_chunk_size: usize,
         start_eq: usize,
@@ -116,7 +116,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
-        z: WitnessShare<E>,
+        z: Rep3WitnessShare<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
@@ -140,7 +140,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
 
     // Compute Az, Bz, Cz
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::zero_round")]
-    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &WitnessShare<E>) -> R1CSWitnessShare<E> {
+    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &Rep3WitnessShare<E>) -> Rep3R1CSWitnessShare<E> {
         let chunk_size = pk.ipk.num_variables_val.exp2();
         let mut za = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
         let mut zb = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
@@ -159,7 +159,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
             zc[row] += z_share * pk.ipk.val_c_indexed[i];
         }
 
-        R1CSWitnessShare {
+        Rep3R1CSWitnessShare {
             z: z.clone(),
             za: Rep3Poly::from_rep3_evals(&za, pk.ipk.num_variables_val),
             zb: Rep3Poly::from_rep3_evals(&zb, pk.ipk.num_variables_val),
@@ -176,7 +176,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &R1CSWitnessShare<E>,
+        witness_share: &Rep3R1CSWitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         network: &mut N,
@@ -215,7 +215,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &R1CSWitnessShare<E>,
+        witness_share: &Rep3R1CSWitnessShare<E>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
@@ -530,7 +530,7 @@ impl<E: Pairing, N: NetworkWorker> SpartanProverWorker<E, N> {
     }
 }
 
-pub fn poly_commit_worker<'a, E: Pairing, N: NetworkWorker>(
+pub fn poly_commit_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     polys: impl IntoIterator<Item = &'a DenseMultilinearExtension<E::ScalarField>>,
     ck: &CommitterKey<E>,
     network: &mut N,
@@ -546,7 +546,7 @@ pub fn poly_commit_worker<'a, E: Pairing, N: NetworkWorker>(
 }
 
 #[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
-pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: NetworkWorker>(
+pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
     za: &Rep3Poly<E>,
     zb: &Rep3Poly<E>,
     zc: &Rep3Poly<E>,
@@ -589,7 +589,7 @@ pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netwo
 }
 
 #[tracing::instrument(skip_all, name = "rep3_second_sumcheck_worker")]
-pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: NetworkWorker>(
+pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
     a_r: &DenseMultilinearExtension<E::ScalarField>,
     b_r: &DenseMultilinearExtension<E::ScalarField>,
     c_r: &DenseMultilinearExtension<E::ScalarField>,
@@ -632,7 +632,7 @@ pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: Netw
 }
 
 #[tracing::instrument(skip_all, name = "distributed_sumcheck_worker")]
-pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
+pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
     distributed_q_polys: &ListOfProductsOfPolynomials<F>,
     network: &mut N,
 ) -> Vec<F> {
@@ -658,7 +658,7 @@ pub fn distributed_sumcheck_worker<F: Field, N: NetworkWorker>(
 }
 
 #[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
-pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
+pub fn rep3_eval_poly_worker<E: Pairing, N: MpcStarNetWorker>(
     polys: Vec<&Rep3Poly<E>>,
     final_point: &[E::ScalarField],
     num_vars: usize,
@@ -676,7 +676,7 @@ pub fn rep3_eval_poly_worker<E: Pairing, N: NetworkWorker>(
 }
 
 #[tracing::instrument(skip_all, name = "distributed_batch_open_poly_worker")]
-pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
+pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     polys: impl IntoIterator<Item = &'a DenseMultilinearExtension<E::ScalarField>>,
     ck: &CommitterKey<E>,
     point: &[E::ScalarField],
@@ -779,7 +779,7 @@ fn hash_tuple<F: Field>(v: &[usize], eq: &DenseMultilinearExtension<F>, v_msg: &
     result
 }
 
-fn dummy_sumcheck_worker<F: Field, N: NetworkWorker>(
+fn dummy_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
     default_last_sumcheck_state: DistrbutedSumcheckProverState<F>,
     num_variables: usize,
     max_multiplicands: usize,
@@ -801,7 +801,7 @@ fn dummy_sumcheck_worker<F: Field, N: NetworkWorker>(
     let _: Vec<F> = network.receive_request();
 }
 
-fn dummy_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
+fn dummy_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     num_var: usize,
     num_poly: usize,
     g: E::G1Affine,
@@ -817,7 +817,7 @@ fn dummy_batch_open_poly_worker<'a, E: Pairing, N: NetworkWorker>(
     network.send_response(default_response);
 }
 
-fn dummy_fourth_round<'a, E: Pairing, N: NetworkWorker>(ipk: &IndexProverKey<E>, network: &mut N) {
+fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(ipk: &IndexProverKey<E>, network: &mut N) {
     let _v_msg: E::ScalarField = network.receive_request();
 
     let (_x_r, _x_c): (E::ScalarField, E::ScalarField) = network.receive_request();

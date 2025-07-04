@@ -1,6 +1,5 @@
 pub mod coordinator;
 pub mod mpc;
-pub mod network;
 pub mod setup;
 pub mod sumcheck;
 pub mod utils;

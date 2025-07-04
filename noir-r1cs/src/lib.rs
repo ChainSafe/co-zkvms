@@ -1,16 +1,13 @@
 #![doc = include_str!("../README.md")]
 #![allow(missing_docs)]
 mod file;
-// mod gnark_config;
 mod interner;
 mod noir_proof_scheme;
 mod noir_to_r1cs;
 mod noir_witness;
 mod r1cs;
-// mod skyscraper;
 mod sparse_matrix;
 mod utils;
-// mod whir_r1cs;
 
 pub use {
     crate::{

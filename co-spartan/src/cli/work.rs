@@ -1,7 +1,6 @@
 #![allow(warnings)]
 use core::num;
 use std::{collections::HashMap, mem, rc::Rc};
-// use mpi_snark::worker::WorkerState;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -52,10 +51,7 @@ use rand::RngCore;
 use rayon::prelude::*;
 use spartan::{transcript::TranscriptMerlin, IndexProverKey, IndexVerifierKey, Indexer, SRS};
 
-// use ark_ec::bn::Bls12;
 use crate::current_num_threads;
-
-const ROOT_RANK: i32 = 0;
 
 pub fn work<E: Pairing>(
     artifacts_dir: PathBuf,
@@ -71,10 +67,10 @@ pub fn work<E: Pairing>(
     let log_num_public_workers = log_num_public_workers
         .unwrap_or(((1 << log_num_workers_per_party) * 3 as u64).ilog2() as usize);
 
-    let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Funneled).unwrap();
-    let communicator = universe.world();
-
-    let rank = communicator.rank();
+    #[cfg(feature = "mpi")]
+    let mpi_ctx = mpc_net::rep3::mpi::initialize_mpi();
+    #[cfg(feature = "mpi")]
+    let is_coordinator = mpi_ctx.is_root();
 
     let keys_dir = artifacts_dir.join(format!(
         "keys_{}_{}",
@@ -93,13 +89,20 @@ pub fn work<E: Pairing>(
         (!local && worker_id.map(|x| x == 0).unwrap_or(false)) || (local && rank == ROOT_RANK);
 
     if is_coordinator {
+        #[cfg(feature = "mpi")]
+        let network = Rep3CoordinatorMPI::new(
+            &mut log,
+            log_num_workers_per_party,
+            log_num_public_workers,
+            size,
+        );
         coordinator_work::<E, _>(
             keys_dir,
             r1cs_noir_scheme_path,
             r1cs_input_path,
             log_num_workers_per_party,
             log_num_public_workers,
-            communicator,
+            network,
         );
     } else {
         let worker_id = if local {
@@ -119,13 +122,13 @@ pub fn work<E: Pairing>(
 }
 
 #[tracing::instrument(skip_all, name = "coordinator_work")]
-fn coordinator_work<E: Pairing, C: Communicator>(
+fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
     keys_dir: PathBuf,
     r1cs_noir_scheme_path: PathBuf,
     r1cs_input_path: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: usize,
-    communicator: C,
+    network: C,
 ) where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {
@@ -164,14 +167,6 @@ fn coordinator_work<E: Pairing, C: Communicator>(
 
     let log_instance_size = pk.log_instance_size;
 
-    // Initial proof
-    let mut network = Rep3CoordinatorMPI::new(
-        root_process,
-        &mut log,
-        log_num_workers_per_party,
-        log_num_public_workers,
-        size,
-    );
 
     let _: Vec<_> = network.receive_responses("ready".to_string());
 
@@ -252,8 +247,6 @@ fn worker_work<E: Pairing, C: Communicator>(
         "Rayon num threads in worker {rank}: {}",
         current_num_threads
     );
-
-    // let worker_id = (rank as usize) - 1;
 
     let log_chunk_size = pk.num_variables - log_num_workers_per_party;
     let start_eq = (1 << log_chunk_size) * (worker_id / 3);

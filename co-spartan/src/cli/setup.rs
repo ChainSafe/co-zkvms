@@ -29,16 +29,7 @@ use co_spartan::{
     utils::{pad_to_power_of_two, split_vec},
     Rep3ProverKey,
 };
-use crossbeam::thread;
 use itertools::{merge, Itertools};
-use mimalloc::MiMalloc;
-use mpi::{
-    datatype::{Partition, PartitionMut},
-    request,
-    topology::Process,
-    traits::*,
-    Count,
-};
 use noir_r1cs::{FieldElement, NoirProofScheme};
 use rand::{rngs::StdRng, seq::SliceRandom, RngCore, SeedableRng};
 use rayon::prelude::*;
