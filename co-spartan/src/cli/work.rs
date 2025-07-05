@@ -85,16 +85,17 @@ pub fn work<E: Pairing>(
         std::process::exit(1);
     }
 
-    let is_coordinator =
-        (!local && worker_id.map(|x| x == 0).unwrap_or(false)) || (local && rank == ROOT_RANK);
+    #[cfg(feature = "mpi")]
+    let is_coordinator = mpi_ctx.is_root();
+    #[cfg(not(feature = "mpi"))]
+    let is_coordinator = !local && worker_id.map(|x| x == 0).unwrap_or(false) || (local && rank == ROOT_RANK);
 
     if is_coordinator {
         #[cfg(feature = "mpi")]
         let network = Rep3CoordinatorMPI::new(
-            &mut log,
             log_num_workers_per_party,
             log_num_public_workers,
-            size,
+            &mpi_ctx,
         );
         coordinator_work::<E, _>(
             keys_dir,
@@ -105,11 +106,25 @@ pub fn work<E: Pairing>(
             network,
         );
     } else {
-        let worker_id = if local {
-            rank as usize - 1
-        } else {
-            worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
+        #[cfg(feature = "mpi")]
+        let (worker_id, network) = {
+            let worker_id = if local {
+                mpi_ctx.rank as usize - 1
+            } else {
+                worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
+            };
+
+            let network = Rep3WorkerMPI::new(
+                mpi_ctx.communicator.process_at_rank(mpi_ctx.rank as i32),
+                log_num_workers_per_party,
+                log_num_public_workers,
+                mpi_ctx.communicator.size(),
+                rank as usize,
+            );
+
+            (worker_id, network)
         };
+      
 
         worker_work::<E, _>(
             keys_dir,
@@ -128,7 +143,7 @@ fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
     r1cs_input_path: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: usize,
-    network: C,
+    mpi_ctx: &MpiContext,
 ) where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {

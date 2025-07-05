@@ -49,6 +49,7 @@ zstd = "0.13.3"
 bytes = "1.10.1"
 zeroize = "1.8.1"
 num-bigint = "0.4.3"
+eyre = "0.6.10"
 color-eyre = "0.6.3"
 
 

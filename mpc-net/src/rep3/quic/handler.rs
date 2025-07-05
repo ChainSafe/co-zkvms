@@ -1,7 +1,6 @@
-
 use std::{
     collections::{BTreeMap, HashMap},
-    io,
+    io, iter,
     net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
     time::Duration,
@@ -9,17 +8,17 @@ use std::{
 
 use super::channel::{BytesChannel, Channel};
 use super::codecs::BincodeCodec;
-use color_eyre::eyre::{self, Context, Report};
 use crate::config::NetworkConfig;
+use color_eyre::eyre::{self, Context, Report};
+use quinn::{
+    crypto::rustls::QuicClientConfig,
+    rustls::{pki_types::CertificateDer, RootCertStore},
+};
 use quinn::{
     ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig,
     VarInt,
 };
-use quinn::{
-    crypto::rustls::QuicClientConfig,
-    rustls::{RootCertStore, pki_types::CertificateDer},
-};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     runtime::Runtime,
@@ -64,21 +63,23 @@ pub struct MpcNetworkHandler {
 impl MpcNetworkHandler {
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
     pub async fn establish(config: NetworkConfig) -> Result<Self, Report> {
-        config.check_config()?;
-        let certs: HashMap<usize, CertificateDer> = config
-            .parties
-            .iter()
-            .map(|p| (p.id, p.cert.clone()))
-            .collect();
+        // config.check_config()?;
+        // let certs: HashMap<usize, CertificateDer> = config
+        //     .parties
+        //     .iter()
+        //     .map(|p| (p.id, p.cert.clone()))
+        //     .collect();
 
-        let mut root_store = RootCertStore::empty();
-        for (id, cert) in &certs {
-            root_store
-                .add(cert.clone())
-                .with_context(|| format!("adding certificate for party {id} to root store"))?;
-        }
+        // let mut root_store = RootCertStore::empty();
+        // for (id, cert) in &certs {
+        //     root_store
+        //         .add(cert.clone())
+        //         .with_context(|| format!("adding certificate for party {id} to root store"))?;
+        // }
         let crypto = quinn::rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
+            // .with_root_certificates(root_store)
+            .dangerous()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_no_client_auth();
 
         let client_config = {
@@ -97,7 +98,7 @@ impl MpcNetworkHandler {
         };
 
         let server_config =
-            quinn::ServerConfig::with_single_cert(vec![certs[&config.my_id].clone()], config.key)
+            quinn::ServerConfig::with_single_cert(vec![], config.key)
                 .context("creating our server config")?;
         let our_socket_addr = config.bind_addr;
 
@@ -106,90 +107,91 @@ impl MpcNetworkHandler {
 
         let mut connections = BTreeMap::new();
 
-        for party in config.parties {
-            if party.id == config.my_id {
+        let parties = if config.my_id == 0 {
+            &config.parties[1..]
+        } else {
+            &config.parties[..1]
+        };
+
+        for party in parties {
+            if config.my_id == 0 && party.id == 0 {
                 // skip self
                 continue;
             }
-            if party.id < config.my_id {
-                // connect to party, we are client
+            if config.my_id != 0 && party.id != 0 {
+                // skip other workers
+                continue;
+            }
 
-                let party_addresses: Vec<SocketAddr> = party
-                    .dns_name
-                    .to_socket_addrs()
-                    .with_context(|| format!("while resolving DNS name for {}", party.dns_name))?
-                    .collect();
-                if party_addresses.is_empty() {
-                    return Err(eyre::eyre!("could not resolve DNS name {}", party.dns_name));
-                }
-                let party_addr = party_addresses[0];
-                let local_client_socket: SocketAddr = match party_addr {
-                    SocketAddr::V4(_) => {
-                        "0.0.0.0:0".parse().expect("hardcoded IP address is valid")
-                    }
-                    SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
-                };
-                let endpoint = quinn::Endpoint::client(local_client_socket)
-                    .with_context(|| format!("creating client endpoint to party {}", party.id))?;
-                let conn = endpoint
-                    .connect_with(client_config.clone(), party_addr, &party.dns_name.hostname)
-                    .with_context(|| {
-                        format!("setting up client connection with party {}", party.id)
-                    })?
-                    .await
-                    .with_context(|| format!("connecting as a client to party {}", party.id))?;
-                let mut uni = conn.open_uni().await?;
-                uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
-                    .await?;
-                uni.flush().await?;
-                uni.finish()?;
-                tracing::trace!(
-                    "Conn with id {} from {} to {}",
-                    conn.stable_id(),
-                    endpoint.local_addr().unwrap(),
-                    conn.remote_address(),
-                );
-                assert!(connections.insert(party.id, conn).is_none());
-                endpoints.push(endpoint);
-            } else {
-                // we are the server, accept a connection
-                match tokio::time::timeout(
-                    config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-                    server_endpoint.accept(),
-                )
+            let party_addresses: Vec<SocketAddr> = party
+                .dns_name
+                .to_socket_addrs()
+                .with_context(|| format!("while resolving DNS name for {}", party.dns_name))?
+                .collect();
+            if party_addresses.is_empty() {
+                return Err(eyre::eyre!("could not resolve DNS name {}", party.dns_name));
+            }
+            let party_addr = party_addresses[0];
+            let local_client_socket: SocketAddr = match party_addr {
+                SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
+                SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
+            };
+            let endpoint = quinn::Endpoint::client(local_client_socket)
+                .with_context(|| format!("creating client endpoint to party {}", party.id))?;
+            let conn = endpoint
+                .connect_with(client_config.clone(), party_addr, &party.dns_name.hostname)
+                .with_context(|| format!("setting up client connection with party {}", party.id))?
                 .await
-                {
-                    Ok(Some(maybe_conn)) => {
-                        let conn = maybe_conn.await?;
-                        tracing::trace!(
-                            "Conn with id {} from {} to {}",
-                            conn.stable_id(),
-                            server_endpoint.local_addr().unwrap(),
-                            conn.remote_address(),
-                        );
-                        let mut uni = conn.accept_uni().await?;
-                        let other_party_id = uni.read_u32().await?;
-                        assert!(
-                            connections
-                                .insert(
-                                    usize::try_from(other_party_id).expect("u32 fits into usize"),
-                                    conn
-                                )
-                                .is_none()
-                        );
-                    }
-                    Ok(None) => {
-                        return Err(eyre::eyre!(
-                            "server endpoint did not accept a connection from party {}",
-                            party.id
-                        ));
-                    }
-                    Err(_) => {
-                        return Err(eyre::eyre!(
-                            "party {} did not connect within 60 seconds - timeout",
-                            party.id
-                        ));
-                    }
+                .with_context(|| format!("connecting as a client to party {}", party.id))?;
+            let mut uni = conn.open_uni().await?;
+            uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
+                .await?;
+            uni.flush().await?;
+            uni.finish()?;
+            tracing::trace!(
+                "Conn with id {} from {} to {}",
+                conn.stable_id(),
+                endpoint.local_addr().unwrap(),
+                conn.remote_address(),
+            );
+            assert!(connections.insert(party.id, conn).is_none());
+            endpoints.push(endpoint);
+
+            // we are the server, accept a connection
+            match tokio::time::timeout(
+                config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
+                server_endpoint.accept(),
+            )
+            .await
+            {
+                Ok(Some(maybe_conn)) => {
+                    let conn = maybe_conn.await?;
+                    tracing::trace!(
+                        "Conn with id {} from {} to {}",
+                        conn.stable_id(),
+                        server_endpoint.local_addr().unwrap(),
+                        conn.remote_address(),
+                    );
+                    let mut uni = conn.accept_uni().await?;
+                    let other_party_id = uni.read_u32().await?;
+                    assert!(connections
+                        .insert(
+                            usize::try_from(other_party_id).expect("u32 fits into usize"),
+                            conn
+                        )
+                        .is_none());
+                }
+                Ok(None) => {
+                    return Err(eyre::eyre!(
+                        "server endpoint did not accept a connection from party {}",
+                        party.id
+                    ));
+                }
+                Err(_) => {
+                    return Err(eyre::eyre!(
+                        "party {} did not connect within 60 seconds - timeout",
+                        party.id
+                    ));
                 }
             }
         }
@@ -314,5 +316,61 @@ impl MpcNetworkHandler {
             endpoint.close(VarInt::from_u32(0), &[]);
         }
         Ok(())
+    }
+}
+
+/// Dummy certificate verifier that treats any certificate as valid.
+/// NOTE, such verification is vulnerable to MITM attacks, but convenient for testing.
+#[derive(Debug)]
+struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
+
+impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }

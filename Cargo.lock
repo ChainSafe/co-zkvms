@@ -2670,6 +2670,7 @@ dependencies = [
  "bytes",
  "clap",
  "color-eyre",
+ "eyre",
  "futures",
  "mpi",
  "quinn",

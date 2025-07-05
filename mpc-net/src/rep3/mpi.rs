@@ -14,6 +14,8 @@ use crate::{
     Result,
 };
 
+const ROOT_RANK: usize = 0;
+
 pub struct MpiContext {
     pub communicator: SimpleCommunicator,
     pub rank: usize,
@@ -31,13 +33,13 @@ pub fn initialize_mpi() -> MpiContext {
 
 impl MpiContext {
     pub fn is_root(&self) -> bool {
-        self.rank == 0
+        self.rank == ROOT_RANK
     }
 }
 
 
-pub struct Rep3CoordinatorMPI<'a, C: 'a + Communicator> {
-    pub root_process: Process<'a, C>,
+pub struct Rep3CoordinatorMPI<'a> {
+    pub root_process: Process<'a, SimpleCommunicator>,
     pub log_num_workers_per_party: usize,
     pub log_num_public_workers: usize,
     pub size: Count,
@@ -45,14 +47,13 @@ pub struct Rep3CoordinatorMPI<'a, C: 'a + Communicator> {
     pub total_recv_bytes: usize,
 }
 
-impl<'a, C: 'a + Communicator> Rep3CoordinatorMPI<'a, C> {
+impl<'a> Rep3CoordinatorMPI<'a> {
     pub fn new(
         log_num_workers_per_party: usize,
         log_num_public_workers: usize,
-        mpi_ctx: MpiContext,
+        mpi_ctx: &'a MpiContext,
     ) -> Self {    
-        let root_process = mpi_ctx.communicator.root();
-        let log = Vec::new();
+        let root_process = mpi_ctx.communicator.process_at_rank(ROOT_RANK as i32);
         let size = mpi_ctx.communicator.size();
         Self {
             root_process,
@@ -65,7 +66,7 @@ impl<'a, C: 'a + Communicator> Rep3CoordinatorMPI<'a, C> {
     }
 }
 
-impl<'a, C: 'a + Communicator> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a, C> {
+impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         default_response: T,

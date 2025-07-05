@@ -1,8 +1,11 @@
-use std::{collections::BTreeMap, sync::Arc};
+pub mod channel;
+pub mod codecs;
+pub mod handler;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
-use color_eyre::eyre::Context;
+use color_eyre::eyre::{bail, Context};
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     config::NetworkConfig,
@@ -11,9 +14,7 @@ use crate::{
     Result,
 };
 
-pub mod channel;
-pub mod codecs;
-pub mod handler;
+use handler::MpcNetworkHandler;
 
 pub struct Rep3QuicNetCoordinator {
     pub(crate) channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>>,
@@ -21,8 +22,30 @@ pub struct Rep3QuicNetCoordinator {
 }
 
 impl Rep3QuicNetCoordinator {
-    pub fn new(config: NetworkConfig) -> Self {
-        todo!()
+    pub fn new(config: NetworkConfig) -> Result<Self> {
+        if (config.parties.len() - 1) % 3 != 0 {
+            bail!("REP3 protocol requires exactly 3 workers per party")
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let (net_handler, channels) = runtime.block_on(async {
+            let net_handler = MpcNetworkHandler::establish(config).await.context("establishing network handler")?;
+            let mut channels = BTreeMap::new();
+            for (id, channel) in net_handler.get_byte_channels().await.context("getting byte channels")? {
+                channels.insert(id, ChannelHandle::manage(channel));
+            }
+            if !channels.is_empty() {
+                bail!("unexpected channels found")
+            }
+
+            Ok((net_handler, channels))
+        })?;
+
+        Ok(Self {
+            channels,
+            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(runtime, net_handler)),
+        })
     }
 }
 
@@ -76,7 +99,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         for (&i, channel) in self.channels.iter_mut() {
             let size = data[i].uncompressed_size();
             let mut ser_data = Vec::with_capacity(size);
-            data[i].serialize_uncompressed(&mut ser_data)
+            data[i]
+                .serialize_uncompressed(&mut ser_data)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
             std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
         }
