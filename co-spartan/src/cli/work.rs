@@ -31,20 +31,13 @@ use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
 use co_spartan::{
     mpc::{rep3::Rep3Poly, SSRandom},
-    network::{
-        mpi::{Rep3CoordinatorMPI, Rep3WorkerMPI},
-        NetworkCoordinator, NetworkWorker,
-    },
     setup::CoordinatorKey,
 };
 use crossbeam::thread;
 use itertools::{merge, Itertools};
-use mpi::{
-    datatype::{Partition, PartitionMut},
-    request,
-    topology::Process,
-    traits::*,
-    Count,
+use mpc_net::{
+    mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
+    rep3::mpi::{Rep3CoordinatorMPI, Rep3WorkerMPI},
 };
 use noir_r1cs::NoirProofScheme;
 use rand::RngCore;
@@ -88,26 +81,23 @@ pub fn work<E: Pairing>(
     #[cfg(feature = "mpi")]
     let is_coordinator = mpi_ctx.is_root();
     #[cfg(not(feature = "mpi"))]
-    let is_coordinator = !local && worker_id.map(|x| x == 0).unwrap_or(false) || (local && rank == ROOT_RANK);
+    let is_coordinator = todo!();
 
     if is_coordinator {
         #[cfg(feature = "mpi")]
-        let network = Rep3CoordinatorMPI::new(
-            log_num_workers_per_party,
-            log_num_public_workers,
-            &mpi_ctx,
-        );
+        let mut network =
+            Rep3CoordinatorMPI::new(log_num_workers_per_party, log_num_public_workers, &mpi_ctx);
         coordinator_work::<E, _>(
             keys_dir,
             r1cs_noir_scheme_path,
             r1cs_input_path,
             log_num_workers_per_party,
             log_num_public_workers,
-            network,
+            &mut network,
         );
     } else {
         #[cfg(feature = "mpi")]
-        let (worker_id, network) = {
+        let (worker_id, mut network) = {
             let worker_id = if local {
                 mpi_ctx.rank as usize - 1
             } else {
@@ -115,43 +105,35 @@ pub fn work<E: Pairing>(
             };
 
             let network = Rep3WorkerMPI::new(
-                mpi_ctx.communicator.process_at_rank(mpi_ctx.rank as i32),
-                log_num_workers_per_party,
                 log_num_public_workers,
-                mpi_ctx.communicator.size(),
-                rank as usize,
+                log_num_workers_per_party,
+                &mpi_ctx,
             );
 
             (worker_id, network)
         };
-      
 
         worker_work::<E, _>(
             keys_dir,
             log_num_workers_per_party,
             log_num_public_workers,
-            communicator,
+            &mut network,
             worker_id,
         );
     }
 }
 
 #[tracing::instrument(skip_all, name = "coordinator_work")]
-fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
+fn coordinator_work<E: Pairing, N: MpcStarNetCoordinator>(
     keys_dir: PathBuf,
     r1cs_noir_scheme_path: PathBuf,
     r1cs_input_path: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: usize,
-    mpi_ctx: &MpiContext,
+    network: &mut N,
 ) where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {
-    let mut rng = Blake2s512Rng::setup();
-    let size = communicator.size();
-    let root_process = communicator.process_at_rank(ROOT_RANK);
-    let mut log = Vec::new();
-
     let pk = {
         let mut buf = Vec::new();
 
@@ -173,6 +155,7 @@ fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
         .collect();
     let r1cs: spartan::R1CS<E::ScalarField> = proof_scheme.r1cs.into();
 
+    let mut rng = Blake2s512Rng::setup();
     let witness_shares = co_spartan::split_witness::<E>(
         z,
         r1cs.log2_instance_size(),
@@ -182,8 +165,7 @@ fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
 
     let log_instance_size = pk.log_instance_size;
 
-
-    let _: Vec<_> = network.receive_responses("ready".to_string());
+    let _: Vec<_> = network.receive_responses("ready".to_string()).unwrap();
 
     let witness_shares = witness_shares
         .into_iter()
@@ -207,12 +189,12 @@ fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
         &pk.pub_ipk,
         &pk.ivk,
         &mut transcript,
-        &mut network,
-    );
+        network,
+    ).unwrap();
 
     let mut verifier_transcript = TranscriptMerlin::new(b"dfs");
     if let Err(e) = proof.verify(&pk.ivk, &Vec::new(), &mut verifier_transcript) {
-        println!("proof verification failed: {:?}", e);
+        eprintln!("proof verification failed: {:?}", e);
         std::process::exit(1);
     }
 
@@ -231,20 +213,15 @@ fn coordinator_work<E: Pairing, C: MpcStarNetCoordinator>(
 }
 
 #[tracing::instrument(skip_all, name = "worker_work", fields(worker_id = %worker_id))]
-fn worker_work<E: Pairing, C: Communicator>(
+fn worker_work<E: Pairing, N: MpcStarNetWorker>(
     keys_dir: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: usize,
-    communicator: C,
+    network: &mut N,
     worker_id: usize,
 ) where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {
-    let rank = communicator.rank();
-    let size = communicator.size();
-    let root_process = communicator.process_at_rank(ROOT_RANK);
-    let mut log = Vec::new();
-
     let pk = {
         let mut buf = Vec::new();
 
@@ -259,7 +236,7 @@ fn worker_work<E: Pairing, C: Communicator>(
 
     let current_num_threads = current_num_threads();
     tracing::info!(
-        "Rayon num threads in worker {rank}: {}",
+        "Rayon num threads in worker {worker_id}: {}",
         current_num_threads
     );
 
@@ -277,15 +254,6 @@ fn worker_work<E: Pairing, C: Communicator>(
     seed_1.feed(&pk.seed_1.as_bytes());
     let mut random = SSRandom::<Blake2s512Rng>::new(seed_0, seed_1);
 
-    let mut network = Rep3WorkerMPI::new(
-        root_process,
-        &mut log,
-        log_num_workers_per_party,
-        log_num_public_workers,
-        size,
-        rank as usize,
-    );
-
     network.send_response("ready".to_string());
 
     let witness_share = network.receive_request();
@@ -296,7 +264,7 @@ fn worker_work<E: Pairing, C: Communicator>(
         pub_log_chunk_size,
         pub_start_eq,
     )
-    .prove(&pk, witness_share, &mut random, active, &mut network);
+    .prove(&pk, witness_share, &mut random, active, network);
 
     let (send_bytes, recv_bytes) = network.total_bandwidth_used();
     tracing::info!(

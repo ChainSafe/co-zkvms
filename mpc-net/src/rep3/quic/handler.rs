@@ -1,19 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    io, iter,
+    io,
     net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
     time::Duration,
 };
 
-use super::channel::{BytesChannel, Channel};
-use super::codecs::BincodeCodec;
-use crate::config::NetworkConfig;
-use color_eyre::eyre::{self, Context, Report};
-use quinn::{
-    crypto::rustls::QuicClientConfig,
-    rustls::{pki_types::CertificateDer, RootCertStore},
+use super::{
+    channel::{BytesChannel, Channel},
+    codecs::BincodeCodec,
+    config::NetworkConfig,
 };
+use color_eyre::eyre::{self, Context, Report};
+use quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer};
 use quinn::{
     ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig,
     VarInt,
@@ -97,9 +96,8 @@ impl MpcNetworkHandler {
             client_config
         };
 
-        let server_config =
-            quinn::ServerConfig::with_single_cert(vec![], config.key)
-                .context("creating our server config")?;
+        let server_config = quinn::ServerConfig::with_single_cert(vec![], config.key)
+            .context("creating our server config")?;
         let our_socket_addr = config.bind_addr;
 
         let mut endpoints = Vec::new();

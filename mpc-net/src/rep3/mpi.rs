@@ -1,10 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::Context;
 use mpi::{
-    datatype::{Partition, PartitionMut},
-    topology::{Process, SimpleCommunicator},
-    traits::{Communicator, Partitioned, Root},
-    Count,
+    datatype::{Partition, PartitionMut}, environment::Universe, topology::{Process, SimpleCommunicator}, traits::{Communicator, Partitioned, Root}, Count
 };
 
 use crate::{
@@ -19,6 +16,7 @@ const ROOT_RANK: usize = 0;
 pub struct MpiContext {
     pub communicator: SimpleCommunicator,
     pub rank: usize,
+    pub universe: Universe,
 }
 
 pub fn initialize_mpi() -> MpiContext {
@@ -26,6 +24,7 @@ pub fn initialize_mpi() -> MpiContext {
     let communicator = universe.world();
     let rank = communicator.rank() as usize;
     MpiContext {
+        universe,
         communicator,
         rank,
     }
@@ -131,9 +130,8 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
     }
 }
 
-pub struct Rep3WorkerMPI<'a, C: 'a + Communicator> {
-    pub root_process: Process<'a, C>,
-    pub log: &'a mut Vec<String>,
+pub struct Rep3WorkerMPI<'a> {
+    pub root_process: Process<'a, SimpleCommunicator>,
     pub log_num_workers_per_party: usize,
     pub log_num_public_workers: usize,
     pub size: Count,
@@ -142,20 +140,19 @@ pub struct Rep3WorkerMPI<'a, C: 'a + Communicator> {
     pub total_recv_bytes: usize,
 }
 
-impl<'a, C: 'a + Communicator> Rep3WorkerMPI<'a, C> {
+impl<'a> Rep3WorkerMPI<'a> {
     pub fn new(
-        root_process: Process<'a, C>,
-        log: &'a mut Vec<String>,
-        log_num_workers_per_party: usize,
         log_num_public_workers: usize,
-        size: Count,
-        rank: usize,
+        log_num_workers_per_party: usize,
+        mpi_ctx: &'a MpiContext,
     ) -> Self {
+        let root_process = mpi_ctx.communicator.process_at_rank(ROOT_RANK as i32);
+        let size = mpi_ctx.communicator.size();
+        let rank = mpi_ctx.rank;
         Self {
             root_process,
-            log,
-            log_num_workers_per_party,
             log_num_public_workers,
+            log_num_workers_per_party,
             size,
             rank,
             total_send_bytes: 0,
@@ -164,7 +161,7 @@ impl<'a, C: 'a + Communicator> Rep3WorkerMPI<'a, C> {
     }
 }
 
-impl<'a, C: 'a + Communicator> MpcStarNetWorker for Rep3WorkerMPI<'a, C> {
+impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
     fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) {
         let responses_bytes = serialize_to_vec(&data);
         self.root_process.gather_varcount_into(&responses_bytes);

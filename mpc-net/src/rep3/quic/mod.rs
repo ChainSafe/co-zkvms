@@ -1,5 +1,6 @@
 pub mod channel;
 pub mod codecs;
+pub mod config;
 pub mod handler;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -8,12 +9,12 @@ use color_eyre::eyre::{bail, Context};
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    config::NetworkConfig,
     mpc_star::MpcStarNetCoordinator,
     rep3::quic::{channel::ChannelHandle, handler::MpcNetworkHandlerWrapper},
     Result,
 };
 
+use config::NetworkConfig;
 use handler::MpcNetworkHandler;
 
 pub struct Rep3QuicNetCoordinator {
@@ -30,9 +31,15 @@ impl Rep3QuicNetCoordinator {
             .enable_all()
             .build()?;
         let (net_handler, channels) = runtime.block_on(async {
-            let net_handler = MpcNetworkHandler::establish(config).await.context("establishing network handler")?;
+            let net_handler = MpcNetworkHandler::establish(config)
+                .await
+                .context("establishing network handler")?;
             let mut channels = BTreeMap::new();
-            for (id, channel) in net_handler.get_byte_channels().await.context("getting byte channels")? {
+            for (id, channel) in net_handler
+                .get_byte_channels()
+                .await
+                .context("getting byte channels")?
+            {
                 channels.insert(id, ChannelHandle::manage(channel));
             }
             if !channels.is_empty() {
