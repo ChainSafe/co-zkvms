@@ -18,12 +18,14 @@ impl TranscriptMerlin {
 
 /// A Transcript with some shorthands for feeding scalars, group elements, and obtaining challenges as field elements.
 pub trait Transcript: RngCore + FeedableRNG<Error = ark_linear_sumcheck::Error> {
+    fn append_scalar<F: Field>(&mut self, label: &'static [u8], msg: &F);
+
     fn append_serializable<S: CanonicalSerialize>(&mut self, label: &'static [u8], msg: &S);
 
     /// Compute a `label`ed challenge scalar from the given commitments and the choice bit.
-    fn get_scalar_challenge<F: Field>(&mut self, label: &'static [u8]) -> F;
+    fn challenge_scalar<F: Field>(&mut self, label: &'static [u8]) -> F;
 
-    fn get_vector_challenge<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F>;
+    fn challenge_vector<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F>;
 
     fn fork(&self) -> Self;
 }
@@ -65,6 +67,10 @@ impl FeedableRNG for TranscriptMerlin {
 }
 
 impl Transcript for TranscriptMerlin {
+    fn append_scalar<F: Field>(&mut self, label: &'static [u8], msg: &F) {
+        self.append_serializable(label, msg);
+    }
+
     fn append_serializable<S: CanonicalSerialize>(
         &mut self,
         label: &'static [u8],
@@ -75,7 +81,7 @@ impl Transcript for TranscriptMerlin {
         self.0.append_message(label, &message)
     }
 
-    fn get_scalar_challenge<F: Field>(&mut self, label: &'static [u8]) -> F {
+    fn challenge_scalar<F: Field>(&mut self, label: &'static [u8]) -> F {
         loop {
             let mut bytes = [0; 64];
             self.0.challenge_bytes(label, &mut bytes);
@@ -85,10 +91,8 @@ impl Transcript for TranscriptMerlin {
         }
     }
 
-    fn get_vector_challenge<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F> {
-        (0..size)
-            .map(|_| self.get_scalar_challenge(label))
-            .collect()
+    fn challenge_vector<F: Field>(&mut self, label: &'static [u8], size: usize) -> Vec<F> {
+        (0..size).map(|_| self.challenge_scalar(label)).collect()
     }
 
     fn fork(&self) -> Self {
@@ -121,7 +125,7 @@ impl CryptographicSponge for TranscriptMerlin {
             return Vec::new();
         }
 
-        let field_elements = self.get_vector_challenge::<F>(b"", sizes.len());
+        let field_elements = self.challenge_vector::<F>(b"", sizes.len());
 
         let mut output = Vec::with_capacity(sizes.len());
         for (elem, size) in field_elements.into_iter().zip(sizes.iter()) {

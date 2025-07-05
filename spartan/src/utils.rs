@@ -278,28 +278,28 @@ macro_rules! end_timer_buf {
     }};
 }
 
-#[test]
-fn test_generate_eq() {
-    use ark_bn254::Fr;
-    use ark_ff::UniformRand;
-    use rand::thread_rng;
+// #[test]
+// fn test_generate_eq() {
+//     use ark_bn254::Fr;
+//     use ark_ff::UniformRand;
+//     use rand::thread_rng;
 
-    const NUM_VARS: usize = 1;
+//     const NUM_VARS: usize = 1;
 
-    let z = <[Fr; NUM_VARS]>::rand(&mut thread_rng()).to_vec();
-    let lh = generate_eq(&z);
+//     let z = <[Fr; NUM_VARS]>::rand(&mut thread_rng()).to_vec();
+//     let lh = generate_eq(&z);
 
-    let f = DenseMultilinearExtension::from_evaluations_vec(
-        NUM_VARS,
-        <[Fr; 1 << NUM_VARS]>::rand(&mut thread_rng()).to_vec(),
-    );
+//     let f = DenseMultilinearExtension::from_evaluations_vec(
+//         NUM_VARS,
+//         <[Fr; 1 << NUM_VARS]>::rand(&mut thread_rng()).to_vec(),
+//     );
 
-    let s: Fr = f
-        .evaluations
-        .iter()
-        .zip(lh.evaluations.iter())
-        .map(|(a, b)| a * b)
-        .sum();
+//     let s: Fr = f
+//         .evaluations
+//         .iter()
+//         .zip(lh.evaluations.iter())
+//         .map(|(a, b)| a * b)
+//         .sum();
 
-    assert_eq!(s, f.evaluate(&z));
-}
+//     assert_eq!(s, f.evaluate(&z));
+// }

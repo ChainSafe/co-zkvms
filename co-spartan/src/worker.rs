@@ -29,9 +29,7 @@ use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     mpc::{
-        rep3::{Rep3Poly, Rep3Share},
-        sumcheck::rep3::RssSumcheck,
-        SSRandom,
+        rep3::{Rep3Poly, Rep3Share}, sumcheck::rep3::Rep3Sumcheck, SSRandom
     },
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
@@ -116,7 +114,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     pub fn prove<R: RngCore + FeedableRNG>(
         &mut self,
         pk: &Rep3ProverKey<E>,
-        z: Rep3WitnessShare<E>,
+        z: Rep3WitnessShare<E::ScalarField>,
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
@@ -140,11 +138,11 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
     // Compute Az, Bz, Cz
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::zero_round")]
-    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &Rep3WitnessShare<E>) -> Rep3R1CSWitnessShare<E> {
+    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &Rep3WitnessShare<E::ScalarField>) -> Rep3R1CSWitnessShare<E::ScalarField> {
         let chunk_size = pk.ipk.num_variables_val.exp2();
-        let mut za = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
-        let mut zb = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
-        let mut zc = vec![Rep3Share::<E>::zero().with_party(z.party_id); chunk_size];
+        let mut za = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
+        let mut zb = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
+        let mut zc = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
 
         let c_start = pk.party_id * pk.num_variables.exp2() / pk.num_parties;
 
@@ -168,7 +166,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::first_round")]
-    fn first_round(&self, polys: &Vec<&Rep3Poly<E>>, ck: &CommitterKey<E>, network: &mut N) {
+    fn first_round(&self, polys: &Vec<&Rep3Poly<E::ScalarField>>, ck: &CommitterKey<E>, network: &mut N) {
         poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
     }
 
@@ -176,7 +174,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     fn second_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &Rep3R1CSWitnessShare<E>,
+        witness_share: &Rep3R1CSWitnessShare<E::ScalarField>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         network: &mut N,
@@ -215,7 +213,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     fn third_round<R: RngCore + FeedableRNG>(
         &self,
         pk: &Rep3ProverKey<E>,
-        witness_share: &Rep3R1CSWitnessShare<E>,
+        witness_share: &Rep3R1CSWitnessShare<E::ScalarField>,
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         active: bool,
@@ -546,21 +544,21 @@ pub fn poly_commit_worker<'a, E: Pairing, N: MpcStarNetWorker>(
 }
 
 #[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
-pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
-    za: &Rep3Poly<E>,
-    zb: &Rep3Poly<E>,
-    zc: &Rep3Poly<E>,
-    eq: &DenseMultilinearExtension<E::ScalarField>,
+pub fn rep3_first_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
+    za: &Rep3Poly<F>,
+    zb: &Rep3Poly<F>,
+    zc: &Rep3Poly<F>,
+    eq: &DenseMultilinearExtension<F>,
     random_rng: &mut SSRandom<R>,
     network: &mut N,
-) -> Vec<E::ScalarField> {
-    let mut prover_state = RssSumcheck::<E>::first_sumcheck_init(za, zb, zc, eq);
+) -> Vec<F> {
+    let mut prover_state = Rep3Sumcheck::<F>::first_sumcheck_init(za, zb, zc, eq);
     let num_vars = prover_state.num_vars;
     let mut verifier_msg = None;
     let mut final_point = Vec::new();
 
     for _round in 0..num_vars {
-        let prover_message = RssSumcheck::<E>::first_sumcheck_prove_round(
+        let prover_message = Rep3Sumcheck::<F>::first_sumcheck_prove_round(
             &mut prover_state,
             &verifier_msg,
             random_rng,
@@ -573,7 +571,7 @@ pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcSt
     }
 
     let _ =
-        RssSumcheck::<E>::first_sumcheck_prove_round(&mut prover_state, &verifier_msg, random_rng);
+        Rep3Sumcheck::<F>::first_sumcheck_prove_round(&mut prover_state, &verifier_msg, random_rng);
 
     let response = (
         prover_state.secret_polys[0].share_0[0],
@@ -589,22 +587,22 @@ pub fn rep3_first_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcSt
 }
 
 #[tracing::instrument(skip_all, name = "rep3_second_sumcheck_worker")]
-pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
-    a_r: &DenseMultilinearExtension<E::ScalarField>,
-    b_r: &DenseMultilinearExtension<E::ScalarField>,
-    c_r: &DenseMultilinearExtension<E::ScalarField>,
-    z: &Rep3Poly<E>,
+pub fn rep3_second_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
+    a_r: &DenseMultilinearExtension<F>,
+    b_r: &DenseMultilinearExtension<F>,
+    c_r: &DenseMultilinearExtension<F>,
+    z: &Rep3Poly<F>,
     random_rng: &mut SSRandom<R>,
-    v_msg: &Vec<E::ScalarField>,
+    v_msg: &Vec<F>,
     network: &mut N,
-) -> Vec<E::ScalarField> {
-    let mut prover_state = RssSumcheck::<E>::second_sumcheck_init(a_r, b_r, c_r, z, v_msg);
+) -> Vec<F> {
+    let mut prover_state = Rep3Sumcheck::<F>::second_sumcheck_init(a_r, b_r, c_r, z, v_msg);
     let num_vars = prover_state.num_vars;
     let mut verifier_msg = None;
     let mut final_point = Vec::new();
 
     for _round in 0..num_vars {
-        let prover_message = RssSumcheck::<E>::second_sumcheck_prove_round(
+        let prover_message = Rep3Sumcheck::<F>::second_sumcheck_prove_round(
             &mut prover_state,
             &verifier_msg,
             random_rng,
@@ -617,7 +615,7 @@ pub fn rep3_second_sumcheck_worker<E: Pairing, R: RngCore + FeedableRNG, N: MpcS
     }
 
     let _ =
-        RssSumcheck::<E>::second_sumcheck_prove_round(&mut prover_state, &verifier_msg, random_rng);
+        Rep3Sumcheck::<F>::second_sumcheck_prove_round(&mut prover_state, &verifier_msg, random_rng);
     let responses = (
         prover_state.pub_polys[0][0],
         prover_state.pub_polys[1][0],
@@ -658,9 +656,9 @@ pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
 }
 
 #[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
-pub fn rep3_eval_poly_worker<E: Pairing, N: MpcStarNetWorker>(
-    polys: Vec<&Rep3Poly<E>>,
-    final_point: &[E::ScalarField],
+pub fn rep3_eval_poly_worker<F: PrimeField, N: MpcStarNetWorker>(
+    polys: Vec<&Rep3Poly<F>>,
+    final_point: &[F],
     num_vars: usize,
     network: &mut N,
 ) {

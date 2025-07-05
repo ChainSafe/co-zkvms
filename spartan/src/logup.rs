@@ -90,7 +90,7 @@ impl<E: Pairing> LogLookupProof<E> {
         let mut lookup_x = Vec::new();
         let labels = [b"x_r", b"x_c"];
         for i in 0..num_instance {
-            lookup_x.push(transcript.get_scalar_challenge(labels[i]));
+            lookup_x.push(transcript.challenge_scalar(labels[i]));
         }
 
         for i in 0..num_instance {
@@ -101,8 +101,8 @@ impl<E: Pairing> LogLookupProof<E> {
         let mut z = Vec::new();
         let mut lambda = Vec::new();
         for _ in 0..num_instance {
-            z.push(transcript.get_vector_challenge(b"z", dimension));
-            lambda.push(transcript.get_scalar_challenge(b"lambda"));
+            z.push(transcript.challenge_vector(b"z", dimension));
+            lambda.push(transcript.challenge_scalar(b"lambda"));
         }
 
         (lookup_x, z, lambda)
@@ -162,7 +162,7 @@ impl<E: Pairing> LogLookupProof<E> {
             res = res + q0 + q1;
         }
 
-        let eta = transcript.get_scalar_challenge(b"eta");
+        let eta = transcript.challenge_scalar(b"eta");
         let poly_oracle_verifications = batch_verify_poly(
             &batch_oracle.commitment,
             &batch_oracle.val,

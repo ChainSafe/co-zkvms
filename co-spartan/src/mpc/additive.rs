@@ -1,7 +1,6 @@
 use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
-use ark_ec::pairing::Pairing;
-use ark_ff::{UniformRand, Zero};
+use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
@@ -9,14 +8,14 @@ use rand::RngCore;
 use crate::mpc::{SSOpen, SSRandom};
 
 #[derive(CanonicalDeserialize, CanonicalSerialize, Clone, Copy)]
-pub struct AdditiveShare<E: Pairing> {
+pub struct AdditiveShare<F: PrimeField> {
     pub party: usize,
-    pub share_0: E::ScalarField,
+    pub share_0: F,
 }
 
-impl<E: Pairing> Add<Self> for AdditiveShare<E> {
+impl<F: PrimeField> Add<Self> for AdditiveShare<F> {
     type Output = Self;
-    fn add(self, rhs: AdditiveShare<E>) -> <Self as Add<AdditiveShare<E>>>::Output {
+    fn add(self, rhs: AdditiveShare<F>) -> <Self as Add<AdditiveShare<F>>>::Output {
         assert_eq!(self.party, rhs.party);
         AdditiveShare {
             party: self.party,
@@ -25,9 +24,9 @@ impl<E: Pairing> Add<Self> for AdditiveShare<E> {
     }
 }
 
-impl<E: Pairing> Sub<Self> for AdditiveShare<E> {
+impl<F: PrimeField> Sub<Self> for AdditiveShare<F> {
     type Output = Self;
-    fn sub(self, rhs: AdditiveShare<E>) -> Self::Output {
+    fn sub(self, rhs: AdditiveShare<F>) -> Self::Output {
         assert_eq!(self.party, rhs.party);
         AdditiveShare {
             party: self.party,
@@ -36,9 +35,9 @@ impl<E: Pairing> Sub<Self> for AdditiveShare<E> {
     }
 }
 
-impl<E: Pairing> Mul<E::ScalarField> for AdditiveShare<E> {
+impl<F: PrimeField> Mul<F> for AdditiveShare<F> {
     type Output = Self;
-    fn mul(self, rhs: E::ScalarField) -> Self::Output {
+    fn mul(self, rhs: F) -> Self::Output {
         AdditiveShare {
             party: self.party,
             share_0: self.share_0 * rhs,
@@ -46,32 +45,32 @@ impl<E: Pairing> Mul<E::ScalarField> for AdditiveShare<E> {
     }
 }
 
-impl<E: Pairing> AddAssign for AdditiveShare<E> {
-    fn add_assign(&mut self, rhs: AdditiveShare<E>) {
+impl<F: PrimeField> AddAssign for AdditiveShare<F> {
+    fn add_assign(&mut self, rhs: AdditiveShare<F>) {
         assert_eq!(self.party, rhs.party);
         self.share_0 += rhs.share_0;
     }
 }
 
-impl<'a, E: Pairing> AddAssign<&'a AdditiveShare<E>> for AdditiveShare<E> {
-    fn add_assign(&mut self, rhs: &AdditiveShare<E>) {
+impl<'a, F: PrimeField> AddAssign<&'a AdditiveShare<F>> for AdditiveShare<F> {
+    fn add_assign(&mut self, rhs: &AdditiveShare<F>) {
         assert_eq!(self.party, rhs.party);
         self.share_0 += rhs.share_0;
     }
 }
 
-impl<E: Pairing> SubAssign for AdditiveShare<E> {
-    fn sub_assign(&mut self, rhs: AdditiveShare<E>) {
+impl<F: PrimeField> SubAssign for AdditiveShare<F> {
+    fn sub_assign(&mut self, rhs: AdditiveShare<F>) {
         assert_eq!(self.party, rhs.party);
         self.share_0 -= rhs.share_0;
     }
 }
 
-impl<E: Pairing> Zero for AdditiveShare<E> {
+impl<F: PrimeField> Zero for AdditiveShare<F> {
     fn zero() -> Self {
         AdditiveShare {
             party: 0,
-            share_0: E::ScalarField::zero(),
+            share_0: F::zero(),
         }
     }
     fn is_zero(&self) -> bool {
@@ -79,10 +78,10 @@ impl<E: Pairing> Zero for AdditiveShare<E> {
     }
 }
 
-impl<E: Pairing> SSOpen<E::ScalarField> for AdditiveShare<E> {
-    fn open(shares: &[AdditiveShare<E>]) -> <E as Pairing>::ScalarField {
+impl<F: PrimeField> SSOpen<F> for AdditiveShare<F> {
+    fn open(shares: &[AdditiveShare<F>]) -> F {
         assert!(shares.len() == 2);
-        let mut sum = E::ScalarField::zero();
+        let mut sum = F::zero();
         for ass in shares.iter() {
             sum += ass.share_0;
         }
@@ -90,15 +89,14 @@ impl<E: Pairing> SSOpen<E::ScalarField> for AdditiveShare<E> {
     }
 }
 
-impl<E: Pairing> AdditiveShare<E> {
+impl<F: PrimeField> AdditiveShare<F> {
     pub fn with_party(mut self, party: usize) -> Self {
         self.party = party;
         self
     }
 
-    pub fn get_mask_scalar<R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> E::ScalarField {
-        let zero_share =
-            E::ScalarField::rand(&mut rng.seed_1) - E::ScalarField::rand(&mut rng.seed_0);
+    pub fn get_mask_scalar<R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> F {
+        let zero_share = F::rand(&mut rng.seed_1) - F::rand(&mut rng.seed_0);
         rng.update();
         zero_share
     }

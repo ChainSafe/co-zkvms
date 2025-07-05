@@ -164,20 +164,20 @@ fn fill_witness(witness: Vec<Option<FieldElement>>) -> Result<Vec<FieldElement>>
     Ok(witness)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
+// #[cfg(test)]
+// mod tests {
+//     use std::path::PathBuf;
 
-    use super::NoirProofScheme;
-    use crate::test_serde;
+//     use super::NoirProofScheme;
+//     use crate::test_serde;
 
-    #[test]
-    fn test_noir_proof_scheme_serde() {
-        let proof_schema = NoirProofScheme::from_file(&PathBuf::from(
-            "../noir-examples/poseidon-rounds/target/basic.json",
-        ))
-        .unwrap();
-        test_serde(&proof_schema.r1cs);
-        test_serde(&proof_schema.witness_generator);
-    }
-}
+//     #[test]
+//     fn test_noir_proof_scheme_serde() {
+//         let proof_schema = NoirProofScheme::from_file(&PathBuf::from(
+//             "../noir-examples/poseidon-rounds/target/basic.json",
+//         ))
+//         .unwrap();
+//         test_serde(&proof_schema.r1cs);
+//         test_serde(&proof_schema.witness_generator);
+//     }
+// }

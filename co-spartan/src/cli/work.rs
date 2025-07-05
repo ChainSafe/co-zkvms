@@ -156,7 +156,7 @@ fn coordinator_work<E: Pairing, N: MpcStarNetCoordinator>(
     let r1cs: spartan::R1CS<E::ScalarField> = proof_scheme.r1cs.into();
 
     let mut rng = Blake2s512Rng::setup();
-    let witness_shares = co_spartan::split_witness::<E>(
+    let witness_shares = co_spartan::split_witness::<E::ScalarField>(
         z,
         r1cs.log2_instance_size(),
         log_num_workers_per_party,

@@ -301,7 +301,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<E, ProverFirstMsg<E>, N, T, _>(
+        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<E, ProverFirstMsg<E::ScalarField>, N, T, _>(
             poly_info,
             &index.ck_mask,
             network,
@@ -400,7 +400,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<E, ProverSecondMsg<E>, N, T, _>(
+        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<E, ProverSecondMsg<E::ScalarField>, N, T, _>(
             poly_info,
             &index.ck_mask,
             network,
@@ -489,8 +489,8 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         ];
         q_polys.add_product(prod, E::ScalarField::one());
 
-        let x_r: E::ScalarField = transcript.get_scalar_challenge(b"x_r");
-        let x_c: E::ScalarField = transcript.get_scalar_challenge(b"x_c");
+        let x_r: E::ScalarField = transcript.challenge_scalar(b"x_r");
+        let x_c: E::ScalarField = transcript.challenge_scalar(b"x_c");
 
         state.time_elapsed += time.elapsed();
 
@@ -510,8 +510,8 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             transcript.append_serializable(b"batch_comm2", &comms[2 * i + 1]);
         }
 
-        let z: Vec<E::ScalarField> = transcript.get_vector_challenge(b"z", q_num_vars);
-        let lambda: E::ScalarField = transcript.get_scalar_challenge(b"lambda");
+        let z: Vec<E::ScalarField> = transcript.challenge_vector(b"z", q_num_vars);
+        let lambda: E::ScalarField = transcript.challenge_scalar(b"lambda");
 
         network.broadcast_request((z.clone(), lambda.clone()))?;
 
@@ -521,8 +521,8 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             &mut q_polys,
         );
 
-        let z: Vec<E::ScalarField> = transcript.get_vector_challenge(b"z", q_num_vars);
-        let lambda: E::ScalarField = transcript.get_scalar_challenge(b"lambda");
+        let z: Vec<E::ScalarField> = transcript.challenge_vector(b"z", q_num_vars);
+        let lambda: E::ScalarField = transcript.challenge_scalar(b"lambda");
 
         network.broadcast_request((z.clone(), lambda.clone()))?;
 
@@ -541,7 +541,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript)?;
 
         state.time_elapsed += time;
-        let eta: E::ScalarField = transcript.get_scalar_challenge(b"eta");
+        let eta: E::ScalarField = transcript.challenge_scalar(b"eta");
         network.broadcast_request(eta.clone())?;
 
         let (batch_oracle, time) = batch_open_poly_coordinator(
@@ -580,7 +580,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
 #[tracing::instrument(skip_all, name = "rep3_zk_sumcheck_coordinator")]
 pub fn rep3_zk_sumcheck_coordinator<
     E: Pairing,
-    M: Rep3SumcheckProverMsg<E>,
+    M: Rep3SumcheckProverMsg<E::ScalarField>,
     N: MpcStarNetCoordinator,
     T: Transcript + CryptographicSponge,
     U: CanonicalSerialize + CanonicalDeserialize + Clone + Default,
@@ -610,7 +610,7 @@ pub fn rep3_zk_sumcheck_coordinator<
         MarlinPST13::<_, _>::commit(mask_key, &vec_mask_poly, Some(&mut mask_rng)).unwrap();
     let g_commit = mask_commit[0].commitment();
     let _ = transcript.append_serializable(b"g_commit", g_commit);
-    let challenge = transcript.get_scalar_challenge(b"r1");
+    let challenge = transcript.challenge_scalar(b"r1");
 
     transcript.feed(&poly_info.clone()).unwrap(); // feed same as in ark_linear_sumcheck
     let mut prover_zk_state = IPForMLSumcheck::mask_init(

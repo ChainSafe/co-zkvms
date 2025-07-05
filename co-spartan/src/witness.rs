@@ -1,4 +1,5 @@
 use ark_ec::pairing::Pairing;
+use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
@@ -8,23 +9,23 @@ use crate::{
     utils::{pad_to_power_of_two, split_vec},
 };
 
-pub type Rep3WitnessShare<E> = Rep3Poly<E>;
+pub type Rep3WitnessShare<F: PrimeField> = Rep3Poly<F>;
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Rep3R1CSWitnessShare<E: Pairing> {
-    pub z: Rep3Poly<E>,
-    pub za: Rep3Poly<E>,
-    pub zb: Rep3Poly<E>,
-    pub zc: Rep3Poly<E>,
+pub struct Rep3R1CSWitnessShare<F: PrimeField> {
+    pub z: Rep3Poly<F>,
+    pub za: Rep3Poly<F>,
+    pub zb: Rep3Poly<F>,
+    pub zc: Rep3Poly<F>,
 }
 
 #[tracing::instrument(skip_all, name = "split_witness")]
-pub fn split_witness<E: Pairing>(
-    mut z: Vec<E::ScalarField>,
+pub fn split_witness<F: PrimeField>(
+    mut z: Vec<F>,
     log_instance_size: usize,
     log_num_workers_per_party: usize,
     rng: &mut impl RngCore,
-) -> Vec<[(usize, Rep3WitnessShare<E>); 3]> {
+) -> Vec<[(usize, Rep3WitnessShare<F>); 3]> {
     pad_to_power_of_two(&mut z, log_instance_size);
 
     let mut z_vec = split_vec(&z, log_num_workers_per_party);
@@ -45,7 +46,7 @@ pub fn split_witness<E: Pairing>(
         for j in 0..3 {
             let worker_id = i * 3 + j;
             let next = (j + 1) % 3;
-            let z = Rep3Poly::<E>::new(j, z_shares[j].clone(), z_shares[next].clone());
+            let z = Rep3Poly::<F>::new(j, z_shares[j].clone(), z_shares[next].clone());
             wit_vec.push((worker_id, z));
         }
 
