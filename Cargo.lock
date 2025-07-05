@@ -436,6 +436,7 @@ dependencies = [
 [[package]]
 name = "ark-linear-sumcheck"
 version = "0.5.0"
+source = "git+https://github.com/nulltea/sumcheck#e0500b8ea9ad1e04de22aa9dc747e71e526ed147"
 dependencies = [
  "ark-ff",
  "ark-poly",
@@ -465,6 +466,7 @@ dependencies = [
 [[package]]
 name = "ark-poly-commit"
 version = "0.5.0"
+source = "git+https://github.com/nulltea/poly-commit#40eb68dea2ff7812c83795f555e30d38a19d6f63"
 dependencies = [
  "ahash",
  "ark-crypto-primitives",
@@ -1064,6 +1066,10 @@ dependencies = [
  "rand 0.8.5",
  "tracing",
 ]
+
+[[package]]
+name = "co-lasso"
+version = "0.1.0"
 
 [[package]]
 name = "co-noir"
@@ -3430,8 +3436,8 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.4.1",
- "itertools 0.13.0",
+ "heck 0.5.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -3451,7 +3457,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.103",

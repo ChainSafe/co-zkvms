@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["co-noir", "co-spartan", "mpc-net", "noir-r1cs", "spartan"]
+members = [
+    "co-lasso",
+    "co-noir",
+    "co-spartan",
+    "mpc-net",
+    "noir-r1cs",
+    "spartan",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +18,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
-ark-linear-sumcheck = { path = "../sumcheck", features = ["parallel"] }
+ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = ["parallel"] }
 ark-poly-commit = { version = "0.5.0", features = ["parallel"] }
 ark-std = { version = "0.5.0", features = ["std"] }
 ark-ff = { version = "0.5.0", features = ["parallel"] }
@@ -75,8 +82,12 @@ anyhow = "1.0.93"
 argh = "0.1.12"
 
 [patch.crates-io]
-# ark-linear-sumcheck = {git = "https://github.com/huyuncong/sumcheck"}
-# ark-poly-commit = {git = "https://github.com/xjjj2/poly-commit"} 
-ark-linear-sumcheck = { path = "../sumcheck" }
-ark-poly-commit = { path = "../poly-commit/poly-commit" }
+# ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck" }
+ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
+# ark-linear-sumcheck = { path = "../sumcheck" }
+# ark-poly-commit = { path = "../poly-commit/poly-commit" }
+# ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+# ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+# ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+
 # mpc-net = { path = "./mpc-net" }

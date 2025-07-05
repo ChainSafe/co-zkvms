@@ -34,10 +34,6 @@ spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }
 mpc-net = { path = "../mpc-net" }
 
-[patch.crates-io]
-ark-linear-sumcheck = { git = "https://github.com/huyuncong/sumcheck" }
-ark-poly-commit = { git = "https://github.com/xjjj2/poly-commit" }
-
 [features]
 default = ["std", "parallel", "mpi"]
 std = [
