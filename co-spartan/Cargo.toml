@@ -33,10 +33,6 @@ bytesize = "2.0.1"
 spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }
 
-[patch.crates-io]
-ark-linear-sumcheck = { git = "https://github.com/huyuncong/sumcheck" }
-ark-poly-commit = { git = "https://github.com/xjjj2/poly-commit" }
-
 [features]
 default = ["std", "parallel"]
 std = [
