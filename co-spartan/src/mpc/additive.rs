@@ -1,11 +1,13 @@
 use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
-use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_ff::{PrimeField, Zero};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rand::RngCore;
+use rand::{Rng, RngCore};
 
 use crate::mpc::{SSOpen, SSRandom};
+
+pub type ArithmeticShare<F> = AdditiveShare<F>;
 
 #[derive(CanonicalDeserialize, CanonicalSerialize, Clone, Copy)]
 pub struct AdditiveShare<F: PrimeField> {
@@ -80,7 +82,7 @@ impl<F: PrimeField> Zero for AdditiveShare<F> {
 
 impl<F: PrimeField> SSOpen<F> for AdditiveShare<F> {
     fn open(shares: &[AdditiveShare<F>]) -> F {
-        assert!(shares.len() == 2);
+        assert!(shares.len() == 3);
         let mut sum = F::zero();
         for ass in shares.iter() {
             sum += ass.share_0;
@@ -96,8 +98,22 @@ impl<F: PrimeField> AdditiveShare<F> {
     }
 
     pub fn get_mask_scalar<R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> F {
-        let zero_share = F::rand(&mut rng.seed_1) - F::rand(&mut rng.seed_0);
+        let zero_share = F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0);
         rng.update();
         zero_share
     }
+}
+
+pub fn share_field_element<F: PrimeField, R: Rng>(
+    val: F,
+    rng: &mut R,
+) -> [AdditiveShare<F>; 3] {
+    let a = F::rand(rng);
+    let b = F::rand(rng);
+    let c = val - a - b;
+    [
+        AdditiveShare { party: 0, share_0: a },
+        AdditiveShare { party: 1, share_0: b },
+        AdditiveShare { party: 2, share_0: c },
+    ]
 }

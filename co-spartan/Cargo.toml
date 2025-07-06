@@ -29,6 +29,7 @@ tracing-subscriber.workspace = true
 tracing-forest.workspace = true
 bytesize = "2.0.1"
 color-eyre.workspace = true
+num-bigint.workspace = true
 
 spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }
