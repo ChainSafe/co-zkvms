@@ -1,6 +1,10 @@
+use std::iter;
+
 use co_lasso::{
-    memory_checking::Rep3MemoryCheckingProver, polynomialize, subtables::range_check::RangeLookup, LassoPolynomials, LassoPreprocessing
+    memory_checking::Rep3MemoryCheckingProver, polynomialize, subtables::range_check::RangeLookup,
+    LassoPolynomials, LassoPreprocessing,
 };
+use itertools::Itertools;
 use jolt_core::{poly::field::JoltField, utils::transcript::ProofTranscript};
 
 const LIMB_BITS: usize = 8;
@@ -12,7 +16,8 @@ fn main() {
     let preprocessing = LassoPreprocessing::preprocess::<C, M>([RangeLookup::new_boxed(256)]);
 
     let mut transcript = ProofTranscript::new(b"Memory checking");
-    let inputs = [F::from_u64(1).unwrap(); 64];
+    let inputs = iter::repeat_with(|| F::from(rand::random::<u64>() % 256)).take(64).collect_vec();
+    println!("inputs: {:?}", inputs);
     let polynomials = polynomialize(
         &preprocessing,
         &inputs,
@@ -20,11 +25,11 @@ fn main() {
         M,
         C,
     );
-    // let proof = Rep3MemoryCheckingProver::<C, M, F, LassoPolynomials<F>>::prove_rep3(
-    //     &preprocessing,
-    //     &polynomials,
-    //     &mut transcript,
-    // );
+    let proof = Rep3MemoryCheckingProver::<C, M, (), F, LassoPolynomials<F>>::prove_rep3(
+        &preprocessing,
+        &polynomials,
+        &mut transcript,
+    );
 
     // println!("--------------verify------------------");
 

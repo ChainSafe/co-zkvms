@@ -31,9 +31,11 @@ bytesize = "2.0.1"
 color-eyre.workspace = true
 num-bigint.workspace = true
 
+mpc-core = { path = "../../examples/co-snarks/mpc-core" }
+
 spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }
-mpc-net = { path = "../mpc-net" }
+mpc-net = { path = "../mpc-net", package = "mpc-net-star" }
 
 [features]
 default = ["std", "parallel", "mpi"]

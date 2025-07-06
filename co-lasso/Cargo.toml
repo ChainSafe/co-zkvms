@@ -31,10 +31,11 @@ color-eyre.workspace = true
 fixedbitset = "0.5"
 
 jolt-core = { path = "../../examples/liblasso/jolt-core" }
+mpc-core = { path = "../../examples/co-snarks/mpc-core" }
 
 spartan = { path = "../spartan" }
 co-spartan = { path = "../co-spartan" }
-mpc-net = { path = "../mpc-net" }
+mpc-net = { path = "../mpc-net", package = "mpc-net-star" }
 
 [features]
 default = ["std", "parallel"]
@@ -54,4 +55,4 @@ parallel = [
     "ark-poly-commit/parallel",
     "rayon",
 ]
-mpi = ["mpc-net/mpi"]
+# mpi = ["mpc-net/mpi"]

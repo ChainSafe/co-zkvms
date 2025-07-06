@@ -28,7 +28,7 @@ use rayon::prelude::*;
 pub struct Rep3MemoryCheckingProver<
     const C: usize,
     const M: usize,
-    N: MpcStarNetCoordinator,
+    N, // MpcStarNetCoordinator,
     F: JoltField,
     // C: CommitmentScheme<Field = F>,
     Polynomials,
@@ -65,13 +65,13 @@ where
 type Preprocessing<F> = LassoPreprocessing<F>;
 type Polynomials<F> = LassoPolynomials<F>;
 
-impl<N: MpcStarNetCoordinator, F: JoltField, const C: usize, const M: usize>
+impl<N, F: JoltField, const C: usize, const M: usize>
     Rep3MemoryCheckingProver<C, M, N, F, Polynomials<F>>
 {
     pub fn prove_rep3(
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
-        network: &mut N,
+        // network: &mut N,
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, Polynomials<F>> {
         let (
@@ -80,7 +80,7 @@ impl<N: MpcStarNetCoordinator, F: JoltField, const C: usize, const M: usize>
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, network, transcript);
+        ) = Self::prove_grand_products(preprocessing, polynomials, transcript);
 
         MemoryCheckingProof {
             _polys: PhantomData,
@@ -93,7 +93,7 @@ impl<N: MpcStarNetCoordinator, F: JoltField, const C: usize, const M: usize>
     fn prove_grand_products(
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
-        network: &mut N,
+        // network: &mut N,
         transcript: &mut ProofTranscript,
     ) -> (
         BatchedGrandProductArgument<F>,

@@ -1,8 +1,8 @@
 pub mod range_check;
 
-use co_spartan::mpc::rep3::Rep3BigUintShare;
 use fixedbitset::FixedBitSet;
 use jolt_core::poly::field::JoltField;
+use mpc_core::protocols::rep3::Rep3BigUintShare;
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -53,11 +53,16 @@ pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + LookupClone<
 
     fn output(&self, index: &F) -> F;
 
+    fn output_rep3(&self, index: &Rep3BigUintShare<F>) -> Rep3BigUintShare<F>;
+
     fn chunk_bits(&self, M: usize) -> Vec<usize>;
 
     /// Returns the indices of each subtable lookups
     /// The length of `index_bits` is same as actual bit length of table index
-    fn subtable_indices(&self, index_bits: Vec<Rep3BigUintShare<F>>, log_M: usize) -> Vec<Vec<Rep3BigUintShare<F>>>;
+    fn subtable_indices(&self, index_bits: Vec<bool>, log_M: usize) -> Vec<Vec<bool>>;
+
+    fn subtable_indices_rep3(&self, index_bits: Vec<Rep3BigUintShare<F>>, log_M: usize) -> Vec<Vec<Rep3BigUintShare<F>>>;
+
 
     // fn num_memories(&self) -> usize;
 }

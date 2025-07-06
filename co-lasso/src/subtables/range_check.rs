@@ -2,9 +2,9 @@ use std::{borrow::Borrow, iter, marker::PhantomData};
 
 use ark_ff::PrimeField;
 use ark_std::log2;
-use co_spartan::mpc::rep3::Rep3BigUintShare;
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
+use mpc_core::protocols::rep3::Rep3BigUintShare;
 
 use crate::subtables::{LassoSubtable, LookupType, SubtableIndices};
 
@@ -108,6 +108,10 @@ impl<F: JoltField> LookupType<F> for RangeLookup<F> {
         *index
     }
 
+    fn output_rep3(&self, index: &Rep3BigUintShare<F>) -> Rep3BigUintShare<F> {
+        index.clone()
+    }
+
     fn chunk_bits(&self, M: usize) -> Vec<usize> {
         let log2_M = M.ilog2() as usize;
         let bound_bits = self.bound.ilog2() as usize;
@@ -126,7 +130,11 @@ impl<F: JoltField> LookupType<F> for RangeLookup<F> {
             .collect_vec()
     }
 
-    fn subtable_indices(&self, index_bits: Vec<Rep3BigUintShare<F>>, log_M: usize) -> Vec<Vec<Rep3BigUintShare<F>>> {
+    fn subtable_indices_rep3(&self, index_bits: Vec<Rep3BigUintShare<F>>, log_M: usize) -> Vec<Vec<Rep3BigUintShare<F>>> {
+        index_bits.chunks(log_M).map(Vec::from).collect_vec()
+    }
+
+    fn subtable_indices(&self, index_bits: Vec<bool>, log_M: usize) -> Vec<Vec<bool>> {
         index_bits.chunks(log_M).map(Vec::from).collect_vec()
     }
 
