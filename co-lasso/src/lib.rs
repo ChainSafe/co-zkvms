@@ -10,13 +10,16 @@ use std::{
 };
 
 use ark_ff::{BigInteger, PrimeField};
+use color_eyre::eyre::Context;
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
 use mpc_core::{
     lut::LookupTableProvider,
     protocols::{
         rep3::{
-            arithmetic, network::{IoContext, Rep3Network}, Rep3BigUintShare, Rep3PrimeFieldShare
+            arithmetic,
+            network::{IoContext, Rep3Network},
+            Rep3BigUintShare, Rep3PrimeFieldShare,
         },
         rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
     },
@@ -46,8 +49,7 @@ impl<F: JoltField> LassoPreprocessing<F> {
                 .into_iter()
                 .map(|lookup| (lookup.lookup_id(), lookup)),
         );
-        println!("lookups: {:?}", lookups);
-
+        
         let lookup_id_to_index: HashMap<_, _> = HashMap::from_iter(
             lookups
                 .keys()
@@ -186,21 +188,9 @@ pub struct LassoPolynomials<F: JoltField> {
 
 pub struct Rep3LassoWitnessSolver<F: JoltField, N: Rep3Network> {
     lut_provider: Rep3LookupTable<N>,
-    io_context0: IoContext<N>,
-    io_context1: IoContext<N>,
+    pub io_context0: IoContext<N>,
+    pub io_context1: IoContext<N>,
     phantom_data: PhantomData<F>,
-}
-
-pub struct Rep3LassoPreprocessing<F: JoltField> {
-    subtable_to_memory_indices: Vec<Vec<usize>>,
-    lookup_to_memory_indices: Vec<Vec<usize>>,
-    memory_to_subtable_index: Vec<usize>,
-    memory_to_dimension_index: Vec<usize>,
-    materialized_subtables: Vec<PublicPrivateLut<F>>,
-    subtables_by_idx: Option<Vec<Box<dyn LassoSubtable<F>>>>,
-    lookup_id_to_index: HashMap<LookupId, usize>,
-    num_memories: usize,
-    lookups: BTreeMap<LookupId, Box<dyn LookupType<F>>>,
 }
 
 pub struct Rep3LassoPolynomials<F: JoltField> {
@@ -227,7 +217,7 @@ pub struct Rep3LassoPolynomials<F: JoltField> {
     /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (# lookups).
     ///
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
-    pub lookup_flag_polys:  Vec<DensePolynomial<F>>,
+    pub lookup_flag_polys: Vec<DensePolynomial<F>>,
 
     /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
     /// construction of the memory flag polynomials in `read_write_grand_product`.
@@ -238,9 +228,22 @@ pub struct Rep3LassoPolynomials<F: JoltField> {
 }
 
 impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
+    pub fn new(net: N) -> color_eyre::Result<Self> {
+        let mut io_context0 = IoContext::init(net).context("failed to initialize io context")?;
+        let io_context1 = io_context0.fork().context("failed to fork io context")?;
+
+        Ok(Self {
+            lut_provider: Rep3LookupTable::new(),
+            io_context0,
+            io_context1,
+            phantom_data: PhantomData,
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::polynomialize")]
     pub fn polynomialize(
         &mut self,
-        preprocessing: &Rep3LassoPreprocessing<F>,
+        preprocessing: &LassoPreprocessing<F>,
         inputs: &[Rep3BigUintShare<F>],
         lookups: &[LookupId],
         M: usize,
@@ -248,7 +251,6 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
     ) -> Rep3LassoPolynomials<F> {
         let num_reads = inputs.len().next_power_of_two();
 
-        println!("lookups: {:?}", lookups.len());
         let subtable_lookup_indices: Vec<Vec<Rep3BigUintShare<F>>> =
             Self::subtable_lookup_indices(preprocessing, inputs, &lookups, M, C);
 
@@ -256,6 +258,13 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
             .into_iter()
             .zip(lookups.into_iter())
             .map(|(i, lookup_id)| (i, preprocessing.lookup_id_to_index[lookup_id]))
+            .collect_vec();
+
+        let materialized_subtable_luts = preprocessing
+            .materialized_subtables
+            .clone()
+            .into_iter()
+            .map(|subtable| PublicPrivateLut::Public(subtable))
             .collect_vec();
 
         let polys: Vec<_> = (0..preprocessing.num_memories)
@@ -280,42 +289,45 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
                             M,
                             &mut self.io_context0,
                             &mut self.io_context1,
-                        ).unwrap();
+                        )
+                        .unwrap();
 
-                        let mut counter = self.lut_provider.get_from_shared_lut_from_ohv(
-                            &ohv,
-                            &final_cts_i,
-                            &mut self.io_context0,
-                            &mut self.io_context1,
-                        ).unwrap();
+                        let mut counter = self
+                            .lut_provider
+                            .get_from_shared_lut_from_ohv(
+                                &ohv,
+                                &final_cts_i,
+                                &mut self.io_context0,
+                                &mut self.io_context1,
+                            )
+                            .unwrap();
                         read_cts_i[*j] = counter;
-                        counter = counter + arithmetic::promote_to_trivial_share(self.io_context0.id, F::one());
+                        counter = counter
+                            + arithmetic::promote_to_trivial_share(self.io_context0.id, F::one());
 
-                        self.lut_provider.write_to_shared_lut_from_ohv(
-                            &ohv,
-                            counter,
-                            &mut final_cts_i,
-                            &mut self.io_context0,
-                            &mut self.io_context1,
-                        ).unwrap();
+                        self.lut_provider
+                            .write_to_shared_lut_from_ohv(
+                                &ohv,
+                                counter,
+                                &mut final_cts_i,
+                                &mut self.io_context0,
+                                &mut self.io_context1,
+                            )
+                            .unwrap();
 
-                        let subtable_lookup_share = Rep3LookupTable::get_from_lut_no_a2b_conversion(
-                            memory_address.clone(),
-                            &preprocessing.materialized_subtables[subtable_index],
-                            &mut self.io_context0,
-                            &mut self.io_context1,
-                        ).unwrap();
+                        let subtable_lookup_share =
+                            Rep3LookupTable::get_from_lut_no_a2b_conversion(
+                                memory_address.clone(),
+                                &materialized_subtable_luts[subtable_index],
+                                &mut self.io_context0,
+                                &mut self.io_context1,
+                            )
+                            .unwrap();
                         subtable_lookups[*j] = subtable_lookup_share;
                     }
                 }
 
-             
-
-                (
-                    read_cts_i,
-                    final_cts_i,
-                    subtable_lookups,
-                )
+                (read_cts_i, final_cts_i, subtable_lookups)
             })
             .collect();
 
@@ -333,7 +345,10 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
             .into_iter()
             .take(C)
             .map(|mut access_sequence| {
-                access_sequence.resize(access_sequence.len().next_power_of_two(), Rep3BigUintShare::zero_share());
+                access_sequence.resize(
+                    access_sequence.len().next_power_of_two(),
+                    Rep3BigUintShare::zero_share(),
+                );
                 access_sequence
             })
             .collect();
@@ -367,7 +382,7 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
     fn subtable_lookup_indices(
-        preprocessing: &Rep3LassoPreprocessing<F>,
+        preprocessing: &LassoPreprocessing<F>,
         inputs: &[Rep3BigUintShare<F>],
         lookups: &[LookupId],
         M: usize,
@@ -393,7 +408,8 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
                 let mut chunked_index = iter::repeat(Rep3BigUintShare::zero_share())
                     .take(num_chunks)
                     .collect_vec();
-                let chunked_index_bits = lookup.subtable_indices_rep3(index_bits, M.ilog2() as usize);
+                let chunked_index_bits =
+                    lookup.subtable_indices_rep3(index_bits, M.ilog2() as usize);
                 chunked_index
                     .iter_mut()
                     .zip(chunked_index_bits)
@@ -417,7 +433,7 @@ impl<F: JoltField, N: Rep3Network> Rep3LassoWitnessSolver<F, N> {
     }
 
     fn compute_lookup_outputs(
-        preprocessing: &Rep3LassoPreprocessing<F>,
+        preprocessing: &LassoPreprocessing<F>,
         inputs: &[Rep3BigUintShare<F>],
         lookups: &[LookupId],
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -463,7 +479,10 @@ pub fn polynomialize<F: JoltField>(
                 if memories_used.contains(&memory_index) {
                     let memory_address = access_sequence[*j];
                     // debug_assert!(memory_address < M);
-                    println!("j: {:?}, lookup: {:?}, memory_address: {:?}", *j, lookup, memory_address);
+                    println!(
+                        "j: {:?}, lookup: {:?}, memory_address: {:?}",
+                        *j, lookup, memory_address
+                    );
 
                     let counter = final_cts_i[memory_address];
                     read_cts_i[*j] = counter;
@@ -579,7 +598,12 @@ fn subtable_lookup_indices<F: JoltField>(
         .collect();
 
     let lookup_indices = (0..num_chunks)
-        .map(|i| indices.iter().map(|indices| indices[i].clone()).collect_vec())
+        .map(|i| {
+            indices
+                .iter()
+                .map(|indices| indices[i].clone())
+                .collect_vec()
+        })
         .collect_vec();
     lookup_indices
     // todo!()

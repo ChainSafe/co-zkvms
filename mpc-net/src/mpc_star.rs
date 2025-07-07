@@ -11,16 +11,16 @@ pub trait MpcStarNetCoordinator {
 
     fn log_num_pub_workers(&self) -> usize;
     fn log_num_workers_per_party(&self) -> usize;
-    fn total_bandwidth_used(&self) -> (usize, usize);
+    fn total_bandwidth_used(&self) -> (u64, u64);
 }
 
 pub trait MpcStarNetWorker {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T);
-    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> T;
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
+    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
     fn log_num_pub_workers(&self) -> usize;
     fn log_num_workers_per_party(&self) -> usize;
-    fn rank(&self) -> usize;
+    // fn rank(&self) -> usize;
 
-    fn total_bandwidth_used(&self) -> (usize, usize);
+    fn total_bandwidth_used(&self) -> (u64, u64);
 }

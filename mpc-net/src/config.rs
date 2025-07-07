@@ -90,9 +90,21 @@ impl<'de> Deserialize<'de> for Address {
 
 /// A party in the network config file.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct NetworkPartyConfig {
+pub struct NetworkWorkerConfig {
     /// The id of the party, 0-based indexing.
     pub id: usize,
+    /// The index of the worker in the party.
+    #[serde(default)]
+    pub worker: usize,
+    /// The DNS name of the party.
+    pub dns_name: Address,
+    /// The path to the public certificate of the party.
+    pub cert_path: PathBuf,
+}
+
+/// A coordinator in the network config file.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct NetworkCoordinatorConfig {
     /// The DNS name of the party.
     pub dns_name: Address,
     /// The path to the public certificate of the party.
@@ -104,6 +116,8 @@ pub struct NetworkPartyConfig {
 pub struct NetworkParty {
     /// The id of the party, 0-based indexing.
     pub id: usize,
+    /// The index of the worker in the party.
+    pub worker: usize,
     /// The DNS name of the party.
     pub dns_name: Address,
     /// The public certificate of the party.
@@ -112,21 +126,36 @@ pub struct NetworkParty {
 
 impl NetworkParty {
     /// Construct a new [`NetworkParty`] type.
-    pub fn new(id: usize, address: Address, cert: CertificateDer<'static>) -> Self {
+    pub fn new(id: usize, worker: usize, address: Address, cert: CertificateDer<'static>) -> Self {
         Self {
             id,
+            worker,
             dns_name: address,
             cert,
         }
     }
 }
 
-impl TryFrom<NetworkPartyConfig> for NetworkParty {
+impl TryFrom<NetworkWorkerConfig> for NetworkParty {
     type Error = std::io::Error;
-    fn try_from(value: NetworkPartyConfig) -> Result<Self, Self::Error> {
+    fn try_from(value: NetworkWorkerConfig) -> Result<Self, Self::Error> {
         let cert = CertificateDer::from(std::fs::read(value.cert_path)?).into_owned();
         Ok(NetworkParty {
             id: value.id,
+            worker: value.worker,
+            dns_name: value.dns_name,
+            cert,
+        })
+    }
+}
+
+impl TryFrom<NetworkCoordinatorConfig> for NetworkParty {
+    type Error = std::io::Error;
+    fn try_from(value: NetworkCoordinatorConfig) -> Result<Self, Self::Error> {
+        let cert = CertificateDer::from(std::fs::read(value.cert_path)?).into_owned();
+        Ok(NetworkParty {
+            id: usize::MAX,
+            worker: usize::MAX,
             dns_name: value.dns_name,
             cert,
         })
@@ -137,9 +166,14 @@ impl TryFrom<NetworkPartyConfig> for NetworkParty {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct NetworkConfigFile {
     /// The list of parties in the network.
-    pub parties: Vec<NetworkPartyConfig>,
+    pub parties: Vec<NetworkWorkerConfig>,
+    /// The coordinator of the network.
+    #[serde(default)]
+    pub coordinator: Option<NetworkCoordinatorConfig>,
     /// Our own id in the network.
     pub my_id: usize,
+    /// The worker id of the party.
+    pub worker: usize,
     /// The [SocketAddr] we bind to.
     pub bind_addr: SocketAddr,
     /// The path to our private key file.
@@ -153,6 +187,10 @@ pub struct NetworkConfigFile {
 pub struct NetworkConfig {
     /// The list of parties in the network.
     pub parties: Vec<NetworkParty>,
+    /// The coordinator of the network.
+    pub coordinator: Option<NetworkParty>,
+    /// The worker id of the party.
+    pub worker: usize,
     /// Our own id in the network.
     pub my_id: usize,
     /// The [SocketAddr] we bind to.
@@ -167,14 +205,18 @@ impl NetworkConfig {
     /// Construct a new [`NetworkConfig`] type.
     pub fn new(
         id: usize,
+        worker: usize,
         bind_addr: SocketAddr,
         key: PrivateKeyDer<'static>,
         parties: Vec<NetworkParty>,
+        coordinator: Option<NetworkParty>,
         timeout: Option<Duration>,
     ) -> Self {
         Self {
             parties,
+            coordinator,
             my_id: id,
+            worker,
             bind_addr,
             key,
             timeout,
@@ -194,7 +236,9 @@ impl TryFrom<NetworkConfigFile> for NetworkConfig {
             .clone_key();
         Ok(NetworkConfig {
             parties,
+            coordinator: value.coordinator.map(NetworkParty::try_from).transpose()?,
             my_id: value.my_id,
+            worker: value.worker,
             bind_addr: value.bind_addr,
             key,
             timeout: value.timeout_secs.map(Duration::from_secs),
@@ -206,7 +250,9 @@ impl Clone for NetworkConfig {
     fn clone(&self) -> Self {
         Self {
             parties: self.parties.clone(),
+            coordinator: self.coordinator.clone(),
             my_id: self.my_id,
+            worker: self.worker,
             bind_addr: self.bind_addr,
             key: self.key.clone_key(),
             timeout: self.timeout,

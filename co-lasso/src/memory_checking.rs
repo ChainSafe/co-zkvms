@@ -16,7 +16,7 @@ use jolt_core::{
         transcript::ProofTranscript,
     },
 };
-use mpc_net::mpc_star::MpcStarNetCoordinator;
+// use mpc_net::mpc_star::MpcStarNetCoordinator;
 use spartan::transcript::Transcript;
 use tracing::trace_span;
 

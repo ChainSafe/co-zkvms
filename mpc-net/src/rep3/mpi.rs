@@ -125,8 +125,8 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
         self.log_num_public_workers
     }
 
-    fn total_bandwidth_used(&self) -> (usize, usize) {
-        (self.total_send_bytes, self.total_recv_bytes)
+    fn total_bandwidth_used(&self) -> (u64, u64) {
+        (self.total_send_bytes as u64, self.total_recv_bytes as u64)
     }
 }
 
@@ -162,13 +162,14 @@ impl<'a> Rep3WorkerMPI<'a> {
 }
 
 impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
         let responses_bytes = serialize_to_vec(&data);
         self.root_process.gather_varcount_into(&responses_bytes);
         self.total_send_bytes += responses_bytes.len();
+        Ok(())
     }
 
-    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> T {
+    fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T> {
         let mut size = 0 as Count;
         self.root_process.scatter_into(&mut size);
 
@@ -177,7 +178,7 @@ impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
 
         let ret = T::deserialize_uncompressed_unchecked(&request_bytes[..]).unwrap();
         self.total_recv_bytes += request_bytes.len();
-        ret
+        Ok(ret)
     }
 
     fn log_num_pub_workers(&self) -> usize {
@@ -188,12 +189,12 @@ impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
         self.log_num_workers_per_party
     }
 
-    fn rank(&self) -> usize {
-        self.rank
-    }
+    // fn rank(&self) -> usize {
+    //     self.rank
+    // }
 
-    fn total_bandwidth_used(&self) -> (usize, usize) {
-        (self.total_send_bytes, self.total_recv_bytes)
+    fn total_bandwidth_used(&self) -> (u64, u64) {
+        (self.total_send_bytes as u64, self.total_recv_bytes as u64)
     }
 }
 

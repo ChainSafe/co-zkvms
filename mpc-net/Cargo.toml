@@ -1,5 +1,5 @@
 [package]
-name = "mpc-net-star"
+name = "mpc-net"
 version = "0.4.0"
 edition.workspace = true
 
@@ -28,6 +28,7 @@ tracing = { workspace = true }
 ark-serialize = { workspace = true }
 eyre = { workspace = true }
 color-eyre = { workspace = true }
+bytesize = { workspace = true }
 
 mpi = { version = "0.7.0", features = [
     "user-operations",

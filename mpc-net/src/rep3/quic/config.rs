@@ -90,9 +90,11 @@ impl<'de> Deserialize<'de> for Address {
 
 /// A party in the network config file.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct NetworkPartyConfig {
+pub struct NetworkWorkerConfig {
     /// The id of the party, 0-based indexing.
     pub id: usize,
+    /// The index of the worker in the party.
+    pub worker: usize,
     /// The DNS name of the party.
     pub dns_name: Address,
     /// The path to the public certificate of the party.
@@ -104,6 +106,8 @@ pub struct NetworkPartyConfig {
 pub struct NetworkParty {
     /// The id of the party, 0-based indexing.
     pub id: usize,
+    /// The index of the worker in the party.
+    pub worker: usize,
     /// The DNS name of the party.
     pub dns_name: Address,
     /// The public certificate of the party.
@@ -112,21 +116,23 @@ pub struct NetworkParty {
 
 impl NetworkParty {
     /// Construct a new [`NetworkParty`] type.
-    pub fn new(id: usize, address: Address, cert: CertificateDer<'static>) -> Self {
+    pub fn new(id: usize, worker: usize, address: Address, cert: CertificateDer<'static>) -> Self {
         Self {
             id,
+            worker,
             dns_name: address,
             cert,
         }
     }
 }
 
-impl TryFrom<NetworkPartyConfig> for NetworkParty {
+impl TryFrom<NetworkWorkerConfig> for NetworkParty {
     type Error = std::io::Error;
-    fn try_from(value: NetworkPartyConfig) -> Result<Self, Self::Error> {
+    fn try_from(value: NetworkWorkerConfig) -> Result<Self, Self::Error> {
         let cert = CertificateDer::from(std::fs::read(value.cert_path)?).into_owned();
         Ok(NetworkParty {
             id: value.id,
+            worker: value.worker,
             dns_name: value.dns_name,
             cert,
         })
@@ -137,7 +143,9 @@ impl TryFrom<NetworkPartyConfig> for NetworkParty {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct NetworkConfigFile {
     /// The list of parties in the network.
-    pub parties: Vec<NetworkPartyConfig>,
+    pub parties: Vec<NetworkWorkerConfig>,
+    /// The coordinator of the network.
+    pub coordinator: NetworkWorkerConfig,
     /// Our own id in the network.
     pub my_id: usize,
     /// The [SocketAddr] we bind to.

@@ -256,7 +256,7 @@ fn worker_work<E: Pairing, N: MpcStarNetWorker>(
 
     network.send_response("ready".to_string());
 
-    let witness_share = network.receive_request();
+    let witness_share = network.receive_request().unwrap();
 
     co_spartan::SpartanProverWorker::new(
         log_chunk_size,
@@ -264,7 +264,7 @@ fn worker_work<E: Pairing, N: MpcStarNetWorker>(
         pub_log_chunk_size,
         pub_start_eq,
     )
-    .prove(&pk, witness_share, &mut random, active, network);
+    .prove(&pk, witness_share, &mut random, active, network).unwrap();
 
     let (send_bytes, recv_bytes) = network.total_bandwidth_used();
     tracing::info!(

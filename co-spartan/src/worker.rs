@@ -16,6 +16,9 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, marker::PhantomData, rc::Rc};
+use color_eyre::eyre::Context;
+use color_eyre::eyre::Result;
+use mpc_net::mpc_star::MpcStarNetWorker;
 use rand::RngCore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -25,11 +28,12 @@ use spartan::{
     utils::{boost_degree, dense_scalar_prod, generate_eq, partial_generate_eq},
     IndexProverKey,
 };
-use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     mpc::{
-        rep3::{Rep3DensePolynomial, Rep3PrimeFieldShare}, sumcheck::rep3::Rep3Sumcheck, SSRandom
+        rep3::{Rep3DensePolynomial, Rep3PrimeFieldShare},
+        sumcheck::rep3::Rep3Sumcheck,
+        SSRandom,
     },
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
@@ -118,27 +122,34 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
-    ) {
+    ) -> Result<()> {
         let mut state = ProverState::default();
 
         let witness_share = self.zero_round(pk, &z);
 
-        self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network);
+        self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network).context("while running first round")?;
 
-        self.second_round(pk, &witness_share, &mut state, random_rng, network);
+        self.second_round(pk, &witness_share, &mut state, random_rng, network).context("while running second round")?;
 
-        self.third_round(pk, &witness_share, &mut state, random_rng, active, network);
+        self.third_round(pk, &witness_share, &mut state, random_rng, active, network).context("while running third round")?;
 
         if active {
-            self.fourth_round(pk, &mut state, network);
+            self.fourth_round(pk, &mut state, network).context("while running fourth round")?;
         } else {
+            // todo fork network to avoid dummy fourth round
             dummy_fourth_round(&pk.pub_ipk, network);
         }
+
+        Ok(())
     }
 
     // Compute Az, Bz, Cz
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::zero_round")]
-    fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &Rep3WitnessShare<E::ScalarField>) -> Rep3R1CSWitnessShare<E::ScalarField> {
+    fn zero_round(
+        &self,
+        pk: &Rep3ProverKey<E>,
+        z: &Rep3WitnessShare<E::ScalarField>,
+    ) -> Rep3R1CSWitnessShare<E::ScalarField> {
         let chunk_size = pk.ipk.num_variables_val.exp2();
         let mut za = vec![Rep3PrimeFieldShare::zero(); chunk_size];
         let mut zb = vec![Rep3PrimeFieldShare::zero(); chunk_size];
@@ -166,8 +177,14 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::first_round")]
-    fn first_round(&self, polys: &Vec<&Rep3DensePolynomial<E::ScalarField>>, ck: &CommitterKey<E>, network: &mut N) {
-        poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
+    fn first_round(
+        &self,
+        polys: &Vec<&Rep3DensePolynomial<E::ScalarField>>,
+        ck: &CommitterKey<E>,
+        network: &mut N,
+    ) -> Result<()> {
+        poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network)
+            .context("while committing polynomials")
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::second_round")]
@@ -178,8 +195,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         state: &mut ProverState<E>,
         random_rng: &mut SSRandom<R>,
         network: &mut N,
-    ) {
-        let v_msg: Vec<_> = network.receive_request();
+    ) -> Result<()> {
+        let v_msg: Vec<_> = network.receive_request()?;
 
         let num_variables = pk.ipk.padded_num_var;
 
@@ -192,7 +209,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             &eq_func,
             random_rng,
             network,
-        );
+        ).context("while running first sumcheck")?;
 
         let randomness = &final_point[0..num_variables].to_vec();
 
@@ -203,10 +220,12 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         );
 
         let response = vec![val_a, val_b, val_c];
-        network.send_response(response);
+        network.send_response(response)?;
 
         state.eq_rx = Some(generate_eq(&final_point));
         state.r_x = final_point;
+
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::third_round")]
@@ -218,8 +237,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         random_rng: &mut SSRandom<R>,
         active: bool,
         network: &mut N,
-    ) {
-        let v_msg: Vec<_> = network.receive_request();
+    ) -> Result<()> {
+        let v_msg: Vec<_> = network.receive_request().context("while receiving v_msg")?;
         let eq_rx = state.eq_rx.as_ref().unwrap();
 
         let num_variables = pk.ipk.padded_num_var;
@@ -249,14 +268,14 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             random_rng,
             &v_msg,
             network,
-        );
+        ).context("while running second sumcheck")?;
 
         rep3_eval_poly_worker(
             vec![&witness_share.z],
             &final_point,
             pk.num_variables,
             network,
-        );
+        ).context("while running eval poly")?;
         state.r_y = final_point.to_vec();
         state.eq_ry = Some(generate_eq(&final_point));
         let eq_ry = state.eq_ry.as_ref().unwrap();
@@ -303,7 +322,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             let eq_tilde_ry_chunk = state.eq_tilde_ry_chunk.as_ref().unwrap();
 
             let response = (val_a, val_b, val_c);
-            network.send_response(response);
+            network.send_response(response)?;
 
             let val_m_poly_chunk = dense_scalar_prod(&v_msg[0], &pk.pub_ipk.val_a)
                 + dense_scalar_prod(&v_msg[1], &pk.pub_ipk.val_b)
@@ -314,14 +333,14 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
                 [eq_tilde_rx_chunk, eq_tilde_ry_chunk],
                 &pk.pub_ipk.ck_index,
                 network,
-            );
+            ).context("while committing polynomials")?;
         } else {
             let response = (
                 E::ScalarField::zero(),
                 E::ScalarField::zero(),
                 E::ScalarField::zero(),
             );
-            network.send_response(response);
+            network.send_response(response)?;
 
             let default_response = vec![
                 Commitment::<E> {
@@ -330,7 +349,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
                 };
                 2
             ];
-            network.send_response(default_response);
+            network.send_response(default_response)?;
         }
 
         distributed_batch_open_poly_worker(
@@ -342,7 +361,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             pk.num_variables,
             network.log_num_workers_per_party(),
             network,
-        );
+        ).context("while running batch open poly")?;
 
         let mut eq_tilde_rx_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
         let mut eq_tilde_ry_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
@@ -363,10 +382,17 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             pk.num_variables,
             eq_tilde_ry_evals,
         ));
+
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::fourth_round")]
-    fn fourth_round(&self, pk: &Rep3ProverKey<E>, state: &mut ProverState<E>, network: &mut N) {
+    fn fourth_round(
+        &self,
+        pk: &Rep3ProverKey<E>,
+        state: &mut ProverState<E>,
+        network: &mut N,
+    ) -> Result<()> {
         let start_eq = self.pub_start_eq;
         let log_chunk_size = self.pub_log_chunk_size;
         let eq_tilde_rx = state.eq_tilde_rx.as_ref().unwrap();
@@ -375,7 +401,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         let eq_tilde_ry_chunk = state.eq_tilde_ry_chunk.as_ref().unwrap();
         let val_m_poly_chunk = state.val_m_poly_chunk.as_ref().unwrap();
 
-        let v_msg = network.receive_request();
+        let v_msg = network.receive_request().context("while receiving v_msg")?;
 
         let q_num_vars = pk.pub_ipk.num_variables_val;
 
@@ -440,7 +466,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         ];
         q_polys.add_product(prod, E::ScalarField::one());
 
-        let (x_r, x_c) = network.receive_request();
+        let (x_r, x_c) = network.receive_request().context("while receiving x_r and x_c")?;
 
         let lookup_pf_row = LogLookupProof::prove(
             &q_row,
@@ -467,7 +493,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
         network.send_response(responses);
 
-        let (z, lambda) = network.receive_request();
+        let (z, lambda) = network.receive_request().context("while receiving first z and lambda")?;
 
         append_sumcheck_polys(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
@@ -481,7 +507,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let (z, lambda) = network.receive_request();
+        let (z, lambda) = network.receive_request().context("while receiving second z and lambda")?;
 
         append_sumcheck_polys(
             (lookup_pf_col.0[0].clone(), lookup_pf_col.0[1].clone()),
@@ -495,9 +521,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let final_point = distributed_sumcheck_worker(&q_polys, network);
+        let final_point = distributed_sumcheck_worker(&q_polys, network).context("while running distributed sumcheck")?;
 
-        let eta = network.receive_request();
+        let eta = network.receive_request().context("while receiving eta")?;
 
         distributed_batch_open_poly_worker(
             [
@@ -524,7 +550,10 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             pk.num_variables,
             network.log_num_pub_workers(),
             network,
-        );
+        )
+        .context("while batch opening polynomials")?;
+
+        Ok(())
     }
 }
 
@@ -532,7 +561,7 @@ pub fn poly_commit_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     polys: impl IntoIterator<Item = &'a DenseMultilinearExtension<E::ScalarField>>,
     ck: &CommitterKey<E>,
     network: &mut N,
-) {
+) -> Result<()> {
     let mut res = Vec::new();
 
     for p in polys {
@@ -540,7 +569,7 @@ pub fn poly_commit_worker<'a, E: Pairing, N: MpcStarNetWorker>(
         res.push(comm);
     }
 
-    network.send_response(res);
+    network.send_response(res)
 }
 
 #[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
@@ -551,7 +580,7 @@ pub fn rep3_first_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: Mp
     eq: &DenseMultilinearExtension<F>,
     random_rng: &mut SSRandom<R>,
     network: &mut N,
-) -> Vec<F> {
+) -> Result<Vec<F>> {
     let mut prover_state = Rep3Sumcheck::<F>::first_sumcheck_init(za, zb, zc, eq);
     let num_vars = prover_state.num_vars;
     let mut verifier_msg = None;
@@ -563,8 +592,12 @@ pub fn rep3_first_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: Mp
             &verifier_msg,
             random_rng,
         );
-        network.send_response(prover_message.clone());
-        let r = network.receive_request();
+        network
+            .send_response(prover_message.clone())
+            .context("while sending prover message")?;
+        let r = network
+            .receive_request()
+            .context("while receiving randomness")?;
 
         verifier_msg = Some(VerifierMsg { randomness: r });
         final_point.push(r);
@@ -579,11 +612,13 @@ pub fn rep3_first_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: Mp
         prover_state.secret_polys[2].share_0[0],
         prover_state.pub_polys[0][0],
     );
-    network.send_response(response);
+    network.send_response(response)?;
 
-    let final_point = network.receive_request();
+    let final_point = network
+        .receive_request()
+        .context("while receiving final point")?;
 
-    final_point
+    Ok(final_point)
 }
 
 #[tracing::instrument(skip_all, name = "rep3_second_sumcheck_worker")]
@@ -595,7 +630,7 @@ pub fn rep3_second_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: M
     random_rng: &mut SSRandom<R>,
     v_msg: &Vec<F>,
     network: &mut N,
-) -> Vec<F> {
+) -> Result<Vec<F>> {
     let mut prover_state = Rep3Sumcheck::<F>::second_sumcheck_init(a_r, b_r, c_r, z, v_msg);
     let num_vars = prover_state.num_vars;
     let mut verifier_msg = None;
@@ -607,52 +642,67 @@ pub fn rep3_second_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: M
             &verifier_msg,
             random_rng,
         );
-        network.send_response(prover_message.clone());
+        network
+            .send_response(prover_message.clone())
+            .context("while sending prover message")?;
 
-        let r = network.receive_request();
+        let r = network
+            .receive_request()
+            .context("while receiving randomness")?;
         verifier_msg = Some(VerifierMsg { randomness: r });
         final_point.push(r);
     }
 
-    let _ =
-        Rep3Sumcheck::<F>::second_sumcheck_prove_round(&mut prover_state, &verifier_msg, random_rng);
+    let _ = Rep3Sumcheck::<F>::second_sumcheck_prove_round(
+        &mut prover_state,
+        &verifier_msg,
+        random_rng,
+    );
     let responses = (
         prover_state.pub_polys[0][0],
         prover_state.pub_polys[1][0],
         prover_state.pub_polys[2][0],
         prover_state.secret_polys[0].share_0[0],
     );
-    network.send_response(responses);
+    network.send_response(responses)?;
 
-    let final_point = network.receive_request();
+    let final_point = network
+        .receive_request()
+        .context("while receiving final point")?;
 
-    final_point
+    Ok(final_point)
 }
 
 #[tracing::instrument(skip_all, name = "distributed_sumcheck_worker")]
 pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
     distributed_q_polys: &ListOfProductsOfPolynomials<F>,
     network: &mut N,
-) -> Vec<F> {
+) -> Result<Vec<F>> {
     let mut prover_state = IPForMLSumcheck::prover_init(&distributed_q_polys);
     let mut verifier_msg = None;
     let mut final_point = Vec::new();
 
     for _round in 0..distributed_q_polys.num_variables {
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
-        network.send_response(prover_message.clone());
-        let r = network.receive_request();
+        network
+            .send_response(prover_message.clone())
+            .context("while sending prover message")?;
+        let r = network
+            .receive_request()
+            .context("while receiving randomness")?;
         verifier_msg = Some(VerifierMsg { randomness: r });
         final_point.push(r);
     }
 
     let _ = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
     let responses = obtain_distrbuted_sumcheck_prover_state(&prover_state);
-    network.send_response(responses);
+    network.send_response(responses)?;
 
-    let final_point = network.receive_request();
+    let final_point = network
+        .receive_request()
+        .context("while receiving final point")?;
 
-    final_point
+    Ok(final_point)
 }
 
 #[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
@@ -661,7 +711,7 @@ pub fn rep3_eval_poly_worker<F: PrimeField, N: MpcStarNetWorker>(
     final_point: &[F],
     num_vars: usize,
     network: &mut N,
-) {
+) -> Result<()> {
     let mut res = Vec::new();
     for p in polys {
         res.push(
@@ -670,7 +720,7 @@ pub fn rep3_eval_poly_worker<F: PrimeField, N: MpcStarNetWorker>(
         )
     }
 
-    network.send_response(res);
+    network.send_response(res)
 }
 
 #[tracing::instrument(skip_all, name = "distributed_batch_open_poly_worker")]
@@ -683,7 +733,7 @@ pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     num_var: usize,
     log_num_workers: usize,
     network: &mut N,
-) {
+) -> Result<()> {
     let polys = polys.into_iter().collect::<Vec<_>>();
 
     let agg_poly = aggregate_poly(eta, &polys[0..num_comms]);
@@ -700,7 +750,7 @@ pub fn distributed_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
         evals,
     };
 
-    network.send_response(response);
+    network.send_response(response)
 }
 
 fn distributed_open<E: Pairing>(
@@ -790,13 +840,13 @@ fn dummy_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
 
         network.send_response(default_response);
 
-        let _: F = network.receive_request();
+        let _: F = network.receive_request().unwrap();
     }
 
     let default_response = default_last_sumcheck_state;
     network.send_response(default_response);
 
-    let _: Vec<F> = network.receive_request();
+    let _: Vec<F> = network.receive_request().unwrap();
 }
 
 fn dummy_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
@@ -815,10 +865,13 @@ fn dummy_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
     network.send_response(default_response);
 }
 
-fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(ipk: &IndexProverKey<E>, network: &mut N) {
-    let _v_msg: E::ScalarField = network.receive_request();
+fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(
+    ipk: &IndexProverKey<E>,
+    network: &mut N,
+) {
+    let _v_msg: E::ScalarField = network.receive_request().unwrap();
 
-    let (_x_r, _x_c): (E::ScalarField, E::ScalarField) = network.receive_request();
+    let (_x_r, _x_c): (E::ScalarField, E::ScalarField) = network.receive_request().unwrap();
 
     let default_response = vec![
         Commitment::<E> {
@@ -830,8 +883,8 @@ fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(ipk: &IndexProverKey<
 
     network.send_response(default_response);
 
-    let (_z, _lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
-    let (_z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request();
+    let (_z, _lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request().unwrap();
+    let (_z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request().unwrap();
 
     let mut q_polys = ListOfProductsOfPolynomials::new(1);
     let default_poly = DenseMultilinearExtension::from_evaluations_vec(
@@ -858,7 +911,7 @@ fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(ipk: &IndexProverKey<
         network,
     );
 
-    let _eta: E::ScalarField = network.receive_request();
+    let _eta: E::ScalarField = network.receive_request().unwrap();
 
     dummy_batch_open_poly_worker::<E, N>(ipk.real_len_val.log_2(), 15, ipk.ck_index.g, network);
 }
