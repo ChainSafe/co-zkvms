@@ -11,7 +11,11 @@ use futures::{SinkExt, StreamExt};
 use itertools::Itertools;
 use jolt_core::{poly::field::JoltField, utils::transcript::ProofTranscript};
 use mpc_core::protocols::rep3::{network::Rep3MpcNet, PartyID, Rep3BigUintShare};
-use mpc_net::{config::{NetworkConfig, NetworkConfigFile}, MpcNetworkHandler};
+use mpc_net::{
+    config::{NetworkConfig, NetworkConfigFile},
+    rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
+    MpcNetworkHandler,
+};
 use num_bigint::BigUint;
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
@@ -44,12 +48,28 @@ fn main() -> Result<()> {
         toml::from_str(&std::fs::read_to_string(args.config_file).context("opening config file")?)
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
+    if config.is_coordinator {
+        run_coordinator(config, 1, 1)?;
+    } else {
+        run_party(config, num_inputs, 1, 1)?;
+    }
+
+    Ok(())
+}
+
+fn run_party(
+    config: NetworkConfig,
+    num_inputs: usize,
+    log_num_workers_per_party: usize,
+    log_num_pub_workers: usize,
+) -> Result<()> {
     let my_id = config.my_id;
 
-    let span = tracing::info_span!("party", id = my_id);
+    let span = tracing::info_span!("run_party", id = my_id);
     let _enter = span.enter();
 
-    let rep3_net = Rep3MpcNet::new(config).unwrap();
+    let rep3_net =
+        Rep3QuicMpcNetWorker::new_with_coordinator(config, log_num_workers_per_party, log_num_pub_workers).unwrap();
 
     let preprocessing = LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
 
@@ -62,14 +82,21 @@ fn main() -> Result<()> {
     let polynomials = witness_solver.polynomialize(
         &preprocessing,
         &inputs_shares,
-        &iter::repeat(RangeLookup::<F>::id_for(256)).take(num_inputs).collect_vec(),
+        &iter::repeat(RangeLookup::<F>::id_for(256))
+            .take(num_inputs)
+            .collect_vec(),
         M,
         C,
     );
 
     witness_solver.io_context0.network.log_connection_stats();
     drop(_enter);
+    Ok(())
+}
 
+#[tracing::instrument(skip_all)]
+fn run_coordinator(config: NetworkConfig, log_num_workers_per_party: usize, log_num_pub_workers: usize) -> Result<()> {
+    let rep3_net = Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers).unwrap();
     Ok(())
 }
 

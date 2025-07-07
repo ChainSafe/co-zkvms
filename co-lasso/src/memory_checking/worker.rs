@@ -1,3 +1,5 @@
+
+
 use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
@@ -16,11 +18,13 @@ use jolt_core::{
         transcript::ProofTranscript,
     },
 };
+use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
+use color_eyre::eyre::Result;
 use spartan::transcript::Transcript;
 use tracing::trace_span;
 
-use crate::{grand_product::BatchedGrandProductArgument, LassoPolynomials, LassoPreprocessing};
+use crate::{grand_product::BatchedGrandProductArgument, lasso::MemoryCheckingProof, LassoPolynomials, LassoPreprocessing, Rep3LassoPolynomials};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -28,7 +32,7 @@ use rayon::prelude::*;
 pub struct Rep3MemoryCheckingProver<
     const C: usize,
     const M: usize,
-    N, // MpcStarNetCoordinator,
+    N: MpcStarNetWorker,
     F: JoltField,
     // C: CommitmentScheme<Field = F>,
     Polynomials,
@@ -36,75 +40,41 @@ pub struct Rep3MemoryCheckingProver<
     pub _marker: PhantomData<(F, Polynomials, N)>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, Polynomials: Send + Sync + Sized>
-where
-    F: JoltField,
-    // C: CommitmentScheme<Field = F>,
-    // Polynomials: StructuredCommitment<C>,
-    // ReadWriteOpenings: StructuredOpeningProof<F, C, Polynomials>,
-    // InitFinalOpenings: StructuredOpeningProof<F, C, Polynomials>,
-{
-    pub _polys: PhantomData<Polynomials>,
-    /// Read/write/init/final multiset hashes for each memory
-    pub multiset_hashes: MultisetHashes<F>,
-    /// The read and write grand products for every memory has the same size,
-    /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductArgument<F>,
-    /// The init and final grand products for every memory has the same size,
-    /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductArgument<F>,
-    // /// The opening proofs associated with the read/write grand product.
-    // pub read_write_openings: ReadWriteOpenings,
-    // pub read_write_opening_proof: ReadWriteOpenings::Proof,
-    // /// The opening proofs associated with the init/final grand product.
-    // pub init_final_openings: InitFinalOpenings,
-    // pub init_final_opening_proof: InitFinalOpenings::Proof,
-}
-
 type Preprocessing<F> = LassoPreprocessing<F>;
-type Polynomials<F> = LassoPolynomials<F>;
+type Polynomials<F> = Rep3LassoPolynomials<F>;
 
-impl<N, F: JoltField, const C: usize, const M: usize>
+impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetWorker>
     Rep3MemoryCheckingProver<C, M, N, F, Polynomials<F>>
 {
-    pub fn prove_rep3(
+    pub fn prove(
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
-        // network: &mut N,
+        network: &mut N,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, Polynomials<F>> {
+    ) -> Result<()> {
         let (
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, transcript);
+        ) = Self::prove_grand_products(preprocessing, network, transcript)?;
 
-        MemoryCheckingProof {
-            _polys: PhantomData,
-            multiset_hashes,
-            read_write_grand_product,
-            init_final_grand_product,
-        }
+        Ok(())
     }
 
     fn prove_grand_products(
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
-        // network: &mut N,
-        transcript: &mut ProofTranscript,
-    ) -> (
+        network: &mut N,
+    ) -> Result<(
         BatchedGrandProductArgument<F>,
         BatchedGrandProductArgument<F>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
-    ) {
-        // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
+    )> {
+        let (gamma, tau) = network.receive_request()?;
 
         // transcript.append_protocol_name(Self::protocol_name());
 
@@ -119,12 +89,12 @@ impl<N, F: JoltField, const C: usize, const M: usize>
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
-        multiset_hashes.append_to_transcript(transcript);
+        // multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_grand_product, r_read_write) =
-            BatchedGrandProductArgument::prove(read_write_circuit, transcript);
-        let (init_final_grand_product, r_init_final) =
-            BatchedGrandProductArgument::prove(init_final_circuit, transcript);
+        // let (read_write_grand_product, r_read_write) =
+        //     BatchedGrandProductArgument::prove(read_write_circuit, transcript);
+        // let (init_final_grand_product, r_init_final) =
+        //     BatchedGrandProductArgument::prove(init_final_circuit, transcript);
 
         (
             read_write_grand_product,

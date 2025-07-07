@@ -171,8 +171,13 @@ pub struct NetworkConfigFile {
     #[serde(default)]
     pub coordinator: Option<NetworkCoordinatorConfig>,
     /// Our own id in the network.
+    #[serde(default)]
     pub my_id: usize,
+    /// The is coordinator flag.
+    #[serde(default)]
+    pub is_coordinator: bool,
     /// The worker id of the party.
+    #[serde(default)]
     pub worker: usize,
     /// The [SocketAddr] we bind to.
     pub bind_addr: SocketAddr,
@@ -193,6 +198,8 @@ pub struct NetworkConfig {
     pub worker: usize,
     /// Our own id in the network.
     pub my_id: usize,
+    /// The is coordinator flag.
+    pub is_coordinator: bool,
     /// The [SocketAddr] we bind to.
     pub bind_addr: SocketAddr,
     /// The private key.
@@ -203,18 +210,18 @@ pub struct NetworkConfig {
 
 impl NetworkConfig {
     /// Construct a new [`NetworkConfig`] type.
-    pub fn new(
+    pub fn new_party(
         id: usize,
         worker: usize,
         bind_addr: SocketAddr,
         key: PrivateKeyDer<'static>,
         parties: Vec<NetworkParty>,
-        coordinator: Option<NetworkParty>,
         timeout: Option<Duration>,
     ) -> Self {
         Self {
             parties,
-            coordinator,
+            coordinator: None,
+            is_coordinator: false,
             my_id: id,
             worker,
             bind_addr,
@@ -236,6 +243,7 @@ impl TryFrom<NetworkConfigFile> for NetworkConfig {
             .clone_key();
         Ok(NetworkConfig {
             parties,
+            is_coordinator: value.is_coordinator,
             coordinator: value.coordinator.map(NetworkParty::try_from).transpose()?,
             my_id: value.my_id,
             worker: value.worker,
@@ -251,6 +259,7 @@ impl Clone for NetworkConfig {
         Self {
             parties: self.parties.clone(),
             coordinator: self.coordinator.clone(),
+            is_coordinator: self.is_coordinator,
             my_id: self.my_id,
             worker: self.worker,
             bind_addr: self.bind_addr,

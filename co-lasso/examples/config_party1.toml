@@ -1,4 +1,5 @@
 my_id = 0
+worker = 0
 bind_addr = "0.0.0.0:10000"
 key_path = "data/key0.der"
 [[parties]]
@@ -13,3 +14,6 @@ cert_path = "data/cert1.der"
 id = 2
 dns_name = "localhost:10002"
 cert_path = "data/cert2.der"
+[coordinator]
+dns_name = "localhost:11000"
+cert_path = "data/cert_coordinator.der"

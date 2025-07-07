@@ -29,6 +29,10 @@ ark-serialize = { workspace = true }
 eyre = { workspace = true }
 color-eyre = { workspace = true }
 bytesize = { workspace = true }
+rayon = { version = "1.10.0", optional = true }
+
+
+mpc-types = { path = "../../examples/co-snarks/mpc-types" }
 
 mpi = { version = "0.7.0", features = [
     "user-operations",
@@ -40,3 +44,5 @@ mpi = { version = "0.7.0", features = [
 default = ["quic"]
 mpi = ["dep:mpi"]
 quic = ["dep:quinn", "dep:tokio", "dep:tokio-util"]
+parallel = ["dep:rayon"]
+

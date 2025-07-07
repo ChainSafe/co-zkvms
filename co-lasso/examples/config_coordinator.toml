@@ -1,6 +1,9 @@
-my_id = 0
 bind_addr = "0.0.0.0:11000"
-key_path = "data/key0.der"
+key_path = "data/key_coordinator.der"
+is_coordinator = true
+[coordinator]
+dns_name = "localhost:11000"
+cert_path = "data/cert_coordinator.der"
 [[parties]]
 id = 0
 worker = 0

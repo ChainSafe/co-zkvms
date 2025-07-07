@@ -1,11 +1,15 @@
 use crate::{
-    channel::{BytesChannel, Channel}, codecs::BincodeCodec, rep3::{PartyID, PartyWorkerID}, MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT
+    channel::{BytesChannel, Channel},
+    codecs::BincodeCodec,
+    rep3::{PartyID, PartyWorkerID},
+    MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
+use eyre::ensure;
 use quinn::{
     crypto::rustls::QuicClientConfig,
     rustls::{pki_types::CertificateDer, RootCertStore},
@@ -31,30 +35,34 @@ use crate::{
 };
 
 pub struct Rep3QuicMpcNetWorker {
-    pub(crate) id: PartyWorkerID,
-    pub(crate) chan_next: ChannelHandle<Bytes, BytesMut>,
-    pub(crate) chan_prev: ChannelHandle<Bytes, BytesMut>,
-    pub(crate) chan_coordinator: ChannelHandle<Bytes, BytesMut>,
-    pub(crate) log_num_pub_workers: usize,
-    pub(crate) log_num_workers_per_party: usize,
-    pub(crate) net_handler: Arc<MpcNetworkHandlerWrapper>,
+    pub id: PartyWorkerID,
+    pub chan_next: ChannelHandle<Bytes, BytesMut>,
+    pub chan_prev: ChannelHandle<Bytes, BytesMut>,
+    pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
+    pub log_num_pub_workers: usize,
+    pub log_num_workers_per_party: usize,
+    pub net_handler: Arc<MpcNetworkHandlerWrapper>,
 }
 
 impl Rep3QuicMpcNetWorker {
-    pub fn new(
+    pub fn new(config: NetworkConfig) -> Result<Self> {
+        Self::new_with_coordinator(config, 0, 0)
+    }
+
+    pub fn new_with_coordinator(
         config: NetworkConfig,
-        log_num_pub_workers: usize,
         log_num_workers_per_party: usize,
+        log_num_pub_workers: usize,
     ) -> Result<Self> {
-        if (config.parties.len() - 1) % 3 != 0 {
-            bail!("REP3 protocol requires exactly 3 workers per party")
-        }
+        ensure!(config.parties.len() == 3, "REP3 protocol requires exactly 3 parties");
+        ensure!(config.coordinator.is_some(), "REP3 star protocol requires a coordinator");
         let id = PartyWorkerID::new(config.my_id, config.worker);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         let (net_handler, chan_next, chan_prev, chan_coordinator) = runtime.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config).await?;
+            let chan_coordinator = net_handler.get_coordinator_byte_channel().await?.map(ChannelHandle::manage);
             let mut channels = net_handler.get_byte_channels().await?;
             let chan_next = channels
                 .remove(&id.party_id().next_id().into())
@@ -66,11 +74,10 @@ impl Rep3QuicMpcNetWorker {
                 bail!("unexpected channels found")
             }
 
-            let chan_coordinator = net_handler.get_coordinator_byte_channel().await?;
+
 
             let chan_next = ChannelHandle::manage(chan_next);
             let chan_prev = ChannelHandle::manage(chan_prev);
-            let chan_coordinator = ChannelHandle::manage(chan_coordinator);
             Ok((net_handler, chan_next, chan_prev, chan_coordinator))
         })?;
         Ok(Self {
@@ -83,7 +90,6 @@ impl Rep3QuicMpcNetWorker {
             log_num_workers_per_party,
         })
     }
-
 
     /// Sends bytes over the network to the target party.
     pub fn send_bytes(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
@@ -131,21 +137,31 @@ impl Rep3QuicMpcNetWorker {
 }
 
 impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()> {
         let size = data.uncompressed_size();
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            .context("while serializing data")?;
 
-        std::mem::drop(self.chan_coordinator.blocking_send(Bytes::from(ser_data)));
+        std::mem::drop(self.chan_coordinator.as_ref().unwrap().blocking_send(Bytes::from(ser_data)));
         Ok(())
     }
 
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T> {
-        let response = self.chan_coordinator.blocking_recv().blocking_recv()
+        let response = self
+            .chan_coordinator
+            .as_ref()
+            .unwrap()
+            .blocking_recv()
+            .blocking_recv()
             .context("while receiving response")??;
 
         let ret = T::deserialize_uncompressed_unchecked(&response[..])
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while deserializing response")?;
         Ok(ret)
     }
@@ -204,6 +220,11 @@ impl MpcNetworkHandlerWorker {
                 .add(cert.clone())
                 .with_context(|| format!("adding certificate for party {id} to root store"))?;
         }
+        if let Some(coordinator) = &config.coordinator {
+            root_store
+                .add(coordinator.cert.clone())
+                .with_context(|| format!("adding certificate for coordinator to root store"))?;
+        }
         let crypto = quinn::rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
@@ -231,6 +252,55 @@ impl MpcNetworkHandlerWorker {
         let mut endpoints = Vec::new();
         let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;
 
+        let coordinator_connection = if let Some(coordinator) = config.coordinator {
+            tracing::trace!("my id: {:?}, connecting to coordinator", config.my_id);
+
+            let addresses: Vec<SocketAddr> = coordinator
+                .dns_name
+                .to_socket_addrs()
+                .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
+                .collect();
+            if addresses.is_empty() {
+                return Err(eyre::eyre!(
+                    "could not resolve DNS name {}",
+                    coordinator.dns_name
+                ));
+            }
+            let party_addr = addresses[0];
+            let local_client_socket: SocketAddr = match party_addr {
+                SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
+                SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
+            };
+            let endpoint = quinn::Endpoint::client(local_client_socket)
+                .with_context(|| format!("creating client endpoint to coordinator"))?;
+            let conn = endpoint
+                .connect_with(
+                    client_config.clone(),
+                    party_addr,
+                    &coordinator.dns_name.hostname,
+                )
+                .with_context(|| format!("setting up client connection with coordinator"))?
+                .await
+                .with_context(|| format!("connecting as a client to coordinator"))?;
+            let mut uni = conn.open_uni().await?;
+            uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
+                .await?;
+            uni.write_u32(config.worker as u32).await?;
+            uni.flush().await?;
+            uni.finish()?;
+
+            tracing::trace!(
+                "coordinator conn with id {} from {} to {}",
+                conn.stable_id(),
+                endpoint.local_addr().unwrap(),
+                conn.remote_address(),
+            );
+            endpoints.push(endpoint);
+            Some(conn)
+        } else {
+            None
+        };
+
         let mut parties_connections = BTreeMap::new();
 
         for party in config.parties {
@@ -239,7 +309,7 @@ impl MpcNetworkHandlerWorker {
                 continue;
             }
             if party.id < config.my_id {
-                tracing::info!(
+                tracing::trace!(
                     "my id: {:?}, connecting to party: {:?}",
                     config.my_id,
                     party.id
@@ -284,7 +354,7 @@ impl MpcNetworkHandlerWorker {
                 assert!(parties_connections.insert(party.id, conn).is_none());
                 endpoints.push(endpoint);
             } else {
-                tracing::info!(
+                tracing::trace!(
                     "my id: {:?}, accepting connection from party: {:?}",
                     config.my_id,
                     party.id
@@ -299,7 +369,7 @@ impl MpcNetworkHandlerWorker {
                 {
                     Ok(Some(maybe_conn)) => {
                         let conn = maybe_conn.await?;
-                        tracing::info!(
+                        tracing::trace!(
                             "Conn with id {} from {} to {}",
                             conn.stable_id(),
                             server_endpoint.local_addr().unwrap(),
@@ -307,7 +377,7 @@ impl MpcNetworkHandlerWorker {
                         );
                         let mut uni = conn.accept_uni().await?;
                         let other_party_id = uni.read_u32().await?;
-                        tracing::info!(
+                        tracing::trace!(
                             "my id: {:?}, accepted connection from other_party_id: {:?}",
                             config.my_id,
                             other_party_id
@@ -335,57 +405,6 @@ impl MpcNetworkHandlerWorker {
             }
         }
         endpoints.push(server_endpoint);
-
-        let coordinator_connection = if let Some(coordinator) = config.coordinator {
-            tracing::info!("my id: {:?}, connecting to coordinator", config.my_id);
-
-            let addresses: Vec<SocketAddr> = coordinator
-                .dns_name
-                .to_socket_addrs()
-                .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
-                .collect();
-            if addresses.is_empty() {
-                return Err(eyre::eyre!(
-                    "could not resolve DNS name {}",
-                    coordinator.dns_name
-                ));
-            }
-            let party_addr = addresses[0];
-            let local_client_socket: SocketAddr = match party_addr {
-                SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
-                SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
-            };
-            let endpoint = quinn::Endpoint::client(local_client_socket)
-                .with_context(|| format!("creating client endpoint to coordinator"))?;
-            let conn = endpoint
-                .connect_with(
-                    client_config.clone(),
-                    party_addr,
-                    &coordinator.dns_name.hostname,
-                )
-                .with_context(|| format!("setting up client connection with coordinator"))?
-                .await
-                .with_context(|| format!("connecting as a client to coordinator"))?;
-            let mut uni = conn.open_uni().await?;
-            uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
-                .await?;
-            uni.write_u32(config.worker as u32).await?;
-            uni.flush().await?;
-            uni.finish()?;
-
-            // Wait for coordinator acknowledgment
-            tracing::info!("Worker connected to coordinator");
-            tracing::trace!(
-                "Conn with id {} from {} to {}",
-                conn.stable_id(),
-                endpoint.local_addr().unwrap(),
-                conn.remote_address(),
-            );
-            endpoints.push(endpoint);
-            Some(conn)
-        } else {
-            None
-        };
 
         Ok(MpcNetworkHandlerWorker {
             parties_connections,
@@ -492,25 +511,25 @@ impl MpcNetworkHandlerWorker {
     /// Sets up a new [BytesChannel] between each party. The resulting map maps the id of the party to its respective [BytesChannel].
     pub async fn get_coordinator_byte_channel(
         &self,
-    ) -> std::io::Result<BytesChannel<RecvStream, SendStream>> {
-        let conn = self
-            .coordinator_connection
-            .as_ref()
-            .expect("coordinator connection must be set");
-        // set max frame length to 1Tb and length_field_length to 5 bytes
-        const NUM_BYTES: usize = 5;
-        let codec = LengthDelimitedCodec::builder()
-            .length_field_type::<u64>() // u64 because this is the type the length is decoded into, and u32 doesnt fit 5 bytes
-            .length_field_length(NUM_BYTES)
-            .max_frame_length(1usize << (NUM_BYTES * 8))
-            .new_codec();
+    ) -> std::io::Result<Option<BytesChannel<RecvStream, SendStream>>> {
+        if let Some(conn) = self.coordinator_connection.as_ref() {
+            // set max frame length to 1Tb and length_field_length to 5 bytes
+            const NUM_BYTES: usize = 5;
+            let codec = LengthDelimitedCodec::builder()
+                .length_field_type::<u64>() // u64 because this is the type the length is decoded into, and u32 doesnt fit 5 bytes
+                .length_field_length(NUM_BYTES)
+                .max_frame_length(1usize << (NUM_BYTES * 8))
+                .new_codec();
 
-        // we are the client, so we are the receiver
-        let (mut send_stream, recv_stream) = conn.open_bi().await?;
-        send_stream.write_u32(self.my_id as u32).await?;
-        send_stream.write_u32(self.worker as u32).await?;
+            // we are the client, so we are the receiver
+            let (mut send_stream, recv_stream) = conn.open_bi().await?;
+            send_stream.write_u32(self.my_id as u32).await?;
+            send_stream.write_u32(self.worker as u32).await?;
 
-        Ok(Channel::new(recv_stream, send_stream, codec.clone()))
+            Ok(Some(Channel::new(recv_stream, send_stream, codec.clone())))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -542,6 +561,12 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
                 );
             }
         }
+
+        if let Some(conn) = self.coordinator_connection.as_ref() {
+            let mut send = conn.open_uni().await?;
+            send.write_all(b"done").await?;
+        }
+
         for endpoint in self.endpoints.iter() {
             endpoint.wait_idle().await;
             endpoint.close(VarInt::from_u32(0), &[]);

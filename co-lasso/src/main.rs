@@ -1,8 +1,8 @@
 use std::iter;
 
 use co_lasso::{
-    memory_checking::Rep3MemoryCheckingProver, polynomialize, subtables::range_check::RangeLookup,
-    LassoPolynomials, LassoPreprocessing,
+    lasso::{polynomialize, LassoPolynomials, LassoPreprocessing, MemoryCheckingProver},
+    subtables::range_check::RangeLookup,
 };
 use itertools::Itertools;
 use jolt_core::{poly::field::JoltField, utils::transcript::ProofTranscript};
@@ -25,7 +25,7 @@ fn main() {
         M,
         C,
     );
-    let proof = Rep3MemoryCheckingProver::<C, M, (), F, LassoPolynomials<F>>::prove_rep3(
+    let proof = MemoryCheckingProver::<C, M, (), F, LassoPolynomials<F>>::prove(
         &preprocessing,
         &polynomials,
         &mut transcript,

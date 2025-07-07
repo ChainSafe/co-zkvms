@@ -31,10 +31,10 @@ pub struct Rep3QuicNetCoordinator {
 impl Rep3QuicNetCoordinator {
     pub fn new(
         config: NetworkConfig,
-        log_num_pub_workers: usize,
         log_num_workers_per_party: usize,
+        log_num_pub_workers: usize,
     ) -> Result<Self> {
-        if (config.parties.len() - 1) % 3 != 0 {
+        if config.parties.len() % 3 != 0 {
             bail!("REP3 protocol requires exactly 3 workers per party")
         }
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -51,9 +51,6 @@ impl Rep3QuicNetCoordinator {
                 .into_iter()
                 .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
                 .collect();
-            if !channels.is_empty() {
-                bail!("unexpected channels found")
-            }
 
             Ok::<_, Report>((net_handler, channels))
         })?;
@@ -85,6 +82,9 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .iter()
             .map(|data| {
                 T::deserialize_uncompressed_unchecked(&data[..])
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
                     .context("while deserializing response")
             })
             .collect::<Result<Vec<_>>>()
@@ -99,7 +99,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         let size = data.uncompressed_size();
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            .context("while serializing data")?;
 
         for (_, channel) in self.channels.iter_mut() {
             std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
@@ -119,7 +120,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             let mut ser_data = Vec::with_capacity(size);
             data[i]
                 .serialize_uncompressed(&mut ser_data)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+                .context("while serializing data")?;
             std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
         }
         Ok(())
@@ -164,16 +166,12 @@ pub struct MpcNetworkCoordinatorHandler {
 impl MpcNetworkCoordinatorHandler {
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
     pub async fn establish(config: NetworkConfig) -> Result<Self, Report> {
-        config.check_config()?;
-        let certs: HashMap<usize, CertificateDer> = config
-            .parties
-            .iter()
-            .map(|p| (p.id, p.cert.clone()))
-            .collect();
+        // config.check_config()?;
 
-        let server_config =
-            quinn::ServerConfig::with_single_cert(vec![certs[&config.my_id].clone()], config.key)
-                .context("creating our server config")?;
+        let our_cert = config.coordinator.as_ref().unwrap().cert.clone();
+
+        let server_config = quinn::ServerConfig::with_single_cert(vec![our_cert], config.key)
+            .context("creating our server config")?;
         let our_socket_addr = config.bind_addr;
 
         let mut endpoints = Vec::new();
@@ -181,7 +179,7 @@ impl MpcNetworkCoordinatorHandler {
 
         let mut connections = BTreeMap::new();
 
-        tracing::info!(
+        tracing::trace!(
             "Coordinator expecting {} total worker connections",
             config.parties.len()
         );
@@ -210,7 +208,7 @@ impl MpcNetworkCoordinatorHandler {
                     let id = PartyWorkerID::new(party_id as usize, worker_id as usize);
                     let global_worker_id = id.global_worker_id();
 
-                    tracing::info!(
+                    tracing::trace!(
                         "Coordinator identified connection: party {}, worker {}, global_id {}",
                         party_id,
                         worker_id,
@@ -307,7 +305,7 @@ impl MpcNetworkCoordinatorHandler {
         for (&global_worker_id, conn) in self.connections.iter() {
             // The streams were already established during connection setup
             // We need to create new streams for data communication
-            let (send_stream, mut recv_stream) = conn.open_bi().await?;
+            let (send_stream, mut recv_stream) = conn.accept_bi().await?;
             let party_id = recv_stream.read_u32().await?;
             let worker_id = recv_stream.read_u32().await?;
             let id = PartyWorkerID::new(party_id as usize, worker_id as usize);
@@ -324,29 +322,23 @@ impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
     /// Shutdown all connections, and call [`quinn::Endpoint::wait_idle`] on all of them
     async fn shutdown(&self) -> std::io::Result<()> {
         tracing::debug!(
-            "party {} shutting down, conns = {:?}",
-            self.my_id,
+            "coordinator shutting down, conns = {:?}",
             self.connections.keys()
         );
 
         for (id, conn) in self.connections.iter() {
-            if self.my_id < *id {
-                let mut send = conn.open_uni().await?;
-                send.write_all(b"done").await?;
-            } else {
-                let mut recv = conn.accept_uni().await?;
-                let mut buffer = vec![0u8; b"done".len()];
-                recv.read_exact(&mut buffer).await.map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
-                })?;
+            let mut recv = conn.accept_uni().await?;
+            let mut buffer = vec![0u8; b"done".len()];
+            recv.read_exact(&mut buffer).await.map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
+            })?;
 
-                tracing::debug!("party {} closing conn = {id}", self.my_id);
+            tracing::debug!("coordinator closing conn = {id}");
 
-                conn.close(
-                    0u32.into(),
-                    format!("close from party {}", self.my_id).as_bytes(),
-                );
-            }
+            conn.close(
+                0u32.into(),
+                format!("close from coordinator").as_bytes(),
+            );
         }
         for endpoint in self.endpoints.iter() {
             endpoint.wait_idle().await;
