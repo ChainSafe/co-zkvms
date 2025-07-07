@@ -15,8 +15,8 @@ use rayon::iter::{
 };
 
 use crate::mpc::{
-    additive::AdditiveShare,
-    rep3::{Rep3Poly, Rep3Share},
+    additive::{get_mask_scalar_additive, AdditiveShare},
+    rep3::{get_mask_scalar_rep3, Rep3DensePolynomial, Rep3PrimeFieldShare},
     SSRandom,
 };
 
@@ -27,12 +27,12 @@ pub struct Rep3Sumcheck<F: PrimeField> {
 // 1st round: pub * priv * priv
 // 2nd round:
 pub struct ProverState<F: PrimeField> {
-    pub secret_polys: Vec<Rep3Poly<F>>,
+    pub secret_polys: Vec<Rep3DensePolynomial<F>>,
     pub pub_polys: Vec<DenseMultilinearExtension<F>>,
     pub randomness: Vec<F>,
     pub round: usize,
     pub num_vars: usize,
-    pub party: usize,
+    // pub party: usize,
     pub coef: Vec<F>,
 }
 
@@ -45,17 +45,14 @@ pub trait Rep3SumcheckProverMsg<F: PrimeField>:
 
 #[derive(CanonicalDeserialize, CanonicalSerialize, Clone)]
 pub struct ProverFirstMsg<F: PrimeField> {
-    pub evaluations: Vec<AdditiveShare<F>>,
+    pub evaluations: Vec<F>,
 }
 
 impl<F: PrimeField> Default for ProverFirstMsg<F> {
     fn default() -> Self {
         ProverFirstMsg {
             evaluations: vec![
-                AdditiveShare {
-                    party: 0,
-                    share_0: F::zero(),
-                };
+                F::zero();
                 4
             ],
         }
@@ -68,7 +65,7 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverFirstMsg<F> {
         let mut sum = vec![F::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
             for i in 0..msg.evaluations.len() {
-                sum[i] += msg.evaluations[i].share_0;
+                sum[i] += msg.evaluations[i];
             }
         }
         sum
@@ -79,7 +76,7 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverFirstMsg<F> {
         let mut sum = vec![F::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
             for i in 0..msg.evaluations.len() {
-                sum[i] += msg.evaluations[i].share_0;
+                sum[i] += msg.evaluations[i];
             }
         }
         ProverMsg { evaluations: sum }
@@ -88,17 +85,17 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverFirstMsg<F> {
 
 #[derive(CanonicalDeserialize, CanonicalSerialize, Clone)]
 pub struct ProverSecondMsg<F: PrimeField> {
-    pub evaluations: Vec<Rep3Share<F>>,
+    pub evaluations: Vec<Rep3PrimeFieldShare<F>>,
 }
 
 impl<F: PrimeField> Default for ProverSecondMsg<F> {
     fn default() -> Self {
         ProverSecondMsg {
             evaluations: vec![
-                Rep3Share {
-                    party: 0,
-                    share_0: F::zero(),
-                    share_1: F::zero(),
+                Rep3PrimeFieldShare {
+                    // party: 0,
+                    a: F::zero(),
+                    b: F::zero(),
                 };
                 3
             ],
@@ -112,7 +109,7 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverSecondMsg<F> {
         let mut sum = vec![F::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
             for i in 0..msg.evaluations.len() {
-                sum[i] += msg.evaluations[i].share_0;
+                sum[i] += msg.evaluations[i].a;
             }
         }
         sum
@@ -123,7 +120,7 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverSecondMsg<F> {
         let mut sum = vec![F::zero(); msgs[0].evaluations.len()];
         for msg in msgs {
             for i in 0..msg.evaluations.len() {
-                sum[i] += msg.evaluations[i].share_0;
+                sum[i] += msg.evaluations[i].a;
             }
         }
         ProverMsg { evaluations: sum }
@@ -132,9 +129,9 @@ impl<F: PrimeField> Rep3SumcheckProverMsg<F> for ProverSecondMsg<F> {
 
 impl<F: PrimeField> Rep3Sumcheck<F> {
     pub fn first_sumcheck_init(
-        v_a: &Rep3Poly<F>,
-        v_b: &Rep3Poly<F>,
-        v_c: &Rep3Poly<F>,
+        v_a: &Rep3DensePolynomial<F>,
+        v_b: &Rep3DensePolynomial<F>,
+        v_c: &Rep3DensePolynomial<F>,
         pub1: &DenseMultilinearExtension<F>,
     ) -> ProverState<F> {
         let secret_polys = vec![v_a.clone(), v_b.clone(), v_c.clone()];
@@ -145,7 +142,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
             randomness: Vec::with_capacity(pub1.num_vars),
             round: 0,
             num_vars: pub1.num_vars,
-            party: v_a.party_id,
+            // party: v_a.party_id,
             coef: vec![],
         }
     }
@@ -153,7 +150,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         v_a: &DenseMultilinearExtension<F>,
         v_b: &DenseMultilinearExtension<F>,
         v_c: &DenseMultilinearExtension<F>,
-        z: &Rep3Poly<F>,
+        z: &Rep3DensePolynomial<F>,
         v_msg: &Vec<F>,
     ) -> ProverState<F> {
         let pub_polys = vec![v_a.clone(), v_b.clone(), v_c.clone()];
@@ -163,7 +160,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
             randomness: Vec::with_capacity(v_a.num_vars),
             round: 0,
             num_vars: v_a.num_vars,
-            party: z.party_id,
+            // party: z.party_id,
             coef: v_msg.clone(),
         }
     }
@@ -208,18 +205,18 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         let i = prover_state.round;
         let nv = prover_state.num_vars;
         let degree = 3; // the degree of univariate polynomial sent by prover at this round
-        let party = prover_state.party;
+        // let party = prover_state.party;
 
         #[cfg(not(feature = "parallel"))]
         let zeros = (
-            vec![AdditiveShare::<F>::zero().set_party(party); degree + 1],
-            vec![AdditiveShare::<F>::zero().set_party(party); degree + 1],
+            vec![F::zero(); degree + 1],
+            vec![F::zero(); degree + 1],
         );
         #[cfg(feature = "parallel")]
         let zeros = || {
             (
-                vec![AdditiveShare::<F>::zero().with_party(party); degree + 1],
-                vec![AdditiveShare::<F>::zero().with_party(party); degree + 1],
+                vec![F::zero(); degree + 1],
+                vec![F::zero(); degree + 1],
             )
         };
 
@@ -238,10 +235,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
                 let step_pub1 = prover_state.pub_polys[0][(b << 1) + 1] - start_pub1;
 
                 for p in product.iter_mut() {
-                    *p = AdditiveShare {
-                        party: party,
-                        share_0: Rep3Share::<F>::mul_wo_zero(&start_a, &start_b) * &start_pub1,
-                    };
+                    *p = (&start_a * &start_b) * &start_pub1;
                     start_a += step_a;
                     start_b += step_b;
                     start_pub1 += step_pub1;
@@ -272,7 +266,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         // When rayon is used, the `fold` operation results in a iterator of `Vec<F>` rather than a single `Vec<F>`. In this case, we simply need to sum them.
         #[cfg(feature = "parallel")]
         let mut products_sum = fold_result.map(|scratch| scratch.0).reduce(
-            || vec![AdditiveShare::<F>::zero().with_party(party); degree + 1],
+            || vec![F::zero(); degree + 1],
             |mut overall_products_sum, sublist_sum| {
                 overall_products_sum
                     .iter_mut()
@@ -282,7 +276,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
             },
         );
         for i in products_sum.iter_mut() {
-            i.share_0 += AdditiveShare::<F>::get_mask_scalar(rng);
+            *i += get_mask_scalar_additive::<F, _>(rng);
         }
 
         ProverFirstMsg {
@@ -293,7 +287,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
     pub fn second_sumcheck_prove_round<R: RngCore + FeedableRNG>(
         prover_state: &mut ProverState<F>,
         v_msg: &Option<VerifierMsg<F>>,
-        rng: &mut SSRandom<R>,
+        rng: &mut SSRandom<R>, // TODO: correlate randomness
     ) -> ProverSecondMsg<F> {
         if let Some(msg) = v_msg {
             if prover_state.round == 0 {
@@ -330,18 +324,17 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         let i = prover_state.round;
         let nv = prover_state.num_vars;
         let degree = 2; // the degree of univariate polynomial sent by prover at this round
-        let party = prover_state.party;
 
         #[cfg(not(feature = "parallel"))]
         let zeros = (
-            vec![Rep3Share::<F>::zero().set_party(party); degree + 1],
-            vec![Rep3Share::<F>::zero().set_party(party); degree + 1],
+            vec![Rep3PrimeFieldShare::<F>::zero(); degree + 1],
+            vec![Rep3PrimeFieldShare::<F>::zero(); degree + 1],
         );
         #[cfg(feature = "parallel")]
         let zeros = || {
             (
-                vec![Rep3Share::<F>::zero().with_party(party); degree + 1],
-                vec![Rep3Share::<F>::zero().with_party(party); degree + 1],
+                vec![Rep3PrimeFieldShare::<F>::zero(); degree + 1],
+                vec![Rep3PrimeFieldShare::<F>::zero(); degree + 1],
             )
         };
 
@@ -386,7 +379,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         // When rayon is used, the `fold` operation results in a iterator of `Vec<F>` rather than a single `Vec<F>`. In this case, we simply need to sum them.
         #[cfg(feature = "parallel")]
         let mut products_sum = fold_result.map(|scratch| scratch.0).reduce(
-            || vec![Rep3Share::<F>::zero().with_party(party); degree + 1],
+            || vec![Rep3PrimeFieldShare::<F>::zero(); degree + 1],
             |mut overall_products_sum, sublist_sum| {
                 overall_products_sum
                     .iter_mut()
@@ -396,9 +389,9 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
             },
         );
         for i in products_sum.iter_mut() {
-            let (mask_0, mask_1) = Rep3Share::<F>::get_mask_scalar(rng);
-            i.share_0 += mask_0;
-            i.share_1 += mask_1;
+            let (mask_0, mask_1) = get_mask_scalar_rep3::<F, _>(rng);
+            i.a += mask_0;
+            i.b += mask_1;
         }
         ProverSecondMsg {
             evaluations: products_sum,

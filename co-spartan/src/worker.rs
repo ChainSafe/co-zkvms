@@ -29,7 +29,7 @@ use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     mpc::{
-        rep3::{Rep3Poly, Rep3Share}, sumcheck::rep3::Rep3Sumcheck, SSRandom
+        rep3::{Rep3DensePolynomial, Rep3PrimeFieldShare}, sumcheck::rep3::Rep3Sumcheck, SSRandom
     },
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
@@ -140,9 +140,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::zero_round")]
     fn zero_round(&self, pk: &Rep3ProverKey<E>, z: &Rep3WitnessShare<E::ScalarField>) -> Rep3R1CSWitnessShare<E::ScalarField> {
         let chunk_size = pk.ipk.num_variables_val.exp2();
-        let mut za = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
-        let mut zb = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
-        let mut zc = vec![Rep3Share::zero().with_party(z.party_id); chunk_size];
+        let mut za = vec![Rep3PrimeFieldShare::zero(); chunk_size];
+        let mut zb = vec![Rep3PrimeFieldShare::zero(); chunk_size];
+        let mut zc = vec![Rep3PrimeFieldShare::zero(); chunk_size];
 
         let c_start = pk.party_id * pk.num_variables.exp2() / pk.num_parties;
 
@@ -159,14 +159,14 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
         Rep3R1CSWitnessShare {
             z: z.clone(),
-            za: Rep3Poly::from_rep3_evals(&za, pk.ipk.num_variables_val),
-            zb: Rep3Poly::from_rep3_evals(&zb, pk.ipk.num_variables_val),
-            zc: Rep3Poly::from_rep3_evals(&zc, pk.ipk.num_variables_val),
+            za: Rep3DensePolynomial::from_rep3_evals(&za, pk.ipk.num_variables_val),
+            zb: Rep3DensePolynomial::from_rep3_evals(&zb, pk.ipk.num_variables_val),
+            zc: Rep3DensePolynomial::from_rep3_evals(&zc, pk.ipk.num_variables_val),
         }
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProverWorker::first_round")]
-    fn first_round(&self, polys: &Vec<&Rep3Poly<E::ScalarField>>, ck: &CommitterKey<E>, network: &mut N) {
+    fn first_round(&self, polys: &Vec<&Rep3DensePolynomial<E::ScalarField>>, ck: &CommitterKey<E>, network: &mut N) {
         poly_commit_worker(polys.iter().map(|p| &p.share_0), ck, network);
     }
 
@@ -545,9 +545,9 @@ pub fn poly_commit_worker<'a, E: Pairing, N: MpcStarNetWorker>(
 
 #[tracing::instrument(skip_all, name = "rep3_first_sumcheck_worker")]
 pub fn rep3_first_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: MpcStarNetWorker>(
-    za: &Rep3Poly<F>,
-    zb: &Rep3Poly<F>,
-    zc: &Rep3Poly<F>,
+    za: &Rep3DensePolynomial<F>,
+    zb: &Rep3DensePolynomial<F>,
+    zc: &Rep3DensePolynomial<F>,
     eq: &DenseMultilinearExtension<F>,
     random_rng: &mut SSRandom<R>,
     network: &mut N,
@@ -591,7 +591,7 @@ pub fn rep3_second_sumcheck_worker<F: PrimeField, R: RngCore + FeedableRNG, N: M
     a_r: &DenseMultilinearExtension<F>,
     b_r: &DenseMultilinearExtension<F>,
     c_r: &DenseMultilinearExtension<F>,
-    z: &Rep3Poly<F>,
+    z: &Rep3DensePolynomial<F>,
     random_rng: &mut SSRandom<R>,
     v_msg: &Vec<F>,
     network: &mut N,
@@ -657,7 +657,7 @@ pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
 
 #[tracing::instrument(skip_all, name = "rep3_eval_poly_worker")]
 pub fn rep3_eval_poly_worker<F: PrimeField, N: MpcStarNetWorker>(
-    polys: Vec<&Rep3Poly<F>>,
+    polys: Vec<&Rep3DensePolynomial<F>>,
     final_point: &[F],
     num_vars: usize,
     network: &mut N,

@@ -4,51 +4,51 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::Rng;
 use std::ops::Index;
 
-use super::Rep3Share;
+use super::Rep3PrimeFieldShare;
 
 #[derive(Debug, CanonicalDeserialize, CanonicalSerialize, Clone)]
-pub struct Rep3Poly<F: PrimeField> {
-    pub party_id: usize,
+pub struct Rep3DensePolynomial<F: PrimeField> {
+    // pub party_id: usize,
     pub share_0: DenseMultilinearExtension<F>,
     pub share_1: DenseMultilinearExtension<F>,
 }
 
-impl<F: PrimeField> Rep3Poly<F> {
+impl<F: PrimeField> Rep3DensePolynomial<F> {
     pub fn new(
         party: usize,
         share_0: DenseMultilinearExtension<F>,
         share_1: DenseMultilinearExtension<F>,
     ) -> Self {
-        Rep3Poly {
-            party_id: party,
+        Rep3DensePolynomial {
+            // party_id: party,
             share_0,
             share_1,
         }
     }
-    pub fn get_share_by_idx(&self, i: usize) -> Rep3Share<F> {
-        Rep3Share {
-            party: self.party_id,
-            share_0: self.share_0.index(i).clone(),
-            share_1: self.share_1.index(i).clone(),
+    pub fn get_share_by_idx(&self, i: usize) -> Rep3PrimeFieldShare<F> {
+        Rep3PrimeFieldShare {
+            // party: self.party_id,
+            a: self.share_0.index(i).clone(),
+            b: self.share_1.index(i).clone(),
         }
     }
     pub fn fix_variables(&self, partial_point: &[F]) -> Self {
-        Rep3Poly {
-            party_id: self.party_id,
+        Rep3DensePolynomial {
+            // party_id: self.party_id,
             share_0: self.share_0.fix_variables(partial_point),
             share_1: self.share_1.fix_variables(partial_point),
         }
     }
-    pub fn from_rep3_evals(evals_rep3: &Vec<Rep3Share<F>>, num_vars: usize) -> Self {
+    pub fn from_rep3_evals(evals_rep3: &Vec<Rep3PrimeFieldShare<F>>, num_vars: usize) -> Self {
         let mut share_0 = Vec::with_capacity(1 << num_vars);
         let mut share_1 = Vec::with_capacity(1 << num_vars);
-        let party = evals_rep3[0].party;
+        // let party = evals_rep3[0].party;
         for share in evals_rep3 {
-            share_0.push(share.share_0);
-            share_1.push(share.share_1);
+            share_0.push(share.a);
+            share_1.push(share.b);
         }
-        Rep3Poly {
-            party_id: party,
+        Rep3DensePolynomial {
+            // party_id: party,
             share_0: DenseMultilinearExtension::<F>::from_evaluations_vec(num_vars, share_0),
             share_1: DenseMultilinearExtension::<F>::from_evaluations_vec(num_vars, share_1),
         }

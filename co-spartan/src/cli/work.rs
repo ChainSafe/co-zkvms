@@ -30,7 +30,7 @@ use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Ins
 use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
 use co_spartan::{
-    mpc::{rep3::Rep3Poly, SSRandom},
+    mpc::{rep3::Rep3DensePolynomial, SSRandom},
     setup::CoordinatorKey,
 };
 use crossbeam::thread;

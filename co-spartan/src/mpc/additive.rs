@@ -15,6 +15,13 @@ pub struct AdditiveShare<F: PrimeField> {
     pub share_0: F,
 }
 
+
+pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> F {
+    let zero_share = F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0);
+    rng.update();
+    zero_share
+}
+
 impl<F: PrimeField> Add<Self> for AdditiveShare<F> {
     type Output = Self;
     fn add(self, rhs: AdditiveShare<F>) -> <Self as Add<AdditiveShare<F>>>::Output {
