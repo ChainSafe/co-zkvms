@@ -1,6 +1,7 @@
 use ark_ff::{PrimeField, Zero};
 use ark_linear_sumcheck::rng::FeedableRNG;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use mpc_core::protocols::rep3::{rngs::Rep3RandBitComp, PartyID};
 use rand::{CryptoRng, Rng, RngCore};
 use std::ops::{Add, AddAssign, Mul, Sub};
 
@@ -13,7 +14,7 @@ pub use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 //     pub b: F,
 // }
 
-use crate::mpc::{additive::AdditiveShare, SSOpen, SSRandom};
+use crate::mpc::{SSRandom};
 
 pub type ArithmeticShare<F> = Rep3PrimeFieldShare<F>;
 
@@ -25,6 +26,7 @@ pub fn get_mask_scalar_rep3<F: PrimeField, R: RngCore + FeedableRNG>(rng: &mut S
     rng.update();
     mask_share
 }
+
 
 // impl<F: PrimeField> Rep3PrimeFieldShare<F> {
 //     pub fn new(share_0: F, share_1: F) -> Self {

@@ -1,28 +1,38 @@
 use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
-use ark_ff::Field;
+use ark_ff::{biginteger::arithmetic, Field};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
+use co_spartan::mpc::additive;
+use eyre::Context;
+use itertools::{interleave, multizip, Itertools};
 use jolt_core::{
     lasso::memory_checking::MultisetHashes,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
         field::JoltField, structured_poly::StructuredCommitment,
     },
-    subprotocols::grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
+    subprotocols::grand_product::{
+        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
+    },
     utils::{
-        errors::ProofVerifyError, mul_0_1_optimized, split_poly_flagged,
+        errors::ProofVerifyError, math::Math, mul_0_1_optimized, split_poly_flagged,
         transcript::ProofTranscript,
     },
 };
+use mpc_core::protocols::rep3;
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
 use color_eyre::eyre::Result;
 use spartan::transcript::Transcript;
 use tracing::trace_span;
 
-use crate::{grand_product::BatchedGrandProductArgument, lasso::{LassoPolynomials, MemoryCheckingProof}, LassoPreprocessing, Rep3LassoPolynomials};
+use crate::{
+    grand_product::BatchedGrandProductProver,
+    lasso::{LassoPolynomials, MemoryCheckingProof},
+    poly::Rep3DensePolynomial,
+    LassoPreprocessing, Rep3LassoPolynomials,
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -30,39 +40,39 @@ use rayon::prelude::*;
 pub struct Rep3MemoryCheckingProver<
     const C: usize,
     const M: usize,
-    N: MpcStarNetCoordinator,
     F: JoltField,
+    N: MpcStarNetCoordinator,
     // C: CommitmentScheme<Field = F>,
-    Polynomials,
 > {
-    pub _marker: PhantomData<(F, Polynomials, N)>,
+    pub _marker: PhantomData<(F, N)>,
 }
-
 
 type Preprocessing<F> = LassoPreprocessing<F>;
 
 impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
-    Rep3MemoryCheckingProver<C, M, N, F, LassoPolynomials<F>>
+    Rep3MemoryCheckingProver<C, M, F, N>
 {
-    pub fn prove_rep3(
+    #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
+    pub fn prove(
         preprocessing: &Preprocessing<F>,
         network: &mut N,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, LassoPolynomials<F>> {
+    ) -> Result<MemoryCheckingProof<F, LassoPolynomials<F>>> {
         let (
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, network, transcript);
+        ) = Self::prove_grand_products(preprocessing, network, transcript)
+            .context("while proving grand products")?;
 
-        MemoryCheckingProof {
+        Ok(MemoryCheckingProof {
             _polys: PhantomData,
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
-        }
+        })
     }
 
     fn prove_grand_products(
@@ -80,227 +90,95 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
         let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
         network.broadcast_request((gamma, tau))?;
+        // tracing::info!("gamma: {} tau: {}", gamma, tau);
+        let num_lookups = network.receive_responses(0usize)?[0];
+        println!("num_lookups: {}", num_lookups);
+
+        {
+            let (read_write_leaves, init_final_leaves): (
+                Vec<Vec<Rep3DensePolynomial<F>>>,
+                Vec<Vec<Rep3DensePolynomial<F>>>,
+            ) = network
+                .receive_responses((Vec::default(), Vec::default()))?
+                .into_iter()
+                .unzip();
+            let [rw_share1, rw_share2, rw_share3] = read_write_leaves.try_into().unwrap();
+            let [if_share1, if_share2, if_share3] = init_final_leaves.try_into().unwrap();
+            let read_write_leaves = multizip((rw_share1, rw_share2, rw_share3))
+                .map(|(s1, s2, s3)| {
+                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
+                })
+                .collect_vec();
+            tracing::info!("read_write_leaves: {:?}", read_write_leaves[0].len());
+            let init_final_leaves = multizip((if_share1, if_share2, if_share3))
+                .map(|(s1, s2, s3)| {
+                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
+                })
+                .collect_vec();
+            // tracing::info!("read_leaves: {:?}", (&read_write_leaves[0][..2], &read_write_leaves[0][read_write_leaves[0].len() - 2..]));
+            // tracing::info!("write_leaves: {:?}", (&read_write_leaves[1][..2], &read_write_leaves[1][read_write_leaves[1].len() - 2..]));
+            // tracing::info!("init_leaves: {:?}", (&init_final_leaves[0][..2], &init_final_leaves[0][init_final_leaves[0].len() - 2..]));
+            // tracing::info!("final_leaves: {:?}", (&init_final_leaves[1][..2], &init_final_leaves[1][init_final_leaves[1].len() - 2..]));
+        }
 
         // transcript.append_protocol_name(Self::protocol_name());
 
-        let (read_write_leaves, init_final_leaves) =
-            Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
+        let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
+            network
+                .receive_responses((Vec::default(), Vec::default()))
+                .context("while receiving hashes")?
+                .into_iter()
+                .unzip();
 
-        let (read_write_circuit, read_write_hashes) =
-            Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
-        let (init_final_circuit, init_final_hashes) =
-            Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
+        assert_eq!(read_write_hashes_shares.len(), 3);
+        assert_eq!(init_final_hashes_shares.len(), 3);
+
+        let read_write_hashes = additive::combine_field_elements(
+            &read_write_hashes_shares[0],
+            &read_write_hashes_shares[1],
+            &read_write_hashes_shares[2],
+        );
+        tracing::info!("read_write_hashes: {:?}", &read_write_hashes[..2]);
+        let init_final_hashes = additive::combine_field_elements(
+            &init_final_hashes_shares[0],
+            &init_final_hashes_shares[1],
+            &init_final_hashes_shares[2],
+        );
 
         let multiset_hashes =
-            Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
+            Self::uninterleave_hashes(preprocessing, &read_write_hashes, &init_final_hashes);
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 
-        let (read_write_grand_product, r_read_write) =
-            BatchedGrandProductArgument::prove(read_write_circuit, transcript);
-        let (init_final_grand_product, r_init_final) =
-            BatchedGrandProductArgument::prove(init_final_circuit, transcript);
+        let num_layers_read_write = (num_lookups).log_2() + 1; // +1 for the flag layer
+        let num_layers_init_final = M.log_2();
 
-        (
+        let (read_write_grand_product, r_read_write) = BatchedGrandProductProver::prove(
+            read_write_hashes,
+            num_layers_read_write,
+            network,
+            transcript,
+        )?;
+        let (init_final_grand_product, r_init_final) = BatchedGrandProductProver::prove(
+            init_final_hashes,
+            num_layers_init_final,
+            network,
+            transcript,
+        )?;
+
+        Ok((
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
             r_read_write,
             r_init_final,
-        )
-    }
-
-    fn compute_leaves(
-        preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
-        gamma: &F,
-        tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
-        let gamma_squared = gamma.square();
-        let num_lookups = polynomials.dims[0].len();
-
-        let read_write_leaves = (0..preprocessing.num_memories)
-            .into_par_iter()
-            .flat_map_iter(|memory_index| {
-                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-
-                let read_fingerprints: Vec<F> = (0..num_lookups)
-                    .map(|i| {
-                        let a = &polynomials.dims[dim_index][i];
-                        let v = &polynomials.e_polys[memory_index][i];
-                        let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
-                    })
-                    .collect();
-                let write_fingerprints = read_fingerprints
-                    .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
-                    .collect();
-                [
-                    DensePolynomial::new(read_fingerprints),
-                    DensePolynomial::new(write_fingerprints),
-                ]
-            })
-            .collect();
-
-        let init_final_leaves: Vec<DensePolynomial<F>> = preprocessing
-            .materialized_subtables
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(subtable_index, subtable)| {
-                let init_fingerprints: Vec<F> = (0..M)
-                    .map(|i| {
-                        let a = &F::from_u64(i as u64).unwrap();
-                        let v = &subtable[i];
-                        // let t = F::zero();
-                        // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + a - tau
-                    })
-                    .collect();
-
-                let final_leaves: Vec<DensePolynomial<F>> = preprocessing
-                    .subtable_to_memory_indices[subtable_index]
-                    .iter()
-                    .map(|memory_index| {
-                        let final_cts = &polynomials.final_cts[*memory_index];
-                        let final_fingerprints = (0..M)
-                            .map(|i| {
-                                init_fingerprints[i]
-                                    + mul_0_1_optimized(&final_cts[i], &gamma_squared)
-                            })
-                            .collect();
-                        DensePolynomial::new(final_fingerprints)
-                    })
-                    .collect();
-
-                let mut polys = Vec::with_capacity(C + 1);
-                polys.push(DensePolynomial::new(init_fingerprints));
-                polys.extend(final_leaves);
-                polys
-            })
-            .collect();
-
-        (read_write_leaves, init_final_leaves)
-    }
-
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
-    fn read_write_grand_product(
-        preprocessing: &Preprocessing<F>,
-        read_write_leaves: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
-        assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
-
-        let _span = trace_span!("LassoLookups: construct circuits");
-        let _enter = _span.enter();
-
-        let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.lookup_flag_bitvectors);
-
-        let read_write_circuits = read_write_leaves
-            .par_iter()
-            .enumerate()
-            .map(|(i, leaves_poly)| {
-                // Split while cloning to save on future cloning in GrandProductCircuit
-                let memory_index = i / 2;
-                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                println!("flag: {:?}", flag.len());
-                println!("leaves_poly: {:?}", leaves_poly.len());
-                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(leaves_poly, flag);
-                GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_leaves_l),
-                    DensePolynomial::new(toggled_leaves_r),
-                )
-            })
-            .collect::<Vec<GrandProductCircuit<F>>>();
-
-        drop(_enter);
-        drop(_span);
-
-        let _span = trace_span!("InstructionLookups: compute hashes");
-        let _enter = _span.enter();
-
-        let read_write_hashes: Vec<F> = read_write_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        drop(_enter);
-        drop(_span);
-
-        let _span = trace_span!("InstructionLookups: the rest");
-        let _enter = _span.enter();
-
-        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-        let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
-            read_write_circuits,
-            memory_flag_polys,
-            read_write_leaves,
-        );
-
-        drop(_enter);
-        drop(_span);
-
-        (batched_circuits, read_write_hashes)
-    }
-
-    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
-    /// can be computed by summing over the instructions that use that memory: if a given execution step
-    /// accesses the memory, it must be executing exactly one of those instructions.
-    #[tracing::instrument(skip_all)]
-    fn memory_flag_polys(
-        preprocessing: &Preprocessing<F>,
-        instruction_flag_bitvectors: &[Vec<u64>],
-    ) -> Vec<DensePolynomial<F>> {
-        let m = instruction_flag_bitvectors[0].len();
-
-        (0..preprocessing.num_memories)
-            .into_par_iter()
-            .map(|memory_index| {
-                let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..preprocessing.lookups.len() {
-                    if preprocessing.lookup_to_memory_indices[instruction_index]
-                        .contains(&memory_index)
-                    {
-                        memory_flag_bitvector
-                            .iter_mut()
-                            .zip(&instruction_flag_bitvectors[instruction_index])
-                            .for_each(|(memory_flag, instruction_flag)| {
-                                *memory_flag += instruction_flag
-                            });
-                    }
-                }
-                DensePolynomial::from_u64(&memory_flag_bitvector)
-            })
-            .collect()
-    }
-
-    /// Constructs a batched grand product circuit for the init and final multisets associated
-    /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
-    fn init_final_grand_product(
-        _preprocessing: &Preprocessing<F>,
-        _polynomials: &Polynomials<F>,
-        init_final_leaves: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
-        let init_final_circuits: Vec<GrandProductCircuit<F>> = init_final_leaves
-            .par_iter()
-            .map(|leaves| GrandProductCircuit::new(leaves))
-            .collect();
-        let init_final_hashes: Vec<F> = init_final_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        (
-            BatchedGrandProductCircuit::new_batch(init_final_circuits),
-            init_final_hashes,
-        )
+        ))
     }
 
     fn uninterleave_hashes(
         _preprocessing: &Preprocessing<F>,
-        read_write_hashes: Vec<F>,
-        init_final_hashes: Vec<F>,
+        read_write_hashes: &[F],
+        init_final_hashes: &[F],
     ) -> MultisetHashes<F> {
         assert_eq!(read_write_hashes.len() % 2, 0);
         let num_memories = read_write_hashes.len() / 2;
@@ -341,6 +219,8 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
             let write_hash = multiset_hashes.write_hashes[i];
             let init_hash = multiset_hashes.init_hashes[i];
             let final_hash = multiset_hashes.final_hashes[i];
+            // tracing::info!("init_hash {} write_hash: {}", init_hash, write_hash);
+            // tracing::info!("final_hash {} read_hash: {}", final_hash, read_hash);
             assert_eq!(
                 init_hash * write_hash,
                 final_hash * read_hash,
@@ -365,65 +245,5 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
         .collect();
 
         (read_write_hashes, init_final_hashes)
-    }
-
-    pub fn verify_memory_checking(
-        preprocessing: &Preprocessing<F>,
-        mut proof: MemoryCheckingProof<F, Polynomials<F>>,
-        // commitments: &Polynomials::Commitment,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
-
-        // transcript.append_protocol_name(Self::protocol_name());
-
-        Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
-        proof.multiset_hashes.append_to_transcript(transcript);
-
-        let (read_write_hashes, init_final_hashes) =
-            Self::interleave_hashes(preprocessing, &proof.multiset_hashes);
-
-        let (claims_read_write, r_read_write) = proof
-            .read_write_grand_product
-            .verify(&read_write_hashes, transcript);
-        let (claims_init_final, r_init_final) = proof
-            .init_final_grand_product
-            .verify(&init_final_hashes, transcript);
-
-        // proof.read_write_openings.verify_openings(
-        //     generators,
-        //     &proof.read_write_opening_proof,
-        //     commitments,
-        //     &r_read_write,
-        //     transcript,
-        // )?;
-        // proof.init_final_openings.verify_openings(
-        //     generators,
-        //     &proof.init_final_opening_proof,
-        //     commitments,
-        //     &r_init_final,
-        //     transcript,
-        // )?;
-
-        // proof
-        //     .read_write_openings
-        //     .compute_verifier_openings(&NoPreprocessing, &r_read_write);
-        // proof
-        //     .init_final_openings
-        //     .compute_verifier_openings(preprocessing, &r_init_final);
-
-        // Self::check_fingerprints(
-        //     preprocessing,
-        //     claims_read_write,
-        //     claims_init_final,
-        //     &proof.read_write_openings,
-        //     &proof.init_final_openings,
-        //     &gamma,
-        //     &tau,
-        // );
-
-        Ok(())
     }
 }

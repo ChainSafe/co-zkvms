@@ -2,6 +2,7 @@ use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::Rng;
+use spartan::math::Math;
 use std::ops::Index;
 
 use super::Rep3PrimeFieldShare;
@@ -14,32 +15,12 @@ pub struct Rep3DensePolynomial<F: PrimeField> {
 }
 
 impl<F: PrimeField> Rep3DensePolynomial<F> {
-    pub fn new(
-        party: usize,
-        share_0: DenseMultilinearExtension<F>,
-        share_1: DenseMultilinearExtension<F>,
-    ) -> Self {
-        Rep3DensePolynomial {
-            // party_id: party,
-            share_0,
-            share_1,
-        }
+    pub fn new(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        let num_vars = evals.len().log_2();
+        Self::new_with_vars(evals, num_vars)
     }
-    pub fn get_share_by_idx(&self, i: usize) -> Rep3PrimeFieldShare<F> {
-        Rep3PrimeFieldShare {
-            // party: self.party_id,
-            a: self.share_0.index(i).clone(),
-            b: self.share_1.index(i).clone(),
-        }
-    }
-    pub fn fix_variables(&self, partial_point: &[F]) -> Self {
-        Rep3DensePolynomial {
-            // party_id: self.party_id,
-            share_0: self.share_0.fix_variables(partial_point),
-            share_1: self.share_1.fix_variables(partial_point),
-        }
-    }
-    pub fn from_rep3_evals(evals_rep3: &Vec<Rep3PrimeFieldShare<F>>, num_vars: usize) -> Self {
+
+    pub fn new_with_vars(evals_rep3: Vec<Rep3PrimeFieldShare<F>>, num_vars: usize) -> Self {
         let mut share_0 = Vec::with_capacity(1 << num_vars);
         let mut share_1 = Vec::with_capacity(1 << num_vars);
         // let party = evals_rep3[0].party;
@@ -54,6 +35,33 @@ impl<F: PrimeField> Rep3DensePolynomial<F> {
         }
     }
 
+    pub fn from_poly_shares(
+        share_0: DenseMultilinearExtension<F>,
+        share_1: DenseMultilinearExtension<F>,
+    ) -> Self {
+        Rep3DensePolynomial {
+            // party_id: party,
+            share_0,
+            share_1,
+        }
+    }
+
+    pub fn get_share_by_idx(&self, i: usize) -> Rep3PrimeFieldShare<F> {
+        Rep3PrimeFieldShare {
+            // party: self.party_id,
+            a: self.share_0.index(i).clone(),
+            b: self.share_1.index(i).clone(),
+        }
+    }
+
+    pub fn fix_variables(&self, partial_point: &[F]) -> Self {
+        Rep3DensePolynomial {
+            // party_id: self.party_id,
+            share_0: self.share_0.fix_variables(partial_point),
+            share_1: self.share_1.fix_variables(partial_point),
+        }
+    }
+
     pub fn num_vars(&self) -> usize {
         assert_eq!(self.share_0.num_vars(), self.share_1.num_vars());
         self.share_0.num_vars()
@@ -61,6 +69,14 @@ impl<F: PrimeField> Rep3DensePolynomial<F> {
 
     pub fn len(&self) -> usize {
         1 << self.num_vars()
+    }
+
+    pub fn evals(&self) -> Vec<Rep3PrimeFieldShare<F>> {
+        let mut evals = Vec::with_capacity(self.len());
+        for i in 0..self.len() {
+            evals.push(self.get_share_by_idx(i));
+        }
+        evals
     }
 }
 

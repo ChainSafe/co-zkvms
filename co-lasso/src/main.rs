@@ -25,7 +25,7 @@ fn main() {
         M,
         C,
     );
-    let proof = MemoryCheckingProver::<C, M, (), F, LassoPolynomials<F>>::prove(
+    let proof = MemoryCheckingProver::<C, M, F, LassoPolynomials<F>>::prove(
         &preprocessing,
         &polynomials,
         &mut transcript,

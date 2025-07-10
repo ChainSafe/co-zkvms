@@ -1,6 +1,7 @@
 use ark_ff::{One, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
+use mpc_core::protocols::rep3::PartyID;
 use num_bigint::BigUint;
 use rand::{CryptoRng, Rng};
 use std::marker::PhantomData;
@@ -46,38 +47,9 @@ impl<F: PrimeField> Rep3BigUintShare<F> {
     }
 
     pub fn from_le_bits(bits: &[Self]) -> Self {
-        const WORD: usize = 64;
-
-        let mut a = BigUint::zero();
-        let mut b = BigUint::zero();
-
-        for (block_idx, chunk) in bits.chunks(WORD).enumerate() {
-            let mut acc_a: u64 = 0;
-            let mut acc_b: u64 = 0;
-
-            // gather bits of this 64-bit block into two u64 words
-            for (i, bit) in chunk.iter().enumerate() {
-                if !bit.a.is_zero() {
-                    acc_a |= 1u64 << i;
-                }
-                if !bit.b.is_zero() {
-                    acc_b |= 1u64 << i;
-                }
-            }
-
-            if acc_a != 0 {
-                a |= BigUint::from(acc_a) << (block_idx * WORD);
-            }
-            if acc_b != 0 {
-                b |= BigUint::from(acc_b) << (block_idx * WORD);
-            }
-        }
-
-        Rep3BigUintShare {
-            a,
-            b,
-            phantom: PhantomData,
-        }
+        bits.iter()
+            .rev()
+            .fold(Self::zero(), |int, bit| int << 1 ^ bit.clone())
     }
 
     pub fn zero() -> Self {
@@ -327,10 +299,11 @@ impl<F: PrimeField> std::ops::Shr<usize> for &Rep3BigUintShare<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mpc::{rep3::share_field_element, SSOpen};
+    use crate::mpc::SSOpen;
     use ark_ff::BigInteger;
     use ark_ff::One;
     use ark_linear_sumcheck::rng::Blake2s512Rng;
+    use mpc_core::protocols::rep3::PartyID;
     use rand::SeedableRng;
 
     #[test]
@@ -348,7 +321,9 @@ mod tests {
             .iter()
             .zip(bits2.iter())
             .zip(bits3.iter())
-            .map(|((b1, b2), b3)| Rep3BigUintShare::open(&[b1.clone(), b2.clone(), b3.clone()]).is_one())
+            .map(|((b1, b2), b3)| {
+                Rep3BigUintShare::open(&[b1.clone(), b2.clone(), b3.clone()]).is_one()
+            })
             .collect::<Vec<_>>();
 
         let bits_check = fe.into_bigint().to_bits_le().to_vec();

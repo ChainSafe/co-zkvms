@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use ark_ec::pairing::Pairing;
 use ark_ff::{PrimeField, Zero};
 use ark_linear_sumcheck::{
     ml_sumcheck::protocol::{prover::ProverMsg, verifier::VerifierMsg},
@@ -15,7 +14,7 @@ use rayon::iter::{
 };
 
 use crate::mpc::{
-    additive::{get_mask_scalar_additive, AdditiveShare},
+    additive::get_mask_scalar_additive,
     rep3::{get_mask_scalar_rep3, Rep3DensePolynomial, Rep3PrimeFieldShare},
     SSRandom,
 };
@@ -51,10 +50,7 @@ pub struct ProverFirstMsg<F: PrimeField> {
 impl<F: PrimeField> Default for ProverFirstMsg<F> {
     fn default() -> Self {
         ProverFirstMsg {
-            evaluations: vec![
-                F::zero();
-                4
-            ],
+            evaluations: vec![F::zero(); 4],
         }
     }
 }
@@ -205,20 +201,12 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
         let i = prover_state.round;
         let nv = prover_state.num_vars;
         let degree = 3; // the degree of univariate polynomial sent by prover at this round
-        // let party = prover_state.party;
+                        // let party = prover_state.party;
 
         #[cfg(not(feature = "parallel"))]
-        let zeros = (
-            vec![F::zero(); degree + 1],
-            vec![F::zero(); degree + 1],
-        );
+        let zeros = (vec![F::zero(); degree + 1], vec![F::zero(); degree + 1]);
         #[cfg(feature = "parallel")]
-        let zeros = || {
-            (
-                vec![F::zero(); degree + 1],
-                vec![F::zero(); degree + 1],
-            )
-        };
+        let zeros = || (vec![F::zero(); degree + 1], vec![F::zero(); degree + 1]);
 
         // generate sum
         let fold_result = ark_std::cfg_into_iter!(0..1 << (nv - i), 1 << 10).fold(

@@ -1,4 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use mpc_types::protocols::rep3::id::PartyID;
 use crate::Result;
 
 pub trait MpcStarNetCoordinator {
@@ -23,4 +24,6 @@ pub trait MpcStarNetWorker {
     // fn rank(&self) -> usize;
 
     fn total_bandwidth_used(&self) -> (u64, u64);
+
+    fn party_id(&self) -> PartyID;
 }

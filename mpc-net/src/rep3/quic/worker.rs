@@ -191,6 +191,10 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .sum();
         (sent_bytes, recv_bytes)
     }
+    
+    fn party_id(&self) -> PartyID {
+        self.id.party_id()
+    }
 }
 
 /// A network handler for MPC protocols.

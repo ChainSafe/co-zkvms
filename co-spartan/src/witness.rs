@@ -46,7 +46,7 @@ pub fn split_witness<F: PrimeField>(
         for j in 0..3 {
             let worker_id = i * 3 + j;
             let next = (j + 1) % 3;
-            let z = Rep3DensePolynomial::<F>::new(j, z_shares[j].clone(), z_shares[next].clone());
+            let z = Rep3DensePolynomial::<F>::from_poly_shares(z_shares[j].clone(), z_shares[next].clone());
             wit_vec.push((worker_id, z));
         }
 

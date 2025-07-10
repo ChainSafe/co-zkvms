@@ -1,5 +1,6 @@
 pub mod range_check;
 
+use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use fixedbitset::FixedBitSet;
 use jolt_core::poly::field::JoltField;
 use mpc_core::protocols::rep3::Rep3BigUintShare;
@@ -53,7 +54,7 @@ pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + LookupClone<
 
     fn output(&self, index: &F) -> F;
 
-    fn output_rep3(&self, index: &Rep3BigUintShare<F>) -> Rep3BigUintShare<F>;
+    fn output_rep3(&self, index: &Rep3PrimeFieldShare<F>) -> Rep3PrimeFieldShare<F>;
 
     fn chunk_bits(&self, M: usize) -> Vec<usize>;
 

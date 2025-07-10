@@ -24,7 +24,7 @@ pub struct LassoPreprocessing<F: JoltField> {
 }
 
 impl<F: JoltField> LassoPreprocessing<F> {
-    #[tracing::instrument(skip_all, name = "LassoNode::preprocess")]
+    #[tracing::instrument(skip_all, name = "Lasso::preprocess")]
     pub fn preprocess<const C: usize, const M: usize>(
         lookups: impl IntoIterator<Item = Box<dyn LookupType<F>>>,
     ) -> Self {
@@ -170,6 +170,7 @@ pub struct LassoPolynomials<F: JoltField> {
     pub lookup_outputs: DensePolynomial<F>,
 }
 
+#[tracing::instrument(skip_all, name = "Lasso::polynomialize")]
 pub fn polynomialize<F: JoltField>(
     preprocessing: &LassoPreprocessing<F>,
     inputs: &[F],
@@ -204,10 +205,6 @@ pub fn polynomialize<F: JoltField>(
                 if memories_used.contains(&memory_index) {
                     let memory_address = access_sequence[*j];
                     // debug_assert!(memory_address < M);
-                    println!(
-                        "j: {:?}, lookup: {:?}, memory_address: {:?}",
-                        *j, lookup, memory_address
-                    );
 
                     let counter = final_cts_i[memory_address];
                     read_cts_i[*j] = counter;

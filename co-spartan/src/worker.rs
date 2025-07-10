@@ -170,9 +170,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
         Rep3R1CSWitnessShare {
             z: z.clone(),
-            za: Rep3DensePolynomial::from_rep3_evals(&za, pk.ipk.num_variables_val),
-            zb: Rep3DensePolynomial::from_rep3_evals(&zb, pk.ipk.num_variables_val),
-            zc: Rep3DensePolynomial::from_rep3_evals(&zc, pk.ipk.num_variables_val),
+            za: Rep3DensePolynomial::new_with_vars(za, pk.ipk.num_variables_val),
+            zb: Rep3DensePolynomial::new_with_vars(zb, pk.ipk.num_variables_val),
+            zc: Rep3DensePolynomial::new_with_vars(zc, pk.ipk.num_variables_val),
         }
     }
 

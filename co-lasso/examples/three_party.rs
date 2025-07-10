@@ -1,8 +1,10 @@
 use std::{iter, path::PathBuf};
 
 use ark_ff::{PrimeField, Zero};
+use ark_std::test_rng;
 use clap::Parser;
-use co_lasso::{subtables::range_check::RangeLookup, LassoPreprocessing, Rep3LassoWitnessSolver};
+use co_lasso::{subtables::range_check::RangeLookup, Rep3LassoWitnessSolver};
+use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
@@ -10,15 +12,19 @@ use color_eyre::{
 use futures::{SinkExt, StreamExt};
 use itertools::Itertools;
 use jolt_core::{poly::field::JoltField, utils::transcript::ProofTranscript};
-use mpc_core::protocols::rep3::{network::Rep3MpcNet, PartyID, Rep3BigUintShare};
+use mpc_core::protocols::rep3::{self, network::Rep3MpcNet, PartyID, Rep3BigUintShare};
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
+    mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
     MpcNetworkHandler,
 };
 use num_bigint::BigUint;
+use rand::Rng;
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+use co_lasso::{lasso, memory_checking};
 
 #[derive(Parser)]
 struct Args {
@@ -37,7 +43,7 @@ type F = ark_bn254::Fr;
 
 // #[tokio::main]
 fn main() -> Result<()> {
-    init_tracing();
+    // init_tracing();
     let args = Args::parse();
     let num_inputs = 1 << args.log_num_inputs;
     rustls::crypto::aws_lc_rs::default_provider()
@@ -68,13 +74,18 @@ fn run_party(
     let span = tracing::info_span!("run_party", id = my_id);
     let _enter = span.enter();
 
-    let rep3_net =
-        Rep3QuicMpcNetWorker::new_with_coordinator(config, log_num_workers_per_party, log_num_pub_workers).unwrap();
+    let rep3_net = Rep3QuicMpcNetWorker::new_with_coordinator(
+        config,
+        log_num_workers_per_party,
+        log_num_pub_workers,
+    )
+    .unwrap();
 
-    let preprocessing = LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
+    let preprocessing =
+        lasso::LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
 
-    let mut transcript = ProofTranscript::new(b"Memory checking");
-    let inputs = iter::repeat_with(|| F::from(rand::random::<u64>() % 256))
+    let mut rng = test_rng();
+    let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
         .take(num_inputs)
         .collect_vec();
     let inputs_shares = promote_to_trivial_shares(&inputs, my_id.try_into().unwrap());
@@ -87,35 +98,124 @@ fn run_party(
             .collect_vec(),
         M,
         C,
-    );
+    )?;
 
-    witness_solver.io_context0.network.log_connection_stats();
+    let mut rep3_net = witness_solver.io_ctx0.network;
+
+    rep3_net.send_response(polynomials.clone())?;
+
+    let mut prover =
+        memory_checking::worker::Rep3MemoryCheckingProver::<C, M, F, _, _>::new(rep3_net)?;
+    prover.prove(&preprocessing, &polynomials)?;
+
+    prover.io_ctx.network.log_connection_stats();
     drop(_enter);
     Ok(())
 }
 
 #[tracing::instrument(skip_all)]
-fn run_coordinator(config: NetworkConfig, log_num_workers_per_party: usize, log_num_pub_workers: usize) -> Result<()> {
-    let rep3_net = Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers).unwrap();
+fn run_coordinator(
+    config: NetworkConfig,
+    log_num_workers_per_party: usize,
+    log_num_pub_workers: usize,
+) -> Result<()> {
+    init_tracing();
+
+    let mut rep3_net =
+        Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
+            .unwrap();
+    let preprocessing =
+        lasso::LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
+    let mut transcript = ProofTranscript::new(b"Memory checking");
+
+    let polynomials_shares = rep3_net.receive_responses(Default::default())?;
+    if std::env::var("SANITY_CHECK").is_ok() {
+        let polynomials = Rep3LassoWitnessSolver::<F, Rep3QuicMpcNetWorker>::combine_polynomials(
+            polynomials_shares,
+        );
+
+        {
+            let polynomials_check = {
+                let num_inputs = 1 << 7;
+                let mut rng = test_rng();
+                let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
+                    .take(num_inputs)
+                    .collect_vec();
+
+                lasso::polynomialize(
+                    &preprocessing,
+                    &inputs,
+                    &iter::repeat(RangeLookup::<F>::id_for(256))
+                        .take(num_inputs)
+                        .collect_vec(),
+                    M,
+                    C,
+                )
+            };
+            assert_eq!(polynomials.dims, polynomials_check.dims);
+            assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
+            assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
+            assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
+            assert_eq!(
+                polynomials.lookup_flag_polys,
+                polynomials_check.lookup_flag_polys
+            );
+            assert_eq!(
+                polynomials.lookup_flag_bitvectors,
+                polynomials_check.lookup_flag_bitvectors
+            );
+            assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
+        }
+
+        {
+            let mut transcript = ProofTranscript::new(b"Memory checking");
+            let proof = lasso::MemoryCheckingProver::<C, M, F, _>::prove(
+                &preprocessing,
+                &polynomials,
+                &mut transcript,
+            );
+
+            let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
+            lasso::MemoryCheckingProver::<C, M, F, _>::verify(
+                &preprocessing,
+                proof,
+                &mut verifier_transcript,
+            )?;
+        }
+    }
+
+    let proof = memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, _>::prove(
+        &preprocessing,
+        &mut rep3_net,
+        &mut transcript,
+    )?;
+
+    let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
+    lasso::MemoryCheckingProver::<C, M, F, _>::verify(
+        &preprocessing,
+        proof,
+        &mut verifier_transcript,
+    )?;
+
     Ok(())
 }
 
-fn promote_to_trivial_shares(public_values: &[F], id: PartyID) -> Vec<Rep3BigUintShare<F>> {
+fn promote_to_trivial_shares(public_values: &[F], id: PartyID) -> Vec<Rep3PrimeFieldShare<F>> {
     public_values
         .iter()
-        .map(|value| promote_from_trivial(value, id))
+        .map(|value| Rep3PrimeFieldShare::promote_from_trivial(value, id))
         .collect()
 }
 
-/// Promotes a public field element to a replicated share by setting the additive share of the party with id=0 and leaving all other shares to be 0. Thus, the replicated shares of party 0 and party 1 are set.
-pub fn promote_from_trivial<F: PrimeField>(val: &F, id: PartyID) -> Rep3BigUintShare<F> {
-    let val: BigUint = val.clone().into();
-    match id {
-        PartyID::ID0 => Rep3BigUintShare::new(val, BigUint::zero()),
-        PartyID::ID1 => Rep3BigUintShare::new(BigUint::zero(), val),
-        PartyID::ID2 => Rep3BigUintShare::zero_share(),
-    }
-}
+// /// Promotes a public field element to a replicated share by setting the additive share of the party with id=0 and leaving all other shares to be 0. Thus, the replicated shares of party 0 and party 1 are set.
+// pub fn promote_from_trivial<F: PrimeField>(val: &F, id: PartyID) -> Rep3BigUintShare<F> {
+//     let val: BigUint = val.clone().into();
+//     match id {
+//         PartyID::ID0 => Rep3BigUintShare::new(val, BigUint::zero()),
+//         PartyID::ID1 => Rep3BigUintShare::new(BigUint::zero(), val),
+//         PartyID::ID2 => Rep3BigUintShare::zero_share(),
+//     }
+// }
 
 fn init_tracing() {
     let env_filter = EnvFilter::builder()

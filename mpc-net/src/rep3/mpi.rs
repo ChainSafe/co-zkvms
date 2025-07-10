@@ -1,5 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::Context;
+use mpc_types::protocols::rep3::id::PartyID;
 use mpi::{
     datatype::{Partition, PartitionMut}, environment::Universe, topology::{Process, SimpleCommunicator}, traits::{Communicator, Partitioned, Root}, Count
 };
@@ -189,9 +190,9 @@ impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
         self.log_num_workers_per_party
     }
 
-    // fn rank(&self) -> usize {
-    //     self.rank
-    // }
+    fn party_id(&self) -> PartyID {
+        todo!()
+    }
 
     fn total_bandwidth_used(&self) -> (u64, u64) {
         (self.total_send_bytes as u64, self.total_recv_bytes as u64)

@@ -2,6 +2,7 @@ use std::{borrow::Borrow, iter, marker::PhantomData};
 
 use ark_ff::PrimeField;
 use ark_std::log2;
+use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
 use mpc_core::protocols::rep3::Rep3BigUintShare;
@@ -108,7 +109,7 @@ impl<F: JoltField> LookupType<F> for RangeLookup<F> {
         *index
     }
 
-    fn output_rep3(&self, index: &Rep3BigUintShare<F>) -> Rep3BigUintShare<F> {
+    fn output_rep3(&self, index: &Rep3PrimeFieldShare<F>) -> Rep3PrimeFieldShare<F> {
         index.clone()
     }
 
