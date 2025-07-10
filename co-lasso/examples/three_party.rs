@@ -191,7 +191,6 @@ fn run_coordinator(
                 &mut verifier_transcript,
             )?;
         }
-        println!("----------------------------------------------------------------");
     }
 
     let proof = memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, _>::prove(

@@ -180,7 +180,6 @@ pub fn polynomialize<F: JoltField>(
 ) -> LassoPolynomials<F> {
     let num_reads = inputs.len().next_power_of_two();
 
-    println!("lookups: {:?}", lookups.len());
     let subtable_lookup_indices = subtable_lookup_indices(preprocessing, inputs, &lookups, M, C);
 
     let lookup_inputs = (0..inputs.len())
@@ -209,7 +208,6 @@ pub fn polynomialize<F: JoltField>(
                     let counter = final_cts_i[memory_address];
                     read_cts_i[*j] = counter;
                     final_cts_i[memory_address] = counter + 1;
-                    // println!("final_cts_i: {:?}", final_cts_i);
                     subtable_lookups[*j] =
                         preprocessing.materialized_subtables[subtable_index][memory_address];
                 }
