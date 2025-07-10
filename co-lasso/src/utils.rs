@@ -2,7 +2,7 @@ use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use eyre::{Context, Result};
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::{self, network::{IoContext, Rep3Network}, PartyID};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -78,17 +78,41 @@ where
 }
 
 #[inline]
-pub fn split_poly_flagged<F: JoltField>(
+pub fn split_rep3_poly_flagged<F: JoltField>(
     poly: &Rep3DensePolynomial<F>,
     flags: &DensePolynomial<F>,
+    id: PartyID,
 ) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
-    let (a, b) = poly.copy_poly_shares();
+    // let (a, b) = poly.copy_poly_shares();
 
-    let (left_a, right_a) = jolt_core::utils::split_poly_flagged(&a, flags);
-    let (left_b, right_b) = jolt_core::utils::split_poly_flagged(&b, flags);
+    // let (left_a, right_a) = split_poly_flagged(&a, flags);
+    // let (left_b, right_b) = split_poly_flagged(&b, flags);
 
-    let left = Rep3DensePolynomial::from_vec_shares(left_a, left_b);
-    let right = Rep3DensePolynomial::from_vec_shares(right_a, right_b);
+    // let left = Rep3DensePolynomial::from_vec_shares(left_a, left_b);
+    // let right = Rep3DensePolynomial::from_vec_shares(right_a, right_b);
 
-    (left, right)
+    // (left, right)
+
+    let poly_evals = poly.evals_ref();
+    let len = poly_evals.len();
+    let half = len / 2;
+    let mut left = Vec::with_capacity(half);
+    let mut right = Vec::with_capacity(half);
+
+    let one = rep3::arithmetic::promote_to_trivial_share(id, F::one());
+
+    for i in 0..len {
+        if flags[i].is_zero() {
+            if i < half {
+                left.push(one);
+            } else {
+                right.push(one);
+            }
+        } else if i < half {
+            left.push(poly_evals[i]);
+        } else {
+            right.push(poly_evals[i]);
+        }
+    }
+    (Rep3DensePolynomial::new(left), Rep3DensePolynomial::new(right))
 }

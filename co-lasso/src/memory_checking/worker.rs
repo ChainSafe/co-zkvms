@@ -19,7 +19,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContext, Rep3Network},
+    network::{IoContext, Rep3Network}, PartyID,
 };
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
@@ -33,8 +33,8 @@ use crate::{
     },
     lasso::MemoryCheckingProof,
     poly::Rep3DensePolynomial,
-    utils::{self, split_poly_flagged},
-    LassoPreprocessing, Rep3LassoPolynomials,
+    utils::{self, split_rep3_poly_flagged},
+    lasso::LassoPreprocessing, witness_solver::Rep3LassoPolynomials,
 };
 
 #[cfg(feature = "parallel")]
@@ -92,7 +92,11 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
             &tau,
             &mut self.io_ctx.network,
         );
-       
+
+        self.io_ctx
+            .network
+            .send_response((read_write_leaves.clone(), init_final_leaves.clone()))?;
+
         let (read_write_circuit, read_write_hashes) =
             self.read_write_grand_product(preprocessing, polynomials, read_write_leaves)?;
         let (init_final_circuit, init_final_hashes) =
@@ -212,7 +216,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let memory_index = i / 2;
                 let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(leaves_poly, flag);
+                let (toggled_leaves_l, toggled_leaves_r) = split_rep3_poly_flagged(leaves_poly, flag, self.io_ctx.network.party_id());
                 Rep3GrandProductCircuit::new_split(
                     toggled_leaves_l,
                     toggled_leaves_r,
@@ -222,6 +226,9 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
             .collect::<Result<Vec<Rep3GrandProductCircuit<F>>>>()?;
 
         drop(_span);
+
+        let len = read_write_circuits[0].left_vec.len();
+        self.io_ctx.network.send_response((read_write_circuits[0].left_vec[len - 1][0].clone(), read_write_circuits[0].right_vec[len - 1][0]))?;
 
         let read_write_hashes: Vec<F> = trace_span!("compute_hashes").in_scope(|| {
             read_write_circuits

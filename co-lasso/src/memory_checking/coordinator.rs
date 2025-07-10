@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use ark_ec::pairing::Pairing;
 use ark_ff::{biginteger::arithmetic, Field};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_spartan::mpc::additive;
+use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use eyre::Context;
 use itertools::{interleave, multizip, Itertools};
 use jolt_core::{
@@ -31,7 +31,7 @@ use crate::{
     grand_product::BatchedGrandProductProver,
     lasso::{LassoPolynomials, MemoryCheckingProof},
     poly::Rep3DensePolynomial,
-    LassoPreprocessing, Rep3LassoPolynomials,
+    lasso::LassoPreprocessing,
 };
 
 #[cfg(feature = "parallel")]
@@ -92,6 +92,42 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
         network.broadcast_request((gamma, tau))?;
         let num_lookups = network.receive_responses(0usize)?[0];
 
+        {
+            let (read_write_leaves, init_final_leaves): (
+                Vec<Vec<Rep3DensePolynomial<F>>>,
+                Vec<Vec<Rep3DensePolynomial<F>>>,
+            ) = network
+                .receive_responses((Vec::default(), Vec::default()))?
+                .into_iter()
+                .unzip();
+            let [rw_share1, rw_share2, rw_share3] = read_write_leaves.try_into().unwrap();
+            let [if_share1, if_share2, if_share3] = init_final_leaves.try_into().unwrap();
+            let read_write_leaves = multizip((rw_share1, rw_share2, rw_share3))
+                .map(|(s1, s2, s3)| {
+                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
+                })
+                .collect_vec();
+            // tracing::info!("read_write_leaves: {:?}", read_write_leaves[0].len());
+            let init_final_leaves = multizip((if_share1, if_share2, if_share3))
+                .map(|(s1, s2, s3)| {
+                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
+                })
+                .collect_vec();
+            for i in 0..read_write_leaves.len() {
+                tracing::info!("read_write_leaves[{}]: {:?}", i, (&read_write_leaves[i][..2], &read_write_leaves[i][read_write_leaves[i].len() - 2..]));
+            }
+            for i in 0..init_final_leaves.len() {
+                tracing::info!("init_final_leaves[{}]: {:?}", i, (&init_final_leaves[i][..2], &init_final_leaves[i][init_final_leaves[i].len() - 2..]));
+            }
+        }
+
+        let (rw_circuit_left, rw_circuit_right): (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) = network.receive_responses((Rep3PrimeFieldShare::zero_share(), Rep3PrimeFieldShare::zero_share()))?.into_iter().unzip();
+        let rw_circuit_left = rep3::combine_field_element(rw_circuit_left[0], rw_circuit_left[1], rw_circuit_left[2]);
+        let rw_circuit_right = rep3::combine_field_element(rw_circuit_right[0], rw_circuit_right[1], rw_circuit_right[2]);
+        tracing::info!("rw_circuit_left: {:?}", rw_circuit_left);
+        tracing::info!("rw_circuit_right: {:?}", rw_circuit_right);
+
+
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
                 .receive_responses((Vec::default(), Vec::default()))
@@ -112,7 +148,8 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
             &init_final_hashes_shares[1],
             &init_final_hashes_shares[2],
         );
-
+        tracing::info!("read_write_hashes: {:?}", read_write_hashes);
+        tracing::info!("init_final_hashes: {:?}", init_final_hashes);
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, &read_write_hashes, &init_final_hashes);
         Self::check_multiset_equality(preprocessing, &multiset_hashes);

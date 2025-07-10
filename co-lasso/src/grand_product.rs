@@ -46,6 +46,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
         let num_circuits = claims_to_verify.len();
         let coeff_vec: Vec<F> =
             transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
+        tracing::info!("coeff_vec: {:?}", coeff_vec);
         let first_claim: F = (0..claims_to_verify.len())
             .map(|i| (claims_to_verify[i] * coeff_vec[i]))
             .sum();
@@ -63,6 +64,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 .clone();
 
             let sumcheck_type = CubicSumcheckType::from(sumcheck_type);
+            tracing::info!("layer_id: {:?} sumcheck_type: {:?}", layer_id, sumcheck_type);
 
             let mut cubic_polys = Vec::new();
             let mut rand_prod = Vec::new();
@@ -77,6 +79,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     &poly_shares[2],
                 );
                 let poly = UniPoly::from_coeff(coeffs);
+                tracing::info!("round: {:?} poly: {:?}", _round, poly.as_vec());
                 poly.append_to_transcript(b"poly", transcript);
                 cubic_polys.push(poly.compress());
                 let r_j = transcript.challenge_scalar(b"challenge_nextround");
@@ -84,6 +87,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 rand_prod.push(r_j);
 
                 network.broadcast_request(poly.evaluate(&r_j))?;
+                tracing::info!("---------------");
             }
 
             let claims_prod: (
@@ -150,9 +154,12 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 });
             }
 
+            tracing::info!("--------------------------------");
+            
             if layer_id != 0 {
                 let coeff_vec =
                     transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
+                tracing::info!("coeff_vec: {:?}", coeff_vec);
                 network.broadcast_request(coeff_vec.clone())?;
             }
             drop(_enter);

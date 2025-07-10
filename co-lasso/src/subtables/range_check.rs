@@ -49,7 +49,82 @@ impl<F: JoltField> FullLimbSubtable<F> {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct BoundSubtable<F> {
+    bound: u64,
+    _marker: PhantomData<F>,
+}
 
+impl<F: JoltField> LassoSubtable<F> for BoundSubtable<F> {
+    fn materialize(&self, M: usize) -> Vec<F> {
+        let bound_bits = self.bound.ilog2() as usize;
+        let reminder = 1 << (bound_bits % M.ilog2() as usize);
+        let cutoff = (reminder + self.bound % M as u64) as usize;
+
+        (0..M)
+            .map(|i| {
+                if i < cutoff {
+                    F::from(i as u64)
+                } else {
+                    F::ZERO
+                }
+            })
+            .collect()
+    }
+
+    fn evaluate_mle(&self, point: &[F], M: usize) -> F {
+        let log2_M = M.ilog2() as usize;
+        let b = point.len();
+
+        let bound_bits = self.bound.ilog2() as usize;
+        let reminder = 1 << (bound_bits % log2_M);
+        let cutoff = reminder + self.bound % (1 << log2_M);
+        let cutoff_log2 = cutoff.ilog2() as usize;
+
+        let g_base = 1 << cutoff_log2;
+        let num_extra = cutoff - g_base;
+
+        let mut result = F::ZERO;
+        for i in 0..b {
+            if i < cutoff_log2 {
+                result += point[i] * F::from(1u64 << (i));
+            } else {
+                let mut g_value = F::ZERO;
+
+                if i == cutoff_log2 {
+                    for k in 0..num_extra {
+                        let mut term: F = F::from(g_base + k).into();
+                        for j in 0..cutoff_log2 {
+                            if (k & (1 << j)) != 0 {
+                                term *= point[j];
+                            } else {
+                                term *= F::ONE - point[j];
+                            }
+                        }
+                        g_value += term;
+                    }
+                }
+
+                result = (F::ONE - point[i]) * result + point[i] * g_value
+            }
+        }
+
+        result
+    }
+
+    fn subtable_id(&self) -> super::SubtableId {
+        format!("bound_{}", self.bound)
+    }
+}
+
+impl<F: JoltField> BoundSubtable<F> {
+    pub fn new(bound: u64) -> Self {
+        Self {
+            bound,
+            _marker: PhantomData,
+        }
+    }
+}
 #[derive(Clone, Debug, Default, Copy)]
 pub struct RangeLookup<F: JoltField> {
     bound: u64,
@@ -80,29 +155,23 @@ impl<F: JoltField> LookupType<F> for RangeLookup<F> {
     // }
 
     // SubtableIndices map subtable to memories
-    fn subtables(
-        &self,
-        _C: usize,
-        M: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables(&self, _C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let full = Box::new(FullLimbSubtable::<F>::new());
         let log_M = M.ilog2() as usize;
         let bound_bits = self.bound.ilog2() as usize;
         let num_chunks = bound_bits / log_M;
+        let rem = Box::new(BoundSubtable::<F>::new(self.bound));
 
         if self.bound % M as u64 == 0 {
             vec![(full, SubtableIndices::from(0..num_chunks))]
+        } else if self.bound < M as u64 {
+            vec![(rem, SubtableIndices::from(0))]
         } else {
-            unimplemented!()
+            vec![
+                (full, SubtableIndices::from(0..num_chunks)),
+                (rem, SubtableIndices::from(num_chunks)),
+            ]
         }
-        // else if self.bound < M as u64 {
-        //     vec![(rem, SubtableIndices::from(0))]
-        // } else {
-        //     vec![
-        //         (full, SubtableIndices::from(0..num_chunks)),
-        //         (rem, SubtableIndices::from(num_chunks)),
-        //     ]
-        // }
     }
 
     fn output(&self, index: &F) -> F {
@@ -131,7 +200,11 @@ impl<F: JoltField> LookupType<F> for RangeLookup<F> {
             .collect_vec()
     }
 
-    fn subtable_indices_rep3(&self, index_bits: Vec<Rep3BigUintShare<F>>, log_M: usize) -> Vec<Vec<Rep3BigUintShare<F>>> {
+    fn subtable_indices_rep3(
+        &self,
+        index_bits: Vec<Rep3BigUintShare<F>>,
+        log_M: usize,
+    ) -> Vec<Vec<Rep3BigUintShare<F>>> {
         index_bits.chunks(log_M).map(Vec::from).collect_vec()
     }
 
@@ -159,10 +232,13 @@ impl<F: JoltField> RangeLookup<F> {
     }
 }
 
-
 fn inner_product<F: JoltField>(
     lhs: impl IntoIterator<Item = impl Borrow<F>>,
     rhs: impl IntoIterator<Item = impl Borrow<F>>,
 ) -> F {
-    F::sum(lhs.into_iter().zip(rhs.into_iter()).map(|(lhs, rhs)| *rhs.borrow() * *lhs.borrow()))
+    F::sum(
+        lhs.into_iter()
+            .zip(rhs.into_iter())
+            .map(|(lhs, rhs)| *rhs.borrow() * *lhs.borrow()),
+    )
 }

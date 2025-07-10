@@ -102,15 +102,40 @@ impl<F: JoltField, const C: usize, const M: usize> MemoryCheckingProver<C, M, F,
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
-        tracing::info!("gamma: {} tau: {}", gamma, tau);
 
         let (read_write_leaves, init_final_leaves) =
             Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
+
+        tracing::info!("read_write_leaves len: {}", read_write_leaves.len());
+        tracing::info!("init_final_leaves len: {}", init_final_leaves.len());
+        for i in 0..read_write_leaves.len() {
+            tracing::info!(
+                "read_write_leaves[{}]: {:?}",
+                i,
+                (
+                    &read_write_leaves[i].evals()[..2],
+                    &read_write_leaves[i].evals()[read_write_leaves[i].len() - 2..]
+                )
+            );
+        }
+        for i in 0..init_final_leaves.len() {
+            tracing::info!(
+                "init_final_leaves[{}]: {:?}",
+                i,
+                (
+                    &init_final_leaves[i].evals()[..2],
+                    &init_final_leaves[i].evals()[init_final_leaves[i].len() - 2..]
+                )
+            );
+        }
 
         let (read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
         let (init_final_circuit, init_final_hashes) =
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
+
+        tracing::info!("read_write_hashes: {:?}", read_write_hashes);
+        tracing::info!("init_final_hashes: {:?}", init_final_hashes);
 
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
@@ -225,6 +250,7 @@ impl<F: JoltField, const C: usize, const M: usize> MemoryCheckingProver<C, M, F,
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let memory_index = i / 2;
                 let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
+                tracing::info!("rw leaf {i}: flag: {:?}", flag);
                 let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(leaves_poly, flag);
                 GrandProductCircuit::new_split(
                     DensePolynomial::new(toggled_leaves_l),
@@ -238,6 +264,9 @@ impl<F: JoltField, const C: usize, const M: usize> MemoryCheckingProver<C, M, F,
 
         let _span = trace_span!("InstructionLookups: compute hashes");
         let _enter = _span.enter();
+
+        tracing::info!("rw_circuit_left: {:?}", read_write_circuits[0].left_vec[read_write_circuits[0].left_vec.len() - 1][0]);
+        tracing::info!("rw_circuit_right: {:?}", read_write_circuits[0].right_vec[read_write_circuits[0].left_vec.len() - 1][0]);
 
         let read_write_hashes: Vec<F> = read_write_circuits
             .par_iter()
