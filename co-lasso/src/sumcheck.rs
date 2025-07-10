@@ -258,14 +258,7 @@ pub fn prove_cubic_batched_prod<F: JoltField, N: MpcStarNetWorker>(
             || poly_iter.for_each(|poly| poly.fix_var_top(&r_j)),
             || params.poly_eq.bound_poly_var_top(&r_j),
         );
-
-        // if params.num_rounds < 3 {
-
-        //     network.send_response(params.poly_As[1].clone())?;
-        //     network.send_response(params.poly_Bs[1].clone())?;
-        //     network.send_response(params.poly_eq.clone())?;
-        // }
-
+        
         drop(_enter);
         drop(_span);
 
@@ -338,22 +331,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
                         let low = mle_index;
                         let high = len + mle_index;
 
-                        // Optimized version of the product for the high probability that A[low], A[high], B[low], B[high] == 1
-                        // let a_low_one = poly_A[low].is_one();
-                        // let a_high_one = poly_A[high].is_one();
-                        // let b_low_one = poly_B[low].is_one();
-                        // let b_high_one = poly_B[high].is_one();
-
-                        // let eval_point_0: F = if a_low_one && b_low_one {
-                        //     eq_evals[low].0
-                        // } else if a_low_one {
-                        //     poly_B[low] * eq_evals[low].0
-                        // } else if b_low_one {
-                        //     poly_A[low] * eq_evals[low].0
-                        // } else {
-                        //     poly_A[low] * poly_B[low] * eq_evals[low].0
-                        // };
-
                         // order of multiplications here is important,
                         // since poly_A[*] and poly_B[*] are Rep3 shares whose multiplication is additive share,
                         // which cannot be multiplied on public value eq_evals[*] without reshare.
@@ -363,41 +340,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
                                 poly_B[low],
                                 eq_evals[low].0 * coeffs[batch_index],
                             );
-
-                        // let m_a_zero = a_low_one && a_high_one;
-                        // let m_b_zero = b_low_one && b_high_one;
-                        // let (eval_point_2, eval_point_3) = if m_a_zero && m_b_zero {
-                        //     (eq_evals[low].1, eq_evals[low].2)
-                        // } else if m_a_zero {
-                        //     let m_b = poly_B[high] - poly_B[low];
-                        //     let point_2_B = poly_B[high] + m_b;
-                        //     let point_3_B = point_2_B + m_b;
-
-                        //     let eval_point_2 = eq_evals[low].1 * point_2_B;
-                        //     let eval_point_3 = eq_evals[low].2 * point_3_B;
-                        //     (eval_point_2, eval_point_3)
-                        // } else if m_b_zero {
-                        //     let m_a = poly_A[high] - poly_A[low];
-                        //     let point_2_A = poly_A[high] + m_a;
-                        //     let point_3_A = point_2_A + m_a;
-
-                        //     let eval_point_2 = eq_evals[low].1 * point_2_A;
-                        //     let eval_point_3 = eq_evals[low].2 * point_3_A;
-                        //     (eval_point_2, eval_point_3)
-                        // } else {
-                        //     let m_a = poly_A[high] - poly_A[low];
-                        //     let m_b = poly_B[high] - poly_B[low];
-
-                        //     let point_2_A = poly_A[high] + m_a;
-                        //     let point_3_A = point_2_A + m_a;
-
-                        //     let point_2_B = poly_B[high] + m_b;
-                        //     let point_3_B = point_2_B + m_b;
-
-                        //     let eval_point_2 = eq_evals[low].1 * point_2_A * point_2_B;
-                        //     let eval_point_3 = eq_evals[low].2 * point_3_A * point_3_B;
-                        //     (eval_point_2, eval_point_3)
-                        // };
 
                         let m_a = poly_A[high] - poly_A[low];
                         let m_b = poly_B[high] - poly_B[low];
@@ -438,11 +380,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
         drop(_enter);
         drop(_span);
 
-
-        // let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
-        // let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
-        // let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
-
         let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0).sum();
         let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1).sum();
         let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2).sum();
@@ -459,10 +396,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
         let poly = UniPoly::from_evals(&evals); // TODO: may not work on additive shares
 
         network.send_response(poly.as_vec())?;
-        tracing::info!("poly coeffs: {:?}", poly.as_vec());
-
-        // append the prover's message to the transcript
-        // network.send_response(poly.as_vec())?;
 
         //derive the verifier's challenge for the next round
         let r_j = network.receive_request()?;
@@ -483,16 +416,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
             || params.poly_eq.bound_poly_var_top(&r_j),
         );
 
-        if params.num_rounds < 3 {
-
-            network.send_response(params.poly_As[0].clone())?;
-            network.send_response(params.poly_Bs[0].clone())?;
-            network.send_response(params.poly_As[1].clone())?;
-            network.send_response(params.poly_Bs[1].clone())?;
-            // network.send_response(DensePolynomial::new(params.poly_eq.evals()))?;
-        }
-        // network.send_response(params.poly_Bs.clone())?;
-
         drop(_enter);
         drop(_span);
 
@@ -502,8 +425,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
         e = additive::promote_to_trivial_share(network.receive_request()?, network.party_id());
         cubic_polys.push(poly.compress());
     }
-
-    // network.send_response(e)?;
 
     let claims_prod = params.get_final_evals();
 

@@ -44,60 +44,29 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
     ) -> eyre::Result<(BatchedGrandProductArgument<F>, Vec<F>)> {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
         let num_circuits = claims_to_verify.len();
-        let mut coeff_vec: Vec<F> =
+        let coeff_vec: Vec<F> =
             transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
         let first_claim: F = (0..claims_to_verify.len())
             .map(|i| (claims_to_verify[i] * coeff_vec[i]))
             .sum();
-        tracing::info!("claims_to_verify: {:?}", claims_to_verify);
-        tracing::info!("first_claim: {:?}", first_claim);
+
         network.broadcast_request((first_claim, coeff_vec.clone()))?;
 
         let mut rand = Vec::new();
         for layer_id in (0..num_layers).rev() {
-            tracing::info!("layer_id: {:?}", layer_id);
             let span = tracing::span!(tracing::Level::TRACE, "grand_product_layer", layer_id);
             let _enter = span.enter();
 
-            // // approach 2
-            // let claim: F = (0..claims_to_verify.len())
-            //     .map(|i| claims_to_verify[i] * coeff_vec[i])
-            //     .sum(); // recv: num_circuits * 3
+            let (num_vars, sumcheck_type) = network
+                .receive_responses((0usize, 0u8))
+                .context("while receiving sumcheck params")?[0]
+                .clone();
 
-            let (num_vars, sumcheck_type, eq) = network
-                .receive_responses((0usize, 0u8, DensePolynomial::new(vec![F::zero()])))
-                .context("while receiving sumcheck params")?[0].clone();
-            if num_vars < 3 {
-                tracing::info!("layer_id: {:?} eq len: {:?} eq: {:?}", layer_id, eq.len(), eq);
-            }
             let sumcheck_type = CubicSumcheckType::from(sumcheck_type);
 
             let mut cubic_polys = Vec::new();
             let mut rand_prod = Vec::new();
             for _round in 0..num_vars {
-                tracing::info!("round: {:?} sumcheck_type: {:?}", _round, sumcheck_type);
-                // if sumcheck_type == CubicSumcheckType::ProdOnes {
-                //     let evals = network
-                //         .receive_responses::<Vec<(F, F, F)>>(Vec::new())
-                //         .context("while receiving evals")?;
-                //     let [evals_0, evals_1, evals_2] = evals.try_into().unwrap();
-                //     let evals: Vec<(F, F, F)> = evals_0
-                //         .into_iter()
-                //         .zip(evals_1.into_iter())
-                //         .zip(evals_2.into_iter())
-                //         .enumerate()
-                //         .map(|(i, ((a0, a1), a2))| {
-                //             (
-                //                 additive::combine_field_element(&a0.0, &a1.0, &a2.0),
-                //                 additive::combine_field_element(&a0.1, &a1.1, &a2.1),
-                //                 additive::combine_field_element(&a0.2, &a1.2, &a2.2),
-                //             )
-                //         })
-                //         .collect();
-
-                //     tracing::info!("evals: {:?}", evals);
-                // }
-
                 let poly_shares = network
                     .receive_responses(Vec::new())
                     .context("while receiving poly shares")?;
@@ -107,25 +76,16 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     &poly_shares[1],
                     &poly_shares[2],
                 );
-                // let poly = UniPoly::from_coeff(coeffs);
                 let poly = UniPoly::from_coeff(coeffs);
-                // tracing::info!("poly coeffs: {:?}", poly.as_vec());
                 poly.append_to_transcript(b"poly", transcript);
                 cubic_polys.push(poly.compress());
                 let r_j = transcript.challenge_scalar(b"challenge_nextround");
                 network.broadcast_request(r_j)?;
                 rand_prod.push(r_j);
 
-                // tracing::info!("e: {:?}", poly.evaluate(&r_j));
                 network.broadcast_request(poly.evaluate(&r_j))?;
-                tracing::info!("---------------");
             }
-            if cubic_polys.len() > 0 {
-                tracing::info!(
-                    "{sumcheck_type:?} proof poly[0]: {:?}",
-                    cubic_polys.last().unwrap().coeffs_except_linear_term
-                );
-            }
+
             let claims_prod: (
                 Vec<Vec<Rep3PrimeFieldShare<F>>>,
                 Vec<Vec<Rep3PrimeFieldShare<F>>>,
@@ -159,29 +119,12 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 transcript.append_scalar(b"claim_prod_right", &claims_poly_B[i]);
             }
 
-            tracing::info!("claims_poly_A: {:?}", claims_poly_A);
-            tracing::info!("claims_poly_B: {:?}", claims_poly_B);
-
             if sumcheck_type == CubicSumcheckType::Prod
                 || sumcheck_type == CubicSumcheckType::ProdOnes
             {
-                // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
-                // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
-                // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
-
-                // produce a random challenge to condense two claims into a single claim
-
-                // approach 1
                 let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-                // tracing::info!("r_layer: {:?}", r_layer);
 
-                network.broadcast_request(r_layer)?; // recv: 3 * num_layers send: 1 * num_layers
-
-                // // approach 2
-                // let claims_to_verify = (0..num_circuits)
-                //     .map(|i| claims_poly_A[i] + r_layer * (claims_poly_B[i] - claims_poly_A[i]))
-                //     .collect::<Vec<F>>();
-                // network.broadcast_request(claims_to_verify)?; // recv: num_circuits * 3 send: num_circuits * num_layers
+                network.broadcast_request(r_layer)?;
 
                 let mut ext = vec![r_layer];
                 ext.extend(rand_prod);
@@ -207,26 +150,10 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 });
             }
 
-            tracing::info!("--------------------------------");
-
             if layer_id != 0 {
-                coeff_vec =
+                let coeff_vec =
                     transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
-                tracing::info!("coeff_vec: {:?}", coeff_vec);
                 network.broadcast_request(coeff_vec.clone())?;
-
-                // approach 1
-                // let claim_shares = network
-                //     .receive_responses(F::zero())
-                //     .context("while receiving claim shares")?;
-                // assert_eq!(claim_shares.len(), 3);
-                // let claim = additive::combine_field_element(
-                //     &claim_shares[0],
-                //     &claim_shares[1],
-                //     &claim_shares[2],
-                // ); // recv: 3 * num_layers
-                // network.broadcast_request(claim)?;
-                // tracing::info!("claim: {:?}", claim);
             }
             drop(_enter);
         }
@@ -247,9 +174,6 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
         let (mut claim, mut coeff_vec) = network.receive_request::<(F, Vec<F>)>()?;
         let mut claims_to_verify = Vec::new();
 
-        tracing::info!("num_layers: {:?}", batch.num_layers());
-        tracing::info!("num_circuits: {:?}", batch.circuits.len());
-
         let mut rand = Vec::new();
         for layer in (0..batch.num_layers()).rev() {
             let span = tracing::trace_span!("grand_product_layer", layer);
@@ -258,8 +182,11 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
 
             let params = batch.sumcheck_layer_params(layer, eq.clone());
-            network
-                .send_response::<(usize, u8, DensePolynomial<F>)>((params.num_rounds, params.sumcheck_type.into(), eq))?;
+            network.send_response::<(usize, u8, DensePolynomial<F>)>((
+                params.num_rounds,
+                params.sumcheck_type.into(),
+                eq,
+            ))?;
 
             let sumcheck_type = params.sumcheck_type;
             let (rand_prod, claims_prod) =
@@ -277,15 +204,11 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
 
                 // produce a random challenge to condense two claims into a single claim
-                // approach 1
+
                 let r_layer = network.receive_request()?;
                 claims_to_verify = (0..batch.circuits.len())
                     .map(|i| claims_poly_a[i] + (claims_poly_b[i] - claims_poly_a[i]) * r_layer)
                     .collect::<Vec<_>>();
-
-                // // approach 2
-                // claims_to_verify = network.receive_request()?; // 1 + num_circuits * num_layers
-
                 let mut ext = vec![r_layer];
                 ext.extend(rand_prod);
                 rand = ext;
@@ -302,9 +225,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                 coeff_vec = network.receive_request()?;
                 claim = (0..claims_to_verify.len())
                     .map(|i| (claims_to_verify[i] * coeff_vec[i]).into_additive())
-                    .sum(); // okay to remain additive since in the next round we just use it for substraction `e - evals_combined_0`
-                            // network.send_response(claim_share)?;
-                            // claim = network.receive_request()?;
+                    .sum(); // it's okay to remain additive since in the next round we just use it for substraction `e - evals_combined_0`
             }
             drop(_enter);
         }

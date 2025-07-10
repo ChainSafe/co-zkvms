@@ -90,38 +90,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
         let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
         network.broadcast_request((gamma, tau))?;
-        // tracing::info!("gamma: {} tau: {}", gamma, tau);
         let num_lookups = network.receive_responses(0usize)?[0];
-        println!("num_lookups: {}", num_lookups);
-
-        {
-            let (read_write_leaves, init_final_leaves): (
-                Vec<Vec<Rep3DensePolynomial<F>>>,
-                Vec<Vec<Rep3DensePolynomial<F>>>,
-            ) = network
-                .receive_responses((Vec::default(), Vec::default()))?
-                .into_iter()
-                .unzip();
-            let [rw_share1, rw_share2, rw_share3] = read_write_leaves.try_into().unwrap();
-            let [if_share1, if_share2, if_share3] = init_final_leaves.try_into().unwrap();
-            let read_write_leaves = multizip((rw_share1, rw_share2, rw_share3))
-                .map(|(s1, s2, s3)| {
-                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
-                })
-                .collect_vec();
-            tracing::info!("read_write_leaves: {:?}", read_write_leaves[0].len());
-            let init_final_leaves = multizip((if_share1, if_share2, if_share3))
-                .map(|(s1, s2, s3)| {
-                    rep3::combine_field_elements(s1.evals_ref(), s2.evals_ref(), s3.evals_ref())
-                })
-                .collect_vec();
-            // tracing::info!("read_leaves: {:?}", (&read_write_leaves[0][..2], &read_write_leaves[0][read_write_leaves[0].len() - 2..]));
-            // tracing::info!("write_leaves: {:?}", (&read_write_leaves[1][..2], &read_write_leaves[1][read_write_leaves[1].len() - 2..]));
-            // tracing::info!("init_leaves: {:?}", (&init_final_leaves[0][..2], &init_final_leaves[0][init_final_leaves[0].len() - 2..]));
-            // tracing::info!("final_leaves: {:?}", (&init_final_leaves[1][..2], &init_final_leaves[1][init_final_leaves[1].len() - 2..]));
-        }
-
-        // transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
@@ -138,7 +107,6 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
             &read_write_hashes_shares[1],
             &read_write_hashes_shares[2],
         );
-        tracing::info!("read_write_hashes: {:?}", &read_write_hashes[..2]);
         let init_final_hashes = additive::combine_field_elements(
             &init_final_hashes_shares[0],
             &init_final_hashes_shares[1],

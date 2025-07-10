@@ -84,9 +84,6 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
         self.io_ctx
             .network
             .send_response(polynomials.dims[0].len())?;
-        tracing::info!("gamma: {} tau: {}", gamma, tau);
-
-        // transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,
@@ -95,10 +92,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
             &tau,
             &mut self.io_ctx.network,
         );
-        self.io_ctx
-            .network
-            .send_response((read_write_leaves.clone(), init_final_leaves.clone()))?;
-
+       
         let (read_write_circuit, read_write_hashes) =
             self.read_write_grand_product(preprocessing, polynomials, read_write_leaves)?;
         let (init_final_circuit, init_final_hashes) =

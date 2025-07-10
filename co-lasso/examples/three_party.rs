@@ -43,7 +43,7 @@ type F = ark_bn254::Fr;
 
 // #[tokio::main]
 fn main() -> Result<()> {
-    // init_tracing();
+    init_tracing();
     let args = Args::parse();
     let num_inputs = 1 << args.log_num_inputs;
     rustls::crypto::aws_lc_rs::default_provider()
@@ -55,7 +55,7 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
     if config.is_coordinator {
-        run_coordinator(config, 1, 1)?;
+        run_coordinator(config, 1, 1, num_inputs)?;
     } else {
         run_party(config, num_inputs, 1, 1)?;
     }
@@ -118,9 +118,8 @@ fn run_coordinator(
     config: NetworkConfig,
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
+    num_inputs: usize,
 ) -> Result<()> {
-    init_tracing();
-
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
@@ -136,7 +135,6 @@ fn run_coordinator(
 
         {
             let polynomials_check = {
-                let num_inputs = 1 << 7;
                 let mut rng = test_rng();
                 let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
                     .take(num_inputs)
