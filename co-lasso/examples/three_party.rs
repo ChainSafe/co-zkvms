@@ -37,7 +37,7 @@ struct Args {
 }
 
 const LIMB_BITS: usize = 8;
-const C: usize = 1;
+const C: usize = 2; // num chunks
 const M: usize = 1 << LIMB_BITS;
 type F = ark_bn254::Fr;
 
@@ -81,12 +81,17 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing =
-        lasso::LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
+    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M>([
+        RangeLookup::<F>::new_boxed(256),
+        RangeLookup::<F>::new_boxed(320),
+    ]);
 
     let mut rng = test_rng();
     let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
-        .take(num_inputs)
+        .take(num_inputs / 2)
+        .collect_vec()
+        .into_iter()
+        .chain(iter::repeat_with(|| F::from(rng.gen_range(0..320))).take(num_inputs / 2))
         .collect_vec();
     let inputs_shares = promote_to_trivial_shares(&inputs, my_id.try_into().unwrap());
     let mut witness_solver = Rep3LassoWitnessSolver::new(rep3_net).unwrap();
@@ -94,7 +99,8 @@ fn run_party(
         &preprocessing,
         &inputs_shares,
         &iter::repeat(RangeLookup::<F>::id_for(256))
-            .take(num_inputs)
+            .take(num_inputs / 2)
+            .chain(iter::repeat(RangeLookup::<F>::id_for(320)).take(num_inputs / 2))
             .collect_vec(),
         M,
         C,
@@ -120,11 +126,14 @@ fn run_coordinator(
     log_num_pub_workers: usize,
     num_inputs: usize,
 ) -> Result<()> {
+    // init_tracing();
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    let preprocessing =
-        lasso::LassoPreprocessing::preprocess::<C, M>([RangeLookup::<F>::new_boxed(256)]);
+       let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M>([
+        RangeLookup::<F>::new_boxed(256),
+        RangeLookup::<F>::new_boxed(320),
+    ]);
     let mut transcript = ProofTranscript::new(b"Memory checking");
 
     let polynomials_shares = rep3_net.receive_responses(Default::default())?;
@@ -133,43 +142,45 @@ fn run_coordinator(
             polynomials_shares,
         );
 
-        {
-            let polynomials_check = {
-                let mut rng = test_rng();
-                let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
-                    .take(num_inputs)
-                    .collect_vec();
+        let polynomials_check = {
+            let mut rng = test_rng();
+            let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
+                .take(num_inputs / 2)
+                .collect_vec()
+                .into_iter()
+                .chain(iter::repeat_with(|| F::from(rng.gen_range(0..320))).take(num_inputs / 2))
+                .collect_vec();
 
-                lasso::polynomialize(
-                    &preprocessing,
-                    &inputs,
-                    &iter::repeat(RangeLookup::<F>::id_for(256))
-                        .take(num_inputs)
-                        .collect_vec(),
-                    M,
-                    C,
-                )
-            };
-            assert_eq!(polynomials.dims, polynomials_check.dims);
-            assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
-            assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
-            assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
-            assert_eq!(
-                polynomials.lookup_flag_polys,
-                polynomials_check.lookup_flag_polys
-            );
-            assert_eq!(
-                polynomials.lookup_flag_bitvectors,
-                polynomials_check.lookup_flag_bitvectors
-            );
-            assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
-        }
+            lasso::polynomialize(
+                &preprocessing,
+                &inputs,
+                &iter::repeat(RangeLookup::<F>::id_for(256))
+                    .take(num_inputs / 2)
+                    .chain(iter::repeat(RangeLookup::<F>::id_for(320)).take(num_inputs / 2))
+                    .collect_vec(),
+                M,
+                C,
+            )
+        };
+        assert_eq!(polynomials.dims, polynomials_check.dims);
+        assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
+        assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
+        assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
+        assert_eq!(
+            polynomials.lookup_flag_polys,
+            polynomials_check.lookup_flag_polys
+        );
+        assert_eq!(
+            polynomials.lookup_flag_bitvectors,
+            polynomials_check.lookup_flag_bitvectors
+        );
+        assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
 
         {
             let mut transcript = ProofTranscript::new(b"Memory checking");
             let proof = lasso::MemoryCheckingProver::<C, M, F, _>::prove(
                 &preprocessing,
-                &polynomials,
+                &polynomials_check,
                 &mut transcript,
             );
 
@@ -180,6 +191,7 @@ fn run_coordinator(
                 &mut verifier_transcript,
             )?;
         }
+        println!("----------------------------------------------------------------");
     }
 
     let proof = memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, _>::prove(
