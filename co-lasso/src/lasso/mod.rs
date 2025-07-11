@@ -1,22 +1,17 @@
 mod prover;
+
 use ark_std::cfg_into_iter;
-pub use prover::{LassoProver, MemoryCheckingProof};
-
-use std::{
-    collections::{BTreeMap, HashMap},
-    iter,
-    marker::PhantomData,
-};
-
-use crate::subtables::{
-    LassoSubtable, LookupId, LookupSet, LookupType, SubtableIndices, SubtableSet,
-};
-use ark_ff::{BigInteger, PrimeField};
 use itertools::Itertools;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, field::JoltField},
     utils::math::Math,
 };
+
+use crate::{
+    instructions::LookupSet,
+    subtables::{LassoSubtable, SubtableIndices, SubtableSet},
+};
+pub use prover::{LassoProver, MemoryCheckingProof};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -232,7 +227,7 @@ where
 
     fn compute_lookup_outputs(inputs: &[Lookups]) -> Vec<F> {
         cfg_into_iter!(inputs)
-            .map(|lookup| lookup.output())
+            .map(|lookup| lookup.lookup_entry())
             .collect()
     }
 

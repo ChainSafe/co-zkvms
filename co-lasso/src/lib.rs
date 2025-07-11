@@ -2,6 +2,7 @@ pub mod grand_product;
 pub mod lasso;
 pub mod memory_checking;
 pub mod subtables;
+pub mod instructions;
 pub mod sumcheck;
 mod utils;
 mod poly;

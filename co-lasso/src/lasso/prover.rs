@@ -13,11 +13,9 @@ use jolt_core::{
     },
     utils::{mul_0_1_optimized, split_poly_flagged, transcript::ProofTranscript},
 };
-// use mpc_net::mpc_star::MpcStarNetCoordinator;
 use tracing::trace_span;
 
-use crate::subtables::{LookupSet, SubtableSet};
-
+use crate::{instructions::LookupSet, subtables::SubtableSet};
 use super::{LassoPolynomials, LassoPreprocessing};
 
 #[cfg(feature = "parallel")]
@@ -350,7 +348,7 @@ where
         let num_memories = multiset_hashes.read_hashes.len();
         assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
         assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
-        assert_eq!(multiset_hashes.init_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.init_hashes.len(), Subtables::COUNT);
     }
 
     fn interleave_hashes(

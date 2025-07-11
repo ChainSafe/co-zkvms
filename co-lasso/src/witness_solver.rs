@@ -1,4 +1,4 @@
-use crate::{lasso, subtables::LookupSet, utils};
+use crate::{instructions::LookupSet, lasso, utils};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
@@ -16,12 +16,12 @@ use mpc_core::protocols::{
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
-use std::{iter, marker::PhantomData};
+use std::marker::PhantomData;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::subtables::{Rep3LookupSet, SubtableSet};
+use crate::{instructions::Rep3LookupSet, subtables::SubtableSet};
 use crate::{lasso::LassoPreprocessing, utils::Forkable};
 
 pub struct Rep3LassoWitnessSolver<
@@ -211,7 +211,7 @@ where
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let mut lookup_outputs = Self::compute_lookup_outputs(lookups);
+        let mut lookup_outputs = Self::compute_lookup_outputs(lookups, &mut self.io_ctx0);
         lookup_outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
 
         let lookup_outputs = lookup_outputs;
@@ -252,11 +252,12 @@ where
         Ok(lookup_indices)
     }
 
-    fn compute_lookup_outputs(lookups: &[Lookups]) -> Vec<Rep3PrimeFieldShare<F>> {
-        cfg_into_iter!(lookups)
-            .zip(cfg_into_iter!(lookups))
-            .map(|(i, lookup)| lookup.output())
-            .collect()
+    #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::compute_lookup_outputs")]
+    fn compute_lookup_outputs(lookups: &[Lookups], io_ctx: &mut IoContext<Network>) -> Vec<Rep3PrimeFieldShare<F>> {
+        let outputs = lookups.iter()
+            .map(|lookup| lookup.output(io_ctx))
+            .collect_vec();
+        outputs
     }
 
     pub fn combine_polynomials(

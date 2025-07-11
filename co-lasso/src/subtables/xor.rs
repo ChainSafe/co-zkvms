@@ -1,39 +1,48 @@
-use ark_ff::PrimeField;
 use ark_std::log2;
-use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
+use jolt_core::{poly::field::JoltField, utils::split_bits};
+use std::marker::PhantomData;
 
-pub struct InstructionPreprocessing<F: JoltField> {
-  subtable_to_memory_indices: Vec<Vec<usize>>,
-  instruction_to_memory_indices: Vec<Vec<usize>>,
-  memory_to_subtable_index: Vec<usize>,
-  memory_to_dimension_index: Vec<usize>,
-  materialized_subtables: Vec<Vec<F>>,
-  num_memories: usize,
+use super::LassoSubtable;
+
+#[derive(Default, Debug)]
+pub struct XorSubtable<F: JoltField> {
+    _field: PhantomData<F>,
 }
 
-pub struct InstructionPolynomials<F: JoltField> {
-   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
-    /// `m` (# lookups).
-    pub dim: Vec<DensePolynomial<F>>,
-
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
-    pub read_cts: Vec<DensePolynomial<F>>,
-
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
-    pub final_cts: Vec<DensePolynomial<F>>,
-
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
-    /// size `m` (# lookups).
-    pub E_polys: Vec<DensePolynomial<F>>,
-
-    /// The lookup output for each instruction of the execution trace.
-    pub lookup_outputs: DensePolynomial<F>,
+impl<F: JoltField> XorSubtable<F> {
+  pub fn new() -> Self {
+      Self {
+          _field: PhantomData,
+      }
+  }
 }
 
-pub fn polynomialize(preprocessing: &InstructionPreprocessing<F>) -> InstructionPolynomials<F> {
+impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
+  fn materialize(&self, M: usize) -> Vec<F> {
+      let mut entries: Vec<F> = Vec::with_capacity(M);
+      let bits_per_operand = (log2(M) / 2) as usize;
 
+      // Materialize table entries in order where (x | y) ranges 0..M
+      for idx in 0..M {
+          let (x, y) = split_bits(idx, bits_per_operand);
+          let row = F::from_u64((x ^ y) as u64).unwrap();
+          entries.push(row);
+      }
+      entries
+  }
+
+  fn evaluate_mle(&self, point: &[F]) -> F {
+      // (1-x)*y + x*(1-y)
+      debug_assert!(point.len() % 2 == 0);
+      let b = point.len() / 2;
+      let (x, y) = point.split_at(b);
+
+      let mut result = F::zero();
+      for i in 0..b {
+          let x = x[b - i - 1];
+          let y = y[b - i - 1];
+          result += F::from_u64(1u64 << i).unwrap() * ((F::one() - x) * y + x * (F::one() - y));
+      }
+      result
+  }
 }

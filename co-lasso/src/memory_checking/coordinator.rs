@@ -20,7 +20,7 @@ use jolt_core::{
         transcript::ProofTranscript,
     },
 };
-use mpc_core::protocols::rep3;
+use mpc_core::protocols::rep3::{self, network::Rep3Network};
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
 use color_eyre::eyre::Result;
@@ -29,33 +29,30 @@ use tracing::trace_span;
 
 use crate::{
     grand_product::BatchedGrandProductProver,
-    lasso::{LassoPolynomials, MemoryCheckingProof},
+    lasso::{LassoPolynomials, LassoPreprocessing, MemoryCheckingProof},
     poly::Rep3DensePolynomial,
-    lasso::LassoPreprocessing,
+    subtables::SubtableSet,
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3MemoryCheckingProver<
-    const C: usize,
-    const M: usize,
-    F: JoltField,
-    N: MpcStarNetCoordinator,
-    // C: CommitmentScheme<Field = F>,
-> {
-    pub _marker: PhantomData<(F, N)>,
+pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, Subtables, Network> {
+    pub _marker: PhantomData<(F, Subtables, Network)>,
 }
 
 type Preprocessing<F> = LassoPreprocessing<F>;
 
-impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
-    Rep3MemoryCheckingProver<C, M, F, N>
+impl<F: JoltField, const C: usize, const M: usize, Subtables, Network>
+    Rep3MemoryCheckingProver<C, M, F, Subtables, Network>
+where
+    Subtables: SubtableSet<F>,
+    Network: MpcStarNetCoordinator,
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
     pub fn prove(
         preprocessing: &Preprocessing<F>,
-        network: &mut N,
+        network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> Result<MemoryCheckingProof<F, LassoPolynomials<F>>> {
         let (
@@ -77,7 +74,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
 
     fn prove_grand_products(
         preprocessing: &Preprocessing<F>,
-        network: &mut N,
+        network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> Result<(
         BatchedGrandProductArgument<F>,
@@ -91,10 +88,6 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
         let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
         network.broadcast_request((gamma, tau))?;
         let num_lookups = network.receive_responses(0usize)?[0];
-
-        let (rw_circuit_left, rw_circuit_right): (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) = network.receive_responses((Rep3PrimeFieldShare::zero_share(), Rep3PrimeFieldShare::zero_share()))?.into_iter().unzip();
-        let rw_circuit_left = rep3::combine_field_element(rw_circuit_left[0], rw_circuit_left[1], rw_circuit_left[2]);
-        let rw_circuit_right = rep3::combine_field_element(rw_circuit_right[0], rw_circuit_right[1], rw_circuit_right[2]);
 
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
@@ -148,7 +141,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
     }
 
     fn uninterleave_hashes(
-        _preprocessing: &Preprocessing<F>,
+        preprocessing: &Preprocessing<F>,
         read_write_hashes: &[F],
         init_final_hashes: &[F],
     ) -> MultisetHashes<F> {
@@ -162,13 +155,18 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }
 
-        let mut init_hashes = Vec::with_capacity(num_memories);
-        let mut final_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
-            init_hashes.push(init_final_hashes[2 * i]);
-            final_hashes.push(init_final_hashes[2 * i + 1]);
+        let mut init_hashes = Vec::with_capacity(Subtables::COUNT);
+        let mut final_hashes = Vec::with_capacity(preprocessing.num_memories);
+        let mut init_final_hashes = init_final_hashes.iter();
+        for subtable_index in 0..Subtables::COUNT {
+            // I
+            init_hashes.push(*init_final_hashes.next().unwrap());
+            // F F F F
+            let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
+            for _ in memory_indices {
+                final_hashes.push(*init_final_hashes.next().unwrap());
+            }
         }
-
         MultisetHashes {
             read_hashes,
             write_hashes,
@@ -178,26 +176,34 @@ impl<F: JoltField, const C: usize, const M: usize, N: MpcStarNetCoordinator>
     }
 
     fn check_multiset_equality(
-        _preprocessing: &Preprocessing<F>,
+        preprocessing: &Preprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
-        let num_memories = multiset_hashes.read_hashes.len();
-        assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
-        assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
-        assert_eq!(multiset_hashes.init_hashes.len(), num_memories);
+        assert_eq!(
+            multiset_hashes.final_hashes.len(),
+            preprocessing.num_memories
+        );
+        assert_eq!(
+            multiset_hashes.write_hashes.len(),
+            preprocessing.num_memories
+        );
+        assert_eq!(multiset_hashes.init_hashes.len(), Subtables::COUNT);
 
-        (0..num_memories).into_par_iter().for_each(|i| {
-            let read_hash = multiset_hashes.read_hashes[i];
-            let write_hash = multiset_hashes.write_hashes[i];
-            let init_hash = multiset_hashes.init_hashes[i];
-            let final_hash = multiset_hashes.final_hashes[i];
-            
-            assert_eq!(
-                init_hash * write_hash,
-                final_hash * read_hash,
-                "Multiset hashes don't match"
-            );
-        });
+        (0..preprocessing.num_memories)
+            .into_par_iter()
+            .for_each(|i| {
+                let read_hash = multiset_hashes.read_hashes[i];
+                let write_hash = multiset_hashes.write_hashes[i];
+                let init_hash =
+                    multiset_hashes.init_hashes[preprocessing.memory_to_subtable_index[i]];
+                let final_hash = multiset_hashes.final_hashes[i];
+
+                assert_eq!(
+                    init_hash * write_hash,
+                    final_hash * read_hash,
+                    "Multiset hashes don't match"
+                );
+            });
     }
 
     fn interleave_hashes(

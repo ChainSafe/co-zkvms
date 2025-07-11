@@ -18,14 +18,14 @@ use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
 use co_lasso::{
-    lasso, memory_checking,
-    subtables::{range_check::RangeLookup, TestLookups, TestSubtables},
-    Rep3LassoWitnessSolver,
+    instructions::{self, range_check::RangeLookup, xor::XORInstruction},
+    lasso, memory_checking, subtables, Rep3LassoWitnessSolver,
 };
 
-type TestLassoProver = lasso::LassoProver<C, M, F, TestLookups<F>, TestSubtables<F>>;
-type TestLassoWitnessSolver<Network> =
-    Rep3LassoWitnessSolver<C, M, F, TestLookups<F>, TestSubtables<F>, Network>;
+type Lookups = instructions::TestLookups<F>;
+type Subtables = subtables::TestSubtables<F>;
+type TestLassoProver = lasso::LassoProver<C, M, F, Lookups, Subtables>;
+type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, Lookups, Subtables, Network>;
 
 #[derive(Parser)]
 struct Args {
@@ -37,9 +37,8 @@ struct Args {
     log_num_inputs: usize,
 }
 
-const LIMB_BITS: usize = 8;
 const C: usize = 2; // num chunks
-const M: usize = 1 << LIMB_BITS;
+const M: usize = 1 << 8;
 type F = ark_bn254::Fr;
 
 // #[tokio::main]
@@ -82,16 +81,25 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing =
-        lasso::LassoPreprocessing::preprocess::<C, M, TestLookups<F>, TestSubtables<F>>();
+    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
     let party_id = rep3_net.party_id();
 
     let mut rng = test_rng();
+    // let lookups = iter::repeat_with(|| {
+    //     let a = F::from(rng.gen_range(0..256));
+    //     let b = F::from(rng.gen_range(0..256));
+    //     Lookups::XOR(XORInstruction::shared(
+    //         rep3::binary::promote_to_trivial_share(party_id, &a.into()),
+    //         rep3::binary::promote_to_trivial_share(party_id, &b.into()),
+    //     ))
+    // })
+    // .take(num_inputs)
+    // .collect_vec();
     let lookups = chain!(
         iter::repeat_with(|| {
             let value = F::from(rng.gen_range(0..256));
-            TestLookups::Range256(RangeLookup::shared(
+            Lookups::Range256(RangeLookup::shared(
                 rep3::arithmetic::promote_to_trivial_share(party_id, value),
                 rep3::binary::promote_to_trivial_share(party_id, &value.into()),
             ))
@@ -100,7 +108,7 @@ fn run_party(
         .collect_vec(),
         iter::repeat_with(|| {
             let value = F::from(rng.gen_range(0..320));
-            TestLookups::Range320(RangeLookup::shared(
+            Lookups::Range320(RangeLookup::shared(
                 rep3::arithmetic::promote_to_trivial_share(party_id, value),
                 rep3::binary::promote_to_trivial_share(party_id, &value.into()),
             ))
@@ -116,14 +124,10 @@ fn run_party(
 
     rep3_net.send_response(polynomials.clone())?;
 
-    let mut prover = memory_checking::worker::Rep3MemoryCheckingProver::<
-        C,
-        M,
-        F,
-        TestLookups<F>,
-        TestSubtables<F>,
-        _,
-    >::new(rep3_net)?;
+    let mut prover =
+        memory_checking::worker::Rep3MemoryCheckingProver::<C, M, F, Lookups, Subtables, _>::new(
+            rep3_net,
+        )?;
     prover.prove(&preprocessing, &polynomials)?;
 
     prover.io_ctx.network.log_connection_stats();
@@ -142,8 +146,7 @@ fn run_coordinator(
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    let preprocessing =
-        lasso::LassoPreprocessing::preprocess::<C, M, TestLookups<F>, TestSubtables<F>>();
+    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
     let mut transcript = ProofTranscript::new(b"Memory checking");
 
     let polynomials_shares = rep3_net.receive_responses(Default::default())?;
@@ -154,13 +157,21 @@ fn run_coordinator(
         let polynomials_check = {
             let mut rng = test_rng();
 
+            // let lookups = chain!(iter::repeat_with(|| {
+            //     let a = rng.gen_range(0..256);
+            //     let b = rng.gen_range(0..256);
+            //     Lookups::XOR(XORInstruction::public(a, b))
+            // })
+            // .take(num_inputs)
+            // .collect_vec())
+            // .collect_vec();
             let lookups = chain!(
-                iter::repeat_with(|| TestLookups::Range256(RangeLookup::public(F::from(
+                iter::repeat_with(|| Lookups::Range256(RangeLookup::public(F::from(
                     rng.gen_range(0..256)
                 ))))
                 .take(num_inputs / 2)
                 .collect_vec(),
-                iter::repeat_with(|| TestLookups::Range320(RangeLookup::public(F::from(
+                iter::repeat_with(|| Lookups::Range320(RangeLookup::public(F::from(
                     rng.gen_range(0..320)
                 ))))
                 .take(num_inputs / 2)
@@ -168,7 +179,7 @@ fn run_coordinator(
             )
             .collect_vec();
 
-            lasso::LassoProver::<C, M, F, TestLookups<F>, TestSubtables<F>>::polynomialize(
+            lasso::LassoProver::<C, M, F, Lookups, Subtables>::polynomialize(
                 &preprocessing,
                 &lookups,
             )
@@ -196,11 +207,12 @@ fn run_coordinator(
         }
     }
 
-    let proof = memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, _>::prove(
-        &preprocessing,
-        &mut rep3_net,
-        &mut transcript,
-    )?;
+    let proof =
+        memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, Subtables, _>::prove(
+            &preprocessing,
+            &mut rep3_net,
+            &mut transcript,
+        )?;
 
     let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
     TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;

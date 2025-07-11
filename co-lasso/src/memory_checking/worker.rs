@@ -18,7 +18,8 @@ use crate::{
     },
     lasso::LassoPreprocessing,
     poly::Rep3DensePolynomial,
-    subtables::{LookupSet, SubtableSet},
+    subtables::SubtableSet,
+    instructions::LookupSet,
     utils::{self, split_rep3_poly_flagged},
     witness_solver::Rep3LassoPolynomials,
 };
@@ -209,12 +210,6 @@ where
             .collect::<Result<Vec<Rep3GrandProductCircuit<F>>>>()?;
 
         drop(_span);
-
-        let len = read_write_circuits[0].left_vec.len();
-        self.io_ctx.network.send_response((
-            read_write_circuits[0].left_vec[len - 1][0].clone(),
-            read_write_circuits[0].right_vec[len - 1][0],
-        ))?;
 
         let read_write_hashes: Vec<F> = trace_span!("compute_hashes").in_scope(|| {
             read_write_circuits
