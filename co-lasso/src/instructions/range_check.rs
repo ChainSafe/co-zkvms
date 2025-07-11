@@ -2,7 +2,12 @@ use ark_ff::PrimeField;
 use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use itertools::Itertools;
 use jolt_core::poly::field::JoltField;
-use mpc_core::protocols::rep3::{network::{IoContext, Rep3Network}, Rep3BigUintShare};
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare,
+};
+use std::iter::Sum;
 use std::{borrow::Borrow, iter};
 
 use super::{LookupType, Rep3LookupType};
@@ -42,6 +47,10 @@ impl<const BOUND: u64, F: JoltField> LookupType<F> for RangeLookup<BOUND, F> {
             .collect_vec()
             .iter(),
         )
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
     }
 
     // SubtableIndices map subtable to memories
@@ -99,7 +108,20 @@ impl<const BOUND: u64, F: JoltField> Rep3LookupType<F> for RangeLookup<BOUND, F>
         _: usize,
         M: usize,
     ) -> Rep3PrimeFieldShare<F> {
-        todo!()
+        let weight = F::from(M as u64);
+        inner_product_rep3(
+            operands,
+            iter::successors(Some(F::ONE), |power_of_weight| {
+                Some(*power_of_weight * weight)
+            })
+            .take(operands.len())
+            .collect_vec()
+            .iter(),
+        )
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
@@ -147,6 +169,17 @@ fn inner_product<F: JoltField>(
         lhs.into_iter()
             .zip(rhs.into_iter())
             .map(|(lhs, rhs)| *rhs.borrow() * *lhs.borrow()),
+    )
+}
+
+fn inner_product_rep3<F: JoltField>(
+    lhs: impl IntoIterator<Item = impl Borrow<Rep3PrimeFieldShare<F>>>,
+    rhs: impl IntoIterator<Item = impl Borrow<F>>,
+) -> Rep3PrimeFieldShare<F> {
+    Rep3PrimeFieldShare::sum(
+        lhs.into_iter()
+            .zip(rhs.into_iter())
+            .map(|(lhs, rhs)| rep3::arithmetic::mul_public(*lhs.borrow(), *rhs.borrow())),
     )
 }
 

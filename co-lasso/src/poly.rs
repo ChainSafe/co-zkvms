@@ -9,7 +9,7 @@ use std::{ops::Index, slice::SliceIndex};
 
 use super::Rep3PrimeFieldShare;
 
-#[derive(Debug, Clone, CanonicalDeserialize, CanonicalSerialize)]
+#[derive(Debug, Clone, Default, CanonicalDeserialize, CanonicalSerialize)]
 pub struct Rep3DensePolynomial<F: JoltField> {
     // pub party_id: usize,
     pub num_vars: usize,
@@ -110,6 +110,47 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         b.bound_poly_var_top_many_ones(r); // TODO: check if this is correct with rep3 shares
 
         *self = Self::from_poly_shares(a, b);
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn new_poly_from_fix_var_top_flags(&self, r: &F) -> Self {
+        // let n = self.len() / 2;
+        // let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
+
+        // for i in 0..n {
+        //     // let low' = low + r * (high - low)
+        //     // Special truth table here
+        //     //         high 0   high 1
+        //     // low 0     0        r
+        //     // low 1   (1-r)      1
+        //     let low = self.Z[i];
+        //     let high = self.Z[i + n];
+
+        //     if low.is_zero() {
+        //         if high.is_one() {
+        //             new_evals[i] = *r;
+        //         } else if !high.is_zero() {
+        //             panic!("Shouldn't happen for a flag poly");
+        //         }
+        //     } else if low.is_one() {
+        //         if high.is_one() {
+        //             new_evals[i] = F::one();
+        //         } else if high.is_zero() {
+        //             new_evals[i] = F::one() - r;
+        //         } else {
+        //             panic!("Shouldn't happen for a flag poly");
+        //         }
+        //     }
+        // }
+        // let num_vars = self.num_vars - 1;
+        // let len = n;
+
+        // Self {
+        //     num_vars,
+        //     len,
+        //     Z: new_evals,
+        // }
+        todo!()
     }
 
     // pub fn from_poly_shares(

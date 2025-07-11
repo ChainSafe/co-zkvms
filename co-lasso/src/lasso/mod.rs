@@ -11,7 +11,7 @@ use crate::{
     instructions::LookupSet,
     subtables::{LassoSubtable, SubtableIndices, SubtableSet},
 };
-pub use prover::{LassoProver, MemoryCheckingProof};
+pub use prover::{LassoProver, LassoProof, MemoryCheckingProof, PrimarySumcheck};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

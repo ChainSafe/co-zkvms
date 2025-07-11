@@ -1,4 +1,4 @@
-use crate::{instructions::LookupSet, lasso, utils};
+use crate::{instructions::LookupSet, lasso, poly::{combine_poly_shares, Rep3DensePolynomial}, utils};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
@@ -37,25 +37,25 @@ pub struct Rep3LassoWitnessSolver<
     _marker: PhantomData<(F, Lookups, Subtables)>,
 }
 
-#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize, Default)]
+#[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3LassoPolynomials<F: JoltField> {
     /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
     /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
     /// `m` (# lookups).
-    pub dims: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    pub dims: Vec<Rep3DensePolynomial<F>>,
 
     /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
-    pub read_cts: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    pub read_cts: Vec<Rep3DensePolynomial<F>>,
 
     /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
-    pub final_cts: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    pub final_cts: Vec<Rep3DensePolynomial<F>>,
 
     /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
     /// size `m` (# lookups).
-    pub e_polys: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    pub e_polys: Vec<Rep3DensePolynomial<F>>,
 
     /// Polynomial encodings for flag polynomials for each instruction.
     /// If using a single instruction this will be empty.
@@ -69,7 +69,7 @@ pub struct Rep3LassoPolynomials<F: JoltField> {
     pub lookup_flag_bitvectors: Vec<Vec<u64>>,
 
     /// The lookup output for each instruction of the execution trace.
-    pub lookup_outputs: Vec<Rep3PrimeFieldShare<F>>,
+    pub lookup_outputs: Rep3DensePolynomial<F>,
 }
 
 impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables, Network>
@@ -166,7 +166,7 @@ where
                         }
                     }
 
-                    (read_cts_i, final_cts_i, subtable_lookups)
+                    (Rep3DensePolynomial::new(read_cts_i), Rep3DensePolynomial::new(final_cts_i), Rep3DensePolynomial::new(subtable_lookups))
                 },
             )
         })?;
@@ -196,7 +196,7 @@ where
                         dim[i] = rep3::conversion::b2a_selector(&access_sequence[i], &mut io_ctx0)
                             .unwrap();
                     }
-                    dim
+                    Rep3DensePolynomial::new(dim)
                 },
             )
         })?;
@@ -211,10 +211,8 @@ where
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let mut lookup_outputs = Self::compute_lookup_outputs(lookups, &mut self.io_ctx0);
-        lookup_outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
+        let lookup_outputs = Self::compute_lookup_outputs(lookups, num_reads, &mut self.io_ctx0);
 
-        let lookup_outputs = lookup_outputs;
         Ok(Rep3LassoPolynomials {
             dims,
             read_cts,
@@ -253,11 +251,12 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::compute_lookup_outputs")]
-    fn compute_lookup_outputs(lookups: &[Lookups], io_ctx: &mut IoContext<Network>) -> Vec<Rep3PrimeFieldShare<F>> {
-        let outputs = lookups.iter()
+    fn compute_lookup_outputs(lookups: &[Lookups], num_reads: usize, io_ctx: &mut IoContext<Network>) -> Rep3DensePolynomial<F> {
+        let mut outputs = lookups.iter()
             .map(|lookup| lookup.output(io_ctx))
             .collect_vec();
-        outputs
+        outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
+        Rep3DensePolynomial::new(outputs)
     }
 
     pub fn combine_polynomials(
@@ -267,34 +266,27 @@ where
 
         let dims = multizip((share1.dims, share2.dims, share3.dims))
             .map(|(dim1, dim2, dim3)| {
-                DensePolynomial::new(rep3::combine_field_elements(&dim1, &dim2, &dim3))
+                combine_poly_shares(vec![dim1, dim2, dim3])
             })
             .collect_vec();
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
             .map(|(read1, read2, read3)| {
-                DensePolynomial::new(rep3::combine_field_elements(&read1, &read2, &read3))
+                combine_poly_shares(vec![read1, read2, read3])
             })
             .collect_vec();
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
             .map(|(final1, final2, final3)| {
-                DensePolynomial::new(rep3::combine_field_elements(&final1, &final2, &final3))
+                combine_poly_shares(vec![final1, final2, final3])
             })
             .collect_vec();
 
         let e_polys = multizip((share1.e_polys, share2.e_polys, share3.e_polys))
-            .map(|(e1, e2, e3)| DensePolynomial::new(rep3::combine_field_elements(&e1, &e2, &e3)))
+            .map(|(e1, e2, e3)| combine_poly_shares(vec![e1, e2, e3]))
             .collect_vec();
 
-        let lookup_outputs = DensePolynomial::new(
-            rep3::combine_field_elements(
-                &share1.lookup_outputs,
-                &share2.lookup_outputs,
-                &share3.lookup_outputs,
-            )
-            .to_vec(),
-        );
+        let lookup_outputs = combine_poly_shares(vec![share1.lookup_outputs, share2.lookup_outputs, share3.lookup_outputs]);
 
         lasso::LassoPolynomials {
             dims,

@@ -8,6 +8,7 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare};
 use num_bigint::BigUint;
 use std::ops::{BitAnd, BitOr, Shr};
 
+use crate::instructions::utils::concatenate_lookups_rep3;
 use crate::subtables::xor::XorSubtable;
 use crate::subtables::LassoSubtable;
 
@@ -38,9 +39,9 @@ impl<F: JoltField> LookupType<F> for XORInstruction<F> {
         concatenate_lookups(vals, C, log2(M) as usize / 2)
     }
 
-    // fn g_poly_degree(&self, _: usize) -> usize {
-    //     1
-    // }
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
+    }
 
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(Box::new(XorSubtable::new()), SubtableIndices::from(0..C))]
@@ -72,7 +73,11 @@ impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
         C: usize,
         M: usize,
     ) -> Rep3PrimeFieldShare<F> {
-        todo!()
+        concatenate_lookups_rep3(vals, C, log2(M) as usize / 2)
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
     }
 
     fn to_indices(

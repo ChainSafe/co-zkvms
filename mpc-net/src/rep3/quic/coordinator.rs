@@ -8,6 +8,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
+use mpc_types::protocols::rep3::id::PartyID;
 use quinn::{
     rustls::pki_types::CertificateDer, Connection, Endpoint, RecvStream, SendStream, VarInt,
 };
@@ -151,6 +152,21 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .map(|(_, conn)| conn.stats().udp_rx.bytes as u64)
             .sum();
         (sent_bytes, recv_bytes)
+    }
+    
+    fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        _default_response: T,
+    ) -> Result<T> {
+        let channel = self.channels.get_mut(&PartyWorkerID::new(party_id.into(), worker_id).global_worker_id()).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no such party")
+        })?;
+        let response = channel.blocking_recv().blocking_recv().context("while receiving response")??;
+        T::deserialize_uncompressed_unchecked(&response[..])
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            .context("while deserializing response")
     }
 }
 

@@ -129,6 +129,15 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
     fn total_bandwidth_used(&self) -> (u64, u64) {
         (self.total_send_bytes as u64, self.total_recv_bytes as u64)
     }
+    
+    fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        default_response: T,
+    ) -> Result<T> {
+        todo!()
+    }
 }
 
 pub struct Rep3WorkerMPI<'a> {

@@ -7,6 +7,12 @@ pub trait MpcStarNetCoordinator {
         &mut self,
         default_response: T,
     ) -> Result<Vec<T>>;
+    fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        default_response: T,
+    ) -> Result<T>;
     fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: T) -> Result<()>;
     fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: Vec<T>) -> Result<()>;
 

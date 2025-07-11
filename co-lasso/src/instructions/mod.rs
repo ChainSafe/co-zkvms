@@ -1,6 +1,8 @@
 pub mod range_check;
 pub mod xor;
 
+mod utils;
+
 use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
@@ -21,6 +23,9 @@ pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F;
 
+    /// The degree of the `g` polynomial described by `combine_lookups`
+    fn g_poly_degree(&self, C: usize) -> usize;
+
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
     fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
@@ -40,12 +45,10 @@ pub trait Rep3LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     // fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>>;
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-    ) -> Rep3PrimeFieldShare<F>;
+    fn combine_lookups(&self, vals: &[Rep3PrimeFieldShare<F>], C: usize, M: usize) -> Rep3PrimeFieldShare<F>;
+
+    /// The degree of the `g` polynomial described by `combine_lookups`
+    fn g_poly_degree(&self, C: usize) -> usize;
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 

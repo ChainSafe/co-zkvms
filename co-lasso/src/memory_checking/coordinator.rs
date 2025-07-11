@@ -1,36 +1,28 @@
 use std::marker::PhantomData;
 
-use ark_ec::pairing::Pairing;
-use ark_ff::{biginteger::arithmetic, Field};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use eyre::Context;
-use itertools::{interleave, multizip, Itertools};
+use itertools::{interleave, Itertools};
 use jolt_core::{
     lasso::memory_checking::MultisetHashes,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
-        field::JoltField, structured_poly::StructuredCommitment,
+        field::JoltField,
+        unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::grand_product::{
-        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
-    },
+    subprotocols::{grand_product::BatchedGrandProductArgument, sumcheck::SumcheckInstanceProof},
     utils::{
-        errors::ProofVerifyError, math::Math, mul_0_1_optimized, split_poly_flagged,
-        transcript::ProofTranscript,
+        math::Math,
+        transcript::{AppendToTranscript, ProofTranscript},
     },
 };
-use mpc_core::protocols::rep3::{self, network::Rep3Network};
+use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
 use color_eyre::eyre::Result;
-use spartan::transcript::Transcript;
-use tracing::trace_span;
 
 use crate::{
     grand_product::BatchedGrandProductProver,
-    lasso::{LassoPolynomials, LassoPreprocessing, MemoryCheckingProof},
-    poly::Rep3DensePolynomial,
+    lasso::{LassoPreprocessing, LassoProof, MemoryCheckingProof, PrimarySumcheck},
     subtables::SubtableSet,
 };
 
@@ -51,10 +43,127 @@ where
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
     pub fn prove(
+        trace_length: usize,
         preprocessing: &Preprocessing<F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> Result<MemoryCheckingProof<F, LassoPolynomials<F>>> {
+    ) -> Result<LassoProof<C, M, F>> {
+        let r_eq =
+            transcript.challenge_vector::<F>(b"Jolt instruction lookups", trace_length.log_2());
+        network.broadcast_request(r_eq)?;
+
+        let num_rounds = trace_length.log_2();
+
+        let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
+            Self::prove_primary_sumcheck(num_rounds, transcript, network)?;
+
+        let primary_sumcheck = PrimarySumcheck {
+            sumcheck_proof: primary_sumcheck_proof,
+            num_rounds,
+            // openings: sumcheck_openings,
+            // opening_proof: sumcheck_opening_proof,
+        };
+
+        let memory_checking_proof =
+            Self::prove_memory_checking(preprocessing, network, transcript)?;
+
+        Ok(LassoProof {
+            primary_sumcheck,
+            memory_checking: memory_checking_proof,
+        })
+    }
+
+    /// Prove Jolt primary sumcheck including instruction collation.
+    ///
+    /// Computes \sum{ eq(r,x) * [ flags_0(x) * g_0(E(x)) + flags_1(x) * g_1(E(x)) + ... + flags_{NUM_INSTRUCTIONS}(E(x)) * g_{NUM_INSTRUCTIONS}(E(x)) ]}
+    /// via the sumcheck protocol.
+    /// Note: These E(x) terms differ from term to term depending on the memories used in the instruction.
+    ///
+    /// Returns: (SumcheckProof, Random evaluation point, claimed evaluations of polynomials)
+    ///
+    /// Params:
+    /// - `claim`: Claimed sumcheck evaluation.
+    /// - `num_rounds`: Number of rounds to run sumcheck. Corresponds to the number of free bits or free variables in the polynomials.
+    /// - `memory_polys`: Each of the `E` polynomials or "dereferenced memory" polynomials.
+    /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
+    /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
+    /// - `transcript`: Fiat-shamir transcript.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_primary_sumcheck")]
+    fn prove_primary_sumcheck(
+        num_rounds: usize,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>, F)> {
+        // Check all polys are the same size
+
+        let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+        let round_uni_poly = {
+            let [p1, p2, p3] = network
+                .receive_responses(UniPoly::from_coeff(vec![]))?
+                .try_into()
+                .unwrap();
+            UniPoly::from_coeff(additive::combine_field_elements::<F>(
+                &p1.as_slice(),
+                &p2.as_slice(),
+                &p3.as_slice(),
+            ))
+        };
+        compressed_polys.push(round_uni_poly.compress());
+        let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
+        network.broadcast_request(r_j)?;
+        random_vars.push(r_j);
+
+        for _round in 1..num_rounds {
+            let round_uni_poly = {
+                let [p1, p2, p3] = network
+                    .receive_responses(UniPoly::from_coeff(vec![]))?
+                    .try_into()
+                    .unwrap();
+                UniPoly::from_coeff(additive::combine_field_elements::<F>(
+                    &p1.as_slice(),
+                    &p2.as_slice(),
+                    &p3.as_slice(),
+                ))
+            };
+            compressed_polys.push(round_uni_poly.compress());
+            let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
+            network.broadcast_request(r_j)?;
+            random_vars.push(r_j);
+        } // End rounds
+
+        // Pass evaluations at point r back in proof:
+        // - flags(r) * NUM_INSTRUCTIONS
+        // - E(r) * NUM_SUBTABLES
+
+        // Polys are fully defined so we can just take the first (and only) evaluation
+        // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
+
+        let flag_evals = network.receive_response(PartyID::ID0, 0, vec![])?;
+        let [(me1, oe1), (me2, oe2), (me3, oe3)] = network
+            .receive_responses((vec![], Rep3PrimeFieldShare::zero_share()))?
+            .try_into()
+            .unwrap();
+        let memory_evals = rep3::combine_field_elements(&me1, &me2, &me3);
+        let outputs_eval = rep3::combine_field_element(oe1, oe2, oe3);
+
+        Ok((
+            SumcheckInstanceProof::new(compressed_polys),
+            random_vars,
+            flag_evals,
+            memory_evals,
+            outputs_eval,
+        ))
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
+    pub fn prove_memory_checking(
+        preprocessing: &Preprocessing<F>,
+        network: &mut Network,
+        transcript: &mut ProofTranscript,
+    ) -> Result<MemoryCheckingProof<F>> {
         let (
             read_write_grand_product,
             init_final_grand_product,
@@ -65,7 +174,6 @@ where
             .context("while proving grand products")?;
 
         Ok(MemoryCheckingProof {
-            _polys: PhantomData,
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
@@ -222,5 +330,14 @@ where
         .collect();
 
         (read_write_hashes, init_final_hashes)
+    }
+
+    fn update_primary_sumcheck_transcript(
+        round_uni_poly: UniPoly<F>,
+        transcript: &mut ProofTranscript,
+    ) -> F {
+        round_uni_poly.append_to_transcript(b"poly", transcript);
+
+        transcript.challenge_scalar::<F>(b"challenge_nextround")
     }
 }
