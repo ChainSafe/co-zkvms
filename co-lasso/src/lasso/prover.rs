@@ -11,27 +11,20 @@ use jolt_core::{
     subprotocols::grand_product::{
         BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
     },
-    utils::{
-        errors::ProofVerifyError, mul_0_1_optimized, split_poly_flagged,
-        transcript::ProofTranscript,
-    },
+    utils::{mul_0_1_optimized, split_poly_flagged, transcript::ProofTranscript},
 };
 // use mpc_net::mpc_star::MpcStarNetCoordinator;
 use tracing::trace_span;
+
+use crate::subtables::{LookupSet, SubtableSet};
 
 use super::{LassoPolynomials, LassoPreprocessing};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct MemoryCheckingProver<
-    const C: usize,
-    const M: usize,
-    F: JoltField,
-    // C: CommitmentScheme<Field = F>,
-    Polynomials,
-> {
-    pub _marker: PhantomData<(F, Polynomials)>,
+pub struct LassoProver<const C: usize, const M: usize, F: JoltField, Lookups, Subtables> {
+    pub _marker: PhantomData<(F, Lookups, Subtables)>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -63,7 +56,12 @@ where
 type Preprocessing<F> = LassoPreprocessing<F>;
 type Polynomials<F> = LassoPolynomials<F>;
 
-impl<F: JoltField, const C: usize, const M: usize> MemoryCheckingProver<C, M, F, Polynomials<F>> {
+impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables>
+    LassoProver<C, M, F, Lookups, Subtables>
+where
+    Lookups: LookupSet<F>,
+    Subtables: SubtableSet<F>,
+{
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove")]
     pub fn prove(
         preprocessing: &Preprocessing<F>,
@@ -275,7 +273,7 @@ impl<F: JoltField, const C: usize, const M: usize> MemoryCheckingProver<C, M, F,
             .into_par_iter()
             .map(|memory_index| {
                 let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..preprocessing.lookups.len() {
+                for instruction_index in 0..Lookups::COUNT {
                     if preprocessing.lookup_to_memory_indices[instruction_index]
                         .contains(&memory_index)
                     {

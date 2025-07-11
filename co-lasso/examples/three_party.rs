@@ -1,30 +1,31 @@
-use std::{iter, path::PathBuf};
-
-use ark_ff::{PrimeField, Zero};
 use ark_std::test_rng;
 use clap::Parser;
-use co_lasso::{subtables::range_check::RangeLookup, Rep3LassoWitnessSolver};
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
-use futures::{SinkExt, StreamExt};
-use itertools::Itertools;
-use jolt_core::{poly::field::JoltField, utils::transcript::ProofTranscript};
-use mpc_core::protocols::rep3::{self, network::Rep3MpcNet, PartyID, Rep3BigUintShare};
+use itertools::{chain, Itertools};
+use jolt_core::utils::transcript::ProofTranscript;
+use mpc_core::protocols::rep3;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
-    MpcNetworkHandler,
 };
-use num_bigint::BigUint;
 use rand::Rng;
+use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
-use co_lasso::{lasso, memory_checking};
+use co_lasso::{
+    lasso, memory_checking,
+    subtables::{range_check::RangeLookup, TestLookups, TestSubtables},
+    Rep3LassoWitnessSolver,
+};
+
+type TestLassoProver = lasso::LassoProver<C, M, F, TestLookups<F>, TestSubtables<F>>;
+type TestLassoWitnessSolver<Network> =
+    Rep3LassoWitnessSolver<C, M, F, TestLookups<F>, TestSubtables<F>, Network>;
 
 #[derive(Parser)]
 struct Args {
@@ -81,37 +82,48 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M>([
-        RangeLookup::<F>::new_boxed(256),
-        RangeLookup::<F>::new_boxed(320),
-    ]);
+    let preprocessing =
+        lasso::LassoPreprocessing::preprocess::<C, M, TestLookups<F>, TestSubtables<F>>();
+
+    let party_id = rep3_net.party_id();
 
     let mut rng = test_rng();
-    let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
+    let lookups = chain!(
+        iter::repeat_with(|| {
+            let value = F::from(rng.gen_range(0..256));
+            TestLookups::Range256(RangeLookup::shared(
+                rep3::arithmetic::promote_to_trivial_share(party_id, value),
+                rep3::binary::promote_to_trivial_share(party_id, &value.into()),
+            ))
+        })
         .take(num_inputs / 2)
-        .collect_vec()
-        .into_iter()
-        .chain(iter::repeat_with(|| F::from(rng.gen_range(0..320))).take(num_inputs / 2))
-        .collect_vec();
-    let inputs_shares = promote_to_trivial_shares(&inputs, my_id.try_into().unwrap());
-    let mut witness_solver = Rep3LassoWitnessSolver::new(rep3_net).unwrap();
-    let polynomials = witness_solver.polynomialize(
-        &preprocessing,
-        &inputs_shares,
-        &iter::repeat(RangeLookup::<F>::id_for(256))
-            .take(num_inputs / 2)
-            .chain(iter::repeat(RangeLookup::<F>::id_for(320)).take(num_inputs / 2))
-            .collect_vec(),
-        M,
-        C,
-    )?;
+        .collect_vec(),
+        iter::repeat_with(|| {
+            let value = F::from(rng.gen_range(0..320));
+            TestLookups::Range320(RangeLookup::shared(
+                rep3::arithmetic::promote_to_trivial_share(party_id, value),
+                rep3::binary::promote_to_trivial_share(party_id, &value.into()),
+            ))
+        })
+        .take(num_inputs / 2)
+        .collect_vec(),
+    )
+    .collect_vec();
+    let mut witness_solver = TestLassoWitnessSolver::<Rep3QuicMpcNetWorker>::new(rep3_net).unwrap();
+    let polynomials = witness_solver.polynomialize(&preprocessing, &lookups)?;
 
     let mut rep3_net = witness_solver.io_ctx0.network;
 
     rep3_net.send_response(polynomials.clone())?;
 
-    let mut prover =
-        memory_checking::worker::Rep3MemoryCheckingProver::<C, M, F, _, _>::new(rep3_net)?;
+    let mut prover = memory_checking::worker::Rep3MemoryCheckingProver::<
+        C,
+        M,
+        F,
+        TestLookups<F>,
+        TestSubtables<F>,
+        _,
+    >::new(rep3_net)?;
     prover.prove(&preprocessing, &polynomials)?;
 
     prover.io_ctx.network.log_connection_stats();
@@ -130,36 +142,35 @@ fn run_coordinator(
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-       let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M>([
-        RangeLookup::<F>::new_boxed(256),
-        RangeLookup::<F>::new_boxed(320),
-    ]);
+    let preprocessing =
+        lasso::LassoPreprocessing::preprocess::<C, M, TestLookups<F>, TestSubtables<F>>();
     let mut transcript = ProofTranscript::new(b"Memory checking");
 
     let polynomials_shares = rep3_net.receive_responses(Default::default())?;
     if std::env::var("SANITY_CHECK").is_ok() {
-        let polynomials = Rep3LassoWitnessSolver::<F, Rep3QuicMpcNetWorker>::combine_polynomials(
-            polynomials_shares,
-        );
+        let polynomials =
+            TestLassoWitnessSolver::<Rep3QuicMpcNetWorker>::combine_polynomials(polynomials_shares);
 
         let polynomials_check = {
             let mut rng = test_rng();
-            let inputs = iter::repeat_with(|| F::from(rng.gen_range(0..256)))
-                .take(num_inputs / 2)
-                .collect_vec()
-                .into_iter()
-                .chain(iter::repeat_with(|| F::from(rng.gen_range(0..320))).take(num_inputs / 2))
-                .collect_vec();
 
-            lasso::polynomialize(
+            let lookups = chain!(
+                iter::repeat_with(|| TestLookups::Range256(RangeLookup::public(F::from(
+                    rng.gen_range(0..256)
+                ))))
+                .take(num_inputs / 2)
+                .collect_vec(),
+                iter::repeat_with(|| TestLookups::Range320(RangeLookup::public(F::from(
+                    rng.gen_range(0..320)
+                ))))
+                .take(num_inputs / 2)
+                .collect_vec(),
+            )
+            .collect_vec();
+
+            lasso::LassoProver::<C, M, F, TestLookups<F>, TestSubtables<F>>::polynomialize(
                 &preprocessing,
-                &inputs,
-                &iter::repeat(RangeLookup::<F>::id_for(256))
-                    .take(num_inputs / 2)
-                    .chain(iter::repeat(RangeLookup::<F>::id_for(320)).take(num_inputs / 2))
-                    .collect_vec(),
-                M,
-                C,
+                &lookups,
             )
         };
         assert_eq!(polynomials.dims, polynomials_check.dims);
@@ -178,18 +189,10 @@ fn run_coordinator(
 
         {
             let mut transcript = ProofTranscript::new(b"Memory checking");
-            let proof = lasso::MemoryCheckingProver::<C, M, F, _>::prove(
-                &preprocessing,
-                &polynomials_check,
-                &mut transcript,
-            );
+            let proof = TestLassoProver::prove(&preprocessing, &polynomials_check, &mut transcript);
 
             let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
-            lasso::MemoryCheckingProver::<C, M, F, _>::verify(
-                &preprocessing,
-                proof,
-                &mut verifier_transcript,
-            )?;
+            TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;
         }
     }
 
@@ -200,20 +203,9 @@ fn run_coordinator(
     )?;
 
     let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
-    lasso::MemoryCheckingProver::<C, M, F, _>::verify(
-        &preprocessing,
-        proof,
-        &mut verifier_transcript,
-    )?;
+    TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;
 
     Ok(())
-}
-
-fn promote_to_trivial_shares(public_values: &[F], id: PartyID) -> Vec<Rep3PrimeFieldShare<F>> {
-    public_values
-        .iter()
-        .map(|value| Rep3PrimeFieldShare::promote_from_trivial(value, id))
-        .collect()
 }
 
 // /// Promotes a public field element to a replicated share by setting the additive share of the party with id=0 and leaving all other shares to be 0. Thus, the replicated shares of party 0 and party 1 are set.

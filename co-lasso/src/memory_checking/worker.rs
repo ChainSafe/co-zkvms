@@ -1,64 +1,50 @@
-use std::marker::PhantomData;
-
-use ark_ec::pairing::Pairing;
-use ark_ff::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_spartan::mpc::{
-    additive::{self, AdditiveShare},
-    rep3::Rep3PrimeFieldShare,
-};
+use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::interleave;
 use jolt_core::{
-    lasso::memory_checking::MultisetHashes,
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
-        field::JoltField, structured_poly::StructuredCommitment,
-    },
-    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
+    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    utils::mul_0_1_optimized,
 };
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContext, Rep3Network}, PartyID,
+    network::{IoContext, Rep3Network},
 };
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
-// use mpc_net::mpc_star::MpcStarNetCoordinator;
-use color_eyre::eyre::Result;
-use spartan::transcript::Transcript;
+use mpc_net::mpc_star::MpcStarNetWorker;
+use std::marker::PhantomData;
 use tracing::trace_span;
 
 use crate::{
     grand_product::{
         BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
     },
-    lasso::MemoryCheckingProof,
+    lasso::LassoPreprocessing,
     poly::Rep3DensePolynomial,
+    subtables::{LookupSet, SubtableSet},
     utils::{self, split_rep3_poly_flagged},
-    lasso::LassoPreprocessing, witness_solver::Rep3LassoPolynomials,
+    witness_solver::Rep3LassoPolynomials,
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3MemoryCheckingProver<
-    const C: usize,
-    const M: usize,
-    F: JoltField,
-    Polynomials,
-    N: Rep3Network + MpcStarNetWorker,
-    // C: CommitmentScheme<Field = F>,
-> {
-    pub _marker: PhantomData<(F, Polynomials)>,
-    pub io_ctx: IoContext<N>,
+pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, Lookups, Subtables, Network>
+where
+    Network: Rep3Network,
+{
+    pub _marker: PhantomData<(F, Lookups, Subtables)>,
+    pub io_ctx: IoContext<Network>,
 }
 
 type Preprocessing<F> = LassoPreprocessing<F>;
 type Polynomials<F> = Rep3LassoPolynomials<F>;
 
-impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWorker>
-    Rep3MemoryCheckingProver<C, M, F, Polynomials<F>, N>
+impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables, Network>
+    Rep3MemoryCheckingProver<C, M, F, Lookups, Subtables, Network>
+where
+    Lookups: LookupSet<F>,
+    Subtables: SubtableSet<F>,
+    Network: Rep3Network + MpcStarNetWorker,
 {
-    pub fn new(net: N) -> color_eyre::Result<Self> {
+    pub fn new(net: Network) -> color_eyre::Result<Self> {
         let io_ctx = IoContext::init(net).context("failed to initialize io context")?;
         Ok(Self {
             _marker: PhantomData,
@@ -70,7 +56,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
     ) -> Result<()> {
-        let (r_read_write, r_init_final) = self.prove_grand_products(preprocessing, polynomials)?;
+        let _ = self.prove_grand_products(preprocessing, polynomials)?;
 
         Ok(())
     }
@@ -92,10 +78,6 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
             &tau,
             &mut self.io_ctx.network,
         );
-
-        self.io_ctx
-            .network
-            .send_response((read_write_leaves.clone(), init_final_leaves.clone()))?;
 
         let (read_write_circuit, read_write_hashes) =
             self.read_write_grand_product(preprocessing, polynomials, read_write_leaves)?;
@@ -119,7 +101,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
         polynomials: &Polynomials<F>,
         gamma: &F,
         tau: &F,
-        network: &mut N,
+        network: &mut Network,
     ) -> (Vec<Rep3DensePolynomial<F>>, Vec<Rep3DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dims[0].len();
@@ -216,7 +198,8 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let memory_index = i / 2;
                 let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                let (toggled_leaves_l, toggled_leaves_r) = split_rep3_poly_flagged(leaves_poly, flag, self.io_ctx.network.party_id());
+                let (toggled_leaves_l, toggled_leaves_r) =
+                    split_rep3_poly_flagged(leaves_poly, flag, self.io_ctx.network.party_id());
                 Rep3GrandProductCircuit::new_split(
                     toggled_leaves_l,
                     toggled_leaves_r,
@@ -228,7 +211,10 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
         drop(_span);
 
         let len = read_write_circuits[0].left_vec.len();
-        self.io_ctx.network.send_response((read_write_circuits[0].left_vec[len - 1][0].clone(), read_write_circuits[0].right_vec[len - 1][0]))?;
+        self.io_ctx.network.send_response((
+            read_write_circuits[0].left_vec[len - 1][0].clone(),
+            read_write_circuits[0].right_vec[len - 1][0],
+        ))?;
 
         let read_write_hashes: Vec<F> = trace_span!("compute_hashes").in_scope(|| {
             read_write_circuits
@@ -286,7 +272,7 @@ impl<F: JoltField, const C: usize, const M: usize, N: Rep3Network + MpcStarNetWo
             .into_par_iter()
             .map(|memory_index| {
                 let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..preprocessing.lookups.len() {
+                for instruction_index in 0..Lookups::COUNT {
                     if preprocessing.lookup_to_memory_indices[instruction_index]
                         .contains(&memory_index)
                     {

@@ -1,15 +1,25 @@
 mod prover;
-pub use prover::{MemoryCheckingProver, MemoryCheckingProof};
+use ark_std::cfg_into_iter;
+pub use prover::{LassoProver, MemoryCheckingProof};
 
 use std::{
     collections::{BTreeMap, HashMap},
     iter,
+    marker::PhantomData,
 };
 
-use crate::subtables::{LassoSubtable, LookupId, LookupType, SubtableIndices};
+use crate::subtables::{
+    LassoSubtable, LookupId, LookupSet, LookupType, SubtableIndices, SubtableSet,
+};
 use ark_ff::{BigInteger, PrimeField};
 use itertools::Itertools;
-use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
+use jolt_core::{
+    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    utils::math::Math,
+};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub struct LassoPreprocessing<F: JoltField> {
     pub subtable_to_memory_indices: Vec<Vec<usize>>,
@@ -17,62 +27,31 @@ pub struct LassoPreprocessing<F: JoltField> {
     pub memory_to_subtable_index: Vec<usize>,
     pub memory_to_dimension_index: Vec<usize>,
     pub materialized_subtables: Vec<Vec<F>>,
-    pub subtables_by_idx: Option<Vec<Box<dyn LassoSubtable<F>>>>,
-    pub lookup_id_to_index: HashMap<LookupId, usize>,
+    // pub lookup_id_to_index: HashMap<LookupId, usize>,
     pub num_memories: usize,
-    pub lookups: BTreeMap<LookupId, Box<dyn LookupType<F>>>,
+    // pub lookups: BTreeMap<LookupId, Box<dyn LookupType<F>>>,
 }
 
 impl<F: JoltField> LassoPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Lasso::preprocess")]
-    pub fn preprocess<const C: usize, const M: usize>(
-        lookups: impl IntoIterator<Item = Box<dyn LookupType<F>>>,
-    ) -> Self {
-        let lookups = BTreeMap::from_iter(
-            lookups
-                .into_iter()
-                .map(|lookup| (lookup.lookup_id(), lookup)),
-        );
-
-        let lookup_id_to_index: HashMap<_, _> = HashMap::from_iter(
-            lookups
-                .keys()
-                .enumerate()
-                .map(|(i, lookup_id)| (lookup_id.clone(), i)),
-        );
-
-        let subtables = lookups
-            .values()
-            .flat_map(|lookup| {
-                lookup
-                    .subtables(C, M)
-                    .into_iter()
-                    .map(|(subtable, _)| subtable)
-            })
-            .unique_by(|subtable| subtable.subtable_id())
-            .collect_vec();
+    pub fn preprocess<const C: usize, const M: usize, Lookups, Subtables>() -> Self
+    where
+        Lookups: LookupSet<F>,
+        Subtables: SubtableSet<F>,
+    {
+        let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
         // Build a mapping from subtable type => chunk indices that access that subtable type
         let mut subtable_indices: Vec<SubtableIndices> =
-            vec![SubtableIndices::with_capacity(C); subtables.len()];
-        let mut subtables_by_idx = vec![None; subtables.len()];
-        let mut subtable_id_to_index = HashMap::with_capacity(subtables.len());
-        for (_, lookup) in &lookups {
-            for (subtable, indices) in lookup.subtables(C, M).into_iter() {
-                let subtable_idx = subtable_id_to_index
-                    .entry(subtable.subtable_id())
-                    .or_insert_with(|| {
-                        subtables
-                            .iter()
-                            .position(|s| s.subtable_id() == subtable.subtable_id())
-                            .expect("Subtable not found")
-                    });
-                subtables_by_idx[*subtable_idx].get_or_insert(subtable);
-                subtable_indices[*subtable_idx].union_with(&indices);
+            vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
+        // let mut subtable_id_to_index = HashMap::with_capacity(subtables.len());
+        for lookup in Lookups::iter() {
+            for (subtable, indices) in lookup.subtables(C, M) {
+                subtable_indices[Subtables::enum_index(subtable)].union_with(&indices);
             }
         }
 
-        let mut subtable_to_memory_indices = Vec::with_capacity(subtables.len());
+        let mut subtable_to_memory_indices = Vec::with_capacity(Subtables::COUNT);
         let mut memory_to_subtable_index = vec![];
         let mut memory_to_dimension_index = vec![];
 
@@ -86,26 +65,19 @@ impl<F: JoltField> LassoPreprocessing<F> {
         }
         let num_memories = memory_index;
 
-        // instruction is a type of lookup
-        // assume all instreuctions are the same first
-        let mut lookup_to_memory_indices = vec![vec![]; lookups.len()];
-        for (lookup_index, lookup_type) in lookups.values().enumerate() {
+        let mut lookup_to_memory_indices = vec![vec![]; Lookups::COUNT];
+        for lookup_type in Lookups::iter() {
             for (subtable, dimension_indices) in lookup_type.subtables(C, M) {
                 let memory_indices: Vec<_> = subtable_to_memory_indices
-                    [subtable_id_to_index[&subtable.subtable_id()]]
-                    .iter()
-                    .filter(|memory_index| {
-                        dimension_indices.contains(memory_to_dimension_index[**memory_index])
-                    })
-                    .collect();
-                lookup_to_memory_indices[lookup_index].extend(memory_indices);
+                    [Subtables::enum_index(subtable)]
+                .iter()
+                .filter(|memory_index| {
+                    dimension_indices.contains(memory_to_dimension_index[**memory_index])
+                })
+                .collect();
+                lookup_to_memory_indices[Lookups::enum_index(&lookup_type)].extend(memory_indices);
             }
         }
-
-        let materialized_subtables = Self::materialize_subtables::<M>(&subtables)
-            .into_iter()
-            // .map(box_dense_poly)
-            .collect_vec();
 
         Self {
             num_memories,
@@ -114,25 +86,15 @@ impl<F: JoltField> LassoPreprocessing<F> {
             memory_to_subtable_index,
             memory_to_dimension_index,
             lookup_to_memory_indices,
-            subtables_by_idx: Some(
-                subtables_by_idx
-                    .into_iter()
-                    .map(|s| s.unwrap())
-                    .collect_vec(),
-            ),
-            lookup_id_to_index,
-            lookups,
         }
     }
 
-    fn materialize_subtables<const M: usize>(
-        subtables: &[Box<dyn LassoSubtable<F>>],
-    ) -> Vec<Vec<F>> {
-        let mut s = Vec::with_capacity(subtables.len());
-        for subtable in subtables.iter() {
-            s.push(subtable.materialize(M));
+    fn materialize_subtables<const M: usize, Subtables: SubtableSet<F>>() -> Vec<Vec<F>> {
+        let mut subtables = Vec::with_capacity(Subtables::COUNT);
+        for subtable in Subtables::iter() {
+            subtables.push(subtable.materialize(M));
         }
-        s
+        subtables
     }
 }
 
@@ -169,172 +131,128 @@ pub struct LassoPolynomials<F: JoltField> {
     /// The lookup output for each instruction of the execution trace.
     pub lookup_outputs: DensePolynomial<F>,
 }
+impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables>
+    LassoProver<C, M, F, Lookups, Subtables>
+where
+    Lookups: LookupSet<F>,
+    Subtables: SubtableSet<F>,
+{
+    #[tracing::instrument(skip_all, name = "Lasso::polynomialize")]
+    pub fn polynomialize(
+        preprocessing: &LassoPreprocessing<F>,
+        ops: &[Lookups],
+    ) -> LassoPolynomials<F> {
+        let num_reads = ops.len().next_power_of_two();
 
-#[tracing::instrument(skip_all, name = "Lasso::polynomialize")]
-pub fn polynomialize<F: JoltField>(
-    preprocessing: &LassoPreprocessing<F>,
-    inputs: &[F],
-    lookups: &[LookupId],
-    M: usize,
-    C: usize,
-) -> LassoPolynomials<F> {
-    let num_reads = inputs.len().next_power_of_two();
+        let subtable_lookup_indices = Self::subtable_lookup_indices(ops);
 
-    let subtable_lookup_indices = subtable_lookup_indices(preprocessing, inputs, &lookups, M, C);
+        // let lookup_inputs = (0..inputs.len())
+        //     .into_iter()
+        //     .zip(lookups.into_iter())
+        //     .map(|(i, lookup_id)| (i, preprocessing.lookup_id_to_index[lookup_id]))
+        //     .collect_vec();
 
-    let lookup_inputs = (0..inputs.len())
-        .into_iter()
-        .zip(lookups.into_iter())
-        .map(|(i, lookup_id)| (i, preprocessing.lookup_id_to_index[lookup_id]))
-        .collect_vec();
+        let polys: Vec<_> = cfg_into_iter!(0..preprocessing.num_memories)
+            .map(|memory_index| {
+                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                let access_sequence = &subtable_lookup_indices[dim_index];
 
-    let polys: Vec<_> = (0..preprocessing.num_memories)
-        .into_iter()
-        .map(|memory_index| {
-            let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-            let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-            let access_sequence = &subtable_lookup_indices[dim_index];
+                let mut final_cts_i = vec![0usize; M];
+                let mut read_cts_i = vec![0usize; num_reads];
+                let mut subtable_lookups = vec![F::ZERO; num_reads];
 
-            let mut final_cts_i = vec![0usize; M];
-            let mut read_cts_i = vec![0usize; num_reads];
-            let mut subtable_lookups = vec![F::ZERO; num_reads];
+                for (j, lookup) in ops.iter().enumerate() {
+                    let memories_used =
+                        &preprocessing.lookup_to_memory_indices[Lookups::enum_index(lookup)];
+                    if memories_used.contains(&memory_index) {
+                        let memory_address = access_sequence[j];
+                        debug_assert!(memory_address < M);
 
-            for (j, lookup) in &lookup_inputs {
-                let memories_used = &preprocessing.lookup_to_memory_indices[*lookup];
-                if memories_used.contains(&memory_index) {
-                    let memory_address = access_sequence[*j];
-                    // debug_assert!(memory_address < M);
-
-                    let counter = final_cts_i[memory_address];
-                    read_cts_i[*j] = counter;
-                    final_cts_i[memory_address] = counter + 1;
-                    subtable_lookups[*j] =
-                        preprocessing.materialized_subtables[subtable_index][memory_address];
+                        let counter = final_cts_i[memory_address];
+                        read_cts_i[j] = counter;
+                        final_cts_i[memory_address] = counter + 1;
+                        subtable_lookups[j] =
+                            preprocessing.materialized_subtables[subtable_index][memory_address];
+                    }
                 }
-            }
 
-            (
-                DensePolynomial::from_usize(&read_cts_i),
-                DensePolynomial::from_usize(&final_cts_i),
-                DensePolynomial::new(subtable_lookups),
-            )
-        })
-        .collect();
+                (
+                    DensePolynomial::from_usize(&read_cts_i),
+                    DensePolynomial::from_usize(&final_cts_i),
+                    DensePolynomial::new(subtable_lookups),
+                )
+            })
+            .collect();
 
-    // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
-    let (read_cts, final_cts, e_polys) = polys.into_iter().fold(
-        (Vec::new(), Vec::new(), Vec::new()),
-        |(mut read_acc, mut final_acc, mut e_acc), (read, f, e)| {
-            read_acc.push(read);
-            final_acc.push(f);
-            e_acc.push(e);
-            (read_acc, final_acc, e_acc)
-        },
-    );
-    let dims: Vec<_> = subtable_lookup_indices
-        .into_iter()
-        .take(C)
-        .map(|mut access_sequence| {
-            access_sequence.resize(access_sequence.len().next_power_of_two(), 0);
-            DensePolynomial::from_usize(&access_sequence)
-        })
-        .collect();
+        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
+        let (read_cts, final_cts, e_polys) = polys.into_iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut read_acc, mut final_acc, mut e_acc), (read, f, e)| {
+                read_acc.push(read);
+                final_acc.push(f);
+                e_acc.push(e);
+                (read_acc, final_acc, e_acc)
+            },
+        );
+        let dims: Vec<_> = subtable_lookup_indices
+            .into_iter()
+            .take(C)
+            .map(|mut access_sequence| {
+                access_sequence.resize(access_sequence.len().next_power_of_two(), 0);
+                DensePolynomial::from_usize(&access_sequence)
+            })
+            .collect();
 
-    let mut lookup_flag_bitvectors: Vec<Vec<u64>> =
-        vec![vec![0u64; num_reads]; preprocessing.lookups.len()];
+        let mut lookup_flag_bitvectors: Vec<Vec<u64>> = vec![vec![0u64; num_reads]; Lookups::COUNT];
 
-    for (j, lookup_idx) in lookup_inputs.into_iter() {
-        lookup_flag_bitvectors[lookup_idx][j] = 1;
+        for (j, lookup) in ops.iter().enumerate() {
+            lookup_flag_bitvectors[Lookups::enum_index(lookup)][j] = 1;
+        }
+
+        let lookup_flag_polys: Vec<_> = lookup_flag_bitvectors
+            .iter()
+            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+            .collect();
+
+        let mut lookup_outputs = Self::compute_lookup_outputs(ops);
+        lookup_outputs.resize(num_reads, F::zero());
+
+        let lookup_outputs = DensePolynomial::new(lookup_outputs);
+        LassoPolynomials {
+            dims,
+            read_cts,
+            final_cts,
+            lookup_flag_polys,
+            lookup_flag_bitvectors,
+            e_polys,
+            lookup_outputs,
+        }
     }
 
-    let lookup_flag_polys: Vec<_> = lookup_flag_bitvectors
-        .iter()
-        .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
-        .collect();
-
-    let mut lookup_outputs = compute_lookup_outputs(preprocessing, inputs, &lookups);
-    lookup_outputs.resize(num_reads, F::ZERO);
-
-    let lookup_outputs = DensePolynomial::new(lookup_outputs);
-    LassoPolynomials {
-        dims,
-        read_cts,
-        final_cts,
-        lookup_flag_polys,
-        lookup_flag_bitvectors,
-        e_polys,
-        lookup_outputs,
+    fn compute_lookup_outputs(inputs: &[Lookups]) -> Vec<F> {
+        cfg_into_iter!(inputs)
+            .map(|lookup| lookup.output())
+            .collect()
     }
-}
 
-fn compute_lookup_outputs<F: JoltField>(
-    preprocessing: &LassoPreprocessing<F>,
-    inputs: &[F],
-    lookups: &[LookupId],
-) -> Vec<F> {
-    (0..inputs.len())
-        .into_iter()
-        .zip(lookups.into_iter())
-        .map(|(i, lookup_id)| preprocessing.lookups[lookup_id].output(&inputs[i]))
-        .collect()
-}
+    #[tracing::instrument(skip_all, name = "LassoNode::subtable_lookup_indices")]
+    fn subtable_lookup_indices(inputs: &[Lookups]) -> Vec<Vec<usize>> {
+        let num_chunks = C;
+        let log_M = M.log_2();
 
-#[tracing::instrument(skip_all, name = "LassoNode::subtable_lookup_indices")]
-fn subtable_lookup_indices<F: JoltField>(
-    preprocessing: &LassoPreprocessing<F>,
-    inputs: &[F],
-    lookups: &[LookupId],
-    M: usize,
-    C: usize,
-) -> Vec<Vec<usize>> {
-    let num_rows: usize = inputs.len();
-    let num_chunks = C;
+        let indices: Vec<_> = cfg_into_iter!(inputs)
+            .map(|lookup| lookup.to_indices(C, log_M))
+            .collect();
 
-    let indices: Vec<_> = (0..num_rows)
-        .into_iter()
-        .zip(lookups.into_iter())
-        .map(|(i, lookup_id)| {
-            let lookup = &preprocessing.lookups[lookup_id];
-            let mut index_bits = fe_to_bits_le(inputs[i]);
-            index_bits.truncate(lookup.chunk_bits(M).iter().sum());
-            // if cfg!(feature = "sanity-check") {
-            //     assert_eq!(
-            //         usize_from_bits_le(&fe_to_bits_le(inputs[i])),
-            //         usize_from_bits_le(&index_bits),
-            //         "index {i} out of range",
-            //     );
-            // }
-            let mut chunked_index = iter::repeat(0).take(num_chunks).collect_vec();
-            let chunked_index_bits = lookup.subtable_indices(index_bits, M.ilog2() as usize);
-            chunked_index
-                .iter_mut()
-                .zip(chunked_index_bits)
-                .map(|(chunked_index, index_bits)| {
-                    *chunked_index = usize_from_bits_le(&index_bits);
-                })
-                .collect_vec();
-            chunked_index
-        })
-        .collect();
-
-    let lookup_indices = (0..num_chunks)
-        .map(|i| {
-            indices
-                .iter()
-                .map(|indices| indices[i].clone())
-                .collect_vec()
-        })
-        .collect_vec();
-    lookup_indices
-    // todo!()
-}
-
-pub fn fe_to_bits_le<F: PrimeField>(fe: F) -> Vec<bool> {
-    fe.into_bigint().to_bits_le()
-}
-
-pub fn usize_from_bits_le(bits: &[bool]) -> usize {
-    bits.iter()
-        .rev()
-        .fold(0, |int, bit| (int << 1) + (*bit as usize))
+        let lookup_indices = (0..num_chunks)
+            .map(|i| {
+                indices
+                    .iter()
+                    .map(|indices| indices[i].clone())
+                    .collect_vec()
+            })
+            .collect_vec();
+        lookup_indices
+    }
 }
