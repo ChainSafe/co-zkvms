@@ -107,13 +107,18 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn fix_var_top_many_ones(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
         a.bound_poly_var_top_many_ones(r);
-        b.bound_poly_var_top_many_ones(r); // TODO: check if this is correct with rep3 shares
+        b.bound_poly_var_top_many_ones(r);
 
         *self = Self::from_poly_shares(a, b);
     }
 
-    #[tracing::instrument(skip_all)]
-    pub fn new_poly_from_fix_var_top_flags(&self, r: &F) -> Self {
+    pub fn new_poly_from_fix_var_top(&self, r: &F) -> Self {
+        let (mut a, mut b) = self.copy_poly_shares();
+        let a = a.new_poly_from_bound_poly_var_top(r);
+        let b = b.new_poly_from_bound_poly_var_top(r); // TODO: check if this is correct with rep3 shares
+
+        Self::from_poly_shares(a, b)
+
         // let n = self.len() / 2;
         // let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
 
@@ -150,27 +155,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         //     len,
         //     Z: new_evals,
         // }
-        todo!()
     }
-
-    // pub fn from_poly_shares(
-    //     share_0: DensePolynomial<F>,
-    //     share_1: DensePolynomial<F>,
-    // ) -> Self {
-    //     Rep3DensePolynomial {
-    //         // party_id: party,
-    //         a: share_0,
-    //         b: share_1,
-    //     }
-    // }
-
-    // pub fn fix_variables(&self, partial_point: &[F]) -> Self {
-    //     Rep3DensePolynomial {
-    //         // party_id: self.party_id,
-    //         share_0: self.share_0.f(partial_point),
-    //         share_1: self.share_1.fix_variables(partial_point),
-    //     }
-    // }
 
     pub fn num_vars(&self) -> usize {
         self.num_vars

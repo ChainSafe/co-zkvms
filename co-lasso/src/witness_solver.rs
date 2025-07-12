@@ -1,4 +1,9 @@
-use crate::{instructions::LookupSet, lasso, poly::{combine_poly_shares, Rep3DensePolynomial}, utils};
+use crate::{
+    instructions::LookupSet,
+    lasso,
+    poly::{combine_poly_shares, Rep3DensePolynomial},
+    utils,
+};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
@@ -16,7 +21,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
-use std::marker::PhantomData;
+use std::{iter, marker::PhantomData};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -94,11 +99,11 @@ where
     pub fn polynomialize(
         &mut self,
         preprocessing: &LassoPreprocessing<F>,
-        lookups: &[Lookups],
+        mut lookups: Vec<Lookups>,
     ) -> eyre::Result<Rep3LassoPolynomials<F>> {
         let num_reads = lookups.len().next_power_of_two();
 
-        let subtable_lookup_indices = self.subtable_lookup_indices(lookups)?;
+        let subtable_lookup_indices = self.subtable_lookup_indices(&mut lookups)?;
 
         let materialized_subtable_luts = preprocessing
             .materialized_subtables
@@ -166,7 +171,11 @@ where
                         }
                     }
 
-                    (Rep3DensePolynomial::new(read_cts_i), Rep3DensePolynomial::new(final_cts_i), Rep3DensePolynomial::new(subtable_lookups))
+                    (
+                        Rep3DensePolynomial::new(read_cts_i),
+                        Rep3DensePolynomial::new(final_cts_i),
+                        Rep3DensePolynomial::new(subtable_lookups),
+                    )
                 },
             )
         })?;
@@ -211,7 +220,7 @@ where
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let lookup_outputs = Self::compute_lookup_outputs(lookups, num_reads, &mut self.io_ctx0);
+        let lookup_outputs = Self::compute_lookup_outputs(&lookups, num_reads, &mut self.io_ctx0);
 
         Ok(Rep3LassoPolynomials {
             dims,
@@ -227,10 +236,9 @@ where
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
     fn subtable_lookup_indices(
         &mut self,
-        lookups: &[Lookups],
+        lookups: &mut [Lookups],
     ) -> eyre::Result<Vec<Vec<Rep3BigUintShare<F>>>> {
-        // let inputs = tracing::info_span!("a2b_many inputs")
-        //     .in_scope(|| rep3::conversion::a2b_many(inputs, &mut self.io_ctx0))?;
+        Lookups::a2b_many(lookups, &mut self.io_ctx0)?;
 
         let num_chunks = C;
         let log_M = M.log_2();
@@ -251,8 +259,13 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::compute_lookup_outputs")]
-    fn compute_lookup_outputs(lookups: &[Lookups], num_reads: usize, io_ctx: &mut IoContext<Network>) -> Rep3DensePolynomial<F> {
-        let mut outputs = lookups.iter()
+    fn compute_lookup_outputs(
+        lookups: &[Lookups],
+        num_reads: usize,
+        io_ctx: &mut IoContext<Network>,
+    ) -> Rep3DensePolynomial<F> {
+        let mut outputs = lookups
+            .iter()
             .map(|lookup| lookup.output(io_ctx))
             .collect_vec();
         outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
@@ -265,28 +278,26 @@ where
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dims = multizip((share1.dims, share2.dims, share3.dims))
-            .map(|(dim1, dim2, dim3)| {
-                combine_poly_shares(vec![dim1, dim2, dim3])
-            })
+            .map(|(dim1, dim2, dim3)| combine_poly_shares(vec![dim1, dim2, dim3]))
             .collect_vec();
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
-            .map(|(read1, read2, read3)| {
-                combine_poly_shares(vec![read1, read2, read3])
-            })
+            .map(|(read1, read2, read3)| combine_poly_shares(vec![read1, read2, read3]))
             .collect_vec();
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
-            .map(|(final1, final2, final3)| {
-                combine_poly_shares(vec![final1, final2, final3])
-            })
+            .map(|(final1, final2, final3)| combine_poly_shares(vec![final1, final2, final3]))
             .collect_vec();
 
         let e_polys = multizip((share1.e_polys, share2.e_polys, share3.e_polys))
             .map(|(e1, e2, e3)| combine_poly_shares(vec![e1, e2, e3]))
             .collect_vec();
 
-        let lookup_outputs = combine_poly_shares(vec![share1.lookup_outputs, share2.lookup_outputs, share3.lookup_outputs]);
+        let lookup_outputs = combine_poly_shares(vec![
+            share1.lookup_outputs,
+            share2.lookup_outputs,
+            share3.lookup_outputs,
+        ]);
 
         lasso::LassoPolynomials {
             dims,

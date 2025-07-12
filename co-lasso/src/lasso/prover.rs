@@ -385,25 +385,34 @@ where
     }
 
     fn uninterleave_hashes(
-        _preprocessing: &Preprocessing<F>,
+        preprocessing: &Preprocessing<F>,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        assert_eq!(read_write_hashes.len() % 2, 0);
-        let num_memories = read_write_hashes.len() / 2;
+        assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
+        assert_eq!(
+            init_final_hashes.len(),
+            Subtables::COUNT + preprocessing.num_memories
+        );
 
-        let mut read_hashes = Vec::with_capacity(num_memories);
-        let mut write_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
+        let mut read_hashes = Vec::with_capacity(preprocessing.num_memories);
+        let mut write_hashes = Vec::with_capacity(preprocessing.num_memories);
+        for i in 0..preprocessing.num_memories {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }
 
-        let mut init_hashes = Vec::with_capacity(num_memories);
-        let mut final_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
-            init_hashes.push(init_final_hashes[2 * i]);
-            final_hashes.push(init_final_hashes[2 * i + 1]);
+        let mut init_hashes = Vec::with_capacity(Subtables::COUNT);
+        let mut final_hashes = Vec::with_capacity(preprocessing.num_memories);
+        let mut init_final_hashes = init_final_hashes.iter();
+        for subtable_index in 0..Subtables::COUNT {
+            // I
+            init_hashes.push(*init_final_hashes.next().unwrap());
+            // F F F F
+            let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
+            for _ in memory_indices {
+                final_hashes.push(*init_final_hashes.next().unwrap());
+            }
         }
 
         MultisetHashes {

@@ -73,21 +73,7 @@ where
         })
     }
 
-    /// Prove Jolt primary sumcheck including instruction collation.
-    ///
-    /// Computes \sum{ eq(r,x) * [ flags_0(x) * g_0(E(x)) + flags_1(x) * g_1(E(x)) + ... + flags_{NUM_INSTRUCTIONS}(E(x)) * g_{NUM_INSTRUCTIONS}(E(x)) ]}
-    /// via the sumcheck protocol.
-    /// Note: These E(x) terms differ from term to term depending on the memories used in the instruction.
-    ///
-    /// Returns: (SumcheckProof, Random evaluation point, claimed evaluations of polynomials)
-    ///
-    /// Params:
-    /// - `claim`: Claimed sumcheck evaluation.
-    /// - `num_rounds`: Number of rounds to run sumcheck. Corresponds to the number of free bits or free variables in the polynomials.
-    /// - `memory_polys`: Each of the `E` polynomials or "dereferenced memory" polynomials.
-    /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
-    /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
-    /// - `transcript`: Fiat-shamir transcript.
+
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(

@@ -7,8 +7,7 @@ use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
 use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare,
+    self, network::{IoContext, Rep3Network}, Rep3BigUintShare
 };
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
@@ -42,7 +41,9 @@ pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 
 #[enum_dispatch]
 pub trait Rep3LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
-    // fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>>;
+    fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>>;
+
+    fn insert_binary_operands(&mut self, operands: Vec<Rep3BigUintShare<F>>);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups(&self, vals: &[Rep3PrimeFieldShare<F>], C: usize, M: usize) -> Rep3PrimeFieldShare<F>;
@@ -70,6 +71,21 @@ pub trait Rep3LookupSet<F: JoltField>:
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
         byte as usize
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3LookupSet::a2b_many")]
+    fn a2b_many<N: Rep3Network>(lookups: &mut [Self], io_ctx: &mut IoContext<N>) -> eyre::Result<()> {
+        let inputs: Vec<Vec<Rep3PrimeFieldShare<F>>> = lookups.iter().map(|lookup| lookup.operands()).collect();
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let meta: Vec<usize> = inputs.iter().map(|input| input.len()).collect();
+        let mut outputs = rep3::conversion::a2b_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
+        for (num, lookup) in meta.iter().zip(lookups.iter_mut()) {
+            let output = outputs.drain(..*num).collect();
+            lookup.insert_binary_operands(output);
+        }
+        Ok(())
     }
 }
 

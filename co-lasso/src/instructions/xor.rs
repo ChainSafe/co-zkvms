@@ -16,7 +16,8 @@ use super::{LookupType, Rep3LookupType};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum XORInstruction<F: JoltField> {
-    Shared(Rep3BigUintShare<F>, Rep3BigUintShare<F>),
+    Shared(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
+    SharedBinary(Rep3BigUintShare<F>, Rep3BigUintShare<F>),
     Public(u64, u64),
 }
 
@@ -25,7 +26,11 @@ impl<F: JoltField> XORInstruction<F> {
         Self::Public(x, y)
     }
 
-    pub fn shared(x: Rep3BigUintShare<F>, y: Rep3BigUintShare<F>) -> Self {
+    pub fn shared_binary(x: Rep3BigUintShare<F>, y: Rep3BigUintShare<F>) -> Self {
+        Self::SharedBinary(x, y)
+    }
+
+    pub fn shared(x: Rep3PrimeFieldShare<F>, y: Rep3PrimeFieldShare<F>) -> Self {
         Self::Shared(x, y)
     }
 }
@@ -49,7 +54,7 @@ impl<F: JoltField> LookupType<F> for XORInstruction<F> {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         match self {
-            XORInstruction::Public(x, y) => chunk_and_concatenate_operands_alt(*x, *y, C, log_M),
+            XORInstruction::Public(x, y) => chunk_and_concatenate_operands(*x, *y, C, log_M),
             _ => unreachable!(),
         }
     }
@@ -67,6 +72,28 @@ impl<F: JoltField> LookupType<F> for XORInstruction<F> {
 }
 
 impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
+    fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>> {
+        match self {
+            XORInstruction::SharedBinary(..) => vec![],
+            XORInstruction::Shared(x, y) => vec![x.clone(), y.clone()],
+            _ => unreachable!(),
+        }
+    }
+
+    fn insert_binary_operands(&mut self, mut operands: Vec<Rep3BigUintShare<F>>) {
+        match self {
+            XORInstruction::Shared(..) => {
+                operands.reverse();
+                assert_eq!(operands.len(), 2);
+                *self = XORInstruction::SharedBinary(operands.pop().unwrap(), operands.pop().unwrap());
+            }
+            XORInstruction::SharedBinary(..) => {
+                assert_eq!(operands.len(), 0);
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn combine_lookups(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -86,14 +113,14 @@ impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
         log_M: usize,
     ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
         match self {
-            XORInstruction::Shared(x, y) => rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M),
+            XORInstruction::SharedBinary(x, y) => rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M),
             _ => todo!(),
         }
     }
 
     fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
         match self {
-            XORInstruction::Shared(x, y) => {
+            XORInstruction::SharedBinary(x, y) => {
                 rep3::conversion::b2a_selector(&(x.clone() ^ y.clone()), io_ctx).unwrap()
             }
             _ => unreachable!(),
@@ -143,13 +170,13 @@ pub fn chunk_and_concatenate_operands_alt(x: u64, y: u64, C: usize, log_M: usize
         }
     }
 
-    let operand_bit_mask: usize = (1 << operand_bits) - 1;
+    let operand_bit_mask: u64 = (1 << operand_bits) - 1;
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * operand_bits) as u32;
-            let left = x.checked_shr(shift).unwrap_or(0) as usize & operand_bit_mask;
-            let right = y.checked_shr(shift).unwrap_or(0) as usize & operand_bit_mask;
-            (left << operand_bits) ^ right
+            let left = x.shr(shift) & operand_bit_mask;
+            let right = y.shr(shift) & operand_bit_mask;
+            ((left << operand_bits) ^ right) as usize
         })
         .collect()
 }

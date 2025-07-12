@@ -1,3 +1,4 @@
+use ark_ff::Zero;
 use ark_std::test_rng;
 use clap::Parser;
 use color_eyre::{
@@ -12,6 +13,7 @@ use mpc_net::{
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
+use num_bigint::BigUint;
 use rand::Rng;
 use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
@@ -86,22 +88,23 @@ fn run_party(
     let party_id = rep3_net.party_id();
 
     let mut rng = test_rng();
+
     // let lookups = iter::repeat_with(|| {
-    //     let a = F::from(rng.gen_range(0..256));
-    //     let b = F::from(rng.gen_range(0..256));
-    //     Lookups::XOR(XORInstruction::shared(
+    //     let a = F::from(rng.gen_range::<u64, _>(0..256));
+    //     let b = F::from(rng.gen_range::<u64, _>(0..256));
+    //     Lookups::XOR(XORInstruction::shared_binary(
     //         rep3::binary::promote_to_trivial_share(party_id, &a.into()),
     //         rep3::binary::promote_to_trivial_share(party_id, &b.into()),
     //     ))
     // })
     // .take(num_inputs)
     // .collect_vec();
+
     let lookups = chain!(
         iter::repeat_with(|| {
             let value = F::from(rng.gen_range(0..256));
             Lookups::Range256(RangeLookup::shared(
                 rep3::arithmetic::promote_to_trivial_share(party_id, value),
-                rep3::binary::promote_to_trivial_share(party_id, &value.into()),
             ))
         })
         .take(num_inputs / 2)
@@ -110,7 +113,6 @@ fn run_party(
             let value = F::from(rng.gen_range(0..320));
             Lookups::Range320(RangeLookup::shared(
                 rep3::arithmetic::promote_to_trivial_share(party_id, value),
-                rep3::binary::promote_to_trivial_share(party_id, &value.into()),
             ))
         })
         .take(num_inputs / 2)
@@ -118,17 +120,15 @@ fn run_party(
     )
     .collect_vec();
     let mut witness_solver = TestLassoWitnessSolver::<Rep3QuicMpcNetWorker>::new(rep3_net).unwrap();
-    let polynomials = witness_solver.polynomialize(&preprocessing, &lookups)?;
+    let polynomials = witness_solver.polynomialize(&preprocessing, lookups)?;
 
     let mut rep3_net = witness_solver.io_ctx0.network;
 
     rep3_net.send_response(polynomials.clone())?;
 
     let mut prover =
-        memory_checking::worker::Rep3LassoProver::<C, M, F, Lookups, Subtables, _>::new(
-            rep3_net,
-        )?;
-    prover.prove_memory_checking(&preprocessing, &polynomials)?;
+        memory_checking::worker::Rep3LassoProver::<C, M, F, Lookups, Subtables, _>::new(rep3_net)?;
+    prover.prove(&preprocessing, &polynomials)?;
 
     prover.io_ctx.network.log_connection_stats();
     drop(_enter);
@@ -165,6 +165,7 @@ fn run_coordinator(
             // .take(num_inputs)
             // .collect_vec())
             // .collect_vec();
+
             let lookups = chain!(
                 iter::repeat_with(|| Lookups::Range256(RangeLookup::public(F::from(
                     rng.gen_range(0..256)
@@ -185,9 +186,9 @@ fn run_coordinator(
             )
         };
         assert_eq!(polynomials.dims, polynomials_check.dims);
-        // assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
-        // assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
-        // assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
+        assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
+        assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
+        assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
         assert_eq!(
             polynomials.lookup_flag_polys,
             polynomials_check.lookup_flag_polys
@@ -208,14 +209,15 @@ fn run_coordinator(
     }
 
     let proof =
-        memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, Subtables, _>::prove_memory_checking(
+        memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, Subtables, _>::prove(
+            num_inputs,
             &preprocessing,
             &mut rep3_net,
             &mut transcript,
         )?;
 
     let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
-    TestLassoProver::verify_memory_checking(&preprocessing, proof, &mut verifier_transcript)?;
+    TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;
 
     Ok(())
 }

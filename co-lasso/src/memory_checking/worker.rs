@@ -138,10 +138,9 @@ where
             lookup_outputs_poly,
             num_eval_points,
         );
-        // compressed_polys.push(round_uni_poly.compress());
         self.io_ctx
             .network
-            .send_response(round_uni_poly.compress())?;
+            .send_response(round_uni_poly)?;
         let r_j = self.io_ctx.network.receive_request::<F>()?;
         random_vars.push(r_j);
 
@@ -157,7 +156,7 @@ where
             .collect();
         let mut memory_polys_updated: Vec<_> = memory_polys
             .par_iter()
-            .map(|poly| poly.new_poly_from_fix_var_top_flags(&r_j))
+            .map(|poly| poly.new_poly_from_fix_var_top(&r_j))
             .collect();
         drop(_bind_enter);
         drop(_bind_span);
@@ -212,7 +211,6 @@ where
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::primary_sumcheck_inner_loop")]
     fn primary_sumcheck_inner_loop(
         &mut self,
         preprocessing: &Preprocessing<F>,

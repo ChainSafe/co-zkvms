@@ -21,7 +21,7 @@ pub enum RangeLookup<const BOUND: u64, F: JoltField> {
     Public(F),
     Shared {
         value: Rep3PrimeFieldShare<F>,
-        binary: Rep3BigUintShare<F>,
+        binary: Option<Rep3BigUintShare<F>>,
     },
 }
 
@@ -30,8 +30,8 @@ impl<const BOUND: u64, F: JoltField> RangeLookup<BOUND, F> {
         Self::Public(value)
     }
 
-    pub fn shared(value: Rep3PrimeFieldShare<F>, binary: Rep3BigUintShare<F>) -> Self {
-        Self::Shared { value, binary }
+    pub fn shared(value: Rep3PrimeFieldShare<F>) -> Self {
+        Self::Shared { value, binary: None }
     }
 }
 
@@ -102,6 +102,24 @@ impl<const BOUND: u64, F: JoltField> LookupType<F> for RangeLookup<BOUND, F> {
 }
 
 impl<const BOUND: u64, F: JoltField> Rep3LookupType<F> for RangeLookup<BOUND, F> {
+    fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>> {
+        match self {
+            Self::Shared { value, .. } => vec![value.clone()],
+            _ => unreachable!(),
+        }
+    }
+
+      
+    fn insert_binary_operands(&mut self, mut operands: Vec<Rep3BigUintShare<F>>) {
+        assert_eq!(operands.len(), 1);
+        match self {
+            Self::Shared { binary, .. } => {
+                *binary = Some(operands.pop().unwrap());
+            },
+            _ => unreachable!(),
+        }
+    }
+
     fn combine_lookups(
         &self,
         operands: &[Rep3PrimeFieldShare<F>],
@@ -133,7 +151,7 @@ impl<const BOUND: u64, F: JoltField> Rep3LookupType<F> for RangeLookup<BOUND, F>
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         let input = match self {
-            Self::Shared { binary, .. } => binary,
+            Self::Shared { binary, .. } => binary.as_ref().expect("binary share must be set"),
             _ => panic!("RangeLookup::to_indices must be called on binary shared value"),
         };
 
