@@ -32,7 +32,7 @@ use std::{iter, marker::PhantomData};
 use rayon::prelude::*;
 
 use crate::{instructions::Rep3LookupSet, subtables::SubtableSet};
-use crate::{lasso::LassoPreprocessing, utils::Forkable};
+use crate::{lasso::InstructionLookupsPreprocessing, utils::Forkable};
 
 pub struct Rep3LassoWitnessSolver<
     const C: usize,
@@ -203,7 +203,7 @@ where
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::polynomialize")]
     pub fn polynomialize(
         &mut self,
-        preprocessing: &LassoPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         mut lookups: Vec<Lookups>,
     ) -> eyre::Result<Rep3LassoPolynomials<F>> {
         let num_reads = lookups.len().next_power_of_two();
@@ -232,7 +232,7 @@ where
 
                     for (j, lookup) in lookups.iter().enumerate() {
                         let memories_used =
-                            &preprocessing.lookup_to_memory_indices[Lookups::enum_index(lookup)];
+                            &preprocessing.instruction_to_memory_indices[Lookups::enum_index(lookup)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = &access_sequence[j];
 

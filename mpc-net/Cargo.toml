@@ -32,7 +32,7 @@ bytesize = { workspace = true }
 rayon = { version = "1.10.0", optional = true }
 
 
-mpc-types = { path = "../../examples/co-snarks/mpc-types" }
+mpc-types = { path = "../../co-snarks/mpc-types" }
 
 mpi = { version = "0.7.0", features = [
     "user-operations",

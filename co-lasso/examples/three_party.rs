@@ -36,8 +36,8 @@ use co_lasso::{
 
 type Lookups = instructions::TestLookups<F>;
 type Subtables = subtables::TestSubtables<F>;
-type TestLassoProver = lasso::LassoProver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
-type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, Lookups, Subtables, Network>;
+type TestLassoProof = lasso::LassoProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
+type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, Network>;
 
 #[derive(Parser)]
 struct Args {
@@ -93,11 +93,11 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing = lasso::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
 
     let setup = {
-        let commitment_shapes = TestLassoProver::commitment_shapes(&preprocessing, num_inputs);
+        let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
         let mut rng = test_rng();
         PST13::setup(&commitment_shapes, &mut rng)
     };
@@ -168,9 +168,9 @@ fn run_coordinator(
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing = lasso::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
-    let commitment_shapes = TestLassoProver::commitment_shapes(&preprocessing, num_inputs);
+    let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
     let setup = {
         let mut rng = test_rng();
         PST13::setup(&commitment_shapes, &mut rng)
@@ -209,7 +209,7 @@ fn run_coordinator(
             )
             .collect_vec();
 
-            TestLassoProver::polynomialize(&preprocessing, &lookups)
+            TestLassoProof::polynomialize(&preprocessing, &lookups)
         };
         assert_eq!(polynomials.dim, polynomials_check.dim);
         assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
@@ -239,10 +239,10 @@ fn run_coordinator(
 
         let mut transcript = ProofTranscript::new(b"Lasso");
         let proof =
-            TestLassoProver::prove(&preprocessing, &polynomials_check, &setup, &mut transcript);
+            TestLassoProof::prove(&preprocessing, &polynomials_check, &setup, &mut transcript);
 
         let mut verifier_transcript = ProofTranscript::new(b"Lasso");
-        TestLassoProver::verify(
+        TestLassoProof::verify(
             &setup,
             &preprocessing,
             proof,
@@ -254,7 +254,7 @@ fn run_coordinator(
 
     let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
 
-    let proof = Rep3MemoryCheckingProver::<C, M, F, PST13<ark_bn254::Bn254>, Subtables, _>::prove(
+    let proof = Rep3MemoryCheckingProver::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, _>::prove(
         num_inputs,
         &preprocessing,
         &mut rep3_net,
@@ -264,7 +264,7 @@ fn run_coordinator(
     // assert_eq!(proof.primary_sumcheck.opening_proof.proofs, proof_check.primary_sumcheck.opening_proof.proofs);
 
     let mut verifier_transcript = ProofTranscript::new(b"Lasso");
-    TestLassoProver::verify(
+    TestLassoProof::verify(
         &setup,
         &preprocessing,
         proof,

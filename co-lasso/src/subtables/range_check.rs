@@ -13,10 +13,12 @@ impl<F: JoltField> LassoSubtable<F> for FullLimbSubtable<F> {
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
+        let point_rev = point.to_vec().into_iter().rev().collect::<Vec<_>>();
+
         let b = point.len();
         let mut result = F::ZERO;
         for i in 0..b {
-            result += point[i] * F::from(1u64 << (i));
+            result += point_rev[i] * F::from(1u64 << (i));
         }
         result
     }
@@ -51,6 +53,8 @@ impl<const BOUND: u64, F: JoltField> LassoSubtable<F> for BoundSubtable<BOUND, F
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
+        let point_rev = point.to_vec().into_iter().rev().collect::<Vec<_>>();
+
         let log2_M = point.len();
         let b = point.len();
 
@@ -65,7 +69,7 @@ impl<const BOUND: u64, F: JoltField> LassoSubtable<F> for BoundSubtable<BOUND, F
         let mut result = F::ZERO;
         for i in 0..b {
             if i < cutoff_log2 {
-                result += point[i] * F::from(1u64 << (i));
+                result += point_rev[i] * F::from(1u64 << (i));
             } else {
                 let mut g_value = F::ZERO;
 
@@ -74,16 +78,16 @@ impl<const BOUND: u64, F: JoltField> LassoSubtable<F> for BoundSubtable<BOUND, F
                         let mut term: F = F::from(g_base + k).into();
                         for j in 0..cutoff_log2 {
                             if (k & (1 << j)) != 0 {
-                                term *= point[j];
+                                term *= point_rev[j];
                             } else {
-                                term *= F::ONE - point[j];
+                                term *= F::ONE - point_rev[j];
                             }
                         }
                         g_value += term;
                     }
                 }
 
-                result = (F::ONE - point[i]) * result + point[i] * g_value
+                result = (F::ONE - point_rev[i]) * result + point_rev[i] * g_value
             }
         }
 

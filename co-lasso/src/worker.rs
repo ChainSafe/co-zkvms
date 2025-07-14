@@ -28,7 +28,7 @@ use crate::{
     instructions::Rep3LookupSet,
     lasso::{
         InstructionFinalOpenings, InstructionReadWriteOpenings, LassoPolynomials,
-        LassoPreprocessing,
+        InstructionLookupsPreprocessing,
     },
     poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
     subprotocols::{
@@ -56,7 +56,7 @@ where
     pub _marker: PhantomData<(F, Lookups, Subtables)>,
 }
 
-type Preprocessing<F> = LassoPreprocessing<F>;
+type Preprocessing<F> = InstructionLookupsPreprocessing<F>;
 type Polynomials<F> = Rep3LassoPolynomials<F>;
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
@@ -315,7 +315,7 @@ where
                 let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); num_eval_points];
                 for instruction in Lookups::iter() {
                     let instruction_index = Lookups::enum_index(&instruction);
-                    let memory_indices = &preprocessing.lookup_to_memory_indices[instruction_index];
+                    let memory_indices = &preprocessing.instruction_to_memory_indices[instruction_index];
 
                     for eval_index in 0..num_eval_points {
                         let flag_eval = multi_flag_evals[eval_index][instruction_index];
@@ -638,7 +638,7 @@ where
             .map(|memory_index| {
                 let mut memory_flag_bitvector = vec![0u64; m];
                 for instruction_index in 0..Lookups::COUNT {
-                    if preprocessing.lookup_to_memory_indices[instruction_index]
+                    if preprocessing.instruction_to_memory_indices[instruction_index]
                         .contains(&memory_index)
                     {
                         memory_flag_bitvector

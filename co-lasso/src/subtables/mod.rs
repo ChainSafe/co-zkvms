@@ -44,7 +44,6 @@ pub trait SubtableSet<F: JoltField>:
     }
 }
 
-
 // pub trait LookupClone<F: JoltField> {
 //     fn clone_box(&self) -> Box<dyn LookupType<F>>;
 // }
@@ -98,7 +97,6 @@ macro_rules! subtable_enum {
     };
 }
 
-
 subtable_enum!(
   TestSubtables,
   Full: range_check::FullLimbSubtable<F>,
@@ -107,8 +105,6 @@ subtable_enum!(
 
 use crate::subtables::xor::XorSubtable;
 subtable_enum!(
-    TestInstructionSubtables,
-    XOR: XorSubtable<F>
-  );
-
-  
+  TestInstructionSubtables,
+  XOR: XorSubtable<F>
+);

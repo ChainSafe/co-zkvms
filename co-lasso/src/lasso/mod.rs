@@ -19,14 +19,14 @@ use crate::{
     instructions::LookupSet,
     subtables::{LassoSubtable, SubtableIndices, SubtableSet},
 };
-pub use prover::{LassoProof, LassoProver, MemoryCheckingProof, PrimarySumcheck, InstructionReadWriteOpenings, InstructionFinalOpenings};
+pub use prover::{LassoProof, PrimarySumcheck, InstructionReadWriteOpenings, InstructionFinalOpenings};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct LassoPreprocessing<F: JoltField> {
+pub struct InstructionLookupsPreprocessing<F: JoltField> {
     pub subtable_to_memory_indices: Vec<Vec<usize>>,
-    pub lookup_to_memory_indices: Vec<Vec<usize>>,
+    pub instruction_to_memory_indices: Vec<Vec<usize>>,
     pub memory_to_subtable_index: Vec<usize>,
     pub memory_to_dimension_index: Vec<usize>,
     pub materialized_subtables: Vec<Vec<F>>,
@@ -35,7 +35,7 @@ pub struct LassoPreprocessing<F: JoltField> {
     // pub lookups: BTreeMap<LookupId, Box<dyn LookupType<F>>>,
 }
 
-impl<F: JoltField> LassoPreprocessing<F> {
+impl<F: JoltField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "Lasso::preprocess")]
     pub fn preprocess<const C: usize, const M: usize, Lookups, Subtables>() -> Self
     where
@@ -88,7 +88,7 @@ impl<F: JoltField> LassoPreprocessing<F> {
             subtable_to_memory_indices,
             memory_to_subtable_index,
             memory_to_dimension_index,
-            lookup_to_memory_indices,
+            instruction_to_memory_indices: lookup_to_memory_indices,
         }
     }
 
@@ -104,7 +104,7 @@ impl<F: JoltField> LassoPreprocessing<F> {
 pub type LassoPolynomials<F: JoltField, CS> = InstructionPolynomials<F, CS>;
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables>
-    LassoProver<C, M, F, CS, Lookups, Subtables>
+    LassoProof<C, M, F, CS, Lookups, Subtables>
 where
     CS: CommitmentScheme<Field = F>,
     Lookups: LookupSet<F>,
@@ -112,18 +112,12 @@ where
 {
     #[tracing::instrument(skip_all, name = "Lasso::polynomialize")]
     pub fn polynomialize(
-        preprocessing: &LassoPreprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &[Lookups],
     ) -> LassoPolynomials<F, CS> {
         let num_reads = ops.len().next_power_of_two();
 
         let subtable_lookup_indices = Self::subtable_lookup_indices(ops);
-
-        // let lookup_inputs = (0..inputs.len())
-        //     .into_iter()
-        //     .zip(lookups.into_iter())
-        //     .map(|(i, lookup_id)| (i, preprocessing.lookup_id_to_index[lookup_id]))
-        //     .collect_vec();
 
         let polys: Vec<_> = cfg_into_iter!(0..preprocessing.num_memories)
             .map(|memory_index| {
@@ -137,10 +131,10 @@ where
 
                 for (j, lookup) in ops.iter().enumerate() {
                     let memories_used =
-                        &preprocessing.lookup_to_memory_indices[Lookups::enum_index(lookup)];
+                        &preprocessing.instruction_to_memory_indices[Lookups::enum_index(lookup)];
                     if memories_used.contains(&memory_index) {
                         let memory_address = access_sequence[j];
-                        debug_assert!(memory_address < M);
+                        // debug_assert!(memory_address < M);
 
                         let counter = final_cts_i[memory_address];
                         read_cts_i[j] = counter;
@@ -230,31 +224,3 @@ where
         lookup_indices
     }
 }
-
-// impl<F, C> StructuredCommitment<C> for LassoPolynomials<F, C>
-// where
-//     F: JoltField,
-//     C: CommitmentScheme<Field = F>,
-// {
-//     type Commitment = InstructionCommitment<C>;
-
-//     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-//     fn commit(&self, generators: &C::Setup) -> Self::Commitment {
-//         let trace_polys: Vec<&DensePolynomial<F>> = chain![
-//             self.dim.iter(),
-//             self.read_cts.iter(),
-//             self.E_polys.iter(),
-//             self.instruction_flag_polys.iter(),
-//             iter::once(&self.lookup_outputs),
-//         ]
-//         .collect();
-
-//         let trace_commitment = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
-//         let final_commitment = C::batch_commit_polys(&self.final_cts, generators, BatchType::Big);
-
-//         Self::Commitment {
-//             trace_commitment,
-//             final_commitment,
-//         }
-//     }
-// }

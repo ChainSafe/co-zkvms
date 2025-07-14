@@ -5,7 +5,7 @@ use eyre::Context;
 use itertools::{interleave, Itertools};
 use jolt_core::{
     jolt::vm::instruction_lookups::PrimarySumcheckOpenings,
-    lasso::memory_checking::MultisetHashes,
+    lasso::memory_checking::{MemoryCheckingProof, MultisetHashes},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         field::JoltField,
@@ -24,31 +24,29 @@ use mpc_net::mpc_star::MpcStarNetCoordinator;
 use color_eyre::eyre::Result;
 
 use crate::{
-    lasso::{
+    instructions::LookupSet, lasso::{
         InstructionFinalOpenings, InstructionReadWriteOpenings, LassoPolynomials,
-        LassoPreprocessing, LassoProof, MemoryCheckingProof, PrimarySumcheck,
-    },
-    poly::Rep3StructuredOpeningProof,
-    subprotocols::{
+        InstructionLookupsPreprocessing, LassoProof, PrimarySumcheck,
+    }, poly::Rep3StructuredOpeningProof, subprotocols::{
         commitment::{DistributedCommitmentScheme, PST13},
         grand_product::BatchedGrandProductProver,
-    },
-    subtables::SubtableSet,
+    }, subtables::SubtableSet
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, CS, Subtables, Network> {
-    pub _marker: PhantomData<(F, Subtables, CS, Network)>,
+pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, CS, Lookups, Subtables, Network> {
+    pub _marker: PhantomData<(F, Lookups, Subtables, CS, Network)>,
 }
 
-type Preprocessing<F> = LassoPreprocessing<F>;
+type Preprocessing<F> = InstructionLookupsPreprocessing<F>;
 
-impl<F: JoltField, const C: usize, const M: usize, CS, Subtables, Network>
-    Rep3MemoryCheckingProver<C, M, F, CS, Subtables, Network>
+impl<F: JoltField, const C: usize, const M: usize, CS, Lookups, Subtables, Network>
+    Rep3MemoryCheckingProver<C, M, F, CS, Lookups, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
+    Lookups: LookupSet<F>,
     Subtables: SubtableSet<F>,
     Network: MpcStarNetCoordinator,
 {
@@ -58,7 +56,7 @@ where
         preprocessing: &Preprocessing<F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> Result<LassoProof<C, M, F, CS, Subtables>> {
+    ) -> Result<LassoProof<C, M, F, CS, Lookups, Subtables>> {
         let r_eq =
             transcript.challenge_vector::<F>(b"Jolt instruction lookups", trace_length.log_2());
         network.broadcast_request(r_eq)?;
@@ -88,6 +86,7 @@ where
             Self::prove_memory_checking(preprocessing, network, transcript)?;
 
         Ok(LassoProof {
+            _marker: PhantomData,
             primary_sumcheck,
             memory_checking: memory_checking_proof,
         })
@@ -198,6 +197,7 @@ where
         <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3(transcript, network)?;
 
         Ok(MemoryCheckingProof {
+            _polys: PhantomData,
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
@@ -223,6 +223,8 @@ where
         let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
         network.broadcast_request((gamma, tau))?;
+        transcript.append_protocol_name(Self::protocol_name());
+
         let num_lookups = network.receive_responses(0usize)?[0];
 
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
@@ -367,5 +369,9 @@ where
         round_uni_poly.append_to_transcript(b"poly", transcript);
 
         transcript.challenge_scalar::<F>(b"challenge_nextround")
+    }
+
+    fn protocol_name() -> &'static [u8] {
+        b"Instruction lookups memory checking"
     }
 }
