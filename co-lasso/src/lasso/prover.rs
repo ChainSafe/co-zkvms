@@ -2,15 +2,23 @@ use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
+use ark_poly_commit::multilinear_pc::data_structures::Proof;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
-use itertools::interleave;
+use itertools::{chain, interleave};
+use jolt_core::lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier};
+use jolt_core::poly::commitment::commitment_scheme::CommitShape;
+use jolt_core::poly::structured_poly::StructuredOpeningProof;
 use jolt_core::{
+    jolt::vm::instruction_lookups::{InstructionCommitment, PrimarySumcheckOpenings},
     lasso::memory_checking::MultisetHashes,
     poly::{
+        commitment::commitment_scheme::{BatchType, CommitmentScheme},
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         field::JoltField,
+        identity_poly::IdentityPolynomial,
+        structured_poly::StructuredCommitment,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
@@ -20,6 +28,7 @@ use jolt_core::{
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
+        errors::ProofVerifyError,
         math::Math,
         mul_0_1_optimized, split_poly_flagged,
         transcript::{AppendToTranscript, ProofTranscript},
@@ -33,74 +42,51 @@ use crate::{instructions::LookupSet, subtables::SubtableSet};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct LassoProver<const C: usize, const M: usize, F: JoltField, Lookups, Subtables> {
-    pub _marker: PhantomData<(F, Lookups, Subtables)>,
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct LassoProof<const C: usize, const M: usize, F>
+pub struct LassoProof<const C: usize, const M: usize, F, CS, Lookups, Subtables>
 where
     F: JoltField,
+    CS: CommitmentScheme<Field = F>,
+    Lookups: LookupSet<F>,
+    Subtables: SubtableSet<F>,
 {
-    pub(crate) primary_sumcheck: PrimarySumcheck<F>,
+    pub(crate) _marker: PhantomData<Lookups>,
+    pub primary_sumcheck: PrimarySumcheck<F, CS>,
     pub(crate) memory_checking: MemoryCheckingProof<
         F,
-        // CS,
-        // InstructionPolynomials<F, CS>,
-        // InstructionReadWriteOpenings<F>,
-        // InstructionFinalOpenings<F, Subtables>,
+        CS,
+        Polynomials<F, CS>,
+        InstructionReadWriteOpenings<F>,
+        InstructionFinalOpenings<F, Subtables>,
     >,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct PrimarySumcheck<F: JoltField> {
+pub struct PrimarySumcheck<F: JoltField, CS: CommitmentScheme<Field = F>> {
     pub(crate) sumcheck_proof: SumcheckInstanceProof<F>,
     pub(crate) num_rounds: usize,
-    // openings: PrimarySumcheckOpenings<F>,
-    // opening_proof: CS::BatchedProof,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F>
-where
-    F: JoltField,
-    // C: CommitmentScheme<Field = F>,
-    // Polynomials: StructuredCommitment<C>,
-    // ReadWriteOpenings: StructuredOpeningProof<F, C, Polynomials>,
-    // InitFinalOpenings: StructuredOpeningProof<F, C, Polynomials>,
-{
-    /// Read/write/init/final multiset hashes for each memory
-    pub multiset_hashes: MultisetHashes<F>,
-    /// The read and write grand products for every memory has the same size,
-    /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductArgument<F>,
-    /// The init and final grand products for every memory has the same size,
-    /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductArgument<F>,
-    // /// The opening proofs associated with the read/write grand product.
-    // pub read_write_openings: ReadWriteOpenings,
-    // pub read_write_opening_proof: ReadWriteOpenings::Proof,
-    // /// The opening proofs associated with the init/final grand product.
-    // pub init_final_openings: InitFinalOpenings,
-    // pub init_final_opening_proof: InitFinalOpenings::Proof,
+    pub(crate) openings: PrimarySumcheckOpenings<F>,
+    pub opening_proof: CS::BatchedProof,
 }
 
 type Preprocessing<F> = LassoPreprocessing<F>;
-type Polynomials<F> = LassoPolynomials<F>;
+type Polynomials<F, C> = LassoPolynomials<F, C>;
 
-impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables>
-    LassoProver<C, M, F, Lookups, Subtables>
+impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables>
+    LassoProof<C, M, F, CS, Lookups, Subtables>
 where
+    CS: CommitmentScheme<Field = F>,
     Lookups: LookupSet<F>,
     Subtables: SubtableSet<F>,
 {
     #[tracing::instrument(skip_all, name = "LassoProver::prove")]
     pub fn prove(
         preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
+        polynomials: &Polynomials<F, CS>,
+        setup: &CS::Setup,
         transcript: &mut ProofTranscript,
-    ) -> LassoProof<C, M, F> {
-        let trace_length = polynomials.dims[0].len();
+    ) -> LassoProof<C, M, F, CS, Lookups, Subtables> {
+        let trace_length = polynomials.dim[0].len();
         let r_eq = transcript.challenge_vector(b"Jolt instruction lookups", trace_length.log_2());
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
@@ -113,21 +99,36 @@ where
                 preprocessing,
                 num_rounds,
                 &mut eq_poly,
-                &polynomials.e_polys,
-                &polynomials.lookup_flag_polys,
+                &polynomials.E_polys,
+                &polynomials.instruction_flag_polys,
                 &mut polynomials.lookup_outputs.clone(),
                 Self::sumcheck_poly_degree(),
                 transcript,
             );
 
+        let sumcheck_openings = PrimarySumcheckOpenings {
+            E_poly_openings: E_evals,
+            flag_openings: flag_evals,
+            lookup_outputs_opening: outputs_eval,
+        };
+
+        let opening_proof = Self::prove_openings(
+            polynomials,
+            &r_primary_sumcheck,
+            &sumcheck_openings,
+            setup,
+            transcript,
+        );
+
         let primary_sumcheck = PrimarySumcheck {
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
-            // openings: sumcheck_openings,
-            // opening_proof: sumcheck_opening_proof,
+            openings: sumcheck_openings,
+            opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(preprocessing, polynomials, transcript);
+        let memory_checking =
+            Self::prove_memory_checking(preprocessing, polynomials, setup, transcript);
 
         LassoProof {
             primary_sumcheck,
@@ -138,9 +139,15 @@ where
     pub fn prove_memory_checking(
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
-        // network: &mut N,
+        setup: &CS::Setup,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F> {
+    ) -> MemoryCheckingProof<
+        F,
+        CS,
+        Polynomials<F, CS>,
+        InstructionReadWriteOpenings<F>,
+        InstructionFinalOpenings<F, Subtables>,
+    > {
         let (
             read_write_grand_product,
             init_final_grand_product,
@@ -149,10 +156,50 @@ where
             r_init_final,
         ) = Self::prove_grand_products(preprocessing, polynomials, transcript);
 
+        let read_write_openings = <InstructionReadWriteOpenings<F> as StructuredOpeningProof<
+            F,
+            CS,
+            Polynomials<F, CS>,
+        >>::open(polynomials, &r_read_write);
+        let read_write_opening_proof =
+            <InstructionReadWriteOpenings<F> as StructuredOpeningProof<
+                F,
+                CS,
+                Polynomials<F, CS>,
+            >>::prove_openings(
+                polynomials,
+                &r_read_write,
+                &read_write_openings,
+                setup,
+                transcript,
+            );
+        let init_final_openings =
+            <InstructionFinalOpenings<F, Subtables> as StructuredOpeningProof<
+                F,
+                CS,
+                Polynomials<F, CS>,
+            >>::open(polynomials, &r_init_final);
+        let init_final_opening_proof =
+            <InstructionFinalOpenings<F, Subtables> as StructuredOpeningProof<
+                F,
+                CS,
+                Polynomials<F, CS>,
+            >>::prove_openings(
+                polynomials,
+                &r_init_final,
+                &init_final_openings,
+                setup,
+                transcript,
+            );
+
         MemoryCheckingProof {
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
+            read_write_openings,
+            read_write_opening_proof,
+            init_final_openings,
+            init_final_opening_proof,
         }
     }
 
@@ -206,7 +253,7 @@ where
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
-        let num_lookups = polynomials.dims[0].len();
+        let num_lookups = polynomials.dim[0].len();
 
         let read_write_leaves = (0..preprocessing.num_memories)
             .into_par_iter()
@@ -215,8 +262,8 @@ where
 
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        let a = &polynomials.dims[dim_index][i];
-                        let v = &polynomials.e_polys[memory_index][i];
+                        let a = &polynomials.dim[dim_index][i];
+                        let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
                         mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
                     })
@@ -284,7 +331,7 @@ where
         let _enter = _span.enter();
 
         let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.lookup_flag_bitvectors);
+            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_bitvectors);
 
         let read_write_circuits = read_write_leaves
             .par_iter()
@@ -556,7 +603,11 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "LassoProver::primary_sumcheck_inner_loop", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "LassoProver::primary_sumcheck_inner_loop",
+        level = "trace"
+    )]
     fn primary_sumcheck_inner_loop(
         preprocessing: &Preprocessing<F>,
         eq_poly: &DensePolynomial<F>,
@@ -675,6 +726,37 @@ where
         UniPoly::from_evals(&evaluations)
     }
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
+    fn prove_openings(
+        polynomials: &Polynomials<F>,
+        opening_point: &[F],
+        openings: &PrimarySumcheckOpenings<F>,
+        setup: &CS::Setup,
+        transcript: &mut ProofTranscript,
+    ) -> CS::BatchedProof {
+        let primary_sumcheck_polys = chain![
+            polynomials.E_polys.iter(),
+            polynomials.instruction_flag_polys.iter(),
+            [&polynomials.lookup_outputs].into_iter()
+        ]
+        .collect::<Vec<_>>();
+        let mut primary_sumcheck_openings: Vec<F> = [
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
+        primary_sumcheck_openings.push(openings.lookup_outputs_opening);
+
+        CS::batch_prove(
+            &primary_sumcheck_polys,
+            opening_point,
+            &primary_sumcheck_openings,
+            setup,
+            BatchType::Big,
+            transcript,
+        )
+    }
+
     fn update_primary_sumcheck_transcript(
         round_uni_poly: UniPoly<F>,
         transcript: &mut ProofTranscript,
@@ -710,12 +792,29 @@ where
             + 2 // eq and flag
     }
 
-    pub fn verify(
+    pub fn commitment_shapes(
         preprocessing: &Preprocessing<F>,
-        proof: LassoProof<C, M, F>,
+        max_trace_length: usize,
+    ) -> Vec<CommitShape> {
+        let max_trace_length = max_trace_length.next_power_of_two();
+        // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
+        let read_write_generator_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_generator_shape = CommitShape::new(
+            M * preprocessing.num_memories.next_power_of_two(),
+            BatchType::Small,
+        );
+
+        vec![read_write_generator_shape, init_final_generator_shape]
+    }
+
+    pub fn verify(
+        setup: &CS::Setup,
+        preprocessing: &Preprocessing<F>,
+        proof: LassoProof<C, M, F, CS, Subtables>,
+        commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<()> {
-        let _r_eq = transcript.challenge_vector::<F>(
+        let r_eq = transcript.challenge_vector::<F>(
             b"Jolt instruction lookups",
             proof.primary_sumcheck.num_rounds,
         );
@@ -729,27 +828,60 @@ where
         )?;
 
         // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
-        // let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
-        // assert_eq!(
-        //     eq_eval
-        //         * (Self::combine_lookups(
-        //             preprocessing,
-        //             &proof.primary_sumcheck.openings.E_poly_openings,
-        //             &proof.primary_sumcheck.openings.flag_openings,
-        //         ) - proof.primary_sumcheck.openings.lookup_outputs_opening),
-        //     claim_last,
-        //     "Primary sumcheck check failed."
-        // );
+        let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
+        assert_eq!(
+            eq_eval
+                * (Self::combine_lookups(
+                    preprocessing,
+                    &proof.primary_sumcheck.openings.E_poly_openings,
+                    &proof.primary_sumcheck.openings.flag_openings,
+                ) - proof.primary_sumcheck.openings.lookup_outputs_opening),
+            claim_last,
+            "Primary sumcheck check failed."
+        );
 
-        // proof.primary_sumcheck.openings.verify_openings(
-        //     generators,
-        //     &proof.primary_sumcheck.opening_proof,
-        //     commitment,
-        //     &r_primary_sumcheck,
-        //     transcript,
-        // )?;
+        Self::verify_openings(
+            &proof.primary_sumcheck.openings,
+            setup,
+            &proof.primary_sumcheck.opening_proof,
+            commitment,
+            &r_primary_sumcheck,
+            transcript,
+        )?;
 
         Self::verify_memory_checking(preprocessing, proof.memory_checking, transcript)?;
+
+        Ok(())
+    }
+
+    fn verify_openings(
+        openings: &PrimarySumcheckOpenings<F>,
+        setup: &CS::Setup,
+        opening_proof: &CS::BatchedProof,
+        commitment: &InstructionCommitment<CS>,
+        opening_point: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> eyre::Result<()> {
+        let mut primary_sumcheck_openings: Vec<F> = [
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
+        primary_sumcheck_openings.push(openings.lookup_outputs_opening);
+        let primary_sumcheck_commitments = commitment.trace_commitment
+            [commitment.trace_commitment.len() - primary_sumcheck_openings.len()..]
+            .iter()
+            .collect::<Vec<_>>();
+
+        CS::batch_verify(
+            opening_proof,
+            setup,
+            opening_point,
+            &primary_sumcheck_openings,
+            &primary_sumcheck_commitments,
+            transcript,
+        )
+        .context("while verifying primary sumcheck openings")?;
 
         Ok(())
     }
@@ -757,8 +889,15 @@ where
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::verify")]
     pub fn verify_memory_checking(
         preprocessing: &Preprocessing<F>,
-        mut proof: MemoryCheckingProof<F>,
-        // commitments: &Polynomials::Commitment,
+        setup: &CS::Setup,
+        mut proof: MemoryCheckingProof<
+            F,
+            CS,
+            Polynomials<F>,
+            InstructionReadWriteOpenings<F>,
+            InstructionFinalOpenings<F, Subtables>,
+        >,
+        commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<()> {
         // Fiat-Shamir randomness for multiset hashes
@@ -782,38 +921,351 @@ where
             .verify(&init_final_hashes, transcript)
             .context("while verifying init_final_grand_product")?;
 
-        // proof.read_write_openings.verify_openings(
-        //     generators,
-        //     &proof.read_write_opening_proof,
-        //     commitments,
-        //     &r_read_write,
-        //     transcript,
-        // )?;
-        // proof.init_final_openings.verify_openings(
-        //     generators,
-        //     &proof.init_final_opening_proof,
-        //     commitments,
-        //     &r_init_final,
-        //     transcript,
-        // )?;
+        proof.read_write_openings.verify_openings(
+            setup,
+            &proof.read_write_opening_proof,
+            commitment,
+            &r_read_write,
+            transcript,
+        )?;
+        proof.init_final_openings.verify_openings(
+            setup,
+            &proof.init_final_opening_proof,
+            commitment,
+            &r_init_final,
+            transcript,
+        )?;
 
-        // proof
-        //     .read_write_openings
-        //     .compute_verifier_openings(&NoPreprocessing, &r_read_write);
-        // proof
-        //     .init_final_openings
-        //     .compute_verifier_openings(preprocessing, &r_init_final);
+        proof
+            .read_write_openings
+            .compute_verifier_openings(preprocessing, &r_read_write);
+        proof
+            .init_final_openings
+            .compute_verifier_openings(preprocessing, &r_init_final);
 
-        // Self::check_fingerprints(
-        //     preprocessing,
-        //     claims_read_write,
-        //     claims_init_final,
-        //     &proof.read_write_openings,
-        //     &proof.init_final_openings,
-        //     &gamma,
-        //     &tau,
-        // );
+        Self::check_fingerprints(
+            preprocessing,
+            claims_read_write,
+            claims_init_final,
+            &proof.read_write_openings,
+            &proof.init_final_openings,
+            &gamma,
+            &tau,
+        );
 
         Ok(())
+    }
+}
+
+impl<const C: usize, const M: usize, F, CS, Lookups, Subtables> MemoryCheckingProver<F, CS, LassoPolynomials<F, CS>>
+    for LassoProof<C, M, F, CS, Lookups, Subtables>
+where
+    F: JoltField,
+    CS: CommitmentScheme<Field = F>,
+    Lookups: LookupSet<F>,
+    Subtables: SubtableSet<F>,
+{
+    type Preprocessing = LassoPreprocessing<F>;
+
+    type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
+
+    type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
+
+    type MemoryTuple = (F, F, F);
+
+    fn compute_leaves(
+        preprocessing: &Self::Preprocessing,
+        polynomials: &LassoPolynomials<F, CS>,
+        gamma: &F,
+        tau: &F,
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+        todo!()
+    }
+
+    fn fingerprint(tuple: &Self::MemoryTuple, gamma: &F, tau: &F) -> F {
+        todo!()
+    }
+
+    fn protocol_name() -> &'static [u8] {
+        todo!()
+    }
+}
+
+type MemoryTuple<F> = (F, F, F, Option<F>);
+
+// impl<F, CS, Subtables, const C: usize, const M: usize>
+//     MemoryCheckingVerifier<F, CS, LassoPolynomials<F, CS>>
+//     for LassoProof<C, M, F, CS, Subtables>
+// where
+//     F: JoltField,
+//     CS: CommitmentScheme<Field = F>,
+//     Subtables: SubtableSet<F>,
+// {
+//     fn read_tuples(
+//         preprocessing: &Preprocessing<F>,
+//         openings: &InstructionReadWriteOpenings<F>,
+//     ) -> Vec<MemoryTuple<F>> {
+//         let memory_flags = Self::memory_flags(preprocessing, &openings.flag_openings);
+//         (0..preprocessing.num_memories)
+//             .map(|memory_index| {
+//                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+//                 (
+//                     openings.dim_openings[dim_index],
+//                     openings.E_poly_openings[memory_index],
+//                     openings.read_openings[memory_index],
+//                     Some(memory_flags[memory_index]),
+//                 )
+//             })
+//             .collect()
+//     }
+//     fn write_tuples(
+//         preprocessing: &InstructionLookupsPreprocessing<F>,
+//         openings: &Self::ReadWriteOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         Self::read_tuples(preprocessing, openings)
+//             .iter()
+//             .map(|(a, v, t, flag)| (*a, *v, *t + F::one(), *flag))
+//             .collect()
+//     }
+//     fn init_tuples(
+//         _preprocessing: &InstructionLookupsPreprocessing<F>,
+//         openings: &Self::InitFinalOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         let a_init = openings.a_init_final.unwrap();
+//         let v_init = openings.v_init_final.as_ref().unwrap();
+
+//         (0..Self::NUM_SUBTABLES)
+//             .map(|subtable_index| (a_init, v_init[subtable_index], F::zero(), None))
+//             .collect()
+//     }
+//     fn final_tuples(
+//         preprocessing: &InstructionLookupsPreprocessing<F>,
+//         openings: &Self::InitFinalOpenings,
+//     ) -> Vec<Self::MemoryTuple> {
+//         let a_init = openings.a_init_final.unwrap();
+//         let v_init = openings.v_init_final.as_ref().unwrap();
+
+//         (0..preprocessing.num_memories)
+//             .map(|memory_index| {
+//                 (
+//                     a_init,
+//                     v_init[preprocessing.memory_to_subtable_index[memory_index]],
+//                     openings.final_openings[memory_index],
+//                     None,
+//                 )
+//             })
+//             .collect()
+//     }
+// }
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct InstructionReadWriteOpenings<F>
+where
+    F: JoltField,
+{
+    /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
+    pub(crate) dim_openings: Vec<F>,
+    /// Evaluations of the read_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+    pub(crate) read_openings: Vec<F>,
+    /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+    pub(crate) E_poly_openings: Vec<F>,
+    /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
+    pub(crate) flag_openings: Vec<F>,
+}
+
+impl<F, C> StructuredOpeningProof<F, C, LassoPolynomials<F, C>> for InstructionReadWriteOpenings<F>
+where
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+{
+    type Proof = C::BatchedProof;
+    type Preprocessing = LassoPreprocessing<F>;
+
+    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
+    fn open(polynomials: &LassoPolynomials<F, C>, opening_point: &[F]) -> Self {
+        // All of these evaluations share the lagrange basis polynomials.
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+
+        let dim_openings = polynomials
+            .dim
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        let read_openings = polynomials
+            .read_cts
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        let E_poly_openings = polynomials
+            .E_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        let flag_openings = polynomials
+            .instruction_flag_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+
+        Self {
+            dim_openings,
+            read_openings,
+            E_poly_openings,
+            flag_openings,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
+    fn prove_openings(
+        polynomials: &LassoPolynomials<F, C>,
+        opening_point: &[F],
+        openings: &Self,
+        setup: &C::Setup,
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        let read_write_polys = chain![
+            polynomials.dim.iter(),
+            polynomials.read_cts.iter(),
+            polynomials.E_polys.iter(),
+            polynomials.instruction_flag_polys.iter()
+        ]
+        .collect::<Vec<_>>();
+
+        let read_write_openings: Vec<F> = [
+            openings.dim_openings.as_slice(),
+            openings.read_openings.as_slice(),
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
+
+        C::batch_prove(
+            &read_write_polys,
+            opening_point,
+            &read_write_openings,
+            setup,
+            BatchType::Big,
+            transcript,
+        )
+    }
+
+    fn verify_openings(
+        &self,
+        generators: &C::Setup,
+        opening_proof: &Self::Proof,
+        commitment: &InstructionCommitment<C>,
+        opening_point: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let read_write_openings: Vec<F> = [
+            self.dim_openings.as_slice(),
+            self.read_openings.as_slice(),
+            self.E_poly_openings.as_slice(),
+            self.flag_openings.as_slice(),
+        ]
+        .concat();
+        C::batch_verify(
+            opening_proof,
+            generators,
+            opening_point,
+            &read_write_openings,
+            &commitment.trace_commitment[..read_write_openings.len()]
+                .iter()
+                .collect::<Vec<_>>(),
+            transcript,
+        )
+    }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct InstructionFinalOpenings<F, Subtables>
+where
+    F: JoltField,
+    Subtables: SubtableSet<F>,
+{
+    pub(crate) _subtables: PhantomData<Subtables>,
+    /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+    pub(crate) final_openings: Vec<F>,
+    /// Evaluation of the a_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+    pub(crate) a_init_final: Option<F>,
+    /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+    pub(crate) v_init_final: Option<Vec<F>>,
+}
+
+impl<F, C, Subtables> StructuredOpeningProof<F, C, LassoPolynomials<F, C>>
+    for InstructionFinalOpenings<F, Subtables>
+where
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+    Subtables: SubtableSet<F>,
+{
+    type Preprocessing = LassoPreprocessing<F>;
+    type Proof = C::BatchedProof;
+
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
+    fn open(polynomials: &LassoPolynomials<F, C>, opening_point: &[F]) -> Self {
+        // All of these evaluations share the lagrange basis polynomials.
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let final_openings = polynomials
+            .final_cts
+            .par_iter()
+            .map(|final_cts_i| final_cts_i.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        Self {
+            _subtables: PhantomData,
+            final_openings,
+            a_init_final: None,
+            v_init_final: None,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
+    fn prove_openings(
+        polynomials: &LassoPolynomials<F>,
+        opening_point: &[F],
+        openings: &Self,
+        setup: &C::Setup,
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        C::batch_prove(
+            &polynomials.final_cts.iter().collect::<Vec<_>>(),
+            opening_point,
+            &openings.final_openings,
+            setup,
+            BatchType::Big,
+            transcript,
+        )
+    }
+
+    fn compute_verifier_openings(
+        &mut self,
+        _preprocessing: &Self::Preprocessing,
+        opening_point: &[F],
+    ) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Subtables::iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
+    }
+
+    fn verify_openings(
+        &self,
+        generators: &C::Setup,
+        opening_proof: &Self::Proof,
+        commitment: &InstructionCommitment<C>,
+        opening_point: &[F],
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        C::batch_verify(
+            opening_proof,
+            generators,
+            opening_point,
+            &self.final_openings,
+            &commitment.final_commitment.iter().collect::<Vec<_>>(),
+            transcript,
+        )
     }
 }

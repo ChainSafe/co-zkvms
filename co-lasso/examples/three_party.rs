@@ -1,4 +1,5 @@
 use ark_ff::Zero;
+use ark_poly_commit::multilinear_pc::MultilinearPC;
 use ark_std::test_rng;
 use clap::Parser;
 use color_eyre::{
@@ -6,7 +7,11 @@ use color_eyre::{
     Result,
 };
 use itertools::{chain, Itertools};
-use jolt_core::utils::transcript::ProofTranscript;
+use jolt_core::poly::structured_poly::StructuredCommitment;
+use jolt_core::{
+    jolt::vm::instruction_lookups::InstructionCommitment,
+    utils::{math::Math, transcript::ProofTranscript},
+};
 use mpc_core::protocols::rep3;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
@@ -20,13 +25,18 @@ use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
 use co_lasso::{
+    coordinator::Rep3MemoryCheckingProver,
     instructions::{self, range_check::RangeLookup, xor::XORInstruction},
-    lasso, memory_checking, subtables, Rep3LassoWitnessSolver,
+    lasso,
+    subprotocols::commitment::PST13,
+    subtables,
+    worker::Rep3LassoProver,
+    Rep3LassoPolynomials, Rep3LassoWitnessSolver,
 };
 
 type Lookups = instructions::TestLookups<F>;
 type Subtables = subtables::TestSubtables<F>;
-type TestLassoProver = lasso::LassoProver<C, M, F, Lookups, Subtables>;
+type TestLassoProver = lasso::LassoProver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
 type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, Lookups, Subtables, Network>;
 
 #[derive(Parser)]
@@ -45,7 +55,7 @@ type F = ark_bn254::Fr;
 
 // #[tokio::main]
 fn main() -> Result<()> {
-    init_tracing();
+    // init_tracing();
     let args = Args::parse();
     let num_inputs = 1 << args.log_num_inputs;
     rustls::crypto::aws_lc_rs::default_provider()
@@ -84,6 +94,13 @@ fn run_party(
     .unwrap();
 
     let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+
+
+    let setup = {
+        let commitment_shapes = TestLassoProver::commitment_shapes(&preprocessing, num_inputs);
+        let mut rng = test_rng();
+        PST13::setup(&commitment_shapes, &mut rng)
+    };
 
     let party_id = rep3_net.party_id();
 
@@ -124,10 +141,15 @@ fn run_party(
 
     let mut rep3_net = witness_solver.io_ctx0.network;
 
+    polynomials.commit::<PST13<ark_bn254::Bn254>>(&setup, &mut rep3_net)?;
+
     rep3_net.send_response(polynomials.clone())?;
 
     let mut prover =
-        memory_checking::worker::Rep3LassoProver::<C, M, F, Lookups, Subtables, _>::new(rep3_net)?;
+        Rep3LassoProver::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, _>::new(
+            rep3_net, setup,
+        )?;
+
     prover.prove(&preprocessing, &polynomials)?;
 
     prover.io_ctx.network.log_connection_stats();
@@ -142,12 +164,19 @@ fn run_coordinator(
     log_num_pub_workers: usize,
     num_inputs: usize,
 ) -> Result<()> {
-    // init_tracing();
+    init_tracing();
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
     let preprocessing = lasso::LassoPreprocessing::preprocess::<C, M, Lookups, Subtables>();
-    let mut transcript = ProofTranscript::new(b"Memory checking");
+
+    let commitment_shapes = TestLassoProver::commitment_shapes(&preprocessing, num_inputs);
+    let setup = {
+        let mut rng = test_rng();
+        PST13::setup(&commitment_shapes, &mut rng)
+    };
+    let commitments =
+        Rep3LassoPolynomials::receive_commitments::<PST13<ark_bn254::Bn254>>(&mut rep3_net)?;
 
     let polynomials_shares = rep3_net.receive_responses(Default::default())?;
     if std::env::var("SANITY_CHECK").is_ok() {
@@ -180,57 +209,72 @@ fn run_coordinator(
             )
             .collect_vec();
 
-            lasso::LassoProver::<C, M, F, Lookups, Subtables>::polynomialize(
-                &preprocessing,
-                &lookups,
-            )
+            TestLassoProver::polynomialize(&preprocessing, &lookups)
         };
-        assert_eq!(polynomials.dims, polynomials_check.dims);
+        assert_eq!(polynomials.dim, polynomials_check.dim);
         assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
         assert_eq!(polynomials.final_cts, polynomials_check.final_cts);
-        assert_eq!(polynomials.e_polys, polynomials_check.e_polys);
+        assert_eq!(polynomials.E_polys, polynomials_check.E_polys);
         assert_eq!(
-            polynomials.lookup_flag_polys,
-            polynomials_check.lookup_flag_polys
+            polynomials.instruction_flag_polys,
+            polynomials_check.instruction_flag_polys
         );
         assert_eq!(
-            polynomials.lookup_flag_bitvectors,
-            polynomials_check.lookup_flag_bitvectors
+            polynomials.instruction_flag_bitvectors,
+            polynomials_check.instruction_flag_bitvectors
         );
         assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
 
-        {
-            let mut transcript = ProofTranscript::new(b"Memory checking");
-            let proof = TestLassoProver::prove(&preprocessing, &polynomials_check, &mut transcript);
+        let commitment_check: InstructionCommitment<PST13<ark_bn254::Bn254>> =
+            polynomials_check.commit(&setup);
 
-            let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
-            TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;
-        }
+        assert_eq!(
+            commitment_check.trace_commitment,
+            commitments.trace_commitment
+        );
+        assert_eq!(
+            commitment_check.final_commitment,
+            commitments.final_commitment
+        );
+
+        let mut transcript = ProofTranscript::new(b"Lasso");
+        let proof =
+            TestLassoProver::prove(&preprocessing, &polynomials_check, &setup, &mut transcript);
+
+        let mut verifier_transcript = ProofTranscript::new(b"Lasso");
+        TestLassoProver::verify(
+            &setup,
+            &preprocessing,
+            proof,
+            &commitments,
+            &mut verifier_transcript,
+        )
+        .context("while verifying Lasso (check) proof")?;
     }
 
-    let proof =
-        memory_checking::coordinator::Rep3MemoryCheckingProver::<C, M, F, Subtables, _>::prove(
-            num_inputs,
-            &preprocessing,
-            &mut rep3_net,
-            &mut transcript,
-        )?;
+    let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
 
-    let mut verifier_transcript = ProofTranscript::new(b"Memory checking");
-    TestLassoProver::verify(&preprocessing, proof, &mut verifier_transcript)?;
+    let proof = Rep3MemoryCheckingProver::<C, M, F, PST13<ark_bn254::Bn254>, Subtables, _>::prove(
+        num_inputs,
+        &preprocessing,
+        &mut rep3_net,
+        &mut transcript,
+    )?;
+
+    // assert_eq!(proof.primary_sumcheck.opening_proof.proofs, proof_check.primary_sumcheck.opening_proof.proofs);
+
+    let mut verifier_transcript = ProofTranscript::new(b"Lasso");
+    TestLassoProver::verify(
+        &setup,
+        &preprocessing,
+        proof,
+        &commitments,
+        &mut verifier_transcript,
+    )
+    .context("while verifying Lasso (rep3) proof")?;
 
     Ok(())
 }
-
-// /// Promotes a public field element to a replicated share by setting the additive share of the party with id=0 and leaving all other shares to be 0. Thus, the replicated shares of party 0 and party 1 are set.
-// pub fn promote_from_trivial<F: PrimeField>(val: &F, id: PartyID) -> Rep3BigUintShare<F> {
-//     let val: BigUint = val.clone().into();
-//     match id {
-//         PartyID::ID0 => Rep3BigUintShare::new(val, BigUint::zero()),
-//         PartyID::ID1 => Rep3BigUintShare::new(BigUint::zero(), val),
-//         PartyID::ID2 => Rep3BigUintShare::zero_share(),
-//     }
-// }
 
 fn init_tracing() {
     let env_filter = EnvFilter::builder()

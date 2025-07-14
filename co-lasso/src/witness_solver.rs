@@ -2,25 +2,30 @@ use crate::{
     instructions::LookupSet,
     lasso,
     poly::{combine_poly_shares, Rep3DensePolynomial},
+    subprotocols::commitment::DistributedCommitmentScheme,
     utils,
 };
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
 use color_eyre::eyre::Context;
-use itertools::{multizip, Itertools};
+use itertools::{chain, multizip, Itertools};
 use jolt_core::{
-    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    jolt::vm::instruction_lookups::InstructionCommitment,
+    poly::{
+        commitment::commitment_scheme::BatchType, dense_mlpoly::DensePolynomial, field::JoltField,
+    },
     utils::math::Math,
 };
 use mpc_core::protocols::{
     rep3::{
         self, arithmetic,
         network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
+use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use std::{iter, marker::PhantomData};
 
 #[cfg(feature = "parallel")]
@@ -33,13 +38,14 @@ pub struct Rep3LassoWitnessSolver<
     const C: usize,
     const M: usize,
     F: JoltField,
+    CS,
     Lookups: Rep3LookupSet<F>,
     Subtables: SubtableSet<F>,
     N: Rep3Network,
 > {
     pub io_ctx0: IoContext<N>,
     pub io_ctx1: IoContext<N>,
-    _marker: PhantomData<(F, Lookups, Subtables)>,
+    _marker: PhantomData<(F, CS, Lookups, Subtables)>,
 }
 
 #[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
@@ -77,9 +83,108 @@ pub struct Rep3LassoPolynomials<F: JoltField> {
     pub lookup_outputs: Rep3DensePolynomial<F>,
 }
 
-impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables, Network>
-    Rep3LassoWitnessSolver<C, M, F, Lookups, Subtables, Network>
+impl<F: JoltField> Rep3LassoPolynomials<F> {
+    pub fn commit<CS: DistributedCommitmentScheme<F>>(
+        &self,
+        setup: &CS::Setup,
+        network: &mut impl MpcStarNetWorker,
+    ) -> eyre::Result<()> {
+        let dims_share_a = self
+            .dims
+            .iter()
+            .map(|poly| poly.copy_share_a())
+            .collect::<Vec<_>>();
+        let read_cts_share_a = self
+            .read_cts
+            .iter()
+            .map(|poly| poly.copy_share_a())
+            .collect::<Vec<_>>();
+        let e_polys_share_a = self
+            .e_polys
+            .iter()
+            .map(|poly| poly.copy_share_a())
+            .collect::<Vec<_>>();
+        let lookup_outputs_share_a = self.lookup_outputs.copy_share_a();
+        let trace_polys: Vec<&DensePolynomial<F>> = chain![
+            dims_share_a.iter(),
+            read_cts_share_a.iter(),
+            e_polys_share_a.iter(),
+            iter::once(&lookup_outputs_share_a),
+        ]
+        .collect();
+
+        let final_cts = self
+            .final_cts
+            .iter()
+            .map(|poly| poly.copy_poly_shares().0)
+            .collect::<Vec<_>>();
+        let trace_commitment = CS::batch_commit_polys_ref(&trace_polys, setup, BatchType::Big);
+        let lookup_flag_polys_commitment = CS::batch_commit_polys_ref(
+            &self.lookup_flag_polys.iter().collect::<Vec<_>>(),
+            setup,
+            BatchType::Big,
+        );
+        let final_commitment = CS::batch_commit_polys(&final_cts, setup, BatchType::Big);
+
+        if network.party_id() == PartyID::ID0 {
+            network.send_response(lookup_flag_polys_commitment)?;
+        }
+
+        network.send_response(InstructionCommitment::<CS> {
+            trace_commitment,
+            final_commitment,
+        })
+    }
+
+    pub fn receive_commitments<CS: DistributedCommitmentScheme<F>>(
+        network: &mut impl MpcStarNetCoordinator,
+    ) -> eyre::Result<InstructionCommitment<CS>> {
+        // lookup flag polys commitment are not secret shared
+        let lookup_flag_polys_commitment: Vec<CS::Commitment> =
+            network.receive_response(PartyID::ID0, 0, Default::default())?;
+
+        let [share1, share2, share3] = network
+            .receive_responses(InstructionCommitment::<CS> {
+                trace_commitment: Default::default(),
+                final_commitment: Default::default(),
+            })?
+            .try_into()
+            .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+
+        let mut trace_commitment = multizip((
+            share1.trace_commitment,
+            share2.trace_commitment,
+            share3.trace_commitment,
+        ))
+        .map(|(trace1, trace2, trace3)| CS::combine_commitments(&[trace1, trace2, trace3]))
+        .collect_vec();
+
+        // need to insert lookup flag polys commitment after e_polys commitments and before lookup outputs commitment
+        let after_e_polys_idx = trace_commitment.len().saturating_sub(1);
+        trace_commitment.splice(
+            after_e_polys_idx..after_e_polys_idx,
+            lookup_flag_polys_commitment,
+        );
+
+        let final_commitment = multizip((
+            share1.final_commitment,
+            share2.final_commitment,
+            share3.final_commitment,
+        ))
+        .map(|(final1, final2, final3)| CS::combine_commitments(&[final1, final2, final3]))
+        .collect_vec();
+
+        Ok(InstructionCommitment::<CS> {
+            trace_commitment,
+            final_commitment,
+        })
+    }
+}
+
+impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
+    Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
+    CS: DistributedCommitmentScheme<F>,
     Lookups: Rep3LookupSet<F>,
     Subtables: SubtableSet<F>,
     Network: Rep3Network,
@@ -274,7 +379,7 @@ where
 
     pub fn combine_polynomials(
         polynomials_shares: Vec<Rep3LassoPolynomials<F>>,
-    ) -> lasso::LassoPolynomials<F> {
+    ) -> lasso::LassoPolynomials<F, CS> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dims = multizip((share1.dims, share2.dims, share3.dims))
@@ -300,20 +405,22 @@ where
         ]);
 
         lasso::LassoPolynomials {
-            dims,
+            _marker: PhantomData,
+            dim: dims,
             read_cts,
             final_cts,
-            lookup_flag_polys: share1.lookup_flag_polys.clone(),
-            lookup_flag_bitvectors: share1.lookup_flag_bitvectors.clone(),
-            e_polys,
+            instruction_flag_polys: share1.lookup_flag_polys.clone(),
+            instruction_flag_bitvectors: share1.lookup_flag_bitvectors.clone(),
+            E_polys: e_polys,
             lookup_outputs,
         }
     }
 }
 
-impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables, Network> Forkable
-    for Rep3LassoWitnessSolver<C, M, F, Lookups, Subtables, Network>
+impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network> Forkable
+    for Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
+    CS: DistributedCommitmentScheme<F>,
     Lookups: Rep3LookupSet<F>,
     Subtables: SubtableSet<F>,
     Network: Rep3Network,

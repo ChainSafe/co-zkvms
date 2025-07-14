@@ -4,9 +4,12 @@ use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use eyre::Context;
 use itertools::{interleave, Itertools};
 use jolt_core::{
+    jolt::vm::instruction_lookups::PrimarySumcheckOpenings,
     lasso::memory_checking::MultisetHashes,
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         field::JoltField,
+        structured_poly::StructuredOpeningProof,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{grand_product::BatchedGrandProductArgument, sumcheck::SumcheckInstanceProof},
@@ -21,23 +24,31 @@ use mpc_net::mpc_star::MpcStarNetCoordinator;
 use color_eyre::eyre::Result;
 
 use crate::{
-    grand_product::BatchedGrandProductProver,
-    lasso::{LassoPreprocessing, LassoProof, MemoryCheckingProof, PrimarySumcheck},
+    lasso::{
+        InstructionFinalOpenings, InstructionReadWriteOpenings, LassoPolynomials,
+        LassoPreprocessing, LassoProof, MemoryCheckingProof, PrimarySumcheck,
+    },
+    poly::Rep3StructuredOpeningProof,
+    subprotocols::{
+        commitment::{DistributedCommitmentScheme, PST13},
+        grand_product::BatchedGrandProductProver,
+    },
     subtables::SubtableSet,
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, Subtables, Network> {
-    pub _marker: PhantomData<(F, Subtables, Network)>,
+pub struct Rep3MemoryCheckingProver<const C: usize, const M: usize, F, CS, Subtables, Network> {
+    pub _marker: PhantomData<(F, Subtables, CS, Network)>,
 }
 
 type Preprocessing<F> = LassoPreprocessing<F>;
 
-impl<F: JoltField, const C: usize, const M: usize, Subtables, Network>
-    Rep3MemoryCheckingProver<C, M, F, Subtables, Network>
+impl<F: JoltField, const C: usize, const M: usize, CS, Subtables, Network>
+    Rep3MemoryCheckingProver<C, M, F, CS, Subtables, Network>
 where
+    CS: DistributedCommitmentScheme<F>,
     Subtables: SubtableSet<F>,
     Network: MpcStarNetCoordinator,
 {
@@ -47,7 +58,7 @@ where
         preprocessing: &Preprocessing<F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> Result<LassoProof<C, M, F>> {
+    ) -> Result<LassoProof<C, M, F, CS, Subtables>> {
         let r_eq =
             transcript.challenge_vector::<F>(b"Jolt instruction lookups", trace_length.log_2());
         network.broadcast_request(r_eq)?;
@@ -57,11 +68,20 @@ where
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck(num_rounds, transcript, network)?;
 
-        let primary_sumcheck = PrimarySumcheck {
+        // Create a single opening proof for the flag_evals and memory_evals
+        let sumcheck_openings = PrimarySumcheckOpenings {
+            E_poly_openings: E_evals,
+            flag_openings: flag_evals,
+            lookup_outputs_opening: outputs_eval,
+        };
+
+        let opening_proof = CS::distributed_batch_open(transcript, network)?;
+
+        let primary_sumcheck = PrimarySumcheck::<F, CS> {
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
-            // openings: sumcheck_openings,
-            // opening_proof: sumcheck_opening_proof,
+            openings: sumcheck_openings,
+            opening_proof,
         };
 
         let memory_checking_proof =
@@ -72,7 +92,6 @@ where
             memory_checking: memory_checking_proof,
         })
     }
-
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_primary_sumcheck")]
@@ -149,7 +168,15 @@ where
         preprocessing: &Preprocessing<F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> Result<MemoryCheckingProof<F>> {
+    ) -> Result<
+        MemoryCheckingProof<
+            F,
+            CS,
+            LassoPolynomials<F, CS>,
+            InstructionReadWriteOpenings<F>,
+            InstructionFinalOpenings<F, Subtables>,
+        >,
+    > {
         let (
             read_write_grand_product,
             init_final_grand_product,
@@ -159,10 +186,25 @@ where
         ) = Self::prove_grand_products(preprocessing, network, transcript)
             .context("while proving grand products")?;
 
+        let read_write_openings =
+            <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3(
+                &r_read_write,
+                network,
+            )?;
+        let read_write_opening_proof =
+        <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3(transcript, network)?;
+        let init_final_openings = <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3(&r_init_final, network)?;
+        let init_final_opening_proof =
+        <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3(transcript, network)?;
+
         Ok(MemoryCheckingProof {
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
+            read_write_openings,
+            read_write_opening_proof,
+            init_final_openings,
+            init_final_opening_proof,
         })
     }
 

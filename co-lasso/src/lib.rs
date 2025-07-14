@@ -1,14 +1,16 @@
-pub mod grand_product;
-pub mod lasso;
-pub mod memory_checking;
-pub mod subtables;
-pub mod instructions;
-pub mod sumcheck;
-mod utils;
-mod poly;
-mod witness_solver;
+#![feature(bool_to_result)]
 
-pub use witness_solver::{Rep3LassoWitnessSolver, Rep3LassoPolynomials};
+pub mod coordinator;
+pub mod instructions;
+pub mod lasso;
+mod poly;
+pub mod subprotocols;
+pub mod subtables;
+mod utils;
+mod witness_solver;
+pub mod worker;
+
+pub use witness_solver::{Rep3LassoPolynomials, Rep3LassoWitnessSolver};
 
 use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

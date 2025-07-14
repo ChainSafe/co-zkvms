@@ -1,9 +1,17 @@
 mod prover;
 
+use std::{iter, marker::PhantomData};
+
 use ark_std::cfg_into_iter;
-use itertools::Itertools;
+use itertools::{chain, Itertools};
 use jolt_core::{
-    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    jolt::vm::instruction_lookups::{InstructionCommitment, InstructionPolynomials},
+    poly::{
+        commitment::commitment_scheme::{BatchType, CommitmentScheme},
+        dense_mlpoly::DensePolynomial,
+        field::JoltField,
+        structured_poly::StructuredCommitment,
+    },
     utils::math::Math,
 };
 
@@ -11,7 +19,7 @@ use crate::{
     instructions::LookupSet,
     subtables::{LassoSubtable, SubtableIndices, SubtableSet},
 };
-pub use prover::{LassoProver, LassoProof, MemoryCheckingProof, PrimarySumcheck};
+pub use prover::{LassoProof, LassoProver, MemoryCheckingProof, PrimarySumcheck, InstructionReadWriteOpenings, InstructionFinalOpenings};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -93,42 +101,12 @@ impl<F: JoltField> LassoPreprocessing<F> {
     }
 }
 
-pub struct LassoPolynomials<F: JoltField> {
-    /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
-    /// `m` (# lookups).
-    pub dims: Vec<DensePolynomial<F>>,
+pub type LassoPolynomials<F: JoltField, CS> = InstructionPolynomials<F, CS>;
 
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
-    pub read_cts: Vec<DensePolynomial<F>>,
-
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
-    pub final_cts: Vec<DensePolynomial<F>>,
-
-    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
-    /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
-    /// size `m` (# lookups).
-    pub e_polys: Vec<DensePolynomial<F>>,
-
-    /// Polynomial encodings for flag polynomials for each instruction.
-    /// If using a single instruction this will be empty.
-    /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (# lookups).
-    ///
-    /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
-    pub lookup_flag_polys: Vec<DensePolynomial<F>>,
-
-    /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
-    /// construction of the memory flag polynomials in `read_write_grand_product`.
-    pub lookup_flag_bitvectors: Vec<Vec<u64>>,
-
-    /// The lookup output for each instruction of the execution trace.
-    pub lookup_outputs: DensePolynomial<F>,
-}
-impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables>
-    LassoProver<C, M, F, Lookups, Subtables>
+impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables>
+    LassoProver<C, M, F, CS, Lookups, Subtables>
 where
+    CS: CommitmentScheme<Field = F>,
     Lookups: LookupSet<F>,
     Subtables: SubtableSet<F>,
 {
@@ -136,7 +114,7 @@ where
     pub fn polynomialize(
         preprocessing: &LassoPreprocessing<F>,
         ops: &[Lookups],
-    ) -> LassoPolynomials<F> {
+    ) -> LassoPolynomials<F, CS> {
         let num_reads = ops.len().next_power_of_two();
 
         let subtable_lookup_indices = Self::subtable_lookup_indices(ops);
@@ -215,12 +193,13 @@ where
 
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
         LassoPolynomials {
-            dims,
+            _marker: PhantomData,
+            dim: dims,
             read_cts,
             final_cts,
-            lookup_flag_polys,
-            lookup_flag_bitvectors,
-            e_polys,
+            instruction_flag_polys: lookup_flag_polys,
+            instruction_flag_bitvectors: lookup_flag_bitvectors,
+            E_polys: e_polys,
             lookup_outputs,
         }
     }
@@ -251,3 +230,31 @@ where
         lookup_indices
     }
 }
+
+// impl<F, C> StructuredCommitment<C> for LassoPolynomials<F, C>
+// where
+//     F: JoltField,
+//     C: CommitmentScheme<Field = F>,
+// {
+//     type Commitment = InstructionCommitment<C>;
+
+//     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
+//     fn commit(&self, generators: &C::Setup) -> Self::Commitment {
+//         let trace_polys: Vec<&DensePolynomial<F>> = chain![
+//             self.dim.iter(),
+//             self.read_cts.iter(),
+//             self.E_polys.iter(),
+//             self.instruction_flag_polys.iter(),
+//             iter::once(&self.lookup_outputs),
+//         ]
+//         .collect();
+
+//         let trace_commitment = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
+//         let final_commitment = C::batch_commit_polys(&self.final_cts, generators, BatchType::Big);
+
+//         Self::Commitment {
+//             trace_commitment,
+//             final_commitment,
+//         }
+//     }
+// }

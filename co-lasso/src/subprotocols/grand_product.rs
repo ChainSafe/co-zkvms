@@ -26,8 +26,8 @@ use mpc_core::protocols::rep3::{
 };
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 
-use crate::poly::{combine_poly_shares, Rep3DensePolynomial};
-use crate::sumcheck::{self, rep3_prove_cubic_batched, Rep3CubicSumcheckParams};
+use super::sumcheck::{self, Rep3CubicSumcheckParams};
+use crate::poly::Rep3DensePolynomial;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedGrandProductProver<F: JoltField> {
@@ -149,7 +149,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     combine_prod: false,
                 });
             }
-            
+
             if layer_id != 0 {
                 let coeff_vec =
                     transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);

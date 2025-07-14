@@ -1,13 +1,29 @@
 use ark_ff::{Field, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::cfg_iter;
 use itertools::Itertools;
-use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
+use jolt_core::{
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        field::JoltField,
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
+    },
+    utils::transcript::ProofTranscript,
+};
 use mpc_core::protocols::rep3;
+use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::Rng;
 use spartan::math::Math;
 use std::{ops::Index, slice::SliceIndex};
 
+use crate::subprotocols::commitment::DistributedCommitmentScheme;
+
 use super::Rep3PrimeFieldShare;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Default, CanonicalDeserialize, CanonicalSerialize)]
 pub struct Rep3DensePolynomial<F: JoltField> {
@@ -67,6 +83,14 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         (DensePolynomial::new(a), DensePolynomial::new(b))
     }
 
+    pub fn copy_share_a(&self) -> DensePolynomial<F> {
+        let mut a = Vec::with_capacity(1 << self.num_vars);
+        for share in &self.evals {
+            a.push(share.a);
+        }
+        DensePolynomial::new(a)
+    }
+
     pub fn split(&self, idx: usize) -> (Self, Self) {
         let (a, b) = self.copy_poly_shares();
         let (left_a, right_a) = a.split(idx);
@@ -118,43 +142,19 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         let b = b.new_poly_from_bound_poly_var_top(r); // TODO: check if this is correct with rep3 shares
 
         Self::from_poly_shares(a, b)
+    }
 
-        // let n = self.len() / 2;
-        // let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
+    pub fn evaluate(&self, r: &[F]) -> F {
+        let chis = EqPolynomial::new(r.to_vec()).evals();
+        assert_eq!(chis.len(), self.evals_ref().len());
+        self.evaluate_at_chi(&chis)
+    }
 
-        // for i in 0..n {
-        //     // let low' = low + r * (high - low)
-        //     // Special truth table here
-        //     //         high 0   high 1
-        //     // low 0     0        r
-        //     // low 1   (1-r)      1
-        //     let low = self.Z[i];
-        //     let high = self.Z[i + n];
-
-        //     if low.is_zero() {
-        //         if high.is_one() {
-        //             new_evals[i] = *r;
-        //         } else if !high.is_zero() {
-        //             panic!("Shouldn't happen for a flag poly");
-        //         }
-        //     } else if low.is_one() {
-        //         if high.is_one() {
-        //             new_evals[i] = F::one();
-        //         } else if high.is_zero() {
-        //             new_evals[i] = F::one() - r;
-        //         } else {
-        //             panic!("Shouldn't happen for a flag poly");
-        //         }
-        //     }
-        // }
-        // let num_vars = self.num_vars - 1;
-        // let len = n;
-
-        // Self {
-        //     num_vars,
-        //     len,
-        //     Z: new_evals,
-        // }
+    pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
+        cfg_iter!(self.evals)
+            .zip_eq(cfg_iter!(chis))
+            .map(|(eval, chi)| rep3::arithmetic::mul_public(*eval, *chi).into_additive())
+            .sum()
     }
 
     pub fn num_vars(&self) -> usize {
@@ -239,4 +239,47 @@ pub fn combine_poly_shares<F: JoltField>(
     let [s0, s1, s2] = poly_shares.try_into().unwrap();
     let a = rep3::combine_field_elements(&s0.evals, &s1.evals, &s2.evals);
     DensePolynomial::new(a)
+}
+
+/// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
+/// Note that there may be a one-to-many mapping from `StructuredCommitment` to `StructuredOpeningProof`:
+/// different subset of the same polynomials may be opened at different points, resulting in
+/// different opening proofs.
+pub trait Rep3StructuredOpeningProof<F, C, Polynomials>:
+    StructuredOpeningProof<F, C, Polynomials>
+where
+    F: JoltField,
+    C: DistributedCommitmentScheme<F>,
+    Polynomials: StructuredCommitment<C> + ?Sized,
+{
+    type Rep3Polynomials: ?Sized;
+
+    /// Evaluates each of the given `polynomials` at the given `opening_point`.
+    fn open_rep3<Network: MpcStarNetCoordinator>(
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<Self>;
+
+    /// Evaluates each of the given `polynomials` at the given `opening_point`.
+    fn open_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<()>;
+
+    /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
+    /// by `openings`. The polynomials should already be committed by the prover.
+    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        setup: &C::Setup,
+        network: &mut Network,
+    ) -> eyre::Result<()>;
+
+    /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
+    /// by `openings`. The polynomials should already be committed by the prover.
+    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<Self::Proof>;
 }

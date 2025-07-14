@@ -1,33 +1,42 @@
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
+use ark_ec::pairing::Pairing;
+use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::Itertools;
+use itertools::{chain, multizip, Itertools};
 use jolt_core::{
+    jolt::vm::instruction_lookups::{InstructionCommitment, PrimarySumcheckOpenings},
     poly::{
+        commitment::commitment_scheme::{BatchType, CommitmentScheme},
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         field::JoltField,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{math::Math, mul_0_1_optimized},
+    utils::{math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     PartyID,
 };
-use mpc_net::mpc_star::MpcStarNetWorker;
-use std::marker::PhantomData;
+use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use std::{iter, marker::PhantomData};
 use tracing::trace_span;
 
 use crate::{
-    grand_product::{
-        BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
-    },
     instructions::Rep3LookupSet,
-    lasso::LassoPreprocessing,
-    poly::Rep3DensePolynomial,
+    lasso::{
+        InstructionFinalOpenings, InstructionReadWriteOpenings, LassoPolynomials,
+        LassoPreprocessing,
+    },
+    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
+    subprotocols::{
+        commitment::DistributedCommitmentScheme,
+        grand_product::{
+            BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
+        },
+    },
     subtables::SubtableSet,
     utils::{self, split_rep3_poly_flagged},
     witness_solver::Rep3LassoPolynomials,
@@ -36,29 +45,34 @@ use crate::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3LassoProver<const C: usize, const M: usize, F, Lookups, Subtables, Network>
+pub struct Rep3LassoProver<const C: usize, const M: usize, F, CS, Lookups, Subtables, Network>
 where
+    F: JoltField,
     Network: Rep3Network,
+    CS: DistributedCommitmentScheme<F>,
 {
-    pub _marker: PhantomData<(F, Lookups, Subtables)>,
+    pub ck: CS::Setup,
     pub io_ctx: IoContext<Network>,
+    pub _marker: PhantomData<(F, Lookups, Subtables)>,
 }
 
 type Preprocessing<F> = LassoPreprocessing<F>;
 type Polynomials<F> = Rep3LassoPolynomials<F>;
 
-impl<const C: usize, const M: usize, F: JoltField, Lookups, Subtables, Network>
-    Rep3LassoProver<C, M, F, Lookups, Subtables, Network>
+impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
+    Rep3LassoProver<C, M, F, CS, Lookups, Subtables, Network>
 where
     Lookups: Rep3LookupSet<F>,
     Subtables: SubtableSet<F>,
+    CS: DistributedCommitmentScheme<F>,
     Network: Rep3Network + MpcStarNetWorker,
 {
-    pub fn new(net: Network) -> color_eyre::Result<Self> {
+    pub fn new(net: Network, ck: CS::Setup) -> color_eyre::Result<Self> {
         let io_ctx = IoContext::init(net).context("failed to initialize io context")?;
         Ok(Self {
-            _marker: PhantomData,
+            ck,
             io_ctx,
+            _marker: PhantomData,
         })
     }
 
@@ -75,15 +89,25 @@ where
         let mut eq_poly = DensePolynomial::new(eq_evals);
         let num_rounds = trace_length.log_2();
 
-        self.prove_primary_sumcheck(
-            preprocessing,
-            num_rounds,
-            &mut eq_poly,
-            &polynomials.e_polys,
-            &polynomials.lookup_flag_polys,
-            &mut polynomials.lookup_outputs.clone(),
-            Self::sumcheck_poly_degree(),
-        )?;
+        let (r_primary_sumcheck, flag_evals, memory_evals, outputs_eval) = self
+            .prove_primary_sumcheck(
+                preprocessing,
+                num_rounds,
+                &mut eq_poly,
+                &polynomials.e_polys,
+                &polynomials.lookup_flag_polys,
+                &mut polynomials.lookup_outputs.clone(),
+                Self::sumcheck_poly_degree(),
+            )?;
+
+        if self.io_ctx.network.party_id() == PartyID::ID0 {
+            self.io_ctx.network.send_response(flag_evals)?;
+        }
+        self.io_ctx
+            .network
+            .send_response((memory_evals, outputs_eval))?;
+
+        let _ = self.prove_openings(&polynomials, &r_primary_sumcheck)?;
 
         let _ = self.prove_memory_checking(preprocessing, polynomials)?;
 
@@ -116,7 +140,12 @@ where
         flag_polys: &Vec<DensePolynomial<F>>,
         lookup_outputs_poly: &mut Rep3DensePolynomial<F>,
         degree: usize,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<(
+        Vec<F>,
+        Vec<F>,
+        Vec<Rep3PrimeFieldShare<F>>,
+        Rep3PrimeFieldShare<F>,
+    )> {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
         memory_polys
@@ -138,9 +167,7 @@ where
             lookup_outputs_poly,
             num_eval_points,
         );
-        self.io_ctx
-            .network
-            .send_response(round_uni_poly)?;
+        self.io_ctx.network.send_response(round_uni_poly)?;
         let r_j = self.io_ctx.network.receive_request::<F>()?;
         random_vars.push(r_j);
 
@@ -201,14 +228,8 @@ where
         let flag_evals: Vec<_> = flag_polys_updated.iter().map(|poly| poly[0]).collect();
         let memory_evals: Vec<_> = memory_polys_updated.iter().map(|poly| poly[0]).collect();
         let outputs_eval = lookup_outputs_poly[0];
-        if self.io_ctx.network.party_id() == PartyID::ID0 {
-            self.io_ctx.network.send_response(flag_evals)?;
-        }
-        self.io_ctx
-            .network
-            .send_response((memory_evals, outputs_eval))?;
 
-        Ok(())
+        Ok((random_vars, flag_evals, memory_evals, outputs_eval))
     }
 
     fn primary_sumcheck_inner_loop(
@@ -339,13 +360,73 @@ where
         UniPoly::from_evals(&evaluations)
     }
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
+    fn prove_openings(
+        &mut self,
+        polynomials: &Polynomials<F>,
+        opening_point: &[F],
+    ) -> eyre::Result<()> {
+        // let e_polys_a = polynomials
+        //     .e_polys
+        //     .iter()
+        //     .map(|poly| poly.copy_share_a())
+        //     .collect::<Vec<_>>();
+        // let lookup_output_a = polynomials.lookup_outputs.copy_share_a();
+        let lookup_flag_polys = polynomials
+            .lookup_flag_polys
+            .iter()
+            .map(|p| {
+                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
+                    p.evals(),
+                    self.io_ctx.network.party_id(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let primary_sumcheck_polys = chain![
+            polynomials.e_polys.iter(),
+            lookup_flag_polys.iter(),
+            iter::once(&polynomials.lookup_outputs),
+        ]
+        .collect::<Vec<_>>();
+
+        CS::distributed_batch_open_worker(
+            &primary_sumcheck_polys,
+            &self.ck,
+            opening_point,
+            &mut self.io_ctx.network,
+        )
+    }
+
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_memory_checking")]
     pub fn prove_memory_checking(
         &mut self,
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
     ) -> Result<()> {
-        let _ = self.prove_grand_products(preprocessing, polynomials)?;
+        let (r_read_write, r_init_final) = self.prove_grand_products(preprocessing, polynomials)?;
+
+        <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3_worker(
+            polynomials,
+            &r_read_write,
+            &mut self.io_ctx.network,
+        )?;
+        <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3_worker(
+            polynomials,
+            &r_read_write,
+            &self.ck,
+            &mut self.io_ctx.network,
+        )?;
+        <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3_worker(
+            polynomials,
+            &r_init_final,
+            &mut self.io_ctx.network,
+        )?;
+        <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3_worker(
+            polynomials,
+            &r_init_final,
+            &self.ck,
+            &mut self.io_ctx.network,
+        )?;
 
         Ok(())
     }
@@ -582,5 +663,179 @@ where
             .max()
             .unwrap()
             + 2 // eq and flag
+    }
+}
+
+impl<F: JoltField, C: DistributedCommitmentScheme<F>>
+    Rep3StructuredOpeningProof<F, C, LassoPolynomials<F, C>> for InstructionReadWriteOpenings<F>
+{
+    type Rep3Polynomials = Rep3LassoPolynomials<F>;
+
+    fn open_rep3<Network: MpcStarNetCoordinator>(
+        _opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<Self> {
+        let (dim_openings, read_openings, E_poly_openings): (
+            Vec<Vec<F>>,
+            Vec<Vec<F>>,
+            Vec<Vec<F>>,
+        ) = itertools::multiunzip(network.receive_responses((
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))?);
+
+        let dim_openings =
+            additive::combine_field_elements(&dim_openings[0], &dim_openings[1], &dim_openings[2]);
+        let read_openings = additive::combine_field_elements(
+            &read_openings[0],
+            &read_openings[1],
+            &read_openings[2],
+        );
+
+        let E_poly_openings = additive::combine_field_elements(
+            &E_poly_openings[0],
+            &E_poly_openings[1],
+            &E_poly_openings[2],
+        );
+
+        let flag_openings = network.receive_response::<Vec<F>>(PartyID::ID0, 0, Vec::new())?;
+        Ok(Self {
+            dim_openings,
+            read_openings,
+            E_poly_openings,
+            flag_openings,
+        })
+    }
+
+    fn open_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        // All of these evaluations share the lagrange basis polynomials.
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+
+        let dim_openings: Vec<F> = polynomials
+            .dims
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+        let read_openings: Vec<F> = polynomials
+            .read_cts
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+        let E_poly_openings: Vec<F> = polynomials
+            .e_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+        let flag_openings: Vec<F> = polynomials
+            .lookup_flag_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect();
+
+        network.send_response((dim_openings, read_openings, E_poly_openings))?;
+        if network.party_id() == PartyID::ID0 {
+            network.send_response(flag_openings)?;
+        }
+
+        Ok(())
+    }
+
+    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        setup: &C::Setup,
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        let lookup_flag_polys = polynomials
+            .lookup_flag_polys
+            .iter()
+            .map(|p| {
+                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
+                    p.evals(),
+                    network.party_id(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let read_write_polys = chain![
+            polynomials.dims.iter(),
+            polynomials.read_cts.iter(),
+            polynomials.e_polys.iter(),
+            lookup_flag_polys.iter(),
+        ]
+        .collect::<Vec<_>>();
+
+        C::distributed_batch_open_worker(&read_write_polys, setup, opening_point, network)
+    }
+
+    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<Self::Proof> {
+        C::distributed_batch_open(transcript, network)
+    }
+}
+
+impl<F: JoltField, C: DistributedCommitmentScheme<F>, Subtables: SubtableSet<F>>
+    Rep3StructuredOpeningProof<F, C, LassoPolynomials<F, C>>
+    for InstructionFinalOpenings<F, Subtables>
+{
+    type Rep3Polynomials = Rep3LassoPolynomials<F>;
+
+    fn open_rep3<Network: MpcStarNetCoordinator>(
+        _opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<Self> {
+        let final_openings = network.receive_responses::<Vec<F>>(Vec::new())?;
+        let final_openings = additive::combine_field_elements(
+            &final_openings[0],
+            &final_openings[1],
+            &final_openings[2],
+        );
+        Ok(Self {
+            _subtables: PhantomData,
+            final_openings,
+            a_init_final: None,
+            v_init_final: None,
+        })
+    }
+
+    fn open_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        let final_openings = polynomials
+            .final_cts
+            .par_iter()
+            .map(|final_cts_i| final_cts_i.evaluate(&opening_point))
+            .collect::<Vec<_>>();
+
+        network.send_response(final_openings)
+    }
+
+    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
+        polynomials: &Self::Rep3Polynomials,
+        opening_point: &[F],
+        setup: &<C>::Setup,
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        C::distributed_batch_open_worker(
+            &polynomials.final_cts.iter().collect::<Vec<_>>(),
+            setup,
+            opening_point,
+            network,
+        )
+    }
+
+    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<Self::Proof> {
+        C::distributed_batch_open(transcript, network)
     }
 }
