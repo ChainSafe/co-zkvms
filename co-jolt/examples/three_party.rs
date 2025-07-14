@@ -24,10 +24,10 @@ use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
-use co_lasso::{
+use co_jolt::{
     coordinator::Rep3MemoryCheckingProver,
     instructions::{self, range_check::RangeLookup, xor::XORInstruction},
-    lasso,
+    vm,
     subprotocols::commitment::PST13,
     subtables,
     worker::Rep3LassoProver,
@@ -36,7 +36,7 @@ use co_lasso::{
 
 type Lookups = instructions::TestLookups<F>;
 type Subtables = subtables::TestSubtables<F>;
-type TestLassoProof = lasso::LassoProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
+type TestLassoProof = vm::LassoProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
 type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, Network>;
 
 #[derive(Parser)]
@@ -93,7 +93,7 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing = lasso::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing = vm::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
 
     let setup = {
@@ -168,7 +168,7 @@ fn run_coordinator(
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    let preprocessing = lasso::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing = vm::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
     let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
     let setup = {

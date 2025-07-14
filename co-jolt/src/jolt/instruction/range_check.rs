@@ -10,8 +10,8 @@ use mpc_core::protocols::rep3::{
 use std::iter::Sum;
 use std::{borrow::Borrow, iter};
 
-use super::{LookupType, Rep3LookupType};
-use crate::subtables::{
+use super::{JoltInstruction, Rep3JoltInstruction};
+use crate::jolt::subtable::{
     range_check::{BoundSubtable, FullLimbSubtable},
     LassoSubtable, SubtableIndices,
 };
@@ -35,7 +35,7 @@ impl<const BOUND: u64, F: JoltField> RangeLookup<BOUND, F> {
     }
 }
 
-impl<const BOUND: u64, F: JoltField> LookupType<F> for RangeLookup<BOUND, F> {
+impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F> {
     fn combine_lookups(&self, operands: &[F], _: usize, M: usize) -> F {
         let weight = F::from(M as u64);
         inner_product(
@@ -101,7 +101,7 @@ impl<const BOUND: u64, F: JoltField> LookupType<F> for RangeLookup<BOUND, F> {
     }
 }
 
-impl<const BOUND: u64, F: JoltField> Rep3LookupType<F> for RangeLookup<BOUND, F> {
+impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUND, F> {
     fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>> {
         match self {
             Self::Shared { value, .. } => vec![value.clone()],

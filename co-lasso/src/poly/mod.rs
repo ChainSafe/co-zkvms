@@ -17,10 +17,8 @@ use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::Rng;
 use spartan::math::Math;
 use std::{ops::Index, slice::SliceIndex};
-
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
-
-use super::Rep3PrimeFieldShare;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

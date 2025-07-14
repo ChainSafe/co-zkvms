@@ -8,11 +8,9 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare};
 use num_bigint::BigUint;
 use std::ops::{BitAnd, BitOr, Shr};
 
-use crate::instructions::utils::concatenate_lookups_rep3;
-use crate::subtables::xor::XorSubtable;
-use crate::subtables::LassoSubtable;
-
-use super::{LookupType, Rep3LookupType};
+use super::utils::concatenate_lookups_rep3;
+use super::{JoltInstruction, JoltInstructionSet, Rep3JoltInstruction, Rep3JoltInstructionSet};
+use crate::jolt::subtable::{LassoSubtable, XorSubtable};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum XORInstruction<F: JoltField> {
@@ -35,7 +33,7 @@ impl<F: JoltField> XORInstruction<F> {
     }
 }
 
-impl<F: JoltField> LookupType<F> for XORInstruction<F> {
+impl<F: JoltField> JoltInstruction<F> for XORInstruction<F> {
     // fn operands(&self) -> (u64, u64) {
     //     (self.0, self.1)
     // }
@@ -71,7 +69,7 @@ impl<F: JoltField> LookupType<F> for XORInstruction<F> {
     // }
 }
 
-impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
+impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
     fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>> {
         match self {
             XORInstruction::SharedBinary(..) => vec![],
@@ -85,7 +83,8 @@ impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
             XORInstruction::Shared(..) => {
                 operands.reverse();
                 assert_eq!(operands.len(), 2);
-                *self = XORInstruction::SharedBinary(operands.pop().unwrap(), operands.pop().unwrap());
+                *self =
+                    XORInstruction::SharedBinary(operands.pop().unwrap(), operands.pop().unwrap());
             }
             XORInstruction::SharedBinary(..) => {
                 assert_eq!(operands.len(), 0);
@@ -113,7 +112,9 @@ impl<F: JoltField> Rep3LookupType<F> for XORInstruction<F> {
         log_M: usize,
     ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
         match self {
-            XORInstruction::SharedBinary(x, y) => rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M),
+            XORInstruction::SharedBinary(x, y) => {
+                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
+            }
             _ => todo!(),
         }
     }

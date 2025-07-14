@@ -1,4 +1,15 @@
 use ark_ec::pairing::Pairing;
+use co_lasso::{
+    memory_checking::worker::MemoryCheckingProverRep3Worker,
+    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
+    subprotocols::{
+        commitment::DistributedCommitmentScheme,
+        grand_product::{
+            BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
+        },
+    },
+    utils::{self, split_rep3_poly_flagged}, Rep3Polynomials,
+};
 use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use color_eyre::eyre::Result;
 use eyre::Context;
@@ -24,29 +35,27 @@ use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use std::{iter, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::{
-    instructions::Rep3LookupSet,
-    lasso::{
-        InstructionFinalOpenings, InstructionReadWriteOpenings, LassoPolynomials,
-        InstructionLookupsPreprocessing,
-    },
-    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
-    subprotocols::{
-        commitment::DistributedCommitmentScheme,
-        grand_product::{
-            BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
-        },
-    },
-    subtables::SubtableSet,
-    utils::{self, split_rep3_poly_flagged},
-    witness_solver::Rep3LassoPolynomials,
+use super::{
+    witness::Rep3InstructionPolynomials, InstructionFinalOpenings, InstructionLookupsPreprocessing,
+    InstructionPolynomials, InstructionReadWriteOpenings,
+};
+use crate::jolt::{
+    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    subtable::JoltSubtableSet,
 };
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub struct Rep3LassoProver<const C: usize, const M: usize, F, CS, Lookups, Subtables, Network>
-where
+pub struct Rep3InstructionLookupsProver<
+    const C: usize,
+    const M: usize,
+    F,
+    CS,
+    Lookups,
+    Subtables,
+    Network,
+> where
     F: JoltField,
     Network: Rep3Network,
     CS: DistributedCommitmentScheme<F>,
@@ -57,13 +66,13 @@ where
 }
 
 type Preprocessing<F> = InstructionLookupsPreprocessing<F>;
-type Polynomials<F> = Rep3LassoPolynomials<F>;
+type Polynomials<F> = Rep3InstructionPolynomials<F>;
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
-    Rep3LassoProver<C, M, F, CS, Lookups, Subtables, Network>
+    Rep3InstructionLookupsProver<C, M, F, CS, Lookups, Subtables, Network>
 where
-    Lookups: Rep3LookupSet<F>,
-    Subtables: SubtableSet<F>,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
     CS: DistributedCommitmentScheme<F>,
     Network: Rep3Network + MpcStarNetWorker,
 {
@@ -109,7 +118,7 @@ where
 
         let _ = self.prove_openings(&polynomials, &r_primary_sumcheck)?;
 
-        let _ = self.prove_memory_checking(preprocessing, polynomials)?;
+        let _ = Self::prove_memory_checking(preprocessing, &self.ck, polynomials, &mut self.io_ctx)?;
 
         Ok(())
     }
@@ -315,7 +324,8 @@ where
                 let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); num_eval_points];
                 for instruction in Lookups::iter() {
                     let instruction_index = Lookups::enum_index(&instruction);
-                    let memory_indices = &preprocessing.instruction_to_memory_indices[instruction_index];
+                    let memory_indices =
+                        &preprocessing.instruction_to_memory_indices[instruction_index];
 
                     for eval_index in 0..num_eval_points {
                         let flag_eval = multi_flag_evals[eval_index][instruction_index];
@@ -397,86 +407,122 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_memory_checking")]
-    pub fn prove_memory_checking(
-        &mut self,
+    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
+    /// can be computed by summing over the instructions that use that memory: if a given execution step
+    /// accesses the memory, it must be executing exactly one of those instructions.
+    #[tracing::instrument(skip_all, name = "Rep3LassoProver::memory_flag_polys")]
+    fn memory_flag_polys(
         preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
-    ) -> Result<()> {
-        let (r_read_write, r_init_final) = self.prove_grand_products(preprocessing, polynomials)?;
+        flag_bitvectors: &[Vec<u64>],
+    ) -> Vec<DensePolynomial<F>> {
+        let m = flag_bitvectors[0].len();
 
-        <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3_worker(
-            polynomials,
-            &r_read_write,
-            &mut self.io_ctx.network,
-        )?;
-        <InstructionReadWriteOpenings<F> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3_worker(
-            polynomials,
-            &r_read_write,
-            &self.ck,
-            &mut self.io_ctx.network,
-        )?;
-        <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::open_rep3_worker(
-            polynomials,
-            &r_init_final,
-            &mut self.io_ctx.network,
-        )?;
-        <InstructionFinalOpenings<F, Subtables> as Rep3StructuredOpeningProof<_, CS, _>>::prove_openings_rep3_worker(
-            polynomials,
-            &r_init_final,
-            &self.ck,
-            &mut self.io_ctx.network,
-        )?;
-
-        Ok(())
+        (0..preprocessing.num_memories)
+            .into_par_iter()
+            .map(|memory_index| {
+                let mut memory_flag_bitvector = vec![0u64; m];
+                for instruction_index in 0..Lookups::COUNT {
+                    if preprocessing.instruction_to_memory_indices[instruction_index]
+                        .contains(&memory_index)
+                    {
+                        memory_flag_bitvector
+                            .iter_mut()
+                            .zip(&flag_bitvectors[instruction_index])
+                            .for_each(|(memory_flag, instruction_flag)| {
+                                *memory_flag += instruction_flag
+                            });
+                    }
+                }
+                DensePolynomial::from_u64(&memory_flag_bitvector)
+            })
+            .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_grand_products")]
-    fn prove_grand_products(
-        &mut self,
-        preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
-    ) -> Result<(Vec<F>, Vec<F>)> {
-        let (gamma, tau) = self.io_ctx.network.receive_request()?;
-        self.io_ctx
-            .network
-            .send_response(polynomials.dims[0].len())?;
+    /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression
+    /// is \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x)), the degree is
+    /// the max over all the instructions' `g_i` polynomial degrees, plus two (one for \tilde{eq}, one for flag_i)
+    fn sumcheck_poly_degree() -> usize {
+        Lookups::iter()
+            .map(|lookup| lookup.g_poly_degree(C))
+            .max()
+            .unwrap()
+            + 2 // eq and flag
+    }
+}
 
-        let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
-            preprocessing,
-            polynomials,
-            &gamma,
-            &tau,
-            &mut self.io_ctx.network,
+impl<F: JoltField, const C: usize, const M: usize, CS, Lookups, Subtables, Network>
+    MemoryCheckingProverRep3Worker<F, CS, Network>
+    for Rep3InstructionLookupsProver<C, M, F, CS, Lookups, Subtables, Network>
+where
+    CS: DistributedCommitmentScheme<F>,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
+    Network: Rep3Network + MpcStarNetWorker,
+{
+    type Polynomials = InstructionPolynomials<F, CS>;
+    type Rep3Polynomials = Rep3InstructionPolynomials<F>;
+    type Preprocessing = InstructionLookupsPreprocessing<F>;
+    type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
+    type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
+
+    #[tracing::instrument(skip_all, name = "Rep3LassoProver::read_write_grand_product")]
+    fn read_write_grand_product(
+        preprocessing: &Self::Preprocessing,
+        polynomials: &Self::Rep3Polynomials,
+        read_write_leaves: Vec<Rep3DensePolynomial<F>>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> Result<(BatchedRep3GrandProductCircuit<F>, Vec<F>)> {
+        assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
+
+        let _span = trace_span!("construct_circuits");
+        _span.enter();
+
+        let memory_flag_polys =
+            Self::memory_flag_polys(preprocessing, &polynomials.lookup_flag_bitvectors);
+
+        let read_write_circuits = read_write_leaves
+            // .par_iter()
+            .iter()
+            .enumerate()
+            .map(|(i, leaves_poly)| {
+                // Split while cloning to save on future cloning in GrandProductCircuit
+                let memory_index = i / 2;
+                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
+                let (toggled_leaves_l, toggled_leaves_r) =
+                    split_rep3_poly_flagged(leaves_poly, flag, io_ctx.network.party_id());
+                Rep3GrandProductCircuit::new_split(toggled_leaves_l, toggled_leaves_r, io_ctx)
+            })
+            .collect::<Result<Vec<Rep3GrandProductCircuit<F>>>>()?;
+
+        drop(_span);
+
+        let read_write_hashes: Vec<F> = trace_span!("compute_hashes").in_scope(|| {
+            read_write_circuits
+                .par_iter()
+                .map(|circuit| circuit.evaluate())
+                .collect()
+        });
+
+        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+        let batched_circuits = BatchedRep3GrandProductCircuit::new_batch_flags(
+            read_write_circuits,
+            memory_flag_polys,
+            read_write_leaves,
         );
 
-        let (read_write_circuit, read_write_hashes) =
-            self.read_write_grand_product(preprocessing, polynomials, read_write_leaves)?;
-        let (init_final_circuit, init_final_hashes) =
-            self.init_final_grand_product(preprocessing, polynomials, init_final_leaves)?;
-
-        self.io_ctx
-            .network
-            .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
-
-        let r_read_write =
-            BatchedGrandProductProver::prove_worker(read_write_circuit, &mut self.io_ctx.network)?;
-        let r_init_final =
-            BatchedGrandProductProver::prove_worker(init_final_circuit, &mut self.io_ctx.network)?;
-
-        Ok((r_read_write, r_init_final))
+        Ok((batched_circuits, read_write_hashes))
     }
 
     fn compute_leaves(
-        preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
+        preprocessing: &Self::Preprocessing,
+        polynomials: &Self::Rep3Polynomials,
         gamma: &F,
         tau: &F,
-        network: &mut Network,
+        io_ctx: &mut IoContext<Network>,
     ) -> (Vec<Rep3DensePolynomial<F>>, Vec<Rep3DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
-        let num_lookups = polynomials.dims[0].len();
-        let party_id = network.party_id();
+        let num_lookups = polynomials.num_lookups();
+        let party_id = io_ctx.network.party_id();
 
         let read_write_leaves = (0..preprocessing.num_memories)
             .into_par_iter()
@@ -544,298 +590,5 @@ where
             .collect();
 
         (read_write_leaves, init_final_leaves)
-    }
-
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::read_write_grand_product")]
-    fn read_write_grand_product(
-        &mut self,
-        preprocessing: &Preprocessing<F>,
-        polynomials: &Polynomials<F>,
-        read_write_leaves: Vec<Rep3DensePolynomial<F>>,
-    ) -> Result<(BatchedRep3GrandProductCircuit<F>, Vec<F>)> {
-        assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
-
-        let _span = trace_span!("construct_circuits");
-        _span.enter();
-
-        let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.lookup_flag_bitvectors);
-
-        let read_write_circuits = read_write_leaves
-            // .par_iter()
-            .iter()
-            .enumerate()
-            .map(|(i, leaves_poly)| {
-                // Split while cloning to save on future cloning in GrandProductCircuit
-                let memory_index = i / 2;
-                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                let (toggled_leaves_l, toggled_leaves_r) =
-                    split_rep3_poly_flagged(leaves_poly, flag, self.io_ctx.network.party_id());
-                Rep3GrandProductCircuit::new_split(
-                    toggled_leaves_l,
-                    toggled_leaves_r,
-                    &mut self.io_ctx,
-                )
-            })
-            .collect::<Result<Vec<Rep3GrandProductCircuit<F>>>>()?;
-
-        drop(_span);
-
-        let read_write_hashes: Vec<F> = trace_span!("compute_hashes").in_scope(|| {
-            read_write_circuits
-                .par_iter()
-                .map(|circuit| circuit.evaluate())
-                .collect()
-        });
-
-        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-        let batched_circuits = BatchedRep3GrandProductCircuit::new_batch_flags(
-            read_write_circuits,
-            memory_flag_polys,
-            read_write_leaves,
-        );
-
-        Ok((batched_circuits, read_write_hashes))
-    }
-
-    /// Constructs a batched grand product circuit for the init and final multisets associated
-    /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::init_final_grand_product")]
-    fn init_final_grand_product(
-        &mut self,
-        _preprocessing: &Preprocessing<F>,
-        _polynomials: &Polynomials<F>,
-        init_final_leaves: Vec<Rep3DensePolynomial<F>>,
-    ) -> Result<(BatchedRep3GrandProductCircuit<F>, Vec<F>)> {
-        let init_final_circuits: Vec<Rep3GrandProductCircuit<F>> =
-            utils::fork_map(init_final_leaves, &mut self.io_ctx, |leaves, io_ctx| {
-                Rep3GrandProductCircuit::new(&leaves, io_ctx).unwrap()
-            })?;
-
-        let init_final_hashes: Vec<F> = init_final_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        Ok((
-            BatchedRep3GrandProductCircuit::new_batch(init_final_circuits),
-            init_final_hashes,
-        ))
-    }
-
-    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
-    /// can be computed by summing over the instructions that use that memory: if a given execution step
-    /// accesses the memory, it must be executing exactly one of those instructions.
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::memory_flag_polys")]
-    fn memory_flag_polys(
-        preprocessing: &Preprocessing<F>,
-        flag_bitvectors: &[Vec<u64>],
-    ) -> Vec<DensePolynomial<F>> {
-        let m = flag_bitvectors[0].len();
-
-        (0..preprocessing.num_memories)
-            .into_par_iter()
-            .map(|memory_index| {
-                let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..Lookups::COUNT {
-                    if preprocessing.instruction_to_memory_indices[instruction_index]
-                        .contains(&memory_index)
-                    {
-                        memory_flag_bitvector
-                            .iter_mut()
-                            .zip(&flag_bitvectors[instruction_index])
-                            .for_each(|(memory_flag, instruction_flag)| {
-                                *memory_flag += instruction_flag
-                            });
-                    }
-                }
-                DensePolynomial::from_u64(&memory_flag_bitvector)
-            })
-            .collect()
-    }
-
-    /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression
-    /// is \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x)), the degree is
-    /// the max over all the instructions' `g_i` polynomial degrees, plus two (one for \tilde{eq}, one for flag_i)
-    fn sumcheck_poly_degree() -> usize {
-        Lookups::iter()
-            .map(|lookup| lookup.g_poly_degree(C))
-            .max()
-            .unwrap()
-            + 2 // eq and flag
-    }
-}
-
-impl<F: JoltField, C: DistributedCommitmentScheme<F>>
-    Rep3StructuredOpeningProof<F, C, LassoPolynomials<F, C>> for InstructionReadWriteOpenings<F>
-{
-    type Rep3Polynomials = Rep3LassoPolynomials<F>;
-
-    fn open_rep3<Network: MpcStarNetCoordinator>(
-        _opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<Self> {
-        let (dim_openings, read_openings, E_poly_openings): (
-            Vec<Vec<F>>,
-            Vec<Vec<F>>,
-            Vec<Vec<F>>,
-        ) = itertools::multiunzip(network.receive_responses((
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ))?);
-
-        let dim_openings =
-            additive::combine_field_elements(&dim_openings[0], &dim_openings[1], &dim_openings[2]);
-        let read_openings = additive::combine_field_elements(
-            &read_openings[0],
-            &read_openings[1],
-            &read_openings[2],
-        );
-
-        let E_poly_openings = additive::combine_field_elements(
-            &E_poly_openings[0],
-            &E_poly_openings[1],
-            &E_poly_openings[2],
-        );
-
-        let flag_openings = network.receive_response::<Vec<F>>(PartyID::ID0, 0, Vec::new())?;
-        Ok(Self {
-            dim_openings,
-            read_openings,
-            E_poly_openings,
-            flag_openings,
-        })
-    }
-
-    fn open_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-
-        let dim_openings: Vec<F> = polynomials
-            .dims
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let read_openings: Vec<F> = polynomials
-            .read_cts
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let E_poly_openings: Vec<F> = polynomials
-            .e_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let flag_openings: Vec<F> = polynomials
-            .lookup_flag_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-
-        network.send_response((dim_openings, read_openings, E_poly_openings))?;
-        if network.party_id() == PartyID::ID0 {
-            network.send_response(flag_openings)?;
-        }
-
-        Ok(())
-    }
-
-    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        setup: &C::Setup,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let lookup_flag_polys = polynomials
-            .lookup_flag_polys
-            .iter()
-            .map(|p| {
-                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-                    p.evals(),
-                    network.party_id(),
-                ))
-            })
-            .collect::<Vec<_>>();
-        let read_write_polys = chain![
-            polynomials.dims.iter(),
-            polynomials.read_cts.iter(),
-            polynomials.e_polys.iter(),
-            lookup_flag_polys.iter(),
-        ]
-        .collect::<Vec<_>>();
-
-        C::distributed_batch_open_worker(&read_write_polys, setup, opening_point, network)
-    }
-
-    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Self::Proof> {
-        C::distributed_batch_open(transcript, network)
-    }
-}
-
-impl<F: JoltField, C: DistributedCommitmentScheme<F>, Subtables: SubtableSet<F>>
-    Rep3StructuredOpeningProof<F, C, LassoPolynomials<F, C>>
-    for InstructionFinalOpenings<F, Subtables>
-{
-    type Rep3Polynomials = Rep3LassoPolynomials<F>;
-
-    fn open_rep3<Network: MpcStarNetCoordinator>(
-        _opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<Self> {
-        let final_openings = network.receive_responses::<Vec<F>>(Vec::new())?;
-        let final_openings = additive::combine_field_elements(
-            &final_openings[0],
-            &final_openings[1],
-            &final_openings[2],
-        );
-        Ok(Self {
-            _subtables: PhantomData,
-            final_openings,
-            a_init_final: None,
-            v_init_final: None,
-        })
-    }
-
-    fn open_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let final_openings = polynomials
-            .final_cts
-            .par_iter()
-            .map(|final_cts_i| final_cts_i.evaluate(&opening_point))
-            .collect::<Vec<_>>();
-
-        network.send_response(final_openings)
-    }
-
-    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        setup: &<C>::Setup,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        C::distributed_batch_open_worker(
-            &polynomials.final_cts.iter().collect::<Vec<_>>(),
-            setup,
-            opening_point,
-            network,
-        )
-    }
-
-    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Self::Proof> {
-        C::distributed_batch_open(transcript, network)
     }
 }

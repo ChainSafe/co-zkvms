@@ -7,12 +7,7 @@ use jolt_core::{
     poly::{
         dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, field::JoltField, unipoly::UniPoly,
     },
-    subprotocols::{
-        grand_product::{
-            BatchedGrandProductArgument, BatchedGrandProductCircuit, LayerProofBatched,
-        },
-        sumcheck::{CubicSumcheckType, SumcheckInstanceProof},
-    },
+    subprotocols::sumcheck::{CubicSumcheckType, SumcheckInstanceProof},
     utils::{
         math::Math,
         transcript::{AppendToTranscript, ProofTranscript},
@@ -21,13 +16,15 @@ use jolt_core::{
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    rngs::Rep3CorrelatedRng,
-    PartyID,
 };
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use super::sumcheck::{self, Rep3CubicSumcheckParams};
 use crate::poly::Rep3DensePolynomial;
+
+pub use jolt_core::subprotocols::grand_product::{
+    BatchedGrandProductArgument, BatchedGrandProductCircuit, LayerProofBatched, GrandProductCircuit,
+};
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedGrandProductProver<F: JoltField> {

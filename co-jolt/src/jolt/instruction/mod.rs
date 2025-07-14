@@ -15,10 +15,10 @@ use strum_macros::{EnumCount, EnumIter};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
 
-use crate::subtables::LassoSubtable;
+use super::subtable::LassoSubtable;
 
 #[enum_dispatch]
-pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
+pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F;
 
@@ -34,13 +34,8 @@ pub trait LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     fn lookup_entry(&self) -> F;
 }
 
-// pub enum Rep3Share<F: JoltField> {
-//     Arithmetic(Rep3PrimeFieldShare<F>),
-//     Binary(Rep3BigUintShare<F>),
-// }
-
 #[enum_dispatch]
-pub trait Rep3LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
+pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>>;
 
     fn insert_binary_operands(&mut self, operands: Vec<Rep3BigUintShare<F>>);
@@ -56,8 +51,8 @@ pub trait Rep3LookupType<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F>;
 }
 
-pub trait LookupSet<F: JoltField>:
-    LookupType<F> + IntoEnumIterator + EnumCount + Send + Sync
+pub trait JoltInstructionSet<F: JoltField>:
+    JoltInstruction<F> + IntoEnumIterator + EnumCount + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -65,8 +60,8 @@ pub trait LookupSet<F: JoltField>:
     }
 }
 
-pub trait Rep3LookupSet<F: JoltField>:
-    Rep3LookupType<F> + IntoEnumIterator + EnumCount + Send + Sync
+pub trait Rep3JoltInstructionSet<F: JoltField>:
+    Rep3JoltInstruction<F> + IntoEnumIterator + EnumCount + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -96,13 +91,13 @@ macro_rules! lookup_set {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
             #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount)]
-            #[enum_dispatch(LookupType<F>, Rep3LookupType<F>)]
+            #[enum_dispatch(JoltInstruction<F>, Rep3JoltInstruction<F>)]
             pub enum $enum_name<F: JoltField> {
                 $([<$alias>]($struct)),+
             }
         }
-        impl<F: JoltField> LookupSet<F> for $enum_name<F> {}
-        impl<F: JoltField> Rep3LookupSet<F> for $enum_name<F> {}
+        impl<F: JoltField> JoltInstructionSet<F> for $enum_name<F> {}
+        impl<F: JoltField> Rep3JoltInstructionSet<F> for $enum_name<F> {}
 
         // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
         // impl<F: JoltField> Default for $enum_name<F> {

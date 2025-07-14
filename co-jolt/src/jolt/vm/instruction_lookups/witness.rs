@@ -1,13 +1,11 @@
-use crate::{
-    instructions::LookupSet,
-    lasso,
-    poly::{combine_poly_shares, Rep3DensePolynomial},
-    subprotocols::commitment::DistributedCommitmentScheme,
-    utils,
-};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
+use co_lasso::{
+    poly::{combine_poly_shares, Rep3DensePolynomial},
+    subprotocols::commitment::DistributedCommitmentScheme,
+    utils::{self, Forkable},
+};
 use color_eyre::eyre::Context;
 use itertools::{chain, multizip, Itertools};
 use jolt_core::{
@@ -31,16 +29,19 @@ use std::{iter, marker::PhantomData};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{instructions::Rep3LookupSet, subtables::SubtableSet};
-use crate::{lasso::InstructionLookupsPreprocessing, utils::Forkable};
+use crate::jolt::{
+        instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+        subtable::JoltSubtableSet,
+        vm::instruction_lookups::{InstructionLookupsPreprocessing, InstructionPolynomials},
+    };
 
 pub struct Rep3LassoWitnessSolver<
     const C: usize,
     const M: usize,
     F: JoltField,
     CS,
-    Lookups: Rep3LookupSet<F>,
-    Subtables: SubtableSet<F>,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
     N: Rep3Network,
 > {
     pub io_ctx0: IoContext<N>,
@@ -49,7 +50,7 @@ pub struct Rep3LassoWitnessSolver<
 }
 
 #[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Rep3LassoPolynomials<F: JoltField> {
+pub struct Rep3InstructionPolynomials<F: JoltField> {
     /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
     /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
     /// `m` (# lookups).
@@ -83,7 +84,7 @@ pub struct Rep3LassoPolynomials<F: JoltField> {
     pub lookup_outputs: Rep3DensePolynomial<F>,
 }
 
-impl<F: JoltField> Rep3LassoPolynomials<F> {
+impl<F: JoltField> Rep3InstructionPolynomials<F> {
     pub fn commit<CS: DistributedCommitmentScheme<F>>(
         &self,
         setup: &CS::Setup,
@@ -181,12 +182,18 @@ impl<F: JoltField> Rep3LassoPolynomials<F> {
     }
 }
 
+impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionPolynomials<F> {
+    fn num_lookups(&self) -> usize {
+        self.dims[0].len()
+    }
+}
+
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
     Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
-    Lookups: Rep3LookupSet<F>,
-    Subtables: SubtableSet<F>,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
     Network: Rep3Network,
 {
     pub fn new(net: Network) -> color_eyre::Result<Self> {
@@ -205,7 +212,7 @@ where
         &mut self,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         mut lookups: Vec<Lookups>,
-    ) -> eyre::Result<Rep3LassoPolynomials<F>> {
+    ) -> eyre::Result<Rep3InstructionPolynomials<F>> {
         let num_reads = lookups.len().next_power_of_two();
 
         let subtable_lookup_indices = self.subtable_lookup_indices(&mut lookups)?;
@@ -231,8 +238,8 @@ where
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
 
                     for (j, lookup) in lookups.iter().enumerate() {
-                        let memories_used =
-                            &preprocessing.instruction_to_memory_indices[Lookups::enum_index(lookup)];
+                        let memories_used = &preprocessing.instruction_to_memory_indices
+                            [Lookups::enum_index(lookup)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = &access_sequence[j];
 
@@ -327,7 +334,7 @@ where
 
         let lookup_outputs = Self::compute_lookup_outputs(&lookups, num_reads, &mut self.io_ctx0);
 
-        Ok(Rep3LassoPolynomials {
+        Ok(Rep3InstructionPolynomials {
             dims,
             read_cts,
             final_cts,
@@ -378,8 +385,8 @@ where
     }
 
     pub fn combine_polynomials(
-        polynomials_shares: Vec<Rep3LassoPolynomials<F>>,
-    ) -> lasso::LassoPolynomials<F, CS> {
+        polynomials_shares: Vec<Rep3InstructionPolynomials<F>>,
+    ) -> InstructionPolynomials<F, CS> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dims = multizip((share1.dims, share2.dims, share3.dims))
@@ -404,7 +411,7 @@ where
             share3.lookup_outputs,
         ]);
 
-        lasso::LassoPolynomials {
+        InstructionPolynomials {
             _marker: PhantomData,
             dim: dims,
             read_cts,
@@ -421,8 +428,8 @@ impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Netwo
     for Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
-    Lookups: Rep3LookupSet<F>,
-    Subtables: SubtableSet<F>,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
     Network: Rep3Network,
 {
     fn fork(&mut self) -> eyre::Result<Self> {

@@ -1173,6 +1173,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "co-jolt"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-crypto-primitives",
+ "ark-ec",
+ "ark-ff",
+ "ark-linear-sumcheck",
+ "ark-poly",
+ "ark-poly-commit",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "bytesize",
+ "clap",
+ "co-lasso",
+ "co-spartan",
+ "color-eyre",
+ "crossbeam",
+ "enum_dispatch",
+ "eyre",
+ "fixedbitset 0.5.7",
+ "futures",
+ "itertools 0.12.1",
+ "jolt-core",
+ "mimalloc",
+ "mpc-core 0.9.0",
+ "mpc-net 0.4.0",
+ "num-bigint 0.4.6",
+ "paste",
+ "rand 0.8.5",
+ "rayon",
+ "rustls",
+ "spartan",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-forest",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "co-lasso"
 version = "0.1.0"
 dependencies = [

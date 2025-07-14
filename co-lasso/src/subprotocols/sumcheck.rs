@@ -18,6 +18,8 @@ use tracing::trace_span;
 
 use crate::poly::Rep3DensePolynomial;
 
+pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+
 #[derive(Debug, Clone)]
 pub struct Rep3CubicSumcheckParams<F: JoltField> {
     poly_As: Vec<Rep3DensePolynomial<F>>,
@@ -258,7 +260,7 @@ pub fn prove_cubic_batched_prod<F: JoltField, N: MpcStarNetWorker>(
             || poly_iter.for_each(|poly| poly.fix_var_top(&r_j)),
             || params.poly_eq.bound_poly_var_top(&r_j),
         );
-        
+
         drop(_enter);
         drop(_span);
 
@@ -391,7 +393,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
             evals_combined_3,
         ];
 
-
         // network.send_response(evals.to_vec())?;
         let poly = UniPoly::from_evals(&evals); // TODO: may not work on additive shares
 
@@ -409,7 +410,6 @@ pub fn prove_cubic_batched_prod_ones<F: JoltField, N: MpcStarNetWorker>(
             .poly_As
             .par_iter_mut()
             .chain(params.poly_Bs.par_iter_mut());
-
 
         rayon::join(
             || poly_iter.for_each(|poly| poly.fix_var_top_many_ones(&r_j)),

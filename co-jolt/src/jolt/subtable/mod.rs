@@ -1,6 +1,3 @@
-pub mod range_check;
-pub mod xor;
-
 use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
@@ -29,7 +26,7 @@ pub trait LassoSubtable<F: JoltField>: 'static + Sync {
 }
 
 pub type SubtableId = TypeId;
-pub trait SubtableSet<F: JoltField>:
+pub trait JoltSubtableSet<F: JoltField>:
     LassoSubtable<F>
     + IntoEnumIterator
     + EnumCount
@@ -93,9 +90,15 @@ macro_rules! subtable_enum {
                 byte as usize
             }
         }
-        impl<F: JoltField> SubtableSet<F> for $enum_name<F> {}
+        impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
     };
 }
+
+pub mod range_check;
+pub mod xor;
+
+pub use range_check::{BoundSubtable, FullLimbSubtable};
+pub use xor::XorSubtable;
 
 subtable_enum!(
   TestSubtables,
@@ -103,7 +106,6 @@ subtable_enum!(
   Bound: range_check::BoundSubtable<320,F>
 );
 
-use crate::subtables::xor::XorSubtable;
 subtable_enum!(
   TestInstructionSubtables,
   XOR: XorSubtable<F>

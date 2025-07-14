@@ -1,5 +1,5 @@
 [package]
-name = "co-lasso"
+name = "co-jolt"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -55,6 +55,7 @@ toml = "0.8"
 spartan = { path = "../spartan" }
 co-spartan = { path = "../co-spartan" }
 mpc-net = { path = "../mpc-net" }
+co-lasso = { path = "../co-lasso" }
 
 [features]
 default = ["std", "parallel"]
@@ -74,3 +75,4 @@ parallel = [
     "ark-poly-commit/parallel",
     "rayon",
 ]
+# mpi = ["mpc-net/mpi"]

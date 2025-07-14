@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use itertools::Itertools;
 use jolt_core::poly::field::JoltField;
 
-use crate::subtables::LassoSubtable;
+use super::LassoSubtable;
 
 #[derive(Clone, Debug, Default)]
 pub struct FullLimbSubtable<F: JoltField>(PhantomData<F>);
