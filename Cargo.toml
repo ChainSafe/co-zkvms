@@ -5,6 +5,7 @@ members = ["co-jolt",
     "co-noir",
     "co-spartan",
     "mpc-net",
+    "mpc-core",
     "noir-r1cs",
     "spartan",
 ]

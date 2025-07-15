@@ -1,10 +1,9 @@
+use std::ops::Add;
+
 use ark_linear_sumcheck::rng::FeedableRNG;
-use ark_std::ops::Add;
+pub use mpc_core::protocols::rep3::rngs::{Rep3CorrelatedRng, Rep3RandBitComp, Rep3Rand};
 use rand::RngCore;
 
-pub mod additive;
-pub mod rep3;
-pub mod sumcheck;
 
 pub trait SSOpen<F: Add>: Sized {
     fn open(ss: &[Self]) -> F;

@@ -2,7 +2,6 @@ use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::Rng;
-use spartan::math::Math;
 use std::ops::Index;
 
 use super::Rep3PrimeFieldShare;
@@ -16,7 +15,7 @@ pub struct Rep3DensePolynomial<F: PrimeField> {
 
 impl<F: PrimeField> Rep3DensePolynomial<F> {
     pub fn new(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        let num_vars = evals.len().log_2();
+        let num_vars = evals.len().ilog2() as usize;
         Self::new_with_vars(evals, num_vars)
     }
 

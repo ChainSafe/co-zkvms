@@ -38,9 +38,9 @@ use spartan::{
 };
 
 use crate::{
-    mpc::sumcheck::rep3::{ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg},
     sumcheck::{
         default_sumcheck_poly_list, merge_list_of_distributed_poly, poly_list_to_prover_state,
+        ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg,
     },
     worker::PartialProof,
 };
@@ -301,13 +301,14 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time1) = rep3_zk_sumcheck_coordinator::<E, ProverFirstMsg<E::ScalarField>, N, T, _>(
-            poly_info,
-            &index.ck_mask,
-            network,
-            transcript,
-            sumcheck_polys_builder,
-        )?;
+        let (pf, final_point, time1) =
+            rep3_zk_sumcheck_coordinator::<E, ProverFirstMsg<E::ScalarField>, N, T, _>(
+                poly_info,
+                &index.ck_mask,
+                network,
+                transcript,
+                sumcheck_polys_builder,
+            )?;
 
         let (evals, time2) =
             rep3_eval_poly_coordinator::<E, _>(index.padded_num_var, 3, &final_point, network)?;
@@ -400,13 +401,14 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             merge_poly
         };
 
-        let (pf, final_point, time) = rep3_zk_sumcheck_coordinator::<E, ProverSecondMsg<E::ScalarField>, N, T, _>(
-            poly_info,
-            &index.ck_mask,
-            network,
-            transcript,
-            sumcheck_polys_builder,
-        )?;
+        let (pf, final_point, time) =
+            rep3_zk_sumcheck_coordinator::<E, ProverSecondMsg<E::ScalarField>, N, T, _>(
+                poly_info,
+                &index.ck_mask,
+                network,
+                transcript,
+                sumcheck_polys_builder,
+            )?;
         transcript.append_serializable(b"second_sumcheck_msgs", &pf);
         state.second_sumcheck_msgs = Some(pf);
 

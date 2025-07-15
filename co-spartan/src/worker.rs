@@ -18,6 +18,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter, marker::PhantomData, rc::Rc};
 use color_eyre::eyre::Context;
 use color_eyre::eyre::Result;
+use mpc_core::protocols::rep3::{
+    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
+};
 use mpc_net::mpc_star::MpcStarNetWorker;
 use rand::RngCore;
 #[cfg(feature = "parallel")]
@@ -30,14 +33,9 @@ use spartan::{
 };
 
 use crate::{
-    mpc::{
-        rep3::{Rep3DensePolynomial, Rep3PrimeFieldShare},
-        sumcheck::rep3::Rep3Sumcheck,
-        SSRandom,
-    },
     sumcheck::{
         append_sumcheck_polys, default_sumcheck_poly_list, obtain_distrbuted_sumcheck_prover_state,
-        poly_list_to_prover_state, DistrbutedSumcheckProverState,
+        poly_list_to_prover_state, DistrbutedSumcheckProverState, Rep3Sumcheck,
     },
     utils::aggregate_poly,
     witness::{Rep3R1CSWitnessShare, Rep3WitnessShare},
@@ -127,14 +125,18 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
         let witness_share = self.zero_round(pk, &z);
 
-        self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network).context("while running first round")?;
+        self.first_round(&vec![&witness_share.z], &pk.ipk.ck_w.0, network)
+            .context("while running first round")?;
 
-        self.second_round(pk, &witness_share, &mut state, random_rng, network).context("while running second round")?;
+        self.second_round(pk, &witness_share, &mut state, random_rng, network)
+            .context("while running second round")?;
 
-        self.third_round(pk, &witness_share, &mut state, random_rng, active, network).context("while running third round")?;
+        self.third_round(pk, &witness_share, &mut state, random_rng, active, network)
+            .context("while running third round")?;
 
         if active {
-            self.fourth_round(pk, &mut state, network).context("while running fourth round")?;
+            self.fourth_round(pk, &mut state, network)
+                .context("while running fourth round")?;
         } else {
             // todo fork network to avoid dummy fourth round
             dummy_fourth_round(&pk.pub_ipk, network);
@@ -209,7 +211,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             &eq_func,
             random_rng,
             network,
-        ).context("while running first sumcheck")?;
+        )
+        .context("while running first sumcheck")?;
 
         let randomness = &final_point[0..num_variables].to_vec();
 
@@ -268,14 +271,16 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             random_rng,
             &v_msg,
             network,
-        ).context("while running second sumcheck")?;
+        )
+        .context("while running second sumcheck")?;
 
         rep3_eval_poly_worker(
             vec![&witness_share.z],
             &final_point,
             pk.num_variables,
             network,
-        ).context("while running eval poly")?;
+        )
+        .context("while running eval poly")?;
         state.r_y = final_point.to_vec();
         state.eq_ry = Some(generate_eq(&final_point));
         let eq_ry = state.eq_ry.as_ref().unwrap();
@@ -333,7 +338,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
                 [eq_tilde_rx_chunk, eq_tilde_ry_chunk],
                 &pk.pub_ipk.ck_index,
                 network,
-            ).context("while committing polynomials")?;
+            )
+            .context("while committing polynomials")?;
         } else {
             let response = (
                 E::ScalarField::zero(),
@@ -361,7 +367,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             pk.num_variables,
             network.log_num_workers_per_party(),
             network,
-        ).context("while running batch open poly")?;
+        )
+        .context("while running batch open poly")?;
 
         let mut eq_tilde_rx_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
         let mut eq_tilde_ry_evals = vec![E::ScalarField::zero(); pk.num_variables.exp2()];
@@ -466,7 +473,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         ];
         q_polys.add_product(prod, E::ScalarField::one());
 
-        let (x_r, x_c) = network.receive_request().context("while receiving x_r and x_c")?;
+        let (x_r, x_c) = network
+            .receive_request()
+            .context("while receiving x_r and x_c")?;
 
         let lookup_pf_row = LogLookupProof::prove(
             &q_row,
@@ -493,7 +502,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
 
         network.send_response(responses);
 
-        let (z, lambda) = network.receive_request().context("while receiving first z and lambda")?;
+        let (z, lambda) = network
+            .receive_request()
+            .context("while receiving first z and lambda")?;
 
         append_sumcheck_polys(
             (lookup_pf_row.0[0].clone(), lookup_pf_row.0[1].clone()),
@@ -507,7 +518,9 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let (z, lambda) = network.receive_request().context("while receiving second z and lambda")?;
+        let (z, lambda) = network
+            .receive_request()
+            .context("while receiving second z and lambda")?;
 
         append_sumcheck_polys(
             (lookup_pf_col.0[0].clone(), lookup_pf_col.0[1].clone()),
@@ -521,7 +534,8 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             log_chunk_size,
         );
 
-        let final_point = distributed_sumcheck_worker(&q_polys, network).context("while running distributed sumcheck")?;
+        let final_point = distributed_sumcheck_worker(&q_polys, network)
+            .context("while running distributed sumcheck")?;
 
         let eta = network.receive_request().context("while receiving eta")?;
 

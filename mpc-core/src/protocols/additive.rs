@@ -3,7 +3,7 @@ use ark_linear_sumcheck::rng::FeedableRNG;
 use mpc_core::protocols::rep3::PartyID;
 use rand::RngCore;
 
-use crate::mpc::SSRandom;
+use crate::protocols::rep3::rngs::SSRandom;
 
 pub type AdditiveShare<F> = F;
 

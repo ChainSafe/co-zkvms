@@ -21,11 +21,10 @@ use ark_poly_commit::multilinear_pc::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs};
 use clap::{Parser, Subcommand};
+use mpc_core::protocols::rep3::{
+    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
+};
 use co_spartan::{
-    mpc::{
-        rep3::{generate_poly_shares_rss, Rep3DensePolynomial},
-        SSRandom,
-    },
     utils::{pad_to_power_of_two, split_vec},
     Rep3ProverKey,
 };

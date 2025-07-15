@@ -1,13 +1,10 @@
-use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use mpc_core::protocols::rep3::poly::{generate_poly_shares_rss, Rep3DensePolynomial};
 use rand::RngCore;
 
-use crate::{
-    mpc::rep3::{generate_poly_shares_rss, Rep3DensePolynomial},
-    utils::{pad_to_power_of_two, split_vec},
-};
+use crate::utils::{pad_to_power_of_two, split_vec};
 
 pub type Rep3WitnessShare<F: PrimeField> = Rep3DensePolynomial<F>;
 
@@ -46,7 +43,10 @@ pub fn split_witness<F: PrimeField>(
         for j in 0..3 {
             let worker_id = i * 3 + j;
             let next = (j + 1) % 3;
-            let z = Rep3DensePolynomial::<F>::from_poly_shares(z_shares[j].clone(), z_shares[next].clone());
+            let z = Rep3DensePolynomial::<F>::from_poly_shares(
+                z_shares[j].clone(),
+                z_shares[next].clone(),
+            );
             wit_vec.push((worker_id, z));
         }
 

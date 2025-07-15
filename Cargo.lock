@@ -1198,7 +1198,7 @@ dependencies = [
  "itertools 0.12.1",
  "jolt-core",
  "mimalloc",
- "mpc-core 0.9.0",
+ "mpc-core 0.1.0",
  "mpc-net 0.4.0",
  "num-bigint 0.4.6",
  "paste",
@@ -1240,7 +1240,7 @@ dependencies = [
  "itertools 0.12.1",
  "jolt-core",
  "mimalloc",
- "mpc-core 0.9.0",
+ "mpc-core 0.1.0",
  "mpc-net 0.4.0",
  "num-bigint 0.4.6",
  "paste",
@@ -1300,7 +1300,7 @@ dependencies = [
  "crossbeam",
  "itertools 0.12.1",
  "mimalloc",
- "mpc-core 0.9.0",
+ "mpc-core 0.1.0",
  "mpc-net 0.4.0",
  "noir-r1cs",
  "num-bigint 0.4.6",
@@ -3321,6 +3321,25 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "mpc-core"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-linear-sumcheck",
+ "ark-poly",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "itertools 0.12.1",
+ "mpc-core 0.9.0",
+ "mpc-net 0.4.0",
+ "mpc-types 0.1.0",
+ "num-bigint 0.4.6",
+ "rand 0.8.5",
 ]
 
 [[package]]

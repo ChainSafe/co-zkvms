@@ -62,7 +62,7 @@ where
 
         let num_rounds = trace_length.log_2();
 
-        let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
+        let (primary_sumcheck_proof, _r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck_rep3(num_rounds, transcript, network)?;
 
         // Create a single opening proof for the flag_evals and memory_evals

@@ -29,10 +29,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Instant};
 use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
-use co_spartan::{
-    mpc::{rep3::Rep3DensePolynomial, SSRandom},
-    setup::CoordinatorKey,
+use mpc_core::protocols::rep3::{
+    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
 };
+use co_spartan::setup::CoordinatorKey;
 use crossbeam::thread;
 use itertools::{merge, Itertools};
 use mpc_net::{
