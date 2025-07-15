@@ -227,7 +227,7 @@ impl<F: JoltField, C: DistributedCommitmentScheme<F>>
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
         let dim_openings: Vec<F> = polynomials
-            .dims
+            .dim
             .par_iter()
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect();
@@ -237,12 +237,12 @@ impl<F: JoltField, C: DistributedCommitmentScheme<F>>
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect();
         let E_poly_openings: Vec<F> = polynomials
-            .e_polys
+            .E_polys
             .par_iter()
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect();
         let flag_openings: Vec<F> = polynomials
-            .lookup_flag_polys
+            .instruction_flag_polys
             .par_iter()
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect();
@@ -262,7 +262,7 @@ impl<F: JoltField, C: DistributedCommitmentScheme<F>>
         network: &mut Network,
     ) -> eyre::Result<()> {
         let lookup_flag_polys = polynomials
-            .lookup_flag_polys
+            .instruction_flag_polys
             .iter()
             .map(|p| {
                 Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
@@ -272,9 +272,9 @@ impl<F: JoltField, C: DistributedCommitmentScheme<F>>
             })
             .collect::<Vec<_>>();
         let read_write_polys = chain![
-            polynomials.dims.iter(),
+            polynomials.dim.iter(),
             polynomials.read_cts.iter(),
-            polynomials.e_polys.iter(),
+            polynomials.E_polys.iter(),
             lookup_flag_polys.iter(),
         ]
         .collect::<Vec<_>>();

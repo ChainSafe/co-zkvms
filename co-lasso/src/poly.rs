@@ -1,11 +1,9 @@
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
-use ark_ff::{Field, PrimeField, Zero};
+use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
-use itertools::Itertools;
 use jolt_core::{
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         field::JoltField,
@@ -16,6 +14,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use rand::Rng;
 use std::ops::Index;
 
 #[cfg(feature = "parallel")]
@@ -133,7 +132,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn new_poly_from_fix_var_top(&self, r: &F) -> Self {
-        let (mut a, mut b) = self.copy_poly_shares();
+        let (a, b) = self.copy_poly_shares();
         let a = a.new_poly_from_bound_poly_var_top(r);
         let b = b.new_poly_from_bound_poly_var_top(r); // TODO: check if this is correct with rep3 shares
 
@@ -163,6 +162,13 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
 
     pub fn evals_ref(&self) -> &[Rep3PrimeFieldShare<F>] {
         &self.evals
+    }
+
+    pub fn zero() -> Self {
+        Rep3DensePolynomial {
+            num_vars: 0,
+            evals: vec![Rep3PrimeFieldShare::zero()],
+        }
     }
 }
 
@@ -228,13 +234,36 @@ impl<F: JoltField> Index<std::ops::RangeToInclusive<usize>> for Rep3DensePolynom
     }
 }
 
-pub fn combine_poly_shares<F: JoltField>(
+pub fn combine_poly_shares_rep3<F: JoltField>(
     poly_shares: Vec<Rep3DensePolynomial<F>>,
 ) -> DensePolynomial<F> {
     assert_eq!(poly_shares.len(), 3);
     let [s0, s1, s2] = poly_shares.try_into().unwrap();
     let a = rep3::combine_field_elements(&s0.evals, &s1.evals, &s2.evals);
     DensePolynomial::new(a)
+}
+
+pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
+    poly: &DensePolynomial<F>,
+    rng: &mut R,
+) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
+    let num_vars = poly.get_num_vars();
+    if num_vars == 0 {
+        return (
+            Rep3DensePolynomial::<F>::zero(),
+            Rep3DensePolynomial::<F>::zero(),
+            Rep3DensePolynomial::<F>::zero(),
+        );
+    }
+    let t0 = DensePolynomial::<F>::rand(num_vars, rng);
+    let t1 = DensePolynomial::<F>::rand(num_vars, rng);
+    let t2 = (poly - &t0) - &t1;
+
+    let p_share_0 = Rep3DensePolynomial::<F>::from_poly_shares(t0.clone(), t1.clone());
+    let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1, t2.clone());
+    let p_share_2 = Rep3DensePolynomial::<F>::from_poly_shares(t2, t0);
+
+    (p_share_0, p_share_1, p_share_2)
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.

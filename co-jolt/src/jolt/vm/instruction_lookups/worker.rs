@@ -91,7 +91,7 @@ where
         preprocessing: &Preprocessing<F>,
         polynomials: &Polynomials<F>,
     ) -> Result<()> {
-        let trace_length = polynomials.dims[0].len();
+        let trace_length = polynomials.dim[0].len();
         let r_eq = self.io_ctx.network.receive_request::<Vec<F>>()?;
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
@@ -103,8 +103,8 @@ where
                 preprocessing,
                 num_rounds,
                 &mut eq_poly,
-                &polynomials.e_polys,
-                &polynomials.lookup_flag_polys,
+                &polynomials.E_polys,
+                &polynomials.instruction_flag_polys,
                 &mut polynomials.lookup_outputs.clone(),
                 Self::sumcheck_poly_degree(),
             )?;
@@ -383,7 +383,7 @@ where
         //     .collect::<Vec<_>>();
         // let lookup_output_a = polynomials.lookup_outputs.copy_share_a();
         let lookup_flag_polys = polynomials
-            .lookup_flag_polys
+            .instruction_flag_polys
             .iter()
             .map(|p| {
                 Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
@@ -393,7 +393,7 @@ where
             })
             .collect::<Vec<_>>();
         let primary_sumcheck_polys = chain![
-            polynomials.e_polys.iter(),
+            polynomials.E_polys.iter(),
             lookup_flag_polys.iter(),
             iter::once(&polynomials.lookup_outputs),
         ]
@@ -478,7 +478,7 @@ where
         _span.enter();
 
         let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.lookup_flag_bitvectors);
+            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_bitvectors);
 
         let read_write_circuits = read_write_leaves
             // .par_iter()
@@ -531,8 +531,8 @@ where
 
                 let read_fingerprints: Vec<_> = (0..num_lookups)
                     .map(|i| {
-                        let a = &polynomials.dims[dim_index][i];
-                        let v = &polynomials.e_polys[memory_index][i];
+                        let a = &polynomials.dim[dim_index][i];
+                        let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
                         rep3::arithmetic::sub_shared_by_public(
                             (t * gamma_squared) + (v * *gamma) + *a,

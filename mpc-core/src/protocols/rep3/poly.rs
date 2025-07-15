@@ -79,7 +79,7 @@ impl<F: PrimeField> Rep3DensePolynomial<F> {
     }
 }
 
-pub fn generate_poly_shares_rss<F: Field, R: Rng>(
+pub fn generate_poly_shares_rep3<F: Field, R: Rng>(
     poly: &DenseMultilinearExtension<F>,
     rng: &mut R,
 ) -> [DenseMultilinearExtension<F>; 3] {

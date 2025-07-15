@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
 use co_lasso::{
-    poly::{combine_poly_shares, Rep3DensePolynomial},
+    poly::{combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial},
     subprotocols::commitment::DistributedCommitmentScheme,
     utils::{self, Forkable},
 };
@@ -23,37 +23,29 @@ use mpc_core::protocols::{
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use rand::{CryptoRng, Rng};
 use std::{iter, marker::PhantomData};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::jolt::{
-        instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+use crate::{
+    jolt::{
+        instruction::Rep3JoltInstructionSet,
         subtable::JoltSubtableSet,
-        vm::instruction_lookups::{InstructionCommitment, InstructionLookupsPreprocessing, InstructionPolynomials},
-    };
-
-pub struct Rep3LassoWitnessSolver<
-    const C: usize,
-    const M: usize,
-    F: JoltField,
-    CS,
-    Lookups: Rep3JoltInstructionSet<F>,
-    Subtables: JoltSubtableSet<F>,
-    N: Rep3Network,
-> {
-    pub io_ctx0: IoContext<N>,
-    pub io_ctx1: IoContext<N>,
-    _marker: PhantomData<(F, CS, Lookups, Subtables)>,
-}
+        vm::instruction_lookups::{
+            InstructionCommitment, InstructionLookupsPreprocessing, InstructionPolynomials,
+        },
+    },
+    poly::commitment::commitment_scheme::CommitmentScheme,
+};
 
 #[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3InstructionPolynomials<F: JoltField> {
     /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
     /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
     /// `m` (# lookups).
-    pub dims: Vec<Rep3DensePolynomial<F>>,
+    pub dim: Vec<Rep3DensePolynomial<F>>,
 
     /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
@@ -66,18 +58,18 @@ pub struct Rep3InstructionPolynomials<F: JoltField> {
     /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
     /// size `m` (# lookups).
-    pub e_polys: Vec<Rep3DensePolynomial<F>>,
+    pub E_polys: Vec<Rep3DensePolynomial<F>>,
 
     /// Polynomial encodings for flag polynomials for each instruction.
     /// If using a single instruction this will be empty.
     /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (# lookups).
     ///
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
-    pub lookup_flag_polys: Vec<DensePolynomial<F>>,
+    pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
     /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
     /// construction of the memory flag polynomials in `read_write_grand_product`.
-    pub lookup_flag_bitvectors: Vec<Vec<u64>>,
+    pub instruction_flag_bitvectors: Vec<Vec<u64>>,
 
     /// The lookup output for each instruction of the execution trace.
     pub lookup_outputs: Rep3DensePolynomial<F>,
@@ -90,7 +82,7 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
         network: &mut impl MpcStarNetWorker,
     ) -> eyre::Result<()> {
         let dims_share_a = self
-            .dims
+            .dim
             .iter()
             .map(|poly| poly.copy_share_a())
             .collect::<Vec<_>>();
@@ -100,7 +92,7 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
             .map(|poly| poly.copy_share_a())
             .collect::<Vec<_>>();
         let e_polys_share_a = self
-            .e_polys
+            .E_polys
             .iter()
             .map(|poly| poly.copy_share_a())
             .collect::<Vec<_>>();
@@ -120,7 +112,7 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
             .collect::<Vec<_>>();
         let trace_commitment = CS::batch_commit_polys_ref(&trace_polys, setup, BatchType::Big);
         let lookup_flag_polys_commitment = CS::batch_commit_polys_ref(
-            &self.lookup_flag_polys.iter().collect::<Vec<_>>(),
+            &self.instruction_flag_polys.iter().collect::<Vec<_>>(),
             setup,
             BatchType::Big,
         );
@@ -183,8 +175,22 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
 
 impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionPolynomials<F> {
     fn num_lookups(&self) -> usize {
-        self.dims[0].len()
+        self.dim[0].len()
     }
+}
+
+pub struct Rep3LassoWitnessSolver<
+    const C: usize,
+    const M: usize,
+    F: JoltField,
+    CS,
+    Lookups: Rep3JoltInstructionSet<F>,
+    Subtables: JoltSubtableSet<F>,
+    N: Rep3Network,
+> {
+    pub io_ctx0: IoContext<N>,
+    pub io_ctx1: IoContext<N>,
+    _marker: PhantomData<(F, CS, Lookups, Subtables)>,
 }
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
@@ -334,12 +340,12 @@ where
         let lookup_outputs = Self::compute_lookup_outputs(&lookups, num_reads, &mut self.io_ctx0);
 
         Ok(Rep3InstructionPolynomials {
-            dims,
+            dim: dims,
             read_cts,
             final_cts,
-            lookup_flag_polys,
-            lookup_flag_bitvectors,
-            e_polys,
+            instruction_flag_polys: lookup_flag_polys,
+            instruction_flag_bitvectors: lookup_flag_bitvectors,
+            E_polys: e_polys,
             lookup_outputs,
         })
     }
@@ -388,23 +394,23 @@ where
     ) -> InstructionPolynomials<F, CS> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
-        let dims = multizip((share1.dims, share2.dims, share3.dims))
-            .map(|(dim1, dim2, dim3)| combine_poly_shares(vec![dim1, dim2, dim3]))
+        let dims = multizip((share1.dim, share2.dim, share3.dim))
+            .map(|(dim1, dim2, dim3)| combine_poly_shares_rep3(vec![dim1, dim2, dim3]))
             .collect_vec();
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
-            .map(|(read1, read2, read3)| combine_poly_shares(vec![read1, read2, read3]))
+            .map(|(read1, read2, read3)| combine_poly_shares_rep3(vec![read1, read2, read3]))
             .collect_vec();
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
-            .map(|(final1, final2, final3)| combine_poly_shares(vec![final1, final2, final3]))
+            .map(|(final1, final2, final3)| combine_poly_shares_rep3(vec![final1, final2, final3]))
             .collect_vec();
 
-        let e_polys = multizip((share1.e_polys, share2.e_polys, share3.e_polys))
-            .map(|(e1, e2, e3)| combine_poly_shares(vec![e1, e2, e3]))
+        let e_polys = multizip((share1.E_polys, share2.E_polys, share3.E_polys))
+            .map(|(e1, e2, e3)| combine_poly_shares_rep3(vec![e1, e2, e3]))
             .collect_vec();
 
-        let lookup_outputs = combine_poly_shares(vec![
+        let lookup_outputs = combine_poly_shares_rep3(vec![
             share1.lookup_outputs,
             share2.lookup_outputs,
             share3.lookup_outputs,
@@ -415,8 +421,8 @@ where
             dim: dims,
             read_cts,
             final_cts,
-            instruction_flag_polys: share1.lookup_flag_polys.clone(),
-            instruction_flag_bitvectors: share1.lookup_flag_bitvectors.clone(),
+            instruction_flag_polys: share1.instruction_flag_polys.clone(),
+            instruction_flag_bitvectors: share1.instruction_flag_bitvectors.clone(),
             E_polys: e_polys,
             lookup_outputs,
         }
@@ -440,18 +446,72 @@ where
     }
 }
 
-/// Reconstructs a vector of field elements from its arithmetic replicated shares.
-/// # Panics
-/// Panics if the provided `Vec` sizes do not match.
-pub fn combine_binary_elements<F: PrimeField>(
-    share1: &[Rep3BigUintShare<F>],
-    share2: &[Rep3BigUintShare<F>],
-    share3: &[Rep3BigUintShare<F>],
-) -> Vec<F> {
-    assert_eq!(share1.len(), share2.len());
-    assert_eq!(share2.len(), share3.len());
+impl<F, C> InstructionPolynomials<F, C>
+where
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+{
+    pub fn into_secret_shares_rep3<R: Rng + CryptoRng>(
+        self,
+        rng: &mut R,
+    ) -> eyre::Result<[Rep3InstructionPolynomials<F>; 3]> {
+        let (dim0, dim1, dim2) = itertools::multiunzip(
+            self.dim
+                .iter()
+                .map(|poly| generate_poly_shares_rep3(poly, rng)),
+        );
 
-    itertools::multizip((share1, share2, share3))
-        .map(|(x1, x2, x3)| (x1.a.clone() ^ x2.a.clone() ^ x3.a.clone()).into())
-        .collect::<Vec<_>>()
+        let (read_cts0, read_cts1, read_cts2) = itertools::multiunzip(
+            self.read_cts
+                .iter()
+                .map(|poly| generate_poly_shares_rep3(poly, rng)),
+        );
+
+        let (final_cts0, final_cts1, final_cts2) = itertools::multiunzip(
+            self.final_cts
+                .iter()
+                .map(|poly| generate_poly_shares_rep3(poly, rng)),
+        );
+
+        let (e_polys0, e_polys1, e_polys2) = itertools::multiunzip(
+            self.E_polys
+                .iter()
+                .map(|poly| generate_poly_shares_rep3(poly, rng)),
+        );
+
+        let (lookup_outputs0, lookup_outputs1, lookup_outputs2) =
+            generate_poly_shares_rep3(&self.lookup_outputs, rng);
+
+        let p0 = Rep3InstructionPolynomials {
+            dim: dim0,
+            read_cts: read_cts0,
+            final_cts: final_cts0,
+            E_polys: e_polys0,
+            lookup_outputs: lookup_outputs0,
+            instruction_flag_polys: self.instruction_flag_polys.clone(),
+            instruction_flag_bitvectors: self.instruction_flag_bitvectors.clone(),
+        };
+
+        let p1 = Rep3InstructionPolynomials {
+            dim: dim1,
+            read_cts: read_cts1,
+            final_cts: final_cts1,
+            E_polys: e_polys1,
+            lookup_outputs: lookup_outputs1,
+            instruction_flag_polys: self.instruction_flag_polys.clone(),
+            instruction_flag_bitvectors: self.instruction_flag_bitvectors.clone(),
+        };
+
+        let p2 = Rep3InstructionPolynomials {
+            dim: dim2,
+            read_cts: read_cts2,
+            final_cts: final_cts2,
+            E_polys: e_polys2,
+            lookup_outputs: lookup_outputs2,
+            instruction_flag_polys: self.instruction_flag_polys,
+            instruction_flag_bitvectors: self.instruction_flag_bitvectors,
+        };
+
+        Ok([p0, p1, p2])
+    }
 }

@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use mpc_core::protocols::rep3::poly::{generate_poly_shares_rss, Rep3DensePolynomial};
+use mpc_core::protocols::rep3::poly::{generate_poly_shares_rep3, Rep3DensePolynomial};
 use rand::RngCore;
 
 use crate::utils::{pad_to_power_of_two, split_vec};
@@ -37,7 +37,7 @@ pub fn split_witness<F: PrimeField>(
             std::mem::take(&mut z_vec[i]),
         );
 
-        let z_shares = generate_poly_shares_rss(&z, rng);
+        let z_shares = generate_poly_shares_rep3(&z, rng);
 
         let mut wit_vec = Vec::new();
         for j in 0..3 {
