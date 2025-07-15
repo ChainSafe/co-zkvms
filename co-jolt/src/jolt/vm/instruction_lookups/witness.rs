@@ -9,7 +9,6 @@ use co_lasso::{
 use color_eyre::eyre::Context;
 use itertools::{chain, multizip, Itertools};
 use jolt_core::{
-    jolt::vm::instruction_lookups::InstructionCommitment,
     poly::{
         commitment::commitment_scheme::BatchType, dense_mlpoly::DensePolynomial, field::JoltField,
     },
@@ -32,7 +31,7 @@ use rayon::prelude::*;
 use crate::jolt::{
         instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
         subtable::JoltSubtableSet,
-        vm::instruction_lookups::{InstructionLookupsPreprocessing, InstructionPolynomials},
+        vm::instruction_lookups::{InstructionCommitment, InstructionLookupsPreprocessing, InstructionPolynomials},
     };
 
 pub struct Rep3LassoWitnessSolver<

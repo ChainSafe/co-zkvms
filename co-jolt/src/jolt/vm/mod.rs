@@ -1,1 +1,1 @@
-mod instruction_lookups;
+pub mod instruction_lookups;

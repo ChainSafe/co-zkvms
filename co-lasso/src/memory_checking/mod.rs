@@ -21,7 +21,7 @@ use crate::{
 
 pub mod worker;
 
-pub trait Rep3MemoryCheckingProver<const M: usize, F, CS, Polynomials, Network>:
+pub trait Rep3MemoryCheckingProver<F, CS, Polynomials, Network>:
     MemoryCheckingProver<F, CS, Polynomials>
 where
     F: JoltField,
@@ -33,6 +33,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
     fn prove_memory_checking(
+        memory_size: usize,
         preprocessing: &Self::Preprocessing,
         network: &mut Network,
         transcript: &mut ProofTranscript,
@@ -45,7 +46,7 @@ where
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products_rep3(preprocessing, network, transcript)
+        ) = Self::prove_grand_products_rep3(memory_size, preprocessing, network, transcript)
             .context("while proving grand products")?;
 
         let read_write_openings = Self::ReadWriteOpenings::open_rep3(&r_read_write, network)?;
@@ -68,6 +69,7 @@ where
     }
 
     fn prove_grand_products_rep3(
+        M: usize,
         preprocessing: &Self::Preprocessing,
         network: &mut Network,
         transcript: &mut ProofTranscript,

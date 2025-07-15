@@ -54,6 +54,8 @@ where
         network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> Result<InstructionLookupsProof<C, M, F, CS, Lookups, Subtables>> {
+        transcript.append_protocol_name(Self::protocol_name());
+
         let r_eq =
             transcript.challenge_vector::<F>(b"Jolt instruction lookups", trace_length.log_2());
         network.broadcast_request(r_eq)?;
@@ -80,7 +82,7 @@ where
         };
 
         let memory_checking_proof =
-            Self::prove_memory_checking(preprocessing, network, transcript)?;
+            Self::prove_memory_checking(M, preprocessing, network, transcript)?;
 
         Ok(InstructionLookupsProof {
             _instructions: PhantomData,
@@ -161,7 +163,7 @@ where
 }
 
 impl<F: JoltField, const C: usize, const M: usize, CS, Lookups, Subtables, Network>
-    Rep3MemoryCheckingProver<C, F, CS, InstructionPolynomials<F, CS>, Network>
+    Rep3MemoryCheckingProver<F, CS, InstructionPolynomials<F, CS>, Network>
     for InstructionLookupsProof<C, M, F, CS, Lookups, Subtables>
 where
     CS: DistributedCommitmentScheme<F>,

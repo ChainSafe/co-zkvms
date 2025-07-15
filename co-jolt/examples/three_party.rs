@@ -9,7 +9,6 @@ use color_eyre::{
 use itertools::{chain, Itertools};
 use jolt_core::poly::structured_poly::StructuredCommitment;
 use jolt_core::{
-    jolt::vm::instruction_lookups::InstructionCommitment,
     utils::{math::Math, transcript::ProofTranscript},
 };
 use mpc_core::protocols::rep3;
@@ -24,20 +23,20 @@ use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
-use co_jolt::{
-    coordinator::Rep3MemoryCheckingProver,
-    instructions::{self, range_check::RangeLookup, xor::XORInstruction},
-    vm,
-    subprotocols::commitment::PST13,
-    subtables,
-    worker::Rep3LassoProver,
-    Rep3LassoPolynomials, Rep3LassoWitnessSolver,
+use co_jolt::jolt::{
+    instruction::{self, range_check::RangeLookup, xor::XORInstruction},
+    subtable,
+    vm::instruction_lookups::{
+        coordinator, witness::{Rep3InstructionPolynomials, Rep3LassoWitnessSolver}, worker::Rep3InstructionLookupsProver, InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof
+    },
 };
+use co_lasso::subprotocols::commitment::PST13;
 
-type Lookups = instructions::TestLookups<F>;
-type Subtables = subtables::TestSubtables<F>;
-type TestLassoProof = vm::LassoProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
-type TestLassoWitnessSolver<Network> = Rep3LassoWitnessSolver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, Network>;
+type Lookups = instruction::TestLookups<F>;
+type Subtables = subtable::TestSubtables<F>;
+type TestLassoProof = InstructionLookupsProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
+type TestLassoWitnessSolver<Network> =
+    Rep3LassoWitnessSolver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, Network>;
 
 #[derive(Parser)]
 struct Args {
@@ -55,7 +54,7 @@ type F = ark_bn254::Fr;
 
 // #[tokio::main]
 fn main() -> Result<()> {
-    // init_tracing();
+    init_tracing();
     let args = Args::parse();
     let num_inputs = 1 << args.log_num_inputs;
     rustls::crypto::aws_lc_rs::default_provider()
@@ -93,8 +92,8 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing = vm::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
+    let preprocessing = InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
     let setup = {
         let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
@@ -145,10 +144,15 @@ fn run_party(
 
     rep3_net.send_response(polynomials.clone())?;
 
-    let mut prover =
-        Rep3LassoProver::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, _>::new(
-            rep3_net, setup,
-        )?;
+    let mut prover = Rep3InstructionLookupsProver::<
+        C,
+        M,
+        F,
+        PST13<ark_bn254::Bn254>,
+        Lookups,
+        Subtables,
+        _,
+    >::new(rep3_net, setup)?;
 
     prover.prove(&preprocessing, &polynomials)?;
 
@@ -164,11 +168,13 @@ fn run_coordinator(
     log_num_pub_workers: usize,
     num_inputs: usize,
 ) -> Result<()> {
-    init_tracing();
+    // init_tracing();
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    let preprocessing = vm::InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+
+    let preprocessing =
+        InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
 
     let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
     let setup = {
@@ -176,7 +182,7 @@ fn run_coordinator(
         PST13::setup(&commitment_shapes, &mut rng)
     };
     let commitments =
-        Rep3LassoPolynomials::receive_commitments::<PST13<ark_bn254::Bn254>>(&mut rep3_net)?;
+        Rep3InstructionPolynomials::receive_commitments::<PST13<ark_bn254::Bn254>>(&mut rep3_net)?;
 
     let polynomials_shares = rep3_net.receive_responses(Default::default())?;
     if std::env::var("SANITY_CHECK").is_ok() {
@@ -196,14 +202,14 @@ fn run_coordinator(
             // .collect_vec();
 
             let lookups = chain!(
-                iter::repeat_with(|| Lookups::Range256(RangeLookup::public(F::from(
+                iter::repeat_with(|| Some(Lookups::Range256(RangeLookup::public(F::from(
                     rng.gen_range(0..256)
-                ))))
+                )))))
                 .take(num_inputs / 2)
                 .collect_vec(),
-                iter::repeat_with(|| Lookups::Range320(RangeLookup::public(F::from(
+                iter::repeat_with(|| Some(Lookups::Range320(RangeLookup::public(F::from(
                     rng.gen_range(0..320)
-                ))))
+                )))))
                 .take(num_inputs / 2)
                 .collect_vec(),
             )
@@ -239,12 +245,12 @@ fn run_coordinator(
 
         let mut transcript = ProofTranscript::new(b"Lasso");
         let proof =
-            TestLassoProof::prove(&preprocessing, &polynomials_check, &setup, &mut transcript);
+            TestLassoProof::prove(&polynomials_check, &preprocessing, &setup, &mut transcript);
 
         let mut verifier_transcript = ProofTranscript::new(b"Lasso");
         TestLassoProof::verify(
-            &setup,
             &preprocessing,
+            &setup,
             proof,
             &commitments,
             &mut verifier_transcript,
@@ -254,19 +260,20 @@ fn run_coordinator(
 
     let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
 
-    let proof = Rep3MemoryCheckingProver::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, _>::prove(
-        num_inputs,
-        &preprocessing,
-        &mut rep3_net,
-        &mut transcript,
-    )?;
+    let proof =
+        InstructionLookupsProof::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>::prove_rep3(
+            num_inputs,
+            &preprocessing,
+            &mut rep3_net,
+            &mut transcript,
+        )?;
 
     // assert_eq!(proof.primary_sumcheck.opening_proof.proofs, proof_check.primary_sumcheck.opening_proof.proofs);
 
     let mut verifier_transcript = ProofTranscript::new(b"Lasso");
     TestLassoProof::verify(
-        &setup,
         &preprocessing,
+        &setup,
         proof,
         &commitments,
         &mut verifier_transcript,

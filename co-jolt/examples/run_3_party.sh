@@ -4,7 +4,7 @@ cargo build --example three_party --release
 
 cd ../mpc-net
 cargo build --bin gen_cert --release
-cd ../co-lasso
+cd ../co-jolt
 [[ -f "data/cert_coordinator.der" ]] || ../target/release/gen_cert -k data/key_coordinator.der -c data/cert_coordinator.der -s localhost -s ip6-localhost -s 127.0.0.1 -s coordinator
 
 # [[ -f "data/key0.der" ]] || ../target/release/gen_cert -k data/key0.der -c data/cert0.der -s localhost -s ip6-localhost -s 127.0.0.1 -s party0
