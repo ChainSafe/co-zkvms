@@ -1,6 +1,5 @@
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
-use mpc_core::protocols::rep3::{Rep3BigUintShare,Rep3PrimeFieldShare};
 use std::any::TypeId;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
@@ -61,8 +60,7 @@ pub trait JoltSubtableSet<F: JoltField>:
 // }
 
 use paste::paste;
-
-macro_rules! subtable_enum {
+macro_rules! subtable_enum_test {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         paste! {
             #[allow(non_camel_case_types)]
@@ -94,18 +92,31 @@ macro_rules! subtable_enum {
 }
 
 pub mod range_check;
+
+pub mod and;
+pub mod eq;
+pub mod eq_abs;
+pub mod eq_msb;
+pub mod gt_msb;
+pub mod identity;
+pub mod lt_abs;
+pub mod ltu;
+pub mod or;
+pub mod sign_extend;
+pub mod sll;
+pub mod sra_sign;
+pub mod srl;
+pub mod truncate_overflow;
 pub mod xor;
+pub mod zero_lsb;
 
-pub use range_check::{BoundSubtable, FullLimbSubtable};
-pub use xor::XorSubtable;
-
-subtable_enum!(
+subtable_enum_test!(
   TestSubtables,
   Full: range_check::FullLimbSubtable<F>,
   Bound: range_check::BoundSubtable<320,F>
 );
 
-subtable_enum!(
+subtable_enum_test!(
   TestInstructionSubtables,
-  XOR: XorSubtable<F>
+  XOR: xor::XorSubtable<F>
 );

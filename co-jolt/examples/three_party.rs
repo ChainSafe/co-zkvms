@@ -6,38 +6,48 @@ use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
-use itertools::{chain, Itertools};
+use itertools::Itertools;
 use jolt_core::poly::structured_poly::StructuredCommitment;
-use jolt_core::utils::{math::Math, transcript::ProofTranscript};
+use jolt_core::utils::transcript::ProofTranscript;
 use mpc_core::protocols::rep3;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
-use num_bigint::BigUint;
 use rand::Rng;
 use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
 use co_jolt::jolt::{
-    instruction::{self, range_check::RangeLookup, xor::XORInstruction},
+    instruction::{
+        self,
+        range_check::RangeLookup,
+        xor::{self, XORInstruction},
+    },
     subtable,
     vm::instruction_lookups::{
-        coordinator,
-        witness::{Rep3InstructionPolynomials, Rep3LassoWitnessSolver},
+        witness::{Rep3InstructionPolynomials, Rep3InstructionWitnessSolver},
         worker::Rep3InstructionLookupsProver,
         InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
     },
 };
 use co_lasso::subprotocols::commitment::PST13;
 
-type Lookups = instruction::TestLookups<F>;
-type Subtables = subtable::TestSubtables<F>;
-type TestLassoProof = InstructionLookupsProof<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>;
-type TestLassoWitnessSolver<Network> =
-    Rep3LassoWitnessSolver<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables, Network>;
+type Instructions = instruction::TestInstructions<F>;
+type Subtables = subtable::TestInstructionSubtables<F>;
+type TestLassoProof =
+    InstructionLookupsProof<C, M, F, PST13<ark_bn254::Bn254>, Instructions, Subtables>;
+type TestLassoWitnessSolver<Network> = Rep3InstructionWitnessSolver<
+    C,
+    M,
+    F,
+    PST13<ark_bn254::Bn254>,
+    Instructions,
+    Subtables,
+    Network,
+>;
 
 #[derive(Parser)]
 struct Args {
@@ -101,7 +111,8 @@ fn run_party(
     )
     .unwrap();
 
-    let preprocessing = InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing =
+        InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
 
     let setup = {
         let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
@@ -109,41 +120,37 @@ fn run_party(
         PST13::setup(&commitment_shapes, &mut rng)
     };
 
-    let party_id = rep3_net.party_id();
-
-    let mut rng = test_rng();
-
-    // let lookups = iter::repeat_with(|| {
-    //     let a = F::from(rng.gen_range::<u64, _>(0..256));
-    //     let b = F::from(rng.gen_range::<u64, _>(0..256));
-    //     Lookups::XOR(XORInstruction::shared_binary(
-    //         rep3::binary::promote_to_trivial_share(party_id, &a.into()),
-    //         rep3::binary::promote_to_trivial_share(party_id, &b.into()),
-    //     ))
-    // })
-    // .take(num_inputs)
-    // .collect_vec();
-
     let polynomials = if args.solve_witness {
-        let lookups = chain!(
+        let lookups = {
+            let mut rng = test_rng();
             iter::repeat_with(|| {
-                let value = F::from(rng.gen_range(0..256));
-                Lookups::Range256(RangeLookup::shared(
-                    rep3::arithmetic::promote_to_trivial_share(party_id, value),
+                Instructions::XOR(xor::XORInstruction(
+                    rng.gen_range::<u64, _>(0..256).into(),
+                    rng.gen_range::<u64, _>(0..256).into(),
                 ))
             })
-            .take(num_inputs / 2)
-            .collect_vec(),
-            iter::repeat_with(|| {
-                let value = F::from(rng.gen_range(0..320));
-                Lookups::Range320(RangeLookup::shared(
-                    rep3::arithmetic::promote_to_trivial_share(party_id, value),
-                ))
-            })
-            .take(num_inputs / 2)
-            .collect_vec(),
-        )
-        .collect_vec();
+            .take(num_inputs)
+            .collect_vec()
+        };
+        // let lookups = chain!(
+        //     iter::repeat_with(|| {
+        //         let value = F::from(rng.gen_range(0..256));
+        //         Lookups::Range256(RangeLookup::shared(
+        //             rep3::arithmetic::promote_to_trivial_share(party_id, value),
+        //         ))
+        //     })
+        //     .take(num_inputs / 2)
+        //     .collect_vec(),
+        //     iter::repeat_with(|| {
+        //         let value = F::from(rng.gen_range(0..320));
+        //         Lookups::Range320(RangeLookup::shared(
+        //             rep3::arithmetic::promote_to_trivial_share(party_id, value),
+        //         ))
+        //     })
+        //     .take(num_inputs / 2)
+        //     .collect_vec(),
+        // )
+        // .collect_vec();
         let mut witness_solver =
             TestLassoWitnessSolver::<Rep3QuicMpcNetWorker>::new(rep3_net).unwrap();
         let polynomials = witness_solver.polynomialize(&preprocessing, lookups)?;
@@ -166,7 +173,7 @@ fn run_party(
         M,
         F,
         PST13<ark_bn254::Bn254>,
-        Lookups,
+        Instructions,
         Subtables,
         _,
     >::new(rep3_net, setup)?;
@@ -197,7 +204,8 @@ fn run_coordinator(
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
 
-    let preprocessing = InstructionLookupsPreprocessing::preprocess::<C, M, Lookups, Subtables>();
+    let preprocessing =
+        InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
 
     let commitment_shapes = TestLassoProof::commitment_shapes(&preprocessing, num_inputs);
     let setup = {
@@ -205,20 +213,31 @@ fn run_coordinator(
         PST13::setup(&commitment_shapes, &mut rng)
     };
 
+    // let lookups = {
+    //     let mut rng = test_rng();
+    //     chain!(
+    //         iter::repeat_with(|| Some(Instructions::Range256(RangeLookup::public(
+    //             rng.gen_range(0..256)
+    //         ))))
+    //         .take(num_inputs / 2)
+    //         .collect_vec(),
+    //         iter::repeat_with(|| Some(Instructions::Range320(RangeLookup::public(
+    //             rng.gen_range(0..320)
+    //         ))))
+    //         .take(num_inputs / 2)
+    //         .collect_vec(),
+    //     )
+    //     .collect_vec()
+    // };
+
     let lookups = {
         let mut rng = test_rng();
-        chain!(
-            iter::repeat_with(|| Some(Lookups::Range256(RangeLookup::public(F::from(
-                rng.gen_range(0..256)
-            )))))
-            .take(num_inputs / 2)
-            .collect_vec(),
-            iter::repeat_with(|| Some(Lookups::Range320(RangeLookup::public(F::from(
-                rng.gen_range(0..320)
-            )))))
-            .take(num_inputs / 2)
-            .collect_vec(),
-        )
+        iter::repeat_with(|| {
+            let a = rng.gen_range::<u64, _>(0..256);
+            let b = rng.gen_range::<u64, _>(0..256);
+            Some(Instructions::XOR(XORInstruction::<F>::public(a, b)))
+        })
+        .take(num_inputs)
         .collect_vec()
     };
 
@@ -278,7 +297,7 @@ fn run_coordinator(
     let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
 
     let proof =
-        InstructionLookupsProof::<C, M, F, PST13<ark_bn254::Bn254>, Lookups, Subtables>::prove_rep3(
+        InstructionLookupsProof::<C, M, F, PST13<ark_bn254::Bn254>, Instructions, Subtables>::prove_rep3(
             num_inputs,
             &preprocessing,
             &mut rep3_net,

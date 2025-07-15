@@ -1,37 +1,29 @@
-use ark_ec::pairing::Pairing;
 use co_lasso::{
     memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
+    poly::Rep3DensePolynomial,
     subprotocols::{
         commitment::DistributedCommitmentScheme,
-        grand_product::{
-            BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
-        },
+        grand_product::{BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit},
     },
-    utils::{self, split_rep3_poly_flagged}, Rep3Polynomials,
+    utils::split_rep3_poly_flagged,
+    Rep3Polynomials,
 };
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::{chain, multizip, Itertools};
+use itertools::chain;
 use jolt_core::{
-    jolt::vm::instruction_lookups::{InstructionCommitment, PrimarySumcheckOpenings},
     poly::{
-        commitment::commitment_scheme::{BatchType, CommitmentScheme},
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        field::JoltField,
-        unipoly::{CompressedUniPoly, UniPoly},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, field::JoltField, unipoly::UniPoly,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{math::Math, mul_0_1_optimized, transcript::ProofTranscript},
+    utils::{math::Math, mul_0_1_optimized},
 };
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     PartyID,
 };
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use mpc_net::mpc_star::MpcStarNetWorker;
 use std::{iter, marker::PhantomData};
 use tracing::trace_span;
 
@@ -39,10 +31,7 @@ use super::{
     witness::Rep3InstructionPolynomials, InstructionFinalOpenings, InstructionLookupsPreprocessing,
     InstructionPolynomials, InstructionReadWriteOpenings,
 };
-use crate::jolt::{
-    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    subtable::JoltSubtableSet,
-};
+use crate::jolt::{instruction::Rep3JoltInstructionSet, subtable::JoltSubtableSet};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -118,7 +107,8 @@ where
 
         let _ = self.prove_openings(&polynomials, &r_primary_sumcheck)?;
 
-        let _ = Self::prove_memory_checking(preprocessing, &self.ck, polynomials, &mut self.io_ctx)?;
+        let _ =
+            Self::prove_memory_checking(preprocessing, &self.ck, polynomials, &mut self.io_ctx)?;
 
         Ok(())
     }

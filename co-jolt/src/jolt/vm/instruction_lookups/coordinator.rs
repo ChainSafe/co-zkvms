@@ -1,24 +1,18 @@
 use co_lasso::{
     memory_checking::Rep3MemoryCheckingProver,
     poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
-    subprotocols::{
-        commitment::{DistributedCommitmentScheme, PST13},
-        grand_product::BatchedGrandProductProver,
-    },
+    subprotocols::commitment::DistributedCommitmentScheme,
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::{chain, interleave, Itertools};
+use itertools::chain;
 use jolt_core::{
     poly::{
         field::JoltField,
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::{grand_product::BatchedGrandProductArgument, sumcheck::SumcheckInstanceProof},
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
+    subprotocols::sumcheck::SumcheckInstanceProof,
+    utils::{math::Math, transcript::ProofTranscript},
 };
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
@@ -63,7 +57,8 @@ where
         let num_rounds = trace_length.log_2();
 
         let (primary_sumcheck_proof, _r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
-            Self::prove_primary_sumcheck_rep3(num_rounds, transcript, network)?;
+            Self::prove_primary_sumcheck_rep3(num_rounds, transcript, network)
+                .context("while proving primary sumcheck")?;
 
         // Create a single opening proof for the flag_evals and memory_evals
         let sumcheck_openings = PrimarySumcheckOpenings {
@@ -72,7 +67,8 @@ where
             lookup_outputs_opening: outputs_eval,
         };
 
-        let opening_proof = CS::distributed_batch_open(transcript, network)?;
+        let opening_proof =
+            CS::distributed_batch_open(transcript, network).context("while opening sumcheck polynomials")?;
 
         let primary_sumcheck = PrimarySumcheck::<F, CS> {
             sumcheck_proof: primary_sumcheck_proof,
@@ -82,7 +78,8 @@ where
         };
 
         let memory_checking_proof =
-            Self::prove_memory_checking(M, preprocessing, network, transcript)?;
+            Self::prove_memory_checking(M, preprocessing, network, transcript)
+                .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {
             _instructions: PhantomData,

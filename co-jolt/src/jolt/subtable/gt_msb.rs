@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default, Debug)]
-pub struct AndSubtable<F: JoltField> {
+pub struct GtMSBSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField> AndSubtable<F> {
+impl<F: JoltField> GtMSBSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -18,33 +18,27 @@ impl<F: JoltField> AndSubtable<F> {
     }
 }
 
-impl<F: JoltField> LassoSubtable<F> for AndSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for GtMSBSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
+        let high_bit = 1usize << (bits_per_operand - 1);
 
-        // Materialize table entries in order where (x | y) ranges 0..M
+        // Materialize table entries in order from 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from_u64((x & y) as u64).unwrap();
-            entries.push(row);
+            let row = (x & high_bit) > (y & high_bit);
+            entries.push(if row { F::one() } else { F::zero() });
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // x * y
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);
-
-        let mut result = F::zero();
-        for i in 0..b {
-            let x = x[b - i - 1];
-            let y = y[b - i - 1];
-            result += F::from_u64(1u64 << i).unwrap() * x * y;
-        }
-        result
+        // x_0 * (1 - y_0)
+        x[0] * (F::one() - y[0])
     }
 }
 
@@ -53,9 +47,14 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::{
-        jolt::subtable::{and::AndSubtable, LassoSubtable},
+        jolt::subtable::{gt_msb::GtMSBSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
-    subtable_materialize_mle_parity_test!(and_materialize_mle_parity, AndSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(
+        gt_msb_materialize_mle_parity,
+        GtMSBSubtable<Fr>,
+        Fr,
+        256
+    );
 }

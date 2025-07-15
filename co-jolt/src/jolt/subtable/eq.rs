@@ -3,14 +3,13 @@ use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
-use crate::utils::split_bits;
 
 #[derive(Default, Debug)]
-pub struct AndSubtable<F: JoltField> {
+pub struct EqSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField> AndSubtable<F> {
+impl<F: JoltField> EqSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -18,31 +17,30 @@ impl<F: JoltField> AndSubtable<F> {
     }
 }
 
-impl<F: JoltField> LassoSubtable<F> for AndSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for EqSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;
 
         // Materialize table entries in order where (x | y) ranges 0..M
-        for idx in 0..M {
-            let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from_u64((x & y) as u64).unwrap();
-            entries.push(row);
+        // Below is the optimized loop for the condition:
+        // table[x | y] = x == y
+        for idx in 0..(1 << bits_per_operand) {
+            let concat_idx = idx | (idx << bits_per_operand);
+            entries[concat_idx] = F::one();
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // x * y
+        // \prod_i x_i * y_i + (1 - x_i) * (1 - y_i)
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);
 
-        let mut result = F::zero();
+        let mut result = F::one();
         for i in 0..b {
-            let x = x[b - i - 1];
-            let y = y[b - i - 1];
-            result += F::from_u64(1u64 << i).unwrap() * x * y;
+            result *= x[i] * y[i] + (F::one() - x[i]) * (F::one() - y[i]);
         }
         result
     }
@@ -53,9 +51,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::{
-        jolt::subtable::{and::AndSubtable, LassoSubtable},
+        jolt::subtable::{eq::EqSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
-    subtable_materialize_mle_parity_test!(and_materialize_mle_parity, AndSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(eq_materialize_mle_parity, EqSubtable<Fr>, Fr, 256);
 }

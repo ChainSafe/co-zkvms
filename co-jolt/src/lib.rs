@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 #![feature(bool_to_result)]
 
 pub mod poly;

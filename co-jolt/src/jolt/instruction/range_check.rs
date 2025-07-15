@@ -4,38 +4,46 @@ use jolt_core::poly::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3BigUintShare,
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
+use rand::{rngs::StdRng, Rng};
 use std::iter::Sum;
 use std::{borrow::Borrow, iter};
 
 use super::{JoltInstruction, Rep3JoltInstruction};
-use crate::jolt::subtable::{
-    range_check::{BoundSubtable, FullLimbSubtable},
-    LassoSubtable, SubtableIndices,
+use crate::jolt::{
+    instruction::Rep3Operand,
+    subtable::{
+        range_check::{BoundSubtable, FullLimbSubtable},
+        LassoSubtable, SubtableIndices,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum RangeLookup<const BOUND: u64, F: JoltField> {
-    Public(F),
-    Shared {
-        value: Rep3PrimeFieldShare<F>,
-        binary: Option<Rep3BigUintShare<F>>,
-    },
-}
+pub struct RangeLookup<const BOUND: u64, F: JoltField>(Rep3Operand<F>, Rep3Operand<F>); // second operand is dummy for compatibility with other instructions
 
 impl<const BOUND: u64, F: JoltField> RangeLookup<BOUND, F> {
-    pub fn public(value: F) -> Self {
-        Self::Public(value)
+    pub fn public(value: u64) -> Self {
+        Self(Rep3Operand::Public(value), Rep3Operand::Public(0))
     }
 
     pub fn shared(value: Rep3PrimeFieldShare<F>) -> Self {
-        Self::Shared { value, binary: None }
+        Self(Rep3Operand::Arithmetic(value), Rep3Operand::Public(0))
     }
 }
 
 impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F> {
+    fn operands(&self) -> (u64, u64) {
+        unimplemented!()
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        Self(
+            Rep3Operand::Public(rng.gen_range::<u64, _>(0..BOUND)),
+            Rep3Operand::Public(0),
+        )
+    }
+
     fn combine_lookups(&self, operands: &[F], _: usize, M: usize) -> F {
         let weight = F::from(M as u64);
         inner_product(
@@ -74,16 +82,16 @@ impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F
     }
 
     fn lookup_entry(&self) -> F {
-        match self {
-            Self::Public(value) => *value,
+        match &self.0 {
+            Rep3Operand::Public(value) => F::from(*value),
             _ => unreachable!(),
         }
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        match self {
-            Self::Public(value) => {
-                let mut index_bits = fe_to_bits_le(*value);
+        match &self.0 {
+            Rep3Operand::Public(value) => {
+                let mut index_bits = fe_to_bits_le(F::from(*value));
                 index_bits.truncate(chunk_bits(log_M, BOUND).iter().sum());
                 let mut chunked_index = iter::repeat(0).take(C).collect_vec();
                 let chunked_index_bits = index_bits.chunks(log_M).map(Vec::from).collect_vec();
@@ -102,22 +110,12 @@ impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F
 }
 
 impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUND, F> {
-    fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>> {
-        match self {
-            Self::Shared { value, .. } => vec![value.clone()],
-            _ => unreachable!(),
-        }
+    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+        (self.0.clone(), Rep3Operand::Public(0))
     }
 
-      
-    fn insert_binary_operands(&mut self, mut operands: Vec<Rep3BigUintShare<F>>) {
-        assert_eq!(operands.len(), 1);
-        match self {
-            Self::Shared { binary, .. } => {
-                *binary = Some(operands.pop().unwrap());
-            },
-            _ => unreachable!(),
-        }
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, &mut Rep3Operand<F>) {
+        (&mut self.0, &mut self.1)
     }
 
     fn combine_lookups(
@@ -143,15 +141,15 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
-        match self {
-            Self::Shared { value, .. } => value.clone(),
+        match &self.0 {
+            Rep3Operand::Arithmetic(value) => value.clone(),
             _ => unreachable!(),
         }
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
-        let input = match self {
-            Self::Shared { binary, .. } => binary.as_ref().expect("binary share must be set"),
+        let input = match &self.0 {
+            Rep3Operand::Binary(value) => value.clone(),
             _ => panic!("RangeLookup::to_indices must be called on binary shared value"),
         };
 
@@ -175,7 +173,7 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
 
 impl<const BOUND: u64, F: JoltField> Default for RangeLookup<BOUND, F> {
     fn default() -> Self {
-        Self::Public(F::ZERO)
+        Self(Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 }
 

@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default, Debug)]
-pub struct AndSubtable<F: JoltField> {
+pub struct OrSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField> AndSubtable<F> {
+impl<F: JoltField> OrSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -18,7 +18,7 @@ impl<F: JoltField> AndSubtable<F> {
     }
 }
 
-impl<F: JoltField> LassoSubtable<F> for AndSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for OrSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;
@@ -26,14 +26,14 @@ impl<F: JoltField> LassoSubtable<F> for AndSubtable<F> {
         // Materialize table entries in order where (x | y) ranges 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from_u64((x & y) as u64).unwrap();
+            let row = F::from_u64((x | y) as u64).unwrap();
             entries.push(row);
         }
         entries
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
-        // x * y
+        // x + y - x * y
         debug_assert!(point.len() % 2 == 0);
         let b = point.len() / 2;
         let (x, y) = point.split_at(b);
@@ -42,7 +42,7 @@ impl<F: JoltField> LassoSubtable<F> for AndSubtable<F> {
         for i in 0..b {
             let x = x[b - i - 1];
             let y = y[b - i - 1];
-            result += F::from_u64(1u64 << i).unwrap() * x * y;
+            result += F::from_u64(1u64 << i).unwrap() * (x + y - x * y);
         }
         result
     }
@@ -53,9 +53,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::{
-        jolt::subtable::{and::AndSubtable, LassoSubtable},
+        jolt::subtable::{or::OrSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
-    subtable_materialize_mle_parity_test!(and_materialize_mle_parity, AndSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(or_materialize_mle_parity, OrSubtable<Fr>, Fr, 256);
 }

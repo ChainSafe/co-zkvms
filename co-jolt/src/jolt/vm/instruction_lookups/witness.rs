@@ -1,4 +1,3 @@
-use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
 use co_lasso::{
@@ -23,7 +22,7 @@ use mpc_core::protocols::{
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
-use rand::{CryptoRng, Rng};
+use rand::Rng;
 use std::{iter, marker::PhantomData};
 
 #[cfg(feature = "parallel")]
@@ -179,7 +178,7 @@ impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionPolynomials<F> {
     }
 }
 
-pub struct Rep3LassoWitnessSolver<
+pub struct Rep3InstructionWitnessSolver<
     const C: usize,
     const M: usize,
     F: JoltField,
@@ -194,7 +193,7 @@ pub struct Rep3LassoWitnessSolver<
 }
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
-    Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
+    Rep3InstructionWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
     Lookups: Rep3JoltInstructionSet<F>,
@@ -355,7 +354,7 @@ where
         &mut self,
         lookups: &mut [Lookups],
     ) -> eyre::Result<Vec<Vec<Rep3BigUintShare<F>>>> {
-        Lookups::a2b_many(lookups, &mut self.io_ctx0)?;
+        Lookups::operands_to_binary(lookups, &mut self.io_ctx0)?;
 
         let num_chunks = C;
         let log_M = M.log_2();
@@ -430,7 +429,7 @@ where
 }
 
 impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network> Forkable
-    for Rep3LassoWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
+    for Rep3InstructionWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
     Lookups: Rep3JoltInstructionSet<F>,

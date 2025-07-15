@@ -1,14 +1,16 @@
-pub mod range_check;
-pub mod xor;
-
 mod utils;
 
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3BigUintShare
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare,
 };
+use paste::paste;
+use rand::rngs::StdRng;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount, EnumIter};
@@ -17,8 +19,13 @@ pub use jolt_core::jolt::instruction::SubtableIndices;
 
 use super::subtable::LassoSubtable;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 #[enum_dispatch]
 pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
+    fn operands(&self) -> (u64, u64);
+
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F;
 
@@ -32,16 +39,45 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
 
     fn lookup_entry(&self) -> F;
+
+    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>) {
+        assert!(
+            log_M % 2 == 0,
+            "log_M must be even for operand_chunks to work"
+        );
+        let (left_operand, right_operand) = self.operands();
+        (
+            chunk_operand(left_operand, C, log_M / 2),
+            chunk_operand(right_operand, C, log_M / 2),
+        )
+    }
+    fn random(&self, rng: &mut StdRng) -> Self;
+
+    fn slice_values<'a>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
+        let mut offset = 0;
+        let mut slices = vec![];
+        for (_, indices) in self.subtables(C, M) {
+            slices.push(&vals[offset..offset + indices.len()]);
+            offset += indices.len();
+        }
+        assert_eq!(offset, vals.len());
+        slices
+    }
 }
 
 #[enum_dispatch]
 pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
-    fn operands(&self) -> Vec<Rep3PrimeFieldShare<F>>;
+    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>);
 
-    fn insert_binary_operands(&mut self, operands: Vec<Rep3BigUintShare<F>>);
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, &mut Rep3Operand<F>);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups(&self, vals: &[Rep3PrimeFieldShare<F>], C: usize, M: usize) -> Rep3PrimeFieldShare<F>;
+    fn combine_lookups(
+        &self,
+        vals: &[Rep3PrimeFieldShare<F>],
+        C: usize,
+        M: usize,
+    ) -> Rep3PrimeFieldShare<F>;
 
     /// The degree of the `g` polynomial described by `combine_lookups`
     fn g_poly_degree(&self, C: usize) -> usize;
@@ -68,24 +104,111 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
         byte as usize
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3LookupSet::a2b_many")]
-    fn a2b_many<N: Rep3Network>(lookups: &mut [Self], io_ctx: &mut IoContext<N>) -> eyre::Result<()> {
-        let inputs: Vec<Vec<Rep3PrimeFieldShare<F>>> = lookups.iter().map(|lookup| lookup.operands()).collect();
-        if inputs.is_empty() {
+    #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::operands_to_binary")]
+    fn operands_to_binary<N: Rep3Network>(
+        lookups: &mut [Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<()> {
+        let id = io_ctx.network.get_id();
+        ark_std::cfg_iter_mut!(lookups).for_each(|lookup| {
+            let (op1, op2) = lookup.operands_mut();
+            match (&op1, &op2) {
+                (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
+                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*x).into(),
+                    ));
+                    *op2 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*y).into(),
+                    ));
+                }
+                (Rep3Operand::Public(x), _) => {
+                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*x).into(),
+                    ));
+                }
+                (_, Rep3Operand::Public(y)) => {
+                    *op2 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*y).into(),
+                    ));
+                }
+                _ => {}
+            }
+        });
+
+        let (inputs, field_operands): (
+            Vec<Vec<Rep3PrimeFieldShare<F>>>,
+            Vec<Vec<&mut Rep3Operand<F>>>,
+        ) = ark_std::cfg_iter_mut!(lookups)
+            .map(|lookup| {
+                let (op1, op2) = lookup.operands_mut();
+                match (&op1, &op2) {
+                    (Rep3Operand::Arithmetic(x), Rep3Operand::Arithmetic(y)) => {
+                        let res = vec![*x, *y];
+                        (res, vec![op1, op2])
+                    }
+                    (Rep3Operand::Arithmetic(x), _) => {
+                        let res = vec![*x];
+                        (res, vec![op1])
+                    }
+                    (_, Rep3Operand::Arithmetic(y)) => {
+                        let res = vec![*y];
+                        (res, vec![op2])
+                    }
+                    _ => (vec![], vec![]),
+                }
+            })
+            .unzip();
+
+        if inputs.iter().flatten().next().is_none() {
             return Ok(());
         }
-        let meta: Vec<usize> = inputs.iter().map(|input| input.len()).collect();
-        let mut outputs = rep3::conversion::a2b_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
-        for (num, lookup) in meta.iter().zip(lookups.iter_mut()) {
-            let output = outputs.drain(..*num).collect();
-            lookup.insert_binary_operands(output);
+        let mut outputs =
+            rep3::conversion::a2b_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
+        for operands in field_operands.into_iter() {
+            for (output, operand) in outputs.drain(..operands.len()).zip(operands) {
+                *operand = Rep3Operand::Binary(output);
+            }
         }
         Ok(())
     }
 }
 
-use paste::paste;
-macro_rules! lookup_set {
+#[derive(Clone, Debug, PartialEq)]
+pub enum Rep3Operand<F: JoltField> {
+    Arithmetic(Rep3PrimeFieldShare<F>),
+    Binary(Rep3BigUintShare<F>),
+    Public(u64),
+}
+
+impl<F: JoltField> Default for Rep3Operand<F> {
+    fn default() -> Self {
+        Rep3Operand::Public(0)
+    }
+}
+
+impl<F: JoltField> From<Rep3PrimeFieldShare<F>> for Rep3Operand<F> {
+    fn from(value: Rep3PrimeFieldShare<F>) -> Self {
+        Rep3Operand::Arithmetic(value)
+    }
+}
+
+impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand<F> {
+    fn from(value: Rep3BigUintShare<F>) -> Self {
+        Rep3Operand::Binary(value)
+    }
+}
+
+impl<F: JoltField> From<u64> for Rep3Operand<F> {
+    fn from(value: u64) -> Self {
+        Rep3Operand::Public(value)
+    }
+}
+
+macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         paste! {
             #[allow(non_camel_case_types)]
@@ -108,13 +231,35 @@ macro_rules! lookup_set {
     };
 }
 
-lookup_set!(
+pub mod range_check;
+
+pub mod add;
+pub mod and;
+pub mod beq;
+pub mod bge;
+pub mod bgeu;
+pub mod bne;
+pub mod lb;
+pub mod lh;
+pub mod or;
+pub mod sb;
+pub mod sh;
+pub mod sll;
+pub mod slt;
+pub mod sltu;
+pub mod sra;
+pub mod srl;
+pub mod sub;
+pub mod sw;
+pub mod xor;
+
+instruction_set!(
   TestLookups,
   Range256: range_check::RangeLookup<256, F>,
   Range320: range_check::RangeLookup<320, F>
 );
 
-lookup_set!(
+instruction_set!(
   TestInstructions,
   XOR: xor::XORInstruction<F>
 );
