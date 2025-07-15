@@ -1205,7 +1205,7 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop", level = "trace")]
     fn primary_sumcheck_inner_loop(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         eq_poly: &DensePolynomial<F>,
@@ -1377,7 +1377,7 @@ where
     /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
     /// can be computed by summing over the instructions that use that memory: if a given execution step
     /// accesses the memory, it must be executing exactly one of those instructions.
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, level = "trace")]
     fn memory_flag_polys(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         instruction_flag_bitvectors: &[Vec<u64>],

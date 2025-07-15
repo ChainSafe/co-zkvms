@@ -63,7 +63,7 @@ bytesize = "2.0.1"
 
 
 # Additional dependencies for co-spartan
-clap = { version = "4.4.13", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 mimalloc = { version = "*", default-features = false }
 crossbeam = "0.8.3"
 merlin = "3.0.0"

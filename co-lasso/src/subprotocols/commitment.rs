@@ -387,7 +387,8 @@ mod tests {
     fn test_open_plain() {
         const NUM_INPUTS: usize = 8;
         let mut rng = test_rng();
-        let ck = PST13::<E>::setup(NUM_INPUTS, &mut rng);
+        let commitment_shapes = vec![CommitShape::new(NUM_INPUTS, BatchType::Big)];
+        let ck = PST13::<E>::setup(&commitment_shapes, &mut rng);
         let poly = DensePolynomial::new(
             iter::repeat_with(|| F::rand(&mut rng))
                 .take(NUM_INPUTS)

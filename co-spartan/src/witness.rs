@@ -42,7 +42,7 @@ pub fn split_witness<F: PrimeField>(
         let mut wit_vec = Vec::new();
         for j in 0..3 {
             let worker_id = i * 3 + j;
-            let next = (j + 1) % 3;
+            let next = (j + 1) % 3; // TODO: share according co-snarks (ie. use prev)
             let z = Rep3DensePolynomial::<F>::from_poly_shares(
                 z_shares[j].clone(),
                 z_shares[next].clone(),

@@ -1,8 +1,11 @@
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use eyre::{Context, Result};
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
-use mpc_core::protocols::rep3::{self, network::{IoContext, Rep3Network}, PartyID};
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+    PartyID,
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -114,5 +117,8 @@ pub fn split_rep3_poly_flagged<F: JoltField>(
             right.push(poly_evals[i]);
         }
     }
-    (Rep3DensePolynomial::new(left), Rep3DensePolynomial::new(right))
+    (
+        Rep3DensePolynomial::new(left),
+        Rep3DensePolynomial::new(right),
+    )
 }

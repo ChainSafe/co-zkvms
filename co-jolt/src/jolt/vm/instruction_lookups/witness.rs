@@ -451,7 +451,7 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
-    pub fn into_secret_shares_rep3<R: Rng + CryptoRng>(
+    pub fn into_secret_shares_rep3<R: Rng>(
         self,
         rng: &mut R,
     ) -> eyre::Result<[Rep3InstructionPolynomials<F>; 3]> {

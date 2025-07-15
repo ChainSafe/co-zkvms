@@ -243,10 +243,24 @@ pub fn combine_poly_shares_rep3<F: JoltField>(
     DensePolynomial::new(a)
 }
 
+pub fn combine_polys_shares_rep3<F: JoltField>(
+    poly_shares: Vec<Vec<Rep3DensePolynomial<F>>>,
+) -> Vec<DensePolynomial<F>> {
+    assert_eq!(poly_shares.len(), 3);
+    let [s0, s1, s2] = poly_shares.try_into().unwrap(); // TODO: check if this is correct
+    itertools::multizip((s0, s1, s2))
+        .map(|(a, b, c)| combine_poly_shares_rep3(vec![a, b, c]))
+        .collect()
+}
+
 pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     poly: &DensePolynomial<F>,
     rng: &mut R,
-) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
+) -> (
+    Rep3DensePolynomial<F>,
+    Rep3DensePolynomial<F>,
+    Rep3DensePolynomial<F>,
+) {
     let num_vars = poly.get_num_vars();
     if num_vars == 0 {
         return (
@@ -255,15 +269,23 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
             Rep3DensePolynomial::<F>::zero(),
         );
     }
-    let t0 = DensePolynomial::<F>::rand(num_vars, rng);
-    let t1 = DensePolynomial::<F>::rand(num_vars, rng);
+    let t0 =
+        DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
+    let t1 =
+        DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
     let t2 = (poly - &t0) - &t1;
 
-    let p_share_0 = Rep3DensePolynomial::<F>::from_poly_shares(t0.clone(), t1.clone());
-    let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1, t2.clone());
-    let p_share_2 = Rep3DensePolynomial::<F>::from_poly_shares(t2, t0);
+    let p_share_0 = Rep3DensePolynomial::<F>::from_poly_shares(t0.clone(), t2.clone());
+    let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1.clone(), t0);
+    let p_share_2 = Rep3DensePolynomial::<F>::from_poly_shares(t2, t1);
 
     (p_share_0, p_share_1, p_share_2)
+
+    // let p0 = Rep3DensePolynomial::<F>::new(rep3::arithmetic::promote_to_trivial_shares(poly.evals_ref().to_vec(), rep3::PartyID::ID0));
+    // let p1 = Rep3DensePolynomial::<F>::new(rep3::arithmetic::promote_to_trivial_shares(poly.evals_ref().to_vec(), rep3::PartyID::ID1));
+    // let p2 = Rep3DensePolynomial::<F>::new(rep3::arithmetic::promote_to_trivial_shares(poly.evals_ref().to_vec(), rep3::PartyID::ID2));
+
+    // (p0, p1, p2)
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
@@ -307,4 +329,93 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Self::Proof>;
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_ff::{Field, One};
+    use ark_std::test_rng;
+
+    use super::*;
+
+    type F = ark_bn254::Fr;
+
+    fn generate_shares_rep3<F: JoltField, R: Rng>(
+        val: F,
+        rng: &mut R,
+    ) -> (
+        Rep3PrimeFieldShare<F>,
+        Rep3PrimeFieldShare<F>,
+        Rep3PrimeFieldShare<F>,
+    ) {
+        let t0 = F::random(rng);
+        let t1 = F::random(rng);
+        let t2 = val - t0 - t1;
+
+        let p_share_0 = Rep3PrimeFieldShare::new(t0, t2); // Party 0 gets (t_0, t_2)
+        let p_share_1 = Rep3PrimeFieldShare::new(t1, t0); // Party 1 gets (t_1, t_0)
+        let p_share_2 = Rep3PrimeFieldShare::new(t2, t1); // Party 2 gets (t_2, t_1)
+        (p_share_0, p_share_1, p_share_2)
+    }
+
+    #[test]
+    fn test_secret_and_trivial_share() {
+        let mut rng = test_rng();
+        let gamma = F::from(4);
+        let tau = F::from(5);
+        let gamma_squared = gamma.square();
+        let v_val = F::random(&mut rng);
+        let t_val = F::random(&mut rng);
+        let a_val = F::random(&mut rng);
+        let v = generate_shares_rep3(v_val, &mut rng);
+        let t = generate_shares_rep3(t_val, &mut rng);
+        let a = generate_shares_rep3(a_val, &mut rng);
+
+        let x1 = rep3::arithmetic::sub_shared_by_public(
+            (t.0 * gamma_squared) + (v.0 * gamma) + a.0,
+            tau,
+            rep3::PartyID::ID0,
+        );
+        let x2 = rep3::arithmetic::sub_shared_by_public(
+            (t.1 * gamma_squared) + (v.1 * gamma) + a.1,
+            tau,
+            rep3::PartyID::ID1,
+        );
+        let x3 = rep3::arithmetic::sub_shared_by_public(
+            (t.2 * gamma_squared) + (v.2 * gamma) + a.2,
+            tau,
+            rep3::PartyID::ID2,
+        );
+        let x_check = (t_val * gamma_squared) + (v_val * gamma) + a_val - tau;
+
+        let x = open([x1, x2, x3], 0);
+        // let x = rep3::combine_field_element(x1, x2, x3);
+        assert_eq!(x, x_check);
+    }
+
+    fn open(
+        shares: [Rep3PrimeFieldShare<F>; 3],
+        id: usize,
+    ) -> F {
+        println!("prev: {}", (id + 2) % 3);
+        shares[id].a + shares[id].b + shares[(id + 2) % 3].b
+    }
+
+    #[test]
+    fn test_share_and_combine_poly_rep3() {
+        let mut rng = test_rng();
+        let poly = DensePolynomial::<F>::rand(10, &mut rng);
+        let x_check = poly.evals_ref()[0] * F::one();
+        let shares = generate_poly_shares_rep3(&poly, &mut rng);
+        let x1 =
+            shares.0[0] * rep3::arithmetic::promote_to_trivial_share(rep3::PartyID::ID0, F::one());
+        let x2 =
+            shares.1[0] * rep3::arithmetic::promote_to_trivial_share(rep3::PartyID::ID1, F::one());
+        let x3 =
+            shares.2[0] * rep3::arithmetic::promote_to_trivial_share(rep3::PartyID::ID2, F::one());
+        let x = mpc_core::protocols::additive::combine_field_element(&x1, &x2, &x3);
+        assert_eq!(x, x_check);
+        let combined = combine_poly_shares_rep3(vec![shares.0, shares.1, shares.2]);
+        assert_eq!(poly, combined);
+    }
 }
