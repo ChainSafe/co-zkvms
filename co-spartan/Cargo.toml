@@ -32,7 +32,7 @@ color-eyre.workspace = true
 num-bigint.workspace = true
 
 mpc-core = { path = "../mpc-core" }
-
+snarks-core = { path = "../snarks-core" }
 spartan = { path = "../spartan" }
 noir-r1cs = { path = "../noir-r1cs" }
 mpc-net = { path = "../mpc-net" }

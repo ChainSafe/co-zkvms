@@ -25,9 +25,9 @@ use mpc_net::mpc_star::MpcStarNetWorker;
 use rand::RngCore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use snarks_core::math::Math;
 use spartan::{
     logup::LogLookupProof,
-    math::Math,
     utils::{boost_degree, dense_scalar_prod, generate_eq, partial_generate_eq},
     IndexProverKey,
 };

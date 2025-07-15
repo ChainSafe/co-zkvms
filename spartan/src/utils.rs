@@ -7,8 +7,7 @@ use ark_poly_commit::multilinear_pc::data_structures::{Commitment, Proof};
 use ark_std::{cfg_into_iter, cfg_iter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-use crate::math::Math;
+use snarks_core::math::Math;
 
 /// Pads a polynomial to higher dimensions by scaling down evaluations and repeating them.
 /// The scaling factor compensates for the repetition to preserve mathematical properties.
@@ -121,57 +120,10 @@ pub fn pad_with_first_term<F: Field>(v: &[usize]) -> Vec<F> {
     result
 }
 
-pub fn aggregate_comm<E: Pairing>(eta: E::ScalarField, comms: &[Commitment<E>]) -> Commitment<E> {
-    let mut res = comms[0].clone();
-    let mut x = eta;
-    for i in 1..comms.len() {
-        res.g_product = (res.g_product + (comms[i].g_product * x)).into();
-        x *= eta
-    }
-    res
-}
-
 pub fn eval_sparse_mle<F: Field>(mle: &SparseMultilinearExtension<F>, point: &[F]) -> F {
     let mut res = F::zero();
     for (&i, &v) in mle.evaluations.iter() {
         res += v * generate_eq_point(point, i)
-    }
-    res
-}
-
-pub fn combine_comm<E: Pairing>(comms: &[Commitment<E>]) -> Commitment<E> {
-    let mut res = comms[0].clone();
-    for i in 1..comms.len() {
-        res.g_product = (res.g_product + (comms[i].g_product)).into();
-    }
-    res.nv = res.nv + comms.len().log_2();
-    res
-}
-
-pub fn aggregate_proof<E: Pairing>(eta: E::ScalarField, pfs: &[Proof<E>]) -> Proof<E> {
-    let mut res = pfs[0].clone();
-    let mut x = eta;
-    for i in 1..pfs.len() {
-        for j in 0..res.proofs.len() {
-            res.proofs[j] = (res.proofs[j] + pfs[i].proofs[j] * x).into();
-        }
-        x *= eta
-    }
-    res
-}
-
-pub fn merge_proof<E: Pairing>(pf1: &Proof<E>, pf2: &Proof<E>) -> Proof<E> {
-    let mut res = pf1.proofs.clone();
-    res.append(&mut pf2.proofs.clone());
-    Proof { proofs: res }
-}
-
-pub fn aggregate_eval<F: Field>(eta: F, vals: &[F]) -> F {
-    let mut res = vals[0];
-    let mut x = eta;
-    for i in 1..vals.len() {
-        res = res + x * vals[i];
-        x *= eta
     }
     res
 }

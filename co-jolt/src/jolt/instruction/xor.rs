@@ -1,10 +1,9 @@
 use ark_std::log2;
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use jolt_core::jolt::instruction::SubtableIndices;
 use jolt_core::poly::field::JoltField;
 use jolt_core::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare};
+use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
 use std::ops::{BitAnd, BitOr, Shr};
 

@@ -15,6 +15,6 @@ ark-linear-sumcheck.workspace = true
 rand.workspace = true
 itertools.workspace = true
 
-mpc-types = { path = "../../co-snarks/mpc-types" }
-mpc-core = { path = "../../co-snarks/mpc-core" }
+mpc-types = { git = "https://github.com/nulltea/co-snarks" }
+mpc-core = { git = "https://github.com/nulltea/co-snarks" }
 mpc-net = { path = "../mpc-net" }

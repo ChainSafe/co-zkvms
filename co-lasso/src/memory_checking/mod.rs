@@ -1,4 +1,4 @@
-use co_spartan::mpc::additive;
+use mpc_core::protocols::additive;
 use eyre::Context;
 use jolt_core::{
     poly::{field::JoltField, structured_poly::StructuredCommitment},

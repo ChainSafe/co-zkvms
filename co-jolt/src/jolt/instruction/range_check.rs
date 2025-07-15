@@ -1,11 +1,11 @@
 use ark_ff::PrimeField;
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use itertools::Itertools;
 use jolt_core::poly::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3BigUintShare,
+    Rep3PrimeFieldShare,
 };
 use std::iter::Sum;
 use std::{borrow::Borrow, iter};

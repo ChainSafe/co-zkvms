@@ -1,3 +1,4 @@
+use ark_ec::ScalarMul;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly_commit::multilinear_pc::{
@@ -6,26 +7,24 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
-use std::ops::Mul;
 use jolt_core::{
     poly::{
-        commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme}, dense_mlpoly::DensePolynomial,
+        commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+        dense_mlpoly::DensePolynomial,
         field::JoltField,
     },
     utils::{
         errors::ProofVerifyError,
+        math::Math,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::RngCore;
-use spartan::{
-    math::Math,
-    utils::{aggregate_comm, aggregate_eval},
-};
+use snarks_core::poly::commitment::{aggregate_comm, aggregate_eval};
 use std::marker::PhantomData;
-use ark_ec::ScalarMul;
+use std::ops::Mul;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -114,7 +113,11 @@ where
         let agg_poly = aggregate_poly(eta, &polys_a.iter().collect::<Vec<_>>());
 
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        let (pf, _) = open(&setup.ck(agg_poly.get_num_vars()), &agg_poly, &opening_point_rev);
+        let (pf, _) = open(
+            &setup.ck(agg_poly.get_num_vars()),
+            &agg_poly,
+            &opening_point_rev,
+        );
 
         // let mut evals = Vec::new();
         // for p in polys.iter() {
@@ -176,9 +179,11 @@ where
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let nv = poly.get_num_vars();
         let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
-        let g_product =
-            <E::G1 as VariableBaseMSM>::msm_bigint(&setup.ck(nv).powers_of_g[0], scalars.as_slice())
-                .into_affine();
+        let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
+            &setup.ck(nv).powers_of_g[0],
+            scalars.as_slice(),
+        )
+        .into_affine();
         PST13Commitment { nv, g_product }
     }
 

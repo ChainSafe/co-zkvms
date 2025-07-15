@@ -4,7 +4,6 @@ pub mod indexer;
 pub mod logup;
 pub mod math;
 pub mod r1cs;
-pub mod transcript;
 pub mod utils;
 pub mod verifier;
 pub mod zk;
@@ -18,6 +17,8 @@ pub use logup::LogLookupProof;
 pub use r1cs::R1CS;
 pub use zk::SRS;
 use zk::{ZKMLProof, ZKSumcheckProof};
+
+pub use snarks_core::transcript;
 
 /// The SNARK proof, composed of all prover's messages sent throughout the protocol.
 #[derive(CanonicalSerialize)]

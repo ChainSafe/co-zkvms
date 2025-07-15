@@ -3,7 +3,7 @@ pub mod xor;
 
 mod utils;
 
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
 use mpc_core::protocols::rep3::{

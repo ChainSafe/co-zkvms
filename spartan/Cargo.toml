@@ -29,6 +29,7 @@ rayon = { version = "1.8.0", optional = true }
 bytesize = "2.0.1"
 
 noir-r1cs = { path = "../noir-r1cs" }
+snarks-core = { path = "../snarks-core" }
 
 
 [features]

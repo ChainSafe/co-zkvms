@@ -1,7 +1,5 @@
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use jolt_core::poly::field::JoltField;
-use mpc_core::protocols::rep3;
-
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 
 /// Concatenates `C` `vals` field elements each of max size 2^`operand_bits`-1
 /// into a single field element. `operand_bits` is the number of bits required to represent
@@ -20,7 +18,11 @@ pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usi
     sum
 }
 
-pub fn concatenate_lookups_rep3<F: JoltField>(vals: &[Rep3PrimeFieldShare<F>], C: usize, operand_bits: usize) -> Rep3PrimeFieldShare<F> {
+pub fn concatenate_lookups_rep3<F: JoltField>(
+    vals: &[Rep3PrimeFieldShare<F>],
+    C: usize,
+    operand_bits: usize,
+) -> Rep3PrimeFieldShare<F> {
     assert_eq!(vals.len(), C);
 
     let mut sum = Rep3PrimeFieldShare::zero_share();
@@ -32,4 +34,3 @@ pub fn concatenate_lookups_rep3<F: JoltField>(vals: &[Rep3PrimeFieldShare<F>], C
     }
     sum
 }
-

@@ -6,7 +6,6 @@ use co_lasso::{
         grand_product::BatchedGrandProductProver,
     },
 };
-use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, interleave, Itertools};
@@ -22,6 +21,7 @@ use jolt_core::{
     },
 };
 use mpc_core::protocols::rep3::{self, PartyID};
+use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 use std::marker::PhantomData;
 

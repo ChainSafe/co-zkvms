@@ -3,7 +3,8 @@ use ark_ff::Zero;
 use ark_poly::DenseMultilinearExtension;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::RngCore;
-use spartan::{math::Math, IndexProverKey, IndexVerifierKey, Indexer, R1CS, SRS};
+use snarks_core::math::Math;
+use spartan::{IndexProverKey, IndexVerifierKey, Indexer, R1CS, SRS};
 
 use crate::{
     utils::{split_ck, split_poly, split_vec},

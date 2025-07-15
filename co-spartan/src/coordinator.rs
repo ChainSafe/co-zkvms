@@ -27,11 +27,14 @@ use ark_std::{
 use color_eyre::eyre::Context;
 use color_eyre::eyre::Result;
 use mpc_net::mpc_star::MpcStarNetCoordinator;
+use snarks_core::{
+    math::Math,
+    poly::commitment::{aggregate_proof, combine_comm, merge_proof},
+};
 use spartan::{
     logup::LogLookupProof,
-    math::{MaskPolynomial, Math},
+    math::MaskPolynomial,
     transcript::Transcript,
-    utils::{aggregate_proof, combine_comm, merge_proof},
     verifier::{BatchOracleEval, DFSVerifier, VerifierState},
     zk::{generate_mask_polynomial, ZKMLCommit, ZKMLCommitterKey, ZKMLProof, ZKSumcheckProof},
     IndexProverKey, IndexVerifierKey, R1CSProof,

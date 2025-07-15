@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use ark_serialize::*;
-use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
+use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use eyre::Context;
 use jolt_core::{
     poly::{

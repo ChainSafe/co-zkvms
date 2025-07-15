@@ -11,6 +11,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
+use snarks_core::poly::commitment::{aggregate_comm, aggregate_eval};
 
 use super::{
     indexer::IndexVerifierKey,
@@ -21,7 +22,7 @@ use super::{
 use crate::{
     math::MaskPolynomial,
     transcript::Transcript,
-    utils::{aggregate_comm, aggregate_eval, eq_eval},
+    utils::eq_eval,
 };
 
 /// Verification result.

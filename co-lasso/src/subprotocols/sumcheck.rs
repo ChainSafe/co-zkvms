@@ -1,10 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use std::os::unix::net;
-
-use co_spartan::mpc::additive;
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use itertools::multizip;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::field::JoltField;
@@ -12,6 +8,7 @@ use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::CubicSumcheckType;
 use jolt_core::utils::thread::drop_in_background_thread;
 use mpc_core::protocols::rep3::{self, PartyID};
+use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use mpc_net::mpc_star::MpcStarNetWorker;
 use rayon::prelude::*;
 use tracing::trace_span;

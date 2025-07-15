@@ -10,7 +10,7 @@ use co_lasso::{
     },
     utils::{self, split_rep3_poly_flagged}, Rep3Polynomials,
 };
-use co_spartan::mpc::{additive, rep3::Rep3PrimeFieldShare};
+use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, multizip, Itertools};

@@ -13,9 +13,7 @@ ark-ec.workspace = true
 ark-ff.workspace = true
 bincode.workspace = true
 clap.workspace = true
-co-acvm = { version = "0.6.0", git = "https://github.com/TaceoLabs/co-snarks" }
-mpc-core = { version = "0.9.0", git = "https://github.com/TaceoLabs/co-snarks" }
-mpc-net = { version = "0.4.0", git = "https://github.com/TaceoLabs/co-snarks" }
+co-acvm = { version = "0.6.0", git = "https://github.com/nulltea/co-snarks" }
 noirc-abi = { version = "1.0.0-beta.6", git = "https://github.com/noir-lang/noir/", tag = "v1.0.0-beta.6", package = "noirc_abi" }
 noirc-artifacts = { version = "1.0.0-beta.6", git = "https://github.com/noir-lang/noir/", tag = "v1.0.0-beta.6", package = "noirc_artifacts" }
 rand.workspace = true
@@ -25,4 +23,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 anyhow.workspace = true
 
+mpc-net = { path = "../mpc-net" }
 co-spartan = { path = "../co-spartan" }
+mpc-core = { path = "../mpc-core" }

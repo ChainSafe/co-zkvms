@@ -1,7 +1,6 @@
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
-use mpc_core::protocols::rep3::Rep3BigUintShare;
+use mpc_core::protocols::rep3::{Rep3BigUintShare,Rep3PrimeFieldShare};
 use std::any::TypeId;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};

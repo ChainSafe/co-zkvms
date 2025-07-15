@@ -52,8 +52,7 @@ mpc-core = { path = "../mpc-core" }
 futures = "0.3"
 toml = "0.8"
 
-spartan = { path = "../spartan" }
-co-spartan = { path = "../co-spartan" }
+snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
 co-lasso = { path = "../co-lasso" }
 

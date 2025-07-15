@@ -2,12 +2,12 @@
 resolver = "2"
 members = ["co-jolt",
     "co-lasso",
-    "co-noir",
+    # "co-noir",
     "co-spartan",
     "mpc-net",
     "mpc-core",
     "noir-r1cs",
-    "spartan",
+    "spartan", "snarks-core",
 ]
 
 [workspace.package]
@@ -89,5 +89,5 @@ ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
 # ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 # ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 
-# [patch."https://github.com/TaceoLabs/co-snarks"]
-# mpc-net = { path = "./mpc-net" }
+[patch."https://github.com/nulltea/co-snarks"]
+mpc-net = { path = "./mpc-net" }

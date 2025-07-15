@@ -1,3 +1,4 @@
+use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use ark_ff::{Field, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
@@ -10,15 +11,12 @@ use jolt_core::{
         field::JoltField,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    utils::transcript::ProofTranscript,
+    utils::{math::Math, transcript::ProofTranscript},
 };
 use mpc_core::protocols::rep3;
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
-use rand::Rng;
-use spartan::math::Math;
-use std::{ops::Index, slice::SliceIndex};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
+use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use std::ops::Index;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

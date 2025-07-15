@@ -1,4 +1,4 @@
-use co_spartan::mpc::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use eyre::{Context, Result};
 use itertools::Itertools;
 use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};

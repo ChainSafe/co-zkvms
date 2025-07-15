@@ -18,10 +18,11 @@ use ark_poly_commit::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
+use snarks_core::math::Math;
 
 use super::zk::{ZKMLCommit, ZKMLCommitterKey, ZKMLVerifierKey, SRS};
 use crate::{
-    math::{Math, SparseMatEntry},
+    math::SparseMatEntry,
     utils::{normalized_multiplicities, pad_with_first_term},
 };
 
