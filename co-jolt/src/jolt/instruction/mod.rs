@@ -66,13 +66,13 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 }
 
 #[enum_dispatch]
-pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
-    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>);
+pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
+    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>);
 
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups<N: Rep3Network>(
+    fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
@@ -80,10 +80,7 @@ pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clo
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 
-    /// The degree of the `g` polynomial described by `combine_lookups`
-    fn g_poly_degree(&self, C: usize) -> usize;
-
-    fn to_indices(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
+    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 
     fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 }

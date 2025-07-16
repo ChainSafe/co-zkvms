@@ -32,7 +32,7 @@ pub struct BatchedGrandProductProver<F: JoltField> {
 }
 
 impl<F: JoltField> BatchedGrandProductProver<F> {
-    #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument::prove")]
     pub fn prove<N: MpcStarNetCoordinator>(
         claims_to_verify: Vec<F>,
         num_layers: usize,
@@ -163,6 +163,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
         ))
     }
 
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductProver::prove_worker")]
     pub fn prove_worker<N: MpcStarNetWorker>(
         mut batch: BatchedRep3GrandProductCircuit<F>,
         network: &mut N,

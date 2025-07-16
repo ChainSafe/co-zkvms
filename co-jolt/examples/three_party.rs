@@ -121,7 +121,7 @@ pub fn run_party<
 >(
     args: Args,
     config: NetworkConfig,
-    lookups: Vec<Option<Instructions>>,
+    lookups: Vec<Option<Instructions>>, // TODO: make this an Option<Vec<Option<Instructions>>>
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
@@ -213,8 +213,8 @@ pub fn run_coordinator<
     type LassoProof<
         const C: usize,
         const M: usize,
-        Instructions,
-        Subtables,
+        Instructions: JoltInstructionSet<F>,
+        Subtables: JoltSubtableSet<F>,
     > = InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
 
     let num_inputs = lookups.len();

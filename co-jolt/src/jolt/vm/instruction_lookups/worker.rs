@@ -330,7 +330,7 @@ where
                             .map(|memory_index| multi_memory_evals[eval_index][*memory_index])
                             .collect();
                         let instruction_collation_eval =
-                            instruction.combine_lookups(&terms, C, M, io_ctx)?;
+                            instruction.combine_lookups_rep3(&terms, C, M, io_ctx)?;
 
                         // TODO(sragss): Could sum all shared inner terms before multiplying by the flag eval
                         inner_sum[eval_index] +=
@@ -460,7 +460,7 @@ where
     type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
     type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::read_write_grand_product")]
+    #[tracing::instrument(skip_all, name = "Rep3InstructionLookupsProver::read_write_grand_product")]
     fn read_write_grand_product(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
@@ -508,6 +508,7 @@ where
         Ok((batched_circuits, read_write_hashes))
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3InstructionLookupsProver::compute_leaves")]
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,

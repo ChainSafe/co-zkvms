@@ -80,7 +80,7 @@ impl<F: JoltField> JoltInstruction<F> for SLTUInstruction<F> {
 }
 
 impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
-    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), self.1.clone())
     }
 
@@ -89,7 +89,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SLTUInstruction::combine_lookups", level = "trace")]
-    fn combine_lookups<N: Rep3Network>(
+    fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
@@ -110,11 +110,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         Ok(rep3::arithmetic::reshare_to_rep3(sum, io_ctx)?)
     }
 
-    fn g_poly_degree(&self, C: usize) -> usize {
-        C
-    }
-
-    fn to_indices(
+    fn to_indices_rep3(
         &self,
         C: usize,
         log_M: usize,

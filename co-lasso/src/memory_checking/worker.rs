@@ -53,24 +53,44 @@ where
             Self::prove_grand_products(preprocessing, polynomials, io_ctx)
                 .context("while proving grand products")?;
 
-        Self::ReadWriteOpenings::open_rep3_worker(polynomials, &r_read_write, &mut io_ctx.network)
+        tracing::info_span!("open_read_write_polynomials")
+            .in_scope(|| {
+                Self::ReadWriteOpenings::open_rep3_worker(
+                    polynomials,
+                    &r_read_write,
+                    &mut io_ctx.network,
+                )
+            })
             .context("while opening read-write polynomials")?;
-        Self::ReadWriteOpenings::prove_openings_rep3_worker(
-            polynomials,
-            &r_read_write,
-            setup,
-            &mut io_ctx.network,
-        )
-        .context("while proving read-write openings")?;
-        Self::InitFinalOpenings::open_rep3_worker(polynomials, &r_init_final, &mut io_ctx.network)
+        tracing::info_span!("prove_read_write_openings")
+            .in_scope(|| {
+                Self::ReadWriteOpenings::prove_openings_rep3_worker(
+                    polynomials,
+                    &r_read_write,
+                    setup,
+                    &mut io_ctx.network,
+                )
+            })
+            .context("while proving read-write openings")?;
+        tracing::info_span!("open_init_final_polynomials")
+            .in_scope(|| {
+                Self::InitFinalOpenings::open_rep3_worker(
+                    polynomials,
+                    &r_init_final,
+                    &mut io_ctx.network,
+                )
+            })
             .context("while opening init-final polynomials")?;
-        Self::InitFinalOpenings::prove_openings_rep3_worker(
-            polynomials,
-            &r_init_final,
-            setup,
-            &mut io_ctx.network,
-        )
-        .context("while proving init-final openings")?;
+        tracing::info_span!("prove_init_final_openings")
+            .in_scope(|| {
+                Self::InitFinalOpenings::prove_openings_rep3_worker(
+                    polynomials,
+                    &r_init_final,
+                    setup,
+                    &mut io_ctx.network,
+                )
+            })
+            .context("while proving init-final openings")?;
 
         Ok(())
     }

@@ -88,7 +88,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRLInstruction
 }
 
 impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruction<WORD_SIZE, F> {
-    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), self.1.clone())
     }
 
@@ -96,7 +96,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups<N: Rep3Network>(
+    fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
@@ -108,11 +108,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied())) // TODO: make sum over &Rep3PrimeFieldShare<F>
     }
 
-    fn g_poly_degree(&self, _: usize) -> usize {
-        1
-    }
-
-    fn to_indices(
+    fn to_indices_rep3(
         &self,
         C: usize,
         log_M: usize,

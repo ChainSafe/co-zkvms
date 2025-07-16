@@ -71,7 +71,7 @@ impl<F: JoltField> JoltInstruction<F> for SHInstruction<F> {
 }
 
 impl<F: JoltField> Rep3JoltInstruction<F> for SHInstruction<F> {
-    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), Rep3Operand::Public(0))
     }
 
@@ -79,7 +79,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SHInstruction<F> {
         (&mut self.0, None)
     }
 
-    fn combine_lookups<N: Rep3Network>(
+    fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
@@ -91,11 +91,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SHInstruction<F> {
         Ok(vals[0])
     }
 
-    fn g_poly_degree(&self, _: usize) -> usize {
-        1
-    }
-
-    fn to_indices(
+    fn to_indices_rep3(
         &self,
         C: usize,
         log_M: usize,

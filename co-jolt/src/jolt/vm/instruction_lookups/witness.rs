@@ -75,6 +75,7 @@ pub struct Rep3InstructionPolynomials<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3InstructionPolynomials<F> {
+    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::commit")]
     pub fn commit<CS: DistributedCommitmentScheme<F>>(
         &self,
         setup: &CS::Setup,
@@ -109,14 +110,12 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
             .iter()
             .map(|poly| poly.copy_poly_shares().0)
             .collect::<Vec<_>>();
-        println!("trace_polys: {:?} num_vars: {:?}", trace_polys.len(), trace_polys[0].get_num_vars());
         let trace_commitment = CS::batch_commit_polys_ref(&trace_polys, setup, BatchType::Big);
         let lookup_flag_polys_commitment = CS::batch_commit_polys_ref(
             &self.instruction_flag_polys.iter().collect::<Vec<_>>(),
             setup,
             BatchType::Big,
         );
-        println!("final_cts: {:?} num_vars: {:?}", final_cts.len(), final_cts[0].get_num_vars());
         let final_commitment = CS::batch_commit_polys(&final_cts, setup, BatchType::Big);
 
         if network.party_id() == PartyID::ID0 {
@@ -129,6 +128,7 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
         })
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::receive_commitments")]
     pub fn receive_commitments<CS: DistributedCommitmentScheme<F>>(
         network: &mut impl MpcStarNetCoordinator,
     ) -> eyre::Result<InstructionCommitment<CS>> {
@@ -372,7 +372,7 @@ where
         let indices: Vec<_> = cfg_into_iter!(lookups)
             .map(|lookup| {
                 if let Some(lookup) = lookup {
-                    lookup.to_indices(C, log_M)
+                    lookup.to_indices_rep3(C, log_M)
                 } else {
                     vec![Rep3BigUintShare::zero_share(); C]
                 }
