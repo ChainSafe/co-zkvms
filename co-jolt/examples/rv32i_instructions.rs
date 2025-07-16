@@ -1,14 +1,13 @@
 mod three_party;
 
 use clap::Parser;
-use co_jolt::{host, jolt::vm::rv32i_vm::RV32I, poly::field::JoltField};
+use co_jolt::{host, jolt::{instruction::JoltInstructionSet, vm::rv32i_vm::RV32I}, poly::field::JoltField};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
 use itertools::Itertools;
 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
-use std::convert::AsRef;
 
 use crate::three_party::{init_tracing, run_coordinator, run_party, Args};
 
@@ -52,7 +51,7 @@ fn print_used_instructions<F: JoltField>(instruction_trace: &[Option<RV32I<F>>])
     let opcodes_used = instruction_trace
         .par_iter()
         .filter_map(|op| match op {
-            Some(op) => Some(op.as_ref()),
+            Some(op) => Some(op.name()),
             None => None,
         })
         .collect::<std::collections::HashSet<_>>()
@@ -60,5 +59,5 @@ fn print_used_instructions<F: JoltField>(instruction_trace: &[Option<RV32I<F>>])
         .unique()
         .sorted()
         .collect::<Vec<_>>();
-    println!("opcodes_used: {:?}", opcodes_used);
+    tracing::info!("opcodes_used: {:?}", opcodes_used);
 }

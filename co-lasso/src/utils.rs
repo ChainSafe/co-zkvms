@@ -69,10 +69,11 @@ where
         Ok::<_, eyre::Report>(iter)
     })?;
 
-    iter.map(|(val, mut ctx)| map_fn(val, &mut ctx)).collect::<Result<Vec<_>>>()
+    iter.map(|(val, mut ctx)| map_fn(val, &mut ctx))
+        .collect::<Result<Vec<_>>>()
 }
 
-pub fn fork_chunks_flat_map<F, T, R, N: Rep3Network>(
+pub fn fork_chunks<F, T, R, N: Rep3Network>(
     i: &[T],
     io_context0: &mut IoContext<N>,
     io_context1: &mut IoContext<N>,
@@ -103,6 +104,48 @@ where
     })
     .flatten()
     .collect()
+}
+
+pub fn try_fork_chunks<F, T, R, M>(
+    i: impl IntoIterator<Item = T> + ExactSizeIterator,
+    ctx: &mut F,
+    max_forks: usize,
+    map_fn: M,
+) -> eyre::Result<Vec<R>>
+where
+    F: Forkable,
+    M: Fn(T, &mut F) -> eyre::Result<R> + Sync + Send,
+    T: Sized + Send + Clone,
+    R: Sync + Send,
+{
+    let len = i.len();
+    let chunk_size = len.div_ceil(max_forks);
+    let forks = len.div_ceil(chunk_size);
+    assert!(chunk_size != 0);
+
+    let iter = tracing::trace_span!("setup forked networks", len, forks).in_scope(|| {
+        let iter_forked = i
+            .into_iter()
+            .chunks(chunk_size)
+            .into_iter()
+            .map(|chunk| ctx.fork().map(|ctx| (chunk.collect_vec(), ctx)))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(feature = "parallel")]
+        let iter = iter_forked.into_par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let iter = iter_forked.into_iter();
+        Ok::<_, eyre::Report>(iter)
+    })?;
+
+    iter.map(|(chunk, mut ctx)| {
+        chunk
+            .into_iter()
+            .map(|val| map_fn(val, &mut ctx))
+            .collect_vec()
+    })
+    .flatten()
+    .collect::<eyre::Result<Vec<_>>>()
+    .context("while trying to fork_chunks_flat_map")
 }
 
 #[inline]

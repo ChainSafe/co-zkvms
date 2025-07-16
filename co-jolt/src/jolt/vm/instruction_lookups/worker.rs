@@ -247,8 +247,11 @@ where
         //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
         //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
         // After: Sum over MLE elements (with combine)
-        let evaluations: Vec<_> =
-            co_lasso::utils::try_fork_map(0..mle_half, &mut self.io_ctx, |low_index, io_ctx| {
+        let evaluations: Vec<_> = co_lasso::utils::try_fork_chunks(
+            0..mle_half,
+            &mut self.io_ctx,
+            8, // TODO: make configurable
+            |low_index, io_ctx| {
                 let high_index = mle_half + low_index;
 
                 let mut eq_evals: Vec<F> = vec![F::zero(); num_eval_points];
@@ -344,19 +347,20 @@ where
                     })
                     .collect();
                 Ok(evaluations)
-            })?
-            .into_par_iter()
-            .reduce(
-                || vec![F::zero(); num_eval_points],
-                |running, new| {
-                    debug_assert_eq!(running.len(), new.len());
-                    running
-                        .iter()
-                        .zip(new.iter())
-                        .map(|(r, n)| *r + *n)
-                        .collect()
-                },
-            );
+            },
+        )?
+        .into_par_iter()
+        .reduce(
+            || vec![F::zero(); num_eval_points],
+            |running, new| {
+                debug_assert_eq!(running.len(), new.len());
+                running
+                    .iter()
+                    .zip(new.iter())
+                    .map(|(r, n)| *r + *n)
+                    .collect()
+            },
+        );
 
         Ok(UniPoly::from_evals(&evaluations))
     }

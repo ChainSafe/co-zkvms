@@ -89,6 +89,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    #[tracing::instrument(skip_all, name = "BGEInstruction::combine_lookups", level = "trace")]
     fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -110,8 +111,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
 
         Ok(res)    }
 
-    fn g_poly_degree(&self, _: usize) -> usize {
-        1
+    fn g_poly_degree(&self, C: usize) -> usize {
+        C + 1
     }
 
     fn to_indices(

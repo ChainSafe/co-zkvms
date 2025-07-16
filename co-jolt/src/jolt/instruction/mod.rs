@@ -89,16 +89,20 @@ pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clo
 }
 
 pub trait JoltInstructionSet<F: JoltField>:
-    JoltInstruction<F> + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + Send + Sync
+    JoltInstruction<F> + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + AsRef<str> + Send + Sync 
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
         byte as usize
     }
+
+    fn name(&self) -> &str {
+        self.as_ref()
+    }
 }
 
 pub trait Rep3JoltInstructionSet<F: JoltField>:
-    Rep3JoltInstruction<F> + IntoEnumIterator + EnumCount + Send + Sync
+    Rep3JoltInstruction<F> + IntoEnumIterator + EnumCount + AsRef<str> + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -176,6 +180,10 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
             }
         }
         Ok(())
+    }
+
+    fn name(&self) -> &str {
+        self.as_ref()
     }
 }
 

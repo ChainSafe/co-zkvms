@@ -125,18 +125,14 @@ pub fn run_party<
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
-    type LassoProof<
-        const C: usize,
-        const M: usize,
-        Instructions: JoltInstructionSet<F>,
-        Subtables: JoltSubtableSet<F>,
-    > = InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
+    type LassoProof<const C: usize, const M: usize, Instructions, Subtables> =
+        InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
 
     type LassoWitnessSolver<
         const C: usize,
         const M: usize,
-        Instructions: JoltInstructionSet<F>,
-        Subtables: JoltSubtableSet<F>,
+        Instructions,
+        Subtables,
     > = Rep3InstructionWitnessSolver<
         C,
         M,
@@ -147,7 +143,6 @@ pub fn run_party<
         Rep3QuicMpcNetWorker,
     >;
 
-    let num_inputs = lookups.len();
     let my_id = config.my_id;
 
     let span = tracing::info_span!("run_party", id = my_id);
@@ -159,9 +154,6 @@ pub fn run_party<
         log_num_pub_workers,
     )
     .unwrap();
-
-    println!("rep3_net established");
-
 
     let preprocessing =
         InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
@@ -221,8 +213,8 @@ pub fn run_coordinator<
     type LassoProof<
         const C: usize,
         const M: usize,
-        Instructions: JoltInstructionSet<F>,
-        Subtables: JoltSubtableSet<F>,
+        Instructions,
+        Subtables,
     > = InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
 
     let num_inputs = lookups.len();
@@ -236,54 +228,25 @@ pub fn run_coordinator<
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
-    println!("COORDINATOR: rep3_net established");
 
     let preprocessing =
         InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
-    println!("preprocessing done: num_memories {:?}", preprocessing.num_memories);
 
     let commitment_shapes =
         LassoProof::<C, M, Instructions, Subtables>::commitment_shapes(&preprocessing, num_inputs);
-    println!("commitment_shapes done: {:?}", commitment_shapes);
     let setup = {
         let mut rng = test_rng();
-        println!("setup");
         PST13::setup(&commitment_shapes, &mut rng)
     };
 
-    println!("setup done");
-
-    // let lookups = {
-    //     let mut rng = test_rng();
-    //     chain!(
-    //         iter::repeat_with(|| Some(Instructions::Range256(RangeLookup::public(
-    //             rng.gen_range(0..256)
-    //         ))))
-    //         .take(num_inputs / 2)
-    //         .collect_vec(),
-    //         iter::repeat_with(|| Some(Instructions::Range320(RangeLookup::public(
-    //             rng.gen_range(0..320)
-    //         ))))
-    //         .take(num_inputs / 2)
-    //         .collect_vec(),
-    //     )
-    //     .collect_vec()
-    // };
-
-    println!("COORDINATOR: args.solve_witness: {:?}", args.solve_witness);
-
     if !args.solve_witness {
         let mut rng = test_rng();
-        println!("polynomialize");
         let polynomials = LassoProof::<C, M, _, Subtables>::polynomialize(&preprocessing, &lookups);
-        println!("polynomialize done");
         let polynomials_shares = polynomials.into_secret_shares_rep3(&mut rng)?;
         rep3_net.send_requests(polynomials_shares.to_vec())?;
-        println!("sent polynomials");
     }
 
     let commitments = Rep3InstructionPolynomials::receive_commitments::<PST13<E>>(&mut rep3_net)?;
-    println!("received commitments");
     if args.debug {
         let polynomials_check =
             LassoProof::<C, M, _, Subtables>::polynomialize(&preprocessing, &lookups);
@@ -313,8 +276,12 @@ pub fn run_coordinator<
         );
 
         let mut transcript = ProofTranscript::new(b"Lasso");
-        let proof =
-            LassoProof::<C, M, Instructions, Subtables>::prove(&polynomials_check, &preprocessing, &setup, &mut transcript);
+        let proof = LassoProof::<C, M, Instructions, Subtables>::prove(
+            &polynomials_check,
+            &preprocessing,
+            &setup,
+            &mut transcript,
+        );
 
         let mut verifier_transcript = ProofTranscript::new(b"Lasso");
         LassoProof::<C, M, Instructions, Subtables>::verify(
@@ -329,16 +296,12 @@ pub fn run_coordinator<
 
     let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
 
-    println!("proving");
     let proof = LassoProof::<C, M, Instructions, Subtables>::prove_rep3(
         num_inputs,
         &preprocessing,
         &mut rep3_net,
         &mut transcript,
     )?;
-    println!("proved");
-
-    // assert_eq!(proof.primary_sumcheck.opening_proof.proofs, proof_check.primary_sumcheck.opening_proof.proofs);
 
     let mut verifier_transcript = ProofTranscript::new(b"Lasso");
     LassoProof::verify(

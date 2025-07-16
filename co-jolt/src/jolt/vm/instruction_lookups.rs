@@ -1,5 +1,6 @@
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use eyre::Context;
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
@@ -939,7 +940,7 @@ where
         proof: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
         commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
+    ) -> eyre::Result<()> {
         transcript.append_protocol_name(Self::protocol_name());
 
         let r_eq = transcript.challenge_vector(
@@ -953,7 +954,7 @@ where
             proof.primary_sumcheck.num_rounds,
             Self::sumcheck_poly_degree(),
             transcript,
-        )?;
+        ).context("while verifying primary sumcheck")?;
 
         // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
@@ -974,7 +975,7 @@ where
             commitment,
             &r_primary_sumcheck,
             transcript,
-        )?;
+        ).context("while verifying primary sumcheck openings")?;
 
         Self::verify_memory_checking(
             preprocessing,
@@ -982,7 +983,7 @@ where
             proof.memory_checking,
             commitment,
             transcript,
-        )?;
+        ).context("while verifying memory checking")?;
 
         Ok(())
     }
