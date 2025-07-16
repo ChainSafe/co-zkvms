@@ -3,6 +3,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
+    self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
@@ -89,13 +90,20 @@ impl<F: JoltField> Rep3JoltInstruction<F> for LHInstruction<F> {
         (&mut self.0, None)
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        assert!(M == 1 << 16);
+        assert!(vals.len() == 2);
+
+        let half = vals[0];
+        let sign_extension = vals[1];
+
+        Ok(half + rep3::arithmetic::mul_public(sign_extension, F::from_u64(1 << 16).unwrap()))
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -110,7 +118,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for LHInstruction<F> {
         unimplemented!()
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(
+        &self,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         unimplemented!()
     }
 }

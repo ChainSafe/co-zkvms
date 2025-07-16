@@ -1,9 +1,12 @@
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
@@ -74,13 +77,16 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SBInstruction<F> {
         (&mut self.0, None)
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        assert!(M >= 1 << 8);
+        assert!(vals.len() == 1);
+        Ok(vals[0])
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -95,15 +101,12 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SBInstruction<F> {
         unimplemented!()
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match &self.0 {
-            Rep3Operand::Binary(x) => {
-                rep3::conversion::b2a_selector(
-                    &rep3::binary::and_with_public(x, &0xff_u64.into()),
-                    io_ctx,
-                )
-                .unwrap()
-            }
+            Rep3Operand::Binary(x) => rep3::conversion::b2a_selector(
+                &rep3::binary::and_with_public(x, &0xff_u64.into()),
+                io_ctx,
+            ).context("while computing SBInstruction output"),
             _ => panic!("SBInstruction::output called with non-binary operands"),
         }
     }

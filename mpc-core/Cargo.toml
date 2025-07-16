@@ -14,6 +14,7 @@ ark-ec.workspace = true
 ark-linear-sumcheck.workspace = true
 rand.workspace = true
 itertools.workspace = true
+eyre.workspace = true
 
 mpc-types = { git = "https://github.com/nulltea/co-snarks" }
 mpc-core = { git = "https://github.com/nulltea/co-snarks" }

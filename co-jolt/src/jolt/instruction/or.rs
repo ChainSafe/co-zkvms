@@ -73,13 +73,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        concatenate_lookups_rep3(vals, C, log2(M) as usize / 2)
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -99,7 +100,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(
+        &self,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 // rep3::conversion::b2a_selector(&(x.clone() | y.clone()), io_ctx).unwrap()

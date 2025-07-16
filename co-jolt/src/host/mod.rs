@@ -1,46 +1,41 @@
 #![allow(clippy::type_complexity)]
 
-use core::{str::FromStr, u8};
+use core::str::FromStr;
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
     process::Command,
 };
 
-use postcard;
 use rayon::prelude::*;
-use serde::Serialize;
+use itertools::Itertools;
 
 use jolt_common::{
+    self as common,
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     },
-    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS},
+    rv_trace::JoltDevice,
 };
-use jolt_tracer::{self as tracer, ELFInstruction};
+pub use jolt_tracer::{self as tracer, ELFInstruction};
 
-use crate::{
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
+
+// use self::analyze::ProgramSummary;
+use jolt_core::{
+    host::toolchain::{install_no_std_toolchain, install_toolchain},
     poly::field::JoltField,
-    utils::thread::unsafe_allocate_zero_vec,
 };
 
-pub use jolt_core::host::toolchain;
+// pub mod analyze;
 
-use self::{analyze::ProgramSummary, toolchain::install_toolchain};
-
-pub mod analyze;
-
-pub const REG_OPS_PER_INSTRUCTION: usize = 3;
-pub const RAM_OPS_PER_INSTRUCTION: usize = 4;
-pub const MEMORY_OPS_PER_INSTRUCTION: usize = REG_OPS_PER_INSTRUCTION + RAM_OPS_PER_INSTRUCTION;
+pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
 
 #[derive(Clone)]
 pub struct Program {
     guest: String,
     func: Option<String>,
-    input: Vec<u8>,
     memory_size: u64,
     stack_size: u64,
     max_input_size: u64,
@@ -54,7 +49,6 @@ impl Program {
         Self {
             guest: guest.to_string(),
             func: None,
-            input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
@@ -70,11 +64,6 @@ impl Program {
 
     pub fn set_func(&mut self, func: &str) {
         self.func = Some(func.to_string())
-    }
-
-    pub fn set_input<T: Serialize>(&mut self, input: &T) {
-        let mut serialized = postcard::to_stdvec(input).unwrap();
-        self.input.append(&mut serialized);
     }
 
     pub fn set_memory_size(&mut self, len: u64) {
@@ -94,183 +83,152 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build(&mut self) {
+    pub fn build(&mut self, target_dir: &str) {
         if self.elf.is_none() {
             install_toolchain().unwrap();
+            install_no_std_toolchain().unwrap();
+
             self.save_linker();
 
             let rust_flags = [
                 "-C",
                 &format!("link-arg=-T{}", self.linker_path()),
                 "-C",
-                "passes=loweratomic",
+                "passes=lower-atomic",
                 "-C",
                 "panic=abort",
+                "-C",
+                "strip=symbols",
+                "-C",
+                "opt-level=z",
             ];
 
-            let toolchain = "riscv32i-jolt-zkvm-elf";
-            let mut envs = vec![
-                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
-                ("RUSTUP_TOOLCHAIN", toolchain.to_string()),
-            ];
+            let toolchain = if self.std {
+                "riscv32im-jolt-zkvm-elf"
+            } else {
+                "riscv32im-unknown-none-elf"
+            };
+
+            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
+
+            if self.std {
+                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+            }
 
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
             }
 
             let target = format!(
-                "/tmp/jolt-guest-target-{}-{}",
+                "{}/{}-{}",
+                target_dir,
                 self.guest,
                 self.func.as_ref().unwrap_or(&"".to_string())
             );
 
-            let args = [
-                "build",
-                "--release",
-                "--features",
-                "guest",
-                "-p",
-                &self.guest,
-                "--target-dir",
-                &target,
-                "--target",
-                toolchain,
-                "--bin",
-                "guest",
-            ];
+            let output = Command::new("cargo")
+                .envs(envs)
+                .args([
+                    "build",
+                    "--release",
+                    "--features",
+                    "guest",
+                    "-p",
+                    &self.guest,
+                    "--target-dir",
+                    &target,
+                    "--target",
+                    toolchain,
+                ])
+                .output()
+                .expect("failed to build guest");
 
-            // Print the command as a shell command
-            println!("cargo {}", args.join(" "));
-
-            // Print environment variables, making RUSTFLAGS readable
-            for (key, value) in &envs {
-                if key == &"CARGO_ENCODED_RUSTFLAGS" {
-                    // Replace \x1f with space for readability
-                    let pretty_value = value.replace('\x1f', " ");
-                    println!("{}={}", key, pretty_value);
-                } else {
-                    println!("{}={}", key, value);
-                }
+            if !output.status.success() {
+                io::stderr().write_all(&output.stderr).unwrap();
+                panic!("failed to compile guest");
             }
 
-            // let mut cmd = Command::new("cargo");
-            // cmd.envs(envs);
-            // cmd.args([
-            //     "build",
-            //     "--release",
-            //     "--features",
-            //     "guest",
-            //     "-p",
-            //     &self.guest,
-            //     "--target-dir",
-            //     &target,
-            //     "--target",
-            //     toolchain,
-            //     "--bin",
-            //     "guest",
-            // ]);
-
-            // let output = cmd.output().expect("failed to build guest");
-
-            // if !output.status.success() {
-            //     io::stderr().write_all(&output.stderr).unwrap();
-            //     panic!("failed to compile guest");
-            // }
-
-            // let elf = format!("{}/{}/release/guest", target, toolchain);
-            // self.elf = Some(PathBuf::from_str(&elf).unwrap());
+            let elf = format!("{}/{}/release/{}", target, toolchain, self.guest);
+            self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
-        self.build();
+    pub fn decode(&self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         let elf = self.elf.as_ref().unwrap();
-        tracer::decode(elf)
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        tracer::decode(&elf_contents)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: JoltField>(
-        mut self,
-    ) -> (
-        JoltDevice,
-        Vec<BytecodeRow>,
-        Vec<Option<RV32I<F>>>,
-        Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
-        Vec<F>,
-    ) {
-        self.build();
-        let elf = self.elf.unwrap();
-        let (trace, io_device) =
-            tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
+    pub fn trace<F: JoltField>(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<Option<RV32I<F>>>) {
+        self.build(DEFAULT_TARGET_DIR);
 
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .par_iter()
-            .map(|row| BytecodeRow::from_instruction::<F, RV32I<F>>(&row.instruction))
-            .collect();
-
-        let instruction_trace: Vec<Option<RV32I<F>>> = trace
-            .par_iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::<F>::try_from(row) {
-                    Some(jolt_instruction)
-                } else {
-                    // Instruction does not use lookups
-                    None
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.par_iter().map(|row| row.into()).collect();
-
-        let padded_trace_len = trace.len().next_power_of_two();
-        let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
-        circuit_flag_trace
-            .par_chunks_mut(padded_trace_len)
-            .enumerate()
-            .for_each(|(flag_index, chunk)| {
-                chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
-                    if row.instruction.to_circuit_flags()[flag_index] {
-                        *flag = F::one();
-                    }
-                });
-            });
-
-        (
-            io_device,
-            bytecode_trace,
-            instruction_trace,
-            memory_trace,
-            circuit_flag_trace,
-        )
-    }
-
-    pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary<F> {
-        self.build();
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) =
-            tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
+        let mut elf_file =
+            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        let memory_config = common::rv_trace::MemoryConfig {
+            memory_size: self.memory_size,
+            stack_size: self.stack_size,
+            max_input_size: self.max_input_size,
+            max_output_size: self.max_output_size,
+        };
+        let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
 
-        let (bytecode, memory_init) = self.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            self.trace();
-        let circuit_flags: Vec<bool> = circuit_flags
-            .into_iter()
-            .map(|flag: F| flag.is_one())
+        let instructions = raw_trace
+            .into_par_iter()
+            .flat_map(|row| match row.instruction.opcode {
+                // tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                // tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
+                _ => vec![row],
+            })
+            .map(|row| RV32I::try_from(&row.instruction).ok())
             .collect();
 
-        ProgramSummary {
-            raw_trace,
-            bytecode,
-            memory_init,
-            io_device,
-            bytecode_trace,
-            instruction_trace,
-            memory_trace,
-            circuit_flags,
-        }
+        (io_device, instructions)
     }
+
+    // pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
+    //     self.build(DEFAULT_TARGET_DIR);
+    //     let elf = self.elf.as_ref().unwrap();
+    //     let mut elf_file =
+    //         File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+    //     let mut elf_contents = Vec::new();
+    //     elf_file.read_to_end(&mut elf_contents).unwrap();
+    //     let memory_config = common::rv_trace::MemoryConfig {
+    //         memory_size: self.memory_size,
+    //         stack_size: self.stack_size,
+    //         max_input_size: self.max_input_size,
+    //         max_output_size: self.max_output_size,
+    //     };
+    //     let (raw_trace, _) = tracer::trace(elf_contents, inputs, &memory_config);
+
+    //     let (bytecode, memory_init) = self.decode();
+    //     let (io_device, processed_trace) = self.trace(inputs);
+
+    //     ProgramSummary {
+    //         raw_trace,
+    //         bytecode,
+    //         memory_init,
+    //         io_device,
+    //         processed_trace,
+    //     }
+    // }
 
     fn save_linker(&self) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
@@ -281,12 +239,10 @@ impl Program {
         let linker_script = LINKER_SCRIPT_TEMPLATE
             .replace("{MEMORY_SIZE}", &self.memory_size.to_string())
             .replace("{STACK_SIZE}", &self.stack_size.to_string());
-        println!("linker_path: {:?}", linker_path);
 
         let mut file = File::create(linker_path).expect("could not create linker file");
         file.write_all(linker_script.as_bytes())
             .expect("could not save linker");
-        println!("linker saved");
     }
 
     fn linker_path(&self) -> String {

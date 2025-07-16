@@ -12,7 +12,7 @@ use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
-    add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
+    add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -98,14 +98,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(vals.len() == C);
-        unimplemented!()
+        // The output is the TruncateOverflow(most significant chunk) || Identity of other chunks
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize))
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -125,7 +127,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()

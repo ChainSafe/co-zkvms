@@ -382,6 +382,7 @@ where
         setup: &C::Setup,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
+        tracing::info!("polynomials.final_cts: {:?}", polynomials.final_cts.len());
         C::batch_prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
@@ -787,7 +788,7 @@ pub struct InstructionLookupsPreprocessing<F: JoltField> {
     memory_to_subtable_index: Vec<usize>,
     memory_to_dimension_index: Vec<usize>,
     materialized_subtables: Vec<Vec<F>>,
-    num_memories: usize,
+    pub num_memories: usize,
 }
 
 impl<F: JoltField> InstructionLookupsPreprocessing<F> {
@@ -1451,7 +1452,7 @@ where
         // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
         let read_write_generator_shape = CommitShape::new(max_trace_length, BatchType::Big);
         let init_final_generator_shape = CommitShape::new(
-            M * preprocessing.num_memories.next_power_of_two(),
+            M,
             BatchType::Small,
         );
 

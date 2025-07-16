@@ -5,6 +5,8 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
 use std::ops::Shr;
 
+use crate::jolt::instruction::JoltInstruction;
+
 pub fn concatenate_lookups_rep3<F: JoltField>(
     vals: &[Rep3PrimeFieldShare<F>],
     C: usize,
@@ -41,6 +43,17 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
             (left << operand_bits) ^ right
         })
         .collect()
+}
+
+pub fn slice_values_rep3<'a, F: JoltField, I: JoltInstruction<F>>(op: &I, vals: &'a [Rep3PrimeFieldShare<F>], C: usize, M: usize) -> Vec<&'a [Rep3PrimeFieldShare<F>]> {
+    let mut offset = 0;
+    let mut slices = vec![];
+    for (_, indices) in op.subtables(C, M) {
+        slices.push(&vals[offset..offset + indices.len()]);
+        offset += indices.len();
+    }
+    assert_eq!(offset, vals.len());
+    slices
 }
 
 #[cfg(test)]

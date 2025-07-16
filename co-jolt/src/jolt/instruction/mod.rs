@@ -12,7 +12,7 @@ use paste::paste;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, IntoEnumIterator};
-use strum_macros::{EnumCount, EnumIter};
+use strum_macros::{EnumCount, AsRefStr, EnumIter};
 use std::fmt::Debug;
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
@@ -72,19 +72,20 @@ pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clo
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F>;
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 
     /// The degree of the `g` polynomial described by `combine_lookups`
     fn g_poly_degree(&self, C: usize) -> usize;
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F>;
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 }
 
 pub trait JoltInstructionSet<F: JoltField>:
@@ -225,7 +226,7 @@ macro_rules! instruction_set {
         paste! {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
-            #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount, Serialize, Deserialize)]
+            #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount, AsRefStr, Serialize, Deserialize)]
             #[enum_dispatch(JoltInstruction<F>, Rep3JoltInstruction<F>)]
             pub enum $enum_name<F: JoltField> {
                 $([<$alias>]($struct)),+

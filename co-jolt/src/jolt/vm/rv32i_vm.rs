@@ -2,7 +2,7 @@ use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::prelude::StdRng;
 use std::any::TypeId;
-use strum_macros::{EnumCount, EnumIter};
+use strum_macros::{EnumCount, AsRefStr, EnumIter};
 use serde::{Deserialize, Serialize};
 
 // use super::{Jolt, JoltProof};
@@ -98,104 +98,3 @@ pub const M: usize = 1 << 16;
 
 // pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
 
-// ==================== TEST ====================
-
-#[cfg(test)]
-mod tests {
-    use ark_bn254::{Fr, G1Projective};
-
-    use std::collections::HashSet;
-
-    use crate::host;
-    use crate::jolt::instruction::JoltInstruction;
-    use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
-    use crate::poly::commitment::hyrax::HyraxScheme;
-    use std::sync::Mutex;
-    use strum::{EnumCount, IntoEnumIterator};
-
-    // If multiple tests try to read the same trace artifacts simultaneously, they will fail
-    lazy_static::lazy_static! {
-        static ref FIB_FILE_LOCK: Mutex<()> = Mutex::new(());
-        static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
-    }
-
-    #[test]
-    fn instruction_set_subtables() {
-        let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::InstructionSet::iter()
-        {
-            for (subtable, _) in instruction.subtables::<Fr>(C, M) {
-                // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::Subtables::from(
-                    subtable.subtable_id(),
-                );
-                subtable_set.insert(subtable.subtable_id());
-            }
-        }
-        assert_eq!(
-            subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::Subtables::COUNT,
-            "Unused enum variants in Subtables"
-        );
-    }
-
-    #[test]
-    fn fib_e2e() {
-        let _guard = FIB_FILE_LOCK.lock().unwrap();
-
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) =
-            <RV32IJoltVM as Jolt<Fr, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
-        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
-
-    #[test]
-    fn sha3_e2e() {
-        let _guard = SHA3_FILE_LOCK.lock().unwrap();
-
-        let mut program = host::Program::new("sha3-guest");
-        program.set_input(&[5u8; 32]);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
-
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
-    }
-}

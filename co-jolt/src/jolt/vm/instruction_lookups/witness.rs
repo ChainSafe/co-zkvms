@@ -109,12 +109,14 @@ impl<F: JoltField> Rep3InstructionPolynomials<F> {
             .iter()
             .map(|poly| poly.copy_poly_shares().0)
             .collect::<Vec<_>>();
+        println!("trace_polys: {:?} num_vars: {:?}", trace_polys.len(), trace_polys[0].get_num_vars());
         let trace_commitment = CS::batch_commit_polys_ref(&trace_polys, setup, BatchType::Big);
         let lookup_flag_polys_commitment = CS::batch_commit_polys_ref(
             &self.instruction_flag_polys.iter().collect::<Vec<_>>(),
             setup,
             BatchType::Big,
         );
+        println!("final_cts: {:?} num_vars: {:?}", final_cts.len(), final_cts[0].get_num_vars());
         let final_commitment = CS::batch_commit_polys(&final_cts, setup, BatchType::Big);
 
         if network.party_id() == PartyID::ID0 {
@@ -344,7 +346,7 @@ where
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let lookup_outputs = Self::compute_lookup_outputs(&ops, num_reads, &mut self.io_ctx0);
+        let lookup_outputs = Self::compute_lookup_outputs(&ops, num_reads, &mut self.io_ctx0)?;
 
         Ok(Rep3InstructionPolynomials {
             dim: dims,
@@ -393,19 +395,20 @@ where
         ops: &[Option<Instructions>],
         num_reads: usize,
         io_ctx: &mut IoContext<Network>,
-    ) -> Rep3DensePolynomial<F> {
+    ) -> eyre::Result<Rep3DensePolynomial<F>> {
+        // TODO: use co_lasso::utils::chunk_map
         let mut outputs = ops
             .iter()
             .map(|op| {
                 if let Some(op) = op {
                     op.output(io_ctx)
                 } else {
-                    Rep3PrimeFieldShare::zero_share()
+                    Ok(Rep3PrimeFieldShare::zero_share())
                 }
             })
-            .collect_vec();
+            .collect::<eyre::Result<Vec<_>>>()?;
         outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
-        Rep3DensePolynomial::new(outputs)
+        Ok(Rep3DensePolynomial::new(outputs))
     }
 }
 

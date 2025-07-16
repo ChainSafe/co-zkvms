@@ -1,3 +1,5 @@
+use std::iter::Sum;
+
 use crate::poly::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -101,13 +103,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        assert!(C <= 10);
+        assert_eq!(vals.len(), C + 1);
+        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()))
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -127,7 +132,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()

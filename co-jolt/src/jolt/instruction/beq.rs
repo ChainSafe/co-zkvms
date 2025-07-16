@@ -1,8 +1,10 @@
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
+    self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
@@ -75,13 +77,17 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        vals.iter()
+            .skip(1)
+            .try_fold(vals[0], |acc, x| rep3::arithmetic::mul(acc, *x, io_ctx))
+            .context("while combining BEQInstruction")
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -101,7 +107,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()

@@ -1,10 +1,13 @@
+use std::iter::Sum;
+
 use crate::poly::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
@@ -93,13 +96,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        assert!(C <= 10);
+        assert!(vals.len() == C);
+        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied())) // TODO: make sum over &Rep3PrimeFieldShare<F>
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -119,7 +125,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()
@@ -128,7 +134,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

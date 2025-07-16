@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![no_main]
+
+// use sha3::{Digest, Keccak256};
 
 #[jolt::provable]
 fn fib(n: u32) -> u128 {

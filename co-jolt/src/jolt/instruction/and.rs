@@ -10,7 +10,7 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::jolt::instruction::{Rep3JoltInstruction, Rep3Operand};
+use crate::{jolt::instruction::{Rep3JoltInstruction, Rep3Operand}, utils::instruction_utils::concatenate_lookups_rep3};
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{
@@ -73,13 +73,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -99,13 +100,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3::arithmetic::promote_to_trivial_share(
-                    io_ctx.network.get_id(),
-                    (x.clone() & y.clone()).into(),
-                )
+                // Ok(rep3::arithmetic::promote_to_trivial_share(
+                //     io_ctx.network.get_id(),
+                //     (x.clone() & y.clone()).into(),
+                // ))
+                unimplemented!()
             }
             _ => panic!("ANDInstruction::output called with non-binary operands"),
         }

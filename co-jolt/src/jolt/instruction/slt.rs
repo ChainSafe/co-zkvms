@@ -1,9 +1,11 @@
-use crate::poly::field::JoltField;
+use crate::{poly::field::JoltField, utils::instruction_utils::slice_values_rep3};
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
+    self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
@@ -102,13 +104,37 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
-        unimplemented!()
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        let vals_by_subtable = slice_values_rep3(self, vals, C, M);
+
+        let gt_msb = vals_by_subtable[0];
+        let eq_msb = vals_by_subtable[1];
+        let ltu = vals_by_subtable[2];
+        let eq = vals_by_subtable[3];
+        let lt_abs = vals_by_subtable[4];
+        let eq_abs = vals_by_subtable[5];
+
+        // Accumulator for LTU(x_{<s}, y_{<s})
+        let mut ltu_sum = lt_abs[0].into_additive();
+        // Accumulator for EQ(x_{<s}, y_{<s})
+        let mut eq_prod = eq_abs[0];
+
+        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
+            ltu_sum += *ltu_i * eq_prod;
+            eq_prod = rep3::arithmetic::mul(eq_prod, *eq_i, io_ctx)?;
+        }
+
+        let ltu_sum = rep3::arithmetic::reshare_to_rep3(ltu_sum, io_ctx)?;
+
+        // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
+        rep3::arithmetic::add_mul(gt_msb[0], eq_msb[0], ltu_sum, io_ctx)
+            .context("while combining SLTInstruction")
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -128,7 +154,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()
@@ -137,7 +163,6 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

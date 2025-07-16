@@ -11,9 +11,7 @@ cd ../co-jolt
 # [[ -f "data/key1.der" ]] || ../target/release/gen_cert -k data/key1.der -c data/cert1.der -s localhost -s ip6-localhost -s 127.0.0.1 -s party1
 # [[ -f "data/key2.der" ]] || ../target/release/gen_cert -k data/key2.der -c data/cert2.der -s localhost -s ip6-localhost -s 127.0.0.1 -s party2
 
-../target/release/examples/rv32i_instructions -c examples/config_coordinator.toml
-
-# ../target/release/examples/rv32i_instructions -c examples/config_coordinator.toml &
-# ../target/release/examples/rv32i_instructions -c examples/config_party1.toml &
-# ../target/release/examples/rv32i_instructions -c examples/config_party2.toml &
-# ../target/release/examples/rv32i_instructions -c examples/config_party3.toml 
+../target/release/examples/rv32i_instructions -c examples/config_coordinator.toml &
+../target/release/examples/rv32i_instructions -c examples/config_party1.toml &
+../target/release/examples/rv32i_instructions -c examples/config_party2.toml &
+../target/release/examples/rv32i_instructions -c examples/config_party3.toml 

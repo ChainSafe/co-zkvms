@@ -3,8 +3,11 @@ use ark_linear_sumcheck::rng::FeedableRNG;
 use rand::Rng;
 use rand::RngCore;
 
-pub use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 pub use mpc_core::protocols::rep3::arithmetic::*;
+pub use mpc_core::protocols::rep3::{
+    Rep3PrimeFieldShare,
+    network::{IoContext, Rep3Network},
+};
 
 use crate::protocols::rep3::rngs::SSRandom;
 
@@ -39,4 +42,12 @@ pub fn get_mask_scalar_rep3<F: PrimeField, R: RngCore + FeedableRNG>(
     );
     rng.update();
     mask_share
+}
+
+pub fn reshare_to_rep3<F: PrimeField, N: Rep3Network>(
+    additive: F,
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    let prev_share: F = io_ctx.network.reshare(additive)?;
+    Ok(Rep3PrimeFieldShare::new(additive, prev_share))
 }

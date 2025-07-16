@@ -111,6 +111,7 @@ where
         let eta: E::ScalarField = network.receive_request()?;
 
         let agg_poly = aggregate_poly(eta, &polys_a.iter().collect::<Vec<_>>());
+        println!("agg_poly: {:?}", agg_poly.get_num_vars());
 
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         let (pf, _) = open(

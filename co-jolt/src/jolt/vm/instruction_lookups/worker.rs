@@ -165,7 +165,7 @@ where
             memory_polys,
             lookup_outputs_poly,
             num_eval_points,
-        );
+        )?;
         self.io_ctx.network.send_response(round_uni_poly)?;
         let r_j = self.io_ctx.network.receive_request::<F>()?;
         random_vars.push(r_j);
@@ -195,7 +195,7 @@ where
                 &memory_polys_updated,
                 lookup_outputs_poly,
                 num_eval_points,
-            );
+            )?;
             // compressed_polys.push(round_uni_poly.compress());
             self.io_ctx.network.send_response(round_uni_poly)?;
             let r_j = self.io_ctx.network.receive_request::<F>()?;
@@ -239,7 +239,7 @@ where
         memory_polys: &[Rep3DensePolynomial<F>],
         lookup_outputs_poly: &Rep3DensePolynomial<F>,
         num_eval_points: usize,
-    ) -> UniPoly<F> {
+    ) -> eyre::Result<UniPoly<F>> {
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
@@ -247,9 +247,8 @@ where
         //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
         //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
         // After: Sum over MLE elements (with combine)
-        let evaluations: Vec<_> = (0..mle_half)
-            .into_par_iter()
-            .map(|low_index| {
+        let evaluations: Vec<_> =
+            co_lasso::utils::try_fork_map(0..mle_half, &mut self.io_ctx, |low_index, io_ctx| {
                 let high_index = mle_half + low_index;
 
                 let mut eq_evals: Vec<F> = vec![F::zero(); num_eval_points];
@@ -327,7 +326,8 @@ where
                             .iter()
                             .map(|memory_index| multi_memory_evals[eval_index][*memory_index])
                             .collect();
-                        let instruction_collation_eval = instruction.combine_lookups(&terms, C, M);
+                        let instruction_collation_eval =
+                            instruction.combine_lookups(&terms, C, M, io_ctx)?;
 
                         // TODO(sragss): Could sum all shared inner terms before multiplying by the flag eval
                         inner_sum[eval_index] +=
@@ -343,8 +343,9 @@ where
                         .into_additive()
                     })
                     .collect();
-                evaluations
-            })
+                Ok(evaluations)
+            })?
+            .into_par_iter()
             .reduce(
                 || vec![F::zero(); num_eval_points],
                 |running, new| {
@@ -357,7 +358,7 @@ where
                 },
             );
 
-        UniPoly::from_evals(&evaluations)
+        Ok(UniPoly::from_evals(&evaluations))
     }
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]

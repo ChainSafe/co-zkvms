@@ -115,14 +115,15 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
         (&mut self.0, None)
     }
 
-    fn combine_lookups(
+    fn combine_lookups<N: Rep3Network>(
         &self,
         operands: &[Rep3PrimeFieldShare<F>],
         _: usize,
         M: usize,
-    ) -> Rep3PrimeFieldShare<F> {
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let weight = F::from(M as u64);
-        inner_product_rep3(
+        let result = inner_product_rep3(
             operands,
             iter::successors(Some(F::ONE), |power_of_weight| {
                 Some(*power_of_weight * weight)
@@ -130,16 +131,20 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
             .take(operands.len())
             .collect_vec()
             .iter(),
-        )
+        );
+        Ok(result)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
         1
     }
 
-    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+    fn output<N: Rep3Network>(
+        &self,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match &self.0 {
-            Rep3Operand::Arithmetic(value) => value.clone(),
+            Rep3Operand::Arithmetic(value) => Ok(value.clone()),
             _ => unreachable!(),
         }
     }

@@ -47,6 +47,31 @@ where
     Ok(iter.map(|(val, mut ctx)| map_fn(val, &mut ctx)).collect())
 }
 
+pub fn try_fork_map<F: Forkable, T, R, M>(
+    i: impl IntoIterator<Item = T>,
+    ctx: &mut F,
+    map_fn: M,
+) -> Result<Vec<R>>
+where
+    M: Fn(T, &mut F) -> eyre::Result<R> + Sync + Send,
+    T: Sized + Send,
+    R: Sync + Send,
+{
+    let iter = tracing::info_span!("setup forked networks").in_scope(|| {
+        let iter_forked = i
+            .into_iter()
+            .map(|val| ctx.fork().map(|ctx| (val, ctx)))
+            .collect::<Result<Vec<_>>>()?;
+        #[cfg(feature = "parallel")]
+        let iter = iter_forked.into_par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let iter = iter_forked.into_iter();
+        Ok::<_, eyre::Report>(iter)
+    })?;
+
+    iter.map(|(val, mut ctx)| map_fn(val, &mut ctx)).collect::<Result<Vec<_>>>()
+}
+
 pub fn fork_chunks_flat_map<F, T, R, N: Rep3Network>(
     i: &[T],
     io_context0: &mut IoContext<N>,

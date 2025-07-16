@@ -6,7 +6,7 @@ use crate::jolt::instruction::JoltInstructionSet;
 // use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_common::rv_trace::ELFInstruction;
-use jolt_common::to_ram_address;
+
 use jolt_core::poly::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -71,17 +71,6 @@ impl BytecodeRow {
             rs1: 0,
             rs2: 0,
             imm: 0,
-        }
-    }
-
-    pub fn random(index: usize, rng: &mut StdRng) -> Self {
-        Self {
-            address: to_ram_address(index),
-            bitflags: rng.next_u32() as u64, // Roughly how many flags there are
-            rd: rng.next_u64() % REGISTER_COUNT,
-            rs1: rng.next_u64() % REGISTER_COUNT,
-            rs2: rng.next_u64() % REGISTER_COUNT,
-            imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
         }
     }
 
