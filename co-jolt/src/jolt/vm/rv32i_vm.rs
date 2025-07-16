@@ -3,6 +3,7 @@ use enum_dispatch::enum_dispatch;
 use rand::prelude::StdRng;
 use std::any::TypeId;
 use strum_macros::{EnumCount, EnumIter};
+use serde::{Deserialize, Serialize};
 
 // use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
@@ -11,7 +12,7 @@ use crate::jolt::instruction::{
     or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
     slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
     sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, SubtableIndices,
+    JoltInstructionSet, Rep3JoltInstruction, Rep3JoltInstructionSet, Rep3Operand, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -22,62 +23,14 @@ use crate::jolt::subtable::{
 };
 use paste::paste;
 
-macro_rules! instruction_set {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        paste! {
-            #[allow(non_camel_case_types)]
-            #[repr(u8)]
-            #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount)]
-            #[enum_dispatch(JoltInstruction<F>)]
-            pub enum $enum_name<F: JoltField> {
-                $([<$alias>]($struct)),+
-            }
-        }
-        impl<F: JoltField> JoltInstructionSet<F> for $enum_name<F> {}
-
-        // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-        // impl<F: JoltField> Default for $enum_name<F> {
-        //     fn default() -> Self {
-        //         $enum_name::iter().collect::<Vec<_>>()[0]
-        //     }
-        // }
-    };
-}
-
-macro_rules! subtable_enum {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        paste! {
-            #[allow(non_camel_case_types)]
-            #[repr(u8)]
-            #[enum_dispatch(LassoSubtable<F>)]
-            #[derive(Debug, EnumCount, EnumIter)]
-            pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
-        }
-        impl<F: JoltField> From<SubtableId> for $enum_name<F> {
-          fn from(subtable_id: SubtableId) -> Self {
-            $(
-              if subtable_id == TypeId::of::<$struct>() {
-                $enum_name::from(<$struct>::new())
-              } else
-            )+
-            { panic!("Unexpected subtable id {:?}", subtable_id) }
-          }
-        }
-
-        impl<F: JoltField> From<$enum_name<F>> for usize {
-            fn from(subtable: $enum_name<F>) -> usize {
-                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
-                byte as usize
-            }
-        }
-        impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
-    };
-}
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare, Rep3PrimeFieldShare,
+};
 
 const WORD_SIZE: usize = 32;
 
-instruction_set!(
+crate::instruction_set!(
   RV32I,
   ADD: ADDInstruction<WORD_SIZE, F>,
   SUB: SUBInstruction<WORD_SIZE, F>,
@@ -100,7 +53,7 @@ instruction_set!(
   SRL: SRLInstruction<WORD_SIZE, F>
 );
 
-subtable_enum!(
+crate::subtable_enum!(
   RV32ISubtables,
   AND: AndSubtable<F>,
   EQ_ABS: EqAbsSubtable<F>,
@@ -129,10 +82,10 @@ subtable_enum!(
 
 // ==================== JOLT ====================
 
-// pub enum RV32IJoltVM {}
+pub enum RV32IJoltVM {}
 
-// pub const C: usize = 4;
-// pub const M: usize = 1 << 16;
+pub const C: usize = 4;
+pub const M: usize = 1 << 16;
 
 // impl<F, CS> Jolt<F, CS, C, M> for RV32IJoltVM
 // where

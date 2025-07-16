@@ -1,15 +1,21 @@
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
-use super::{JoltInstruction, Rep3Operand, SubtableIndices};
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
+};
+
+use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
+    assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups, concatenate_lookups_rep3
 };
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SLLInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,
@@ -82,6 +88,53 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SLLInstruction
         )
     }
 }
+
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruction<WORD_SIZE, F> {
+    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+        (self.0.clone(), self.1.clone())
+    }
+
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, Some(&mut self.1))
+    }
+
+    fn combine_lookups(
+        &self,
+        vals: &[Rep3PrimeFieldShare<F>],
+        C: usize,
+        M: usize,
+    ) -> Rep3PrimeFieldShare<F> {
+        assert!(C <= 10);
+        concatenate_lookups_rep3(vals, C, (log2(M) / 2) as usize)
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
+    }
+
+    fn to_indices(
+        &self,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
+        match (&self.0, &self.1) {
+            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+                unimplemented!()
+            }
+            _ => panic!("SLLInstruction::to_indices called with non-binary operands"),
+        }
+    }
+
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+        match (&self.0, &self.1) {
+            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+                unimplemented!()
+            }
+            _ => panic!("SLLInstruction::output called with non-binary operands"),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {

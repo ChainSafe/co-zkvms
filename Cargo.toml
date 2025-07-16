@@ -1,13 +1,17 @@
 [workspace]
 resolver = "2"
-members = ["co-jolt",
+members = [
+    "co-jolt",
     "co-lasso",
     # "co-noir",
     "co-spartan",
     "mpc-net",
     "mpc-core",
     "noir-r1cs",
-    "spartan", "snarks-core",
+    "spartan",
+    "snarks-core",
+    "co-jolt/examples/fibonacci",
+    "co-jolt/examples/fibonacci/guest",
 ]
 
 [workspace.package]
@@ -19,7 +23,9 @@ license = "MIT"
 
 [workspace.dependencies]
 # ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
-ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = ["parallel"] }
+ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = [
+    "parallel",
+] }
 ark-poly-commit = { version = "0.5.0", features = ["parallel"] }
 ark-std = { version = "0.5.0", features = ["std"] }
 ark-ff = { version = "0.5.0", features = ["parallel"] }
@@ -91,3 +97,7 @@ ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
 
 [patch."https://github.com/nulltea/co-snarks"]
 mpc-net = { path = "./mpc-net" }
+
+[profile.guest]
+inherits = "release"
+debug = false

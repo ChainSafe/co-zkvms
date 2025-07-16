@@ -192,11 +192,11 @@ pub struct Rep3InstructionWitnessSolver<
     _marker: PhantomData<(F, CS, Lookups, Subtables)>,
 }
 
-impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network>
-    Rep3InstructionWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
+impl<const C: usize, const M: usize, F: JoltField, CS, Instructions, Subtables, Network>
+    Rep3InstructionWitnessSolver<C, M, F, CS, Instructions, Subtables, Network>
 where
     CS: DistributedCommitmentScheme<F>,
-    Lookups: Rep3JoltInstructionSet<F>,
+    Instructions: Rep3JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3Network,
 {
@@ -215,11 +215,11 @@ where
     pub fn polynomialize(
         &mut self,
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        mut lookups: Vec<Lookups>,
+        mut ops: Vec<Option<Instructions>>,
     ) -> eyre::Result<Rep3InstructionPolynomials<F>> {
-        let num_reads = lookups.len().next_power_of_two();
+        let num_reads = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices = self.subtable_lookup_indices(&mut lookups)?;
+        let subtable_lookup_indices = self.subtable_lookup_indices(&mut ops)?;
 
         let materialized_subtable_luts = preprocessing
             .materialized_subtables
@@ -241,49 +241,54 @@ where
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
 
-                    for (j, lookup) in lookups.iter().enumerate() {
-                        let memories_used = &preprocessing.instruction_to_memory_indices
-                            [Lookups::enum_index(lookup)];
-                        if memories_used.contains(&memory_index) {
-                            let memory_address = &access_sequence[j];
+                    for (j, op) in ops.iter().enumerate() {
+                        if let Some(op) = op {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [Instructions::enum_index(op)];
+                            if memories_used.contains(&memory_index) {
+                                let memory_address = &access_sequence[j];
 
-                            let ohv = Rep3LookupTable::ohv_from_index_no_a2b_conversion(
-                                memory_address.clone(),
-                                M,
-                                &mut solver.io_ctx0,
-                                &mut solver.io_ctx1,
-                            )
-                            .unwrap();
-
-                            let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
-                                &ohv,
-                                &final_cts_i,
-                                &mut solver.io_ctx0,
-                                &mut solver.io_ctx1,
-                            )
-                            .unwrap();
-                            read_cts_i[j] = counter;
-                            counter = counter
-                                + arithmetic::promote_to_trivial_share(solver.io_ctx0.id, F::one());
-
-                            Rep3LookupTable::write_to_shared_lut_from_ohv(
-                                &ohv,
-                                counter,
-                                &mut final_cts_i,
-                                &mut solver.io_ctx0,
-                                &mut solver.io_ctx1,
-                            )
-                            .unwrap();
-
-                            let subtable_lookup_share =
-                                Rep3LookupTable::get_from_lut_no_a2b_conversion(
+                                let ohv = Rep3LookupTable::ohv_from_index_no_a2b_conversion(
                                     memory_address.clone(),
-                                    &materialized_subtable_luts[subtable_index],
+                                    M,
                                     &mut solver.io_ctx0,
                                     &mut solver.io_ctx1,
                                 )
                                 .unwrap();
-                            subtable_lookups[j] = subtable_lookup_share;
+
+                                let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                    &ohv,
+                                    &final_cts_i,
+                                    &mut solver.io_ctx0,
+                                    &mut solver.io_ctx1,
+                                )
+                                .unwrap();
+                                read_cts_i[j] = counter;
+                                counter = counter
+                                    + arithmetic::promote_to_trivial_share(
+                                        solver.io_ctx0.id,
+                                        F::one(),
+                                    );
+
+                                Rep3LookupTable::write_to_shared_lut_from_ohv(
+                                    &ohv,
+                                    counter,
+                                    &mut final_cts_i,
+                                    &mut solver.io_ctx0,
+                                    &mut solver.io_ctx1,
+                                )
+                                .unwrap();
+
+                                let subtable_lookup_share =
+                                    Rep3LookupTable::get_from_lut_no_a2b_conversion(
+                                        memory_address.clone(),
+                                        &materialized_subtable_luts[subtable_index],
+                                        &mut solver.io_ctx0,
+                                        &mut solver.io_ctx1,
+                                    )
+                                    .unwrap();
+                                subtable_lookups[j] = subtable_lookup_share;
+                            }
                         }
                     }
 
@@ -326,24 +331,27 @@ where
             )
         })?;
 
-        let mut lookup_flag_bitvectors: Vec<Vec<u64>> = vec![vec![0u64; num_reads]; Lookups::COUNT];
+        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
+            vec![vec![0u64; num_reads]; Instructions::COUNT];
 
-        for (j, lookup) in lookups.iter().enumerate() {
-            lookup_flag_bitvectors[Lookups::enum_index(lookup)][j] = 1;
+        for (j, op) in ops.iter().enumerate() {
+            if let Some(op) = op {
+                instruction_flag_bitvectors[Instructions::enum_index(op)][j] = 1;
+            }
         }
 
-        let lookup_flag_polys: Vec<_> = cfg_iter!(lookup_flag_bitvectors)
+        let instruction_flag_polys: Vec<_> = cfg_iter!(instruction_flag_bitvectors)
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let lookup_outputs = Self::compute_lookup_outputs(&lookups, num_reads, &mut self.io_ctx0);
+        let lookup_outputs = Self::compute_lookup_outputs(&ops, num_reads, &mut self.io_ctx0);
 
         Ok(Rep3InstructionPolynomials {
             dim: dims,
             read_cts,
             final_cts,
-            instruction_flag_polys: lookup_flag_polys,
-            instruction_flag_bitvectors: lookup_flag_bitvectors,
+            instruction_flag_polys,
+            instruction_flag_bitvectors,
             E_polys: e_polys,
             lookup_outputs,
         })
@@ -352,15 +360,21 @@ where
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
     fn subtable_lookup_indices(
         &mut self,
-        lookups: &mut [Lookups],
+        lookups: &mut [Option<Instructions>],
     ) -> eyre::Result<Vec<Vec<Rep3BigUintShare<F>>>> {
-        Lookups::operands_to_binary(lookups, &mut self.io_ctx0)?;
+        Instructions::operands_to_binary(lookups, &mut self.io_ctx0)?;
 
         let num_chunks = C;
         let log_M = M.log_2();
 
         let indices: Vec<_> = cfg_into_iter!(lookups)
-            .map(|lookup| lookup.to_indices(C, log_M))
+            .map(|lookup| {
+                if let Some(lookup) = lookup {
+                    lookup.to_indices(C, log_M)
+                } else {
+                    vec![Rep3BigUintShare::zero_share(); C]
+                }
+            })
             .collect();
 
         let lookup_indices = (0..num_chunks)
@@ -376,20 +390,28 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::compute_lookup_outputs")]
     fn compute_lookup_outputs(
-        lookups: &[Lookups],
+        ops: &[Option<Instructions>],
         num_reads: usize,
         io_ctx: &mut IoContext<Network>,
     ) -> Rep3DensePolynomial<F> {
-        let mut outputs = lookups
+        let mut outputs = ops
             .iter()
-            .map(|lookup| lookup.output(io_ctx))
+            .map(|op| {
+                if let Some(op) = op {
+                    op.output(io_ctx)
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                }
+            })
             .collect_vec();
         outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
         Rep3DensePolynomial::new(outputs)
     }
+}
 
-    pub fn combine_polynomials(
-        polynomials_shares: Vec<Rep3InstructionPolynomials<F>>,
+impl<F: JoltField> Rep3InstructionPolynomials<F> {
+    pub fn combine_polynomials<CS: CommitmentScheme<Field = F>>(
+        polynomials_shares: Vec<Self>,
     ) -> InstructionPolynomials<F, CS> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 

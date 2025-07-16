@@ -1,18 +1,20 @@
 use ark_std::log2;
 use jolt_core::jolt::instruction::SubtableIndices;
 use jolt_core::poly::field::JoltField;
-use jolt_core::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::rngs::StdRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
-use super::utils::concatenate_lookups_rep3;
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-use crate::jolt::instruction::utils::rep3_chunk_and_concatenate_operands;
 use crate::jolt::subtable::{xor::XorSubtable, LassoSubtable};
+use crate::utils::instruction_utils::{
+    chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
+    rep3_chunk_and_concatenate_operands,
+};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct XORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> XORInstruction<F> {
@@ -78,8 +80,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, &mut Rep3Operand<F>) {
-        (&mut self.0, &mut self.1)
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, Some(&mut self.1))
     }
 
     fn combine_lookups(

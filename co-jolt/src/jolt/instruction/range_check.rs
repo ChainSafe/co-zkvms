@@ -7,6 +7,7 @@ use mpc_core::protocols::rep3::{
     Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 use rand::{rngs::StdRng, Rng};
+use serde::{Deserialize, Serialize};
 use std::iter::Sum;
 use std::{borrow::Borrow, iter};
 
@@ -19,16 +20,15 @@ use crate::jolt::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct RangeLookup<const BOUND: u64, F: JoltField>(Rep3Operand<F>, Rep3Operand<F>); // second operand is dummy for compatibility with other instructions
-
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RangeLookup<const BOUND: u64, F: JoltField>(Rep3Operand<F>);
 impl<const BOUND: u64, F: JoltField> RangeLookup<BOUND, F> {
     pub fn public(value: u64) -> Self {
-        Self(Rep3Operand::Public(value), Rep3Operand::Public(0))
+        Self(Rep3Operand::Public(value))
     }
 
     pub fn shared(value: Rep3PrimeFieldShare<F>) -> Self {
-        Self(Rep3Operand::Arithmetic(value), Rep3Operand::Public(0))
+        Self(Rep3Operand::Arithmetic(value))
     }
 }
 
@@ -38,10 +38,7 @@ impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(
-            Rep3Operand::Public(rng.gen_range::<u64, _>(0..BOUND)),
-            Rep3Operand::Public(0),
-        )
+        Self(Rep3Operand::Public(rng.gen_range::<u64, _>(0..BOUND)))
     }
 
     fn combine_lookups(&self, operands: &[F], _: usize, M: usize) -> F {
@@ -114,8 +111,8 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
         (self.0.clone(), Rep3Operand::Public(0))
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, &mut Rep3Operand<F>) {
-        (&mut self.0, &mut self.1)
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, None)
     }
 
     fn combine_lookups(
@@ -168,12 +165,6 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
             })
             .collect_vec();
         chunked_index
-    }
-}
-
-impl<const BOUND: u64, F: JoltField> Default for RangeLookup<BOUND, F> {
-    fn default() -> Self {
-        Self(Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 }
 

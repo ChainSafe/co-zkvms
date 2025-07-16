@@ -1,5 +1,6 @@
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
+use paste::paste;
 use std::any::TypeId;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
@@ -59,36 +60,36 @@ pub trait JoltSubtableSet<F: JoltField>:
 //     }
 // }
 
-use paste::paste;
-macro_rules! subtable_enum_test {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        paste! {
-            #[allow(non_camel_case_types)]
-            #[repr(u8)]
-            #[enum_dispatch(LassoSubtable<F>)]
-            #[derive(Debug, EnumCount, EnumIter)]
-            pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
+#[macro_export]
+macro_rules! subtable_enum {
+  ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+      paste! {
+          #[allow(non_camel_case_types)]
+          #[repr(u8)]
+          #[enum_dispatch(LassoSubtable<F>)]
+          #[derive(Debug, EnumCount, EnumIter)]
+          pub enum $enum_name<F: JoltField> { $([<$alias>]($struct)),+ }
+      }
+      impl<F: JoltField> From<SubtableId> for $enum_name<F> {
+        fn from(subtable_id: SubtableId) -> Self {
+          $(
+            if subtable_id == TypeId::of::<$struct>() {
+              $enum_name::from(<$struct>::new())
+            } else
+          )+
+          { panic!("Unexpected subtable id {:?}", subtable_id) }
         }
-        impl<F: JoltField> From<SubtableId> for $enum_name<F> {
-          fn from(subtable_id: SubtableId) -> Self {
-            $(
-              if subtable_id == TypeId::of::<$struct>() {
-                $enum_name::from(<$struct>::new())
-              } else
-            )+
-            { panic!("Unexpected subtable id {:?}", subtable_id) }
-          }
-        }
+      }
 
-        impl<F: JoltField> From<$enum_name<F>> for usize {
-            fn from(subtable: $enum_name<F>) -> usize {
-                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
-                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
-                byte as usize
-            }
-        }
-        impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
-    };
+      impl<F: JoltField> From<$enum_name<F>> for usize {
+          fn from(subtable: $enum_name<F>) -> usize {
+              // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+              let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
+              byte as usize
+          }
+      }
+      impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
+  };
 }
 
 pub mod range_check;
@@ -110,13 +111,13 @@ pub mod truncate_overflow;
 pub mod xor;
 pub mod zero_lsb;
 
-subtable_enum_test!(
+subtable_enum!(
   TestSubtables,
   Full: range_check::FullLimbSubtable<F>,
   Bound: range_check::BoundSubtable<320,F>
 );
 
-subtable_enum_test!(
+subtable_enum!(
   TestInstructionSubtables,
   XOR: xor::XorSubtable<F>
 );

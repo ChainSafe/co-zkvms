@@ -1,12 +1,17 @@
 use rand::prelude::StdRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
-use super::{JoltInstruction, Rep3Operand, SubtableIndices};
+use mpc_core::protocols::rep3::{
+    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+};
+
+use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SHInstruction<F: JoltField>(pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for SHInstruction<F> {
@@ -63,6 +68,51 @@ impl<F: JoltField> JoltInstruction<F> for SHInstruction<F> {
         Self((rng.next_u32() as u64).into())
     }
 }
+
+impl<F: JoltField> Rep3JoltInstruction<F> for SHInstruction<F> {
+    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+        (self.0.clone(), Rep3Operand::Public(0))
+    }
+
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, None)
+    }
+
+    fn combine_lookups(
+        &self,
+        vals: &[Rep3PrimeFieldShare<F>],
+        C: usize,
+        M: usize,
+    ) -> Rep3PrimeFieldShare<F> {
+        unimplemented!()
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
+    }
+
+    fn to_indices(
+        &self,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
+        unimplemented!()
+    }
+
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+        match &self.0 {
+            Rep3Operand::Binary(x) => {
+                rep3::conversion::b2a_selector(
+                    &rep3::binary::and_with_public(x, &0xffff_u64.into()),
+                    io_ctx,
+                )
+                .unwrap()
+            }
+            _ => panic!("SHInstruction::output called with non-binary operands"),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {

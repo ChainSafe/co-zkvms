@@ -1,8 +1,7 @@
-mod utils;
-
 use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
 use jolt_core::poly::field::JoltField;
+use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{
     self,
@@ -11,9 +10,10 @@ use mpc_core::protocols::rep3::{
 };
 use paste::paste;
 use rand::rngs::StdRng;
-use std::fmt::Debug;
+use serde::{Deserialize, Serialize};
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount, EnumIter};
+use std::fmt::Debug;
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
 
@@ -69,7 +69,7 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>);
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, &mut Rep3Operand<F>);
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups(
@@ -88,7 +88,7 @@ pub trait Rep3JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clo
 }
 
 pub trait JoltInstructionSet<F: JoltField>:
-    JoltInstruction<F> + IntoEnumIterator + EnumCount + Send + Sync
+    JoltInstruction<F> + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -106,57 +106,58 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
 
     #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::operands_to_binary")]
     fn operands_to_binary<N: Rep3Network>(
-        lookups: &mut [Self],
+        ops: &mut [Option<Self>],
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
         let id = io_ctx.network.get_id();
-        ark_std::cfg_iter_mut!(lookups).for_each(|lookup| {
-            let (op1, op2) = lookup.operands_mut();
-            match (&op1, &op2) {
-                (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
-                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*x).into(),
-                    ));
-                    *op2 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*y).into(),
-                    ));
+        ark_std::cfg_iter_mut!(ops)
+            .filter_map(|op| op.as_mut())
+            .for_each(|op| {
+                let (op1, op2) = op.operands_mut();
+                match (&op1, &op2) {
+                    (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {
+                        *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                            id,
+                            &(*x).into(),
+                        ));
+                        *op2.unwrap() = Rep3Operand::Binary(
+                            rep3::binary::promote_to_trivial_share(id, &(*y).into()),
+                        );
+                    }
+                    (Rep3Operand::Public(x), _) => {
+                        *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                            id,
+                            &(*x).into(),
+                        ));
+                    }
+                    (_, Some(Rep3Operand::Public(y))) => {
+                        *op2.unwrap() = Rep3Operand::Binary(
+                            rep3::binary::promote_to_trivial_share(id, &(*y).into()),
+                        );
+                    }
+                    _ => {}
                 }
-                (Rep3Operand::Public(x), _) => {
-                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*x).into(),
-                    ));
-                }
-                (_, Rep3Operand::Public(y)) => {
-                    *op2 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*y).into(),
-                    ));
-                }
-                _ => {}
-            }
-        });
+            });
 
         let (inputs, field_operands): (
             Vec<Vec<Rep3PrimeFieldShare<F>>>,
             Vec<Vec<&mut Rep3Operand<F>>>,
-        ) = ark_std::cfg_iter_mut!(lookups)
-            .map(|lookup| {
-                let (op1, op2) = lookup.operands_mut();
+        ) = ark_std::cfg_iter_mut!(ops)
+            .filter_map(|op| op.as_mut())
+            .map(|op| {
+                let (op1, op2) = op.operands_mut();
                 match (&op1, &op2) {
-                    (Rep3Operand::Arithmetic(x), Rep3Operand::Arithmetic(y)) => {
+                    (Rep3Operand::Arithmetic(x), Some(Rep3Operand::Arithmetic(y))) => {
                         let res = vec![*x, *y];
-                        (res, vec![op1, op2])
+                        (res, vec![op1, op2.unwrap()])
                     }
                     (Rep3Operand::Arithmetic(x), _) => {
                         let res = vec![*x];
                         (res, vec![op1])
                     }
-                    (_, Rep3Operand::Arithmetic(y)) => {
+                    (_, Some(Rep3Operand::Arithmetic(y))) => {
                         let res = vec![*y];
-                        (res, vec![op2])
+                        (res, vec![op2.unwrap()])
                     }
                     _ => (vec![], vec![]),
                 }
@@ -177,7 +178,8 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "u64", into = "u64")]
 pub enum Rep3Operand<F: JoltField> {
     Arithmetic(Rep3PrimeFieldShare<F>),
     Binary(Rep3BigUintShare<F>),
@@ -208,12 +210,22 @@ impl<F: JoltField> From<u64> for Rep3Operand<F> {
     }
 }
 
+impl<F: JoltField> Into<u64> for Rep3Operand<F> {
+    fn into(self) -> u64 {
+        match self {
+            Rep3Operand::Public(x) => x,
+            _ => panic!("Cannot convert Rep3Operand to u64"),
+        }
+    }
+}
+
+#[macro_export]
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         paste! {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
-            #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount)]
+            #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount, Serialize, Deserialize)]
             #[enum_dispatch(JoltInstruction<F>, Rep3JoltInstruction<F>)]
             pub enum $enum_name<F: JoltField> {
                 $([<$alias>]($struct)),+
@@ -259,7 +271,23 @@ instruction_set!(
   Range320: range_check::RangeLookup<320, F>
 );
 
+impl<F: JoltField> TryFrom<&ELFInstruction> for TestLookups<F> {
+    type Error = &'static str;
+
+    fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}
+
 instruction_set!(
   TestInstructions,
   XOR: xor::XORInstruction<F>
 );
+
+impl<F: JoltField> TryFrom<&ELFInstruction> for TestInstructions<F> {
+    type Error = &'static str;
+
+    fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}

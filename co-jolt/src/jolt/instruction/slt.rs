@@ -1,17 +1,25 @@
 use crate::poly::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
-use super::{JoltInstruction, Rep3Operand, SubtableIndices};
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
+};
+
+use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
         lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
     },
-    utils::instruction_utils::chunk_and_concatenate_operands,
+    utils::instruction_utils::{
+        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
+    },
 };
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SLTInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
@@ -50,11 +58,7 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
         C + 1
     }
 
-    fn subtables(
-        &self,
-        C: usize,
-        _: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
@@ -76,9 +80,7 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
 
     fn lookup_entry(&self) -> F {
         match (&self.0, &self.1) {
-            (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
-                ((*x as i32) < (*y as i32)).into()
-            }
+            (Rep3Operand::Public(x), Rep3Operand::Public(y)) => ((*x as i32) < (*y as i32)).into(),
             _ => panic!("SLTInstruction::lookup_entry called with non-public operands"),
         }
     }
@@ -90,6 +92,52 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
         )
     }
 }
+
+impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
+    fn operands(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+        (self.0.clone(), self.1.clone())
+    }
+
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, Some(&mut self.1))
+    }
+
+    fn combine_lookups(
+        &self,
+        vals: &[Rep3PrimeFieldShare<F>],
+        C: usize,
+        M: usize,
+    ) -> Rep3PrimeFieldShare<F> {
+        unimplemented!()
+    }
+
+    fn g_poly_degree(&self, _: usize) -> usize {
+        1
+    }
+
+    fn to_indices(
+        &self,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
+        match (&self.0, &self.1) {
+            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
+            }
+            _ => panic!("SLTInstruction::to_indices called with non-binary operands"),
+        }
+    }
+
+    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> Rep3PrimeFieldShare<F> {
+        match (&self.0, &self.1) {
+            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+                unimplemented!()
+            }
+            _ => panic!("SLTInstruction::output called with non-binary operands"),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {
