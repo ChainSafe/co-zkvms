@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::prelude::StdRng;
 use std::any::TypeId;

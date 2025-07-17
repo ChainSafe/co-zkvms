@@ -57,6 +57,17 @@ pub fn combine_field_elements<F: PrimeField>(
         .collect::<Vec<_>>()
 }
 
+/// Reconstructs a vector of field elements from its arithmetic replicated shares.
+/// # Panics
+/// Panics if the provided `Vec` sizes do not match.
+pub fn combine_field_element_vec<F: PrimeField>(
+    shares: Vec<Vec<F>>,
+) -> Vec<F> {
+   let [s0, s1, s2]: [Vec<F>; 3] = shares.try_into().unwrap();
+   combine_field_elements(&s0, &s1, &s2)
+}
+
+
 pub fn combine_field_element<F: PrimeField>(
     share1: &F,
     share2: &F,

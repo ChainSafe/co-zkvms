@@ -4,15 +4,22 @@ pub mod rv32i_vm;
 
 use std::marker::PhantomData;
 
-use serde::{Deserialize, Serialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use co_lasso::{
+    memory_checking::StructuredPolynomialData,
+    poly::commitment::commitment_scheme::CommitmentScheme, utils::transcript::Transcript,
+};
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{MemoryOp, NUM_CIRCUIT_FLAGS},
 };
+use serde::{Deserialize, Serialize};
 
 use self::bytecode::BytecodeRow;
-use crate::jolt::{instruction::JoltInstructionSet};
-use crate::poly::field::JoltField;
+use crate::jolt::instruction::JoltInstructionSet;
+use jolt_core::{
+    field::JoltField, jolt::vm::JoltStuff, poly::multilinear_polynomial::MultilinearPolynomial,
+};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
@@ -45,3 +52,8 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
         trace.resize(padded_length, Self::no_op());
     }
 }
+
+pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
+
+pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    JoltStuff<PCS::Commitment>;

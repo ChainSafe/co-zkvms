@@ -1,6 +1,6 @@
 pub use jolt_core::utils::instruction_utils::*;
 
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
 use std::ops::Shr;

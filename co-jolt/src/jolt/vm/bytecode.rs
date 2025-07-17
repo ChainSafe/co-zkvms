@@ -2,21 +2,25 @@ use crate::jolt::instruction::JoltInstructionSet;
 use crate::utils::transcript::Transcript;
 // use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 // use crate::poly::eq_poly::EqPolynomial;
-// use crate::poly::field::JoltField;
+// use jolt_core::field::JoltField;
 // use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_lasso::poly::commitment::CommitmentScheme;
-use co_lasso::poly::MultilinearPolynomial;
+use co_lasso::poly::multilinear_polynomial::MultilinearPolynomial;
+
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_common::rv_trace::ELFInstruction;
+use jolt_core::lasso::memory_checking::Initializable;
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-// use std::{collections::HashMap, marker::PhantomData};    
+// use std::{collections::HashMap, marker::PhantomData};
 
-use co_lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, VerifierComputedOpening};
+use co_lasso::memory_checking::{
+    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData, VerifierComputedOpening
+};
 
 // use crate::{
 //     poly::{
@@ -49,21 +53,51 @@ pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
     v_init_final: VerifierComputedOpening<[T; 6]>,
 }
 
-
 pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<MultilinearPolynomial<F>>;
 
 pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
 
-pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-    BytecodeStuff<PCS::Commitment>;
+// impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+//     Initializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
+// {
+// }
 
-pub type BytecodeProof<F, C> = MemoryCheckingProof<
-    F,
-    C,
-    BytecodePolynomials<F, C>,
-    BytecodeReadWriteOpenings<F>,
-    BytecodeInitFinalOpenings<F>,
->;
+impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
+    for BytecodeStuff<T>
+{
+    fn read_write_values(&self) -> Vec<&T> {
+        let mut values = vec![&self.a_read_write];
+        values.extend(self.v_read_write.iter());
+        values.push(&self.t_read);
+        values
+    }
+
+    fn init_final_values(&self) -> Vec<&T> {
+        vec![&self.t_final]
+    }
+
+    fn read_write_values_mut(&mut self) -> Vec<&mut T> {
+        let mut values = vec![&mut self.a_read_write];
+        values.extend(self.v_read_write.iter_mut());
+        values.push(&mut self.t_read);
+        values
+    }
+
+    fn init_final_values_mut(&mut self) -> Vec<&mut T> {
+        vec![&mut self.t_final]
+    }
+}
+
+// pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+//     BytecodeStuff<PCS::Commitment>;
+
+// pub type BytecodeProof<F, C> = MemoryCheckingProof<
+//     F,
+//     C,
+//     BytecodePolynomials<F, C>,
+//     BytecodeReadWriteOpenings<F>,
+//     BytecodeInitFinalOpenings<F>,
+// >;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {

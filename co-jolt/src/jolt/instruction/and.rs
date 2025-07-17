@@ -12,7 +12,7 @@ use mpc_core::protocols::rep3::{
 use super::{JoltInstruction, SubtableIndices};
 use crate::{jolt::instruction::{Rep3JoltInstruction, Rep3Operand}, utils::instruction_utils::concatenate_lookups_rep3};
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, rep3_chunk_and_concatenate_operands,
 };

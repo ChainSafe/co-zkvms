@@ -3,19 +3,19 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
 
-use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{
     jolt::{
         instruction::SubtableIndices,
         subtable::{eq::EqSubtable, LassoSubtable},
     },
-    poly::field::JoltField,
     utils::instruction_utils::{
         chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
     },

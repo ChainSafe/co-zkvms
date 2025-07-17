@@ -213,7 +213,7 @@ impl<F: JoltField> BatchedGrandProductCircuit<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductProof<PCS, ProofTranscript>
+pub struct BatchedGrandProductArgument<PCS, ProofTranscript>
 where
     PCS: CommitmentScheme<ProofTranscript>,
     ProofTranscript: Transcript,
@@ -222,7 +222,7 @@ where
 }
 
 impl<F: JoltField, ProofTranscript: Transcript, PCS>
-    BatchedGrandProductProof<PCS, ProofTranscript>
+    BatchedGrandProductArgument<PCS, ProofTranscript>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
 {
@@ -305,7 +305,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS>
         }
 
         (
-            BatchedGrandProductProof {
+            BatchedGrandProductArgument {
                 proof: proof_layers,
             },
             rand,
@@ -466,7 +466,7 @@ mod grand_product_circuit_tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let circuits_vec = vec![factorial_circuit];
         let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
-        let (proof, _) = BatchedGrandProductProof::prove(batch, &mut transcript);
+        let (proof, _) = BatchedGrandProductArgument::prove(batch, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         proof.verify(&expected_eval, &mut transcript);
@@ -488,7 +488,7 @@ mod grand_product_circuit_tests {
         let batch = BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) = BatchedGrandProductProof::<Fr>::prove(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
@@ -540,7 +540,7 @@ mod grand_product_circuit_tests {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) = BatchedGrandProductProof::<Fr>::prove(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read: Fr = Fr::from(10) * Fr::from(20) * Fr::from(40);
         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);

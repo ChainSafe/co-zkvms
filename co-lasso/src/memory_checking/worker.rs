@@ -17,10 +17,7 @@ use crate::{
     field::JoltField,
     poly::{opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial},
     subprotocols::{
-        commitment::DistributedCommitmentScheme,
-        grand_product::{
-            BatchedGrandProductProver, BatchedRep3GrandProductCircuit, Rep3GrandProductCircuit,
-        },
+        commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProductWorker,
     },
     utils, Rep3Polynomials as _,
 };
@@ -35,8 +32,12 @@ where
     PCS: DistributedCommitmentScheme<F, ProofTranscript>,
     Network: Rep3NetworkWorker,
 {
-    // type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
-    // type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
+    type ReadWriteGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
+        + Send
+        + 'static;
+    type InitFinalGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
+        + Send
+        + 'static;
 
     type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>>
         + crate::Rep3Polynomials
@@ -68,16 +69,22 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_memory_checking")]
     fn prove_memory_checking(
-        _pcs_setup: &PCS::Setup,
+        pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltPolynomials<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        let (r_read_write, r_init_final, multiset_hashes) =
-            Self::prove_grand_products(preprocessing, polynomials, io_ctx)
-                .context("while proving grand products")?;
+        let (r_read_write, r_init_final, multiset_hashes) = Self::prove_grand_products(
+            preprocessing,
+            polynomials,
+            jolt_polynomials,
+            opening_accumulator,
+            io_ctx,
+            pcs_setup,
+        )
+        .context("while proving grand products")?;
 
         let read_write_batch_size =
             multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
@@ -105,18 +112,27 @@ where
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
+        pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, MultisetHashes<F>)> {
         let (gamma, tau) = io_ctx.network.receive_request()?;
         io_ctx.network.send_response(polynomials.num_lookups())?;
 
-        let (read_write_leaves, init_final_leaves) =
-            Self::compute_leaves(preprocessing, polynomials, &gamma, &tau, io_ctx);
+        let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
+            preprocessing,
+            polynomials,
+            jolt_polynomials,
+            &gamma,
+            &tau,
+            io_ctx,
+        )?;
 
-        let (read_write_circuit, read_write_hashes) =
+        let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves, io_ctx)
                 .context("while computing read-write grand product")?;
-        let (init_final_circuit, init_final_hashes) =
+        let (mut init_final_circuit, init_final_hashes) =
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves, io_ctx)
                 .context("while computing init-final grand product")?;
 
@@ -130,12 +146,16 @@ where
             .network
             .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
 
-        let r_read_write =
-            BatchedGrandProductProver::prove_worker(read_write_circuit, &mut io_ctx.network)
-                .context("while proving read-write grand product")?;
-        let r_init_final =
-            BatchedGrandProductProver::prove_worker(init_final_circuit, &mut io_ctx.network)
-                .context("while proving init-final grand product")?;
+        let r_read_write = read_write_circuit.prove_grand_product_worker(
+            Some(opening_accumulator),
+            Some(pcs_setup),
+            io_ctx,
+        )?;
+        let r_init_final = init_final_circuit.prove_grand_product_worker(
+            Some(opening_accumulator),
+            Some(pcs_setup),
+            io_ctx,
+        )?;
 
         Ok((r_read_write, r_init_final, multiset_hashes))
     }
@@ -179,57 +199,66 @@ where
         Ok(())
     }
 
+    /// Computes the MLE of the leaves of the read, write, init, and final grand product circuits,
+    /// one of each type per memory.
+    /// Returns: (interleaved read/write leaves, interleaved init/final leaves)
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
+        exogenous_polynomials: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
         io_ctx: &mut IoContext<Network>,
-    ) -> (Vec<Rep3DensePolynomial<F>>, Vec<Rep3DensePolynomial<F>>);
+    ) -> Result<(
+        <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
+        <Self::InitFinalGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
+    )>;
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::read_write_grand_product")]
+    /// Constructs a batched grand product circuit for the read and write multisets associated
+    /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Self::Rep3Polynomials,
-        read_write_leaves: Vec<Rep3DensePolynomial<F>>,
+        read_write_leaves: <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
         io_ctx: &mut IoContext<Network>,
-    ) -> Result<(BatchedRep3GrandProductCircuit<F>, Vec<F>)> {
-        let read_write_circuits: Vec<Rep3GrandProductCircuit<F>> =
-            utils::fork_map(read_write_leaves, io_ctx, |leaves, io_ctx| {
-                Rep3GrandProductCircuit::new(&leaves, io_ctx).unwrap()
-            })?;
-
-        let read_write_hashes: Vec<F> = cfg_iter!(read_write_circuits)
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        Ok((
-            BatchedRep3GrandProductCircuit::new_batch(read_write_circuits),
-            read_write_hashes,
-        ))
+    ) -> Result<(Self::ReadWriteGrandProduct, Vec<F>)> {
+        let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves, io_ctx)?;
+        let claims = batched_circuit.claimed_outputs();
+        Ok((batched_circuit, claims))
     }
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::init_final_grand_product")]
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Self::Rep3Polynomials,
-        init_final_leaves: Vec<Rep3DensePolynomial<F>>,
+        init_final_leaves: <Self::InitFinalGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
         io_ctx: &mut IoContext<Network>,
-    ) -> Result<(BatchedRep3GrandProductCircuit<F>, Vec<F>)> {
-        let init_final_circuits: Vec<Rep3GrandProductCircuit<F>> =
-            utils::fork_map(init_final_leaves, io_ctx, |leaves, io_ctx| {
-                Rep3GrandProductCircuit::new(&leaves, io_ctx).unwrap()
-            })?;
-
-        let init_final_hashes: Vec<F> = cfg_iter!(init_final_circuits)
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        Ok((
-            BatchedRep3GrandProductCircuit::new_batch(init_final_circuits),
-            init_final_hashes,
-        ))
+    ) -> Result<(Self::InitFinalGrandProduct, Vec<F>)> {
+        let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves, io_ctx)?;
+        let claims = batched_circuit.claimed_outputs();
+        Ok((batched_circuit, claims))
     }
 }

@@ -2,6 +2,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{
     self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
 };
@@ -14,7 +15,6 @@ use crate::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
         lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
     },
-    poly::field::JoltField,
     utils::instruction_utils::{
         chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
     },

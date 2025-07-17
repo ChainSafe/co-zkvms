@@ -51,3 +51,9 @@ pub fn reshare_to_rep3<F: PrimeField, N: Rep3Network>(
     let prev_share: F = io_ctx.network.reshare(additive)?;
     Ok(Rep3PrimeFieldShare::new(additive, prev_share))
 }
+
+/// Convenience method for \[a\] * (\[b\] * c)
+pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
+    a * mul_public(b, c)
+}
+

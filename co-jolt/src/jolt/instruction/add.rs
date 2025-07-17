@@ -10,7 +10,7 @@ use crate::jolt::instruction::Rep3JoltInstruction;
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
 };

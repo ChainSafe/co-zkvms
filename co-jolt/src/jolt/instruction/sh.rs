@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

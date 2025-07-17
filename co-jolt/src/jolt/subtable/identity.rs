@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;

@@ -1,10 +1,12 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
-use jolt_core::lasso::memory_checking::{ExogenousOpenings, Initializable};
 pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::{
+    lasso::memory_checking::{ExogenousOpenings, Initializable, MemoryCheckingProof},
+    subprotocols::grand_product::BatchedGrandProductProof,
+};
 use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
 
 use crate::{
@@ -12,34 +14,12 @@ use crate::{
     poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::{
         commitment::DistributedCommitmentScheme,
-        grand_product::{BatchedGrandProductProof, BatchedGrandProductProver},
+        grand_product::{BatchedGrandProductArgument, Rep3BatchedGrandProduct},
     },
     utils::{math::Math, transcript::Transcript},
 };
 
 pub mod worker;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings, ProofTranscript>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
-    OtherOpenings: ExogenousOpenings<F> + Sync,
-    ProofTranscript: Transcript,
-{
-    /// Read/write/init/final multiset hashes for each memory
-    pub multiset_hashes: MultisetHashes<F>,
-    /// The read and write grand products for every memory has the same size,
-    /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
-    /// The init and final grand products for every memory has the same size,
-    /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
-    /// The openings associated with the grand products.
-    pub openings: Openings,
-    pub exogenous_openings: OtherOpenings,
-}
 
 pub trait Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>:
     MemoryCheckingProver<F, PCS, ProofTranscript>
@@ -51,23 +31,24 @@ where
     Network: Rep3NetworkCoordinator,
     Self::Openings: Initializable<F, Self::Preprocessing>,
 {
+    type Rep3ReadWriteGrandProduct: Rep3BatchedGrandProduct<F, PCS, ProofTranscript, Network>
+        + Send
+        + 'static;
+    type Rep3InitFinalGrandProduct: Rep3BatchedGrandProduct<F, PCS, ProofTranscript, Network>
+        + Send
+        + 'static;
+
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
     fn prove_memory_checking(
-        memory_size: usize,
         preprocessing: &Self::Preprocessing,
         network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
-        let (
-            read_write_grand_product,
-            init_final_grand_product,
-            multiset_hashes,
-            r_read_write,
-            r_init_final,
-        ) = Self::prove_grand_products_rep3(memory_size, preprocessing, network, transcript)
-            .context("while proving grand products")?;
+        let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
+            Self::prove_grand_products_rep3(preprocessing, network, transcript)
+                .context("while proving grand products")?;
 
         let read_write_batch_size =
             multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
@@ -90,7 +71,6 @@ where
     }
 
     fn prove_grand_products_rep3(
-        M: usize,
         preprocessing: &Self::Preprocessing,
         network: &mut Network,
         transcript: &mut ProofTranscript,
@@ -98,8 +78,6 @@ where
         BatchedGrandProductProof<PCS, ProofTranscript>,
         BatchedGrandProductProof<PCS, ProofTranscript>,
         MultisetHashes<F>,
-        Vec<F>,
-        Vec<F>,
     )> {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar();
@@ -141,28 +119,24 @@ where
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 
-        let num_layers_read_write = (num_lookups).log_2() + 1; // +1 for the flag layer
-        let num_layers_init_final = M.log_2();
+        let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
+        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing);
 
-        let (read_write_grand_product, r_read_write) = BatchedGrandProductProver::prove(
+        let read_write_grand_product = read_write_circuit.cooridinate_prove_grand_product(
             read_write_hashes,
-            num_layers_read_write,
-            network,
             transcript,
+            network,
         )?;
-        let (init_final_grand_product, r_init_final) = BatchedGrandProductProver::prove(
+        let init_final_grand_product = init_final_circuit.cooridinate_prove_grand_product(
             init_final_hashes,
-            num_layers_init_final,
-            network,
             transcript,
+            network,
         )?;
 
         Ok((
             read_write_grand_product,
             init_final_grand_product,
             multiset_hashes,
-            r_read_write,
-            r_init_final,
         ))
     }
 
@@ -200,6 +174,15 @@ where
 
         Ok((openings, exogenous_openings))
     }
+
+    fn read_write_grand_product_rep3(
+        _preprocessing: &Self::Preprocessing,
+        num_lookups: usize,
+    ) -> Self::Rep3ReadWriteGrandProduct;
+
+    fn init_final_grand_product_rep3(
+        _preprocessing: &Self::Preprocessing,
+    ) -> Self::Rep3InitFinalGrandProduct;
 }
 
 /// This type, used within a `StructuredPolynomialData` struct, indicates that the

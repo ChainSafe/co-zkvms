@@ -1,7 +1,7 @@
 use ark_std::log2;
 use eyre::Context;
 use jolt_core::jolt::instruction::SubtableIndices;
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::rngs::StdRng;

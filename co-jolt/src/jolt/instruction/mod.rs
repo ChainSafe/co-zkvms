@@ -1,6 +1,6 @@
 use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{

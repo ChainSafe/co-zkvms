@@ -12,8 +12,8 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{
     identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable,
 };
-use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LHInstruction<F: JoltField>(pub Rep3Operand<F>);
@@ -114,10 +114,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for LHInstruction<F> {
         unimplemented!()
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         unimplemented!()
     }
 }

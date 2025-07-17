@@ -18,8 +18,8 @@ use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::rv32i_vm::RV32I;
-use crate::poly::field::JoltField;
 use jolt_common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RV32IM};
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
     type Error = &'static str;

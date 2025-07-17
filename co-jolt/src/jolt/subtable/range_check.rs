@@ -1,6 +1,6 @@
-use std::marker::PhantomData;
 use itertools::Itertools;
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
+use std::marker::PhantomData;
 
 use super::LassoSubtable;
 

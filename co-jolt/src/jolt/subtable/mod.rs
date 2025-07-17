@@ -1,5 +1,5 @@
 use enum_dispatch::enum_dispatch;
-use jolt_core::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use paste::paste;
 use std::any::TypeId;
 use std::fmt::Debug;

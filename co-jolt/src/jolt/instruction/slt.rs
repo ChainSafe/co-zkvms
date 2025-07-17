@@ -1,5 +1,6 @@
-use crate::{poly::field::JoltField, utils::instruction_utils::slice_values_rep3};
+use crate::utils::instruction_utils::slice_values_rep3;
 use eyre::Context;
+use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

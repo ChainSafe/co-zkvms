@@ -8,8 +8,8 @@ use std::{
     process::Command,
 };
 
-use rayon::prelude::*;
 use itertools::Itertools;
+use rayon::prelude::*;
 
 use jolt_common::{
     self as common,
@@ -24,8 +24,8 @@ use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
 
 // use self::analyze::ProgramSummary;
 use jolt_core::{
+    field::JoltField,
     host::toolchain::{install_no_std_toolchain, install_toolchain},
-    poly::field::JoltField,
 };
 
 // pub mod analyze;

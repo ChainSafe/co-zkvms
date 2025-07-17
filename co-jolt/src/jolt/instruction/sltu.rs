@@ -1,13 +1,15 @@
-use crate::{poly::field::JoltField, utils::instruction_utils::slice_values_rep3};
+use crate::utils::instruction_utils::slice_values_rep3;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use jolt_core::field::JoltField;
 
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
+
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{

@@ -1,6 +1,6 @@
 use std::iter::Sum;
 
-use crate::poly::field::JoltField;
+use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
