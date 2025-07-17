@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../../../liblasso/jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../../../jolt/jolt-sdk", features = ["host"] }
 guest = { package = "fibonacci-guest", path = "./guest" }
 hex = "0.4.3"

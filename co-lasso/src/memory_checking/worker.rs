@@ -1,12 +1,21 @@
 use ark_std::cfg_iter;
 use color_eyre::eyre::Result;
 use eyre::Context;
-use jolt_core::poly::{field::JoltField, structured_poly::StructuredCommitment};
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use jolt_core::{
+    jolt::vm::JoltPolynomials,
+    lasso::memory_checking::{
+        ExogenousOpenings, Initializable, MemoryCheckingProver, MultisetHashes,
+        StructuredPolynomialData,
+    },
+    poly::dense_mlpoly::DensePolynomial,
+    utils::{math::Math, transcript::Transcript},
+};
+use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
-    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
+    field::JoltField,
+    poly::{opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial},
     subprotocols::{
         commitment::DistributedCommitmentScheme,
         grand_product::{
@@ -19,78 +28,75 @@ use crate::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub trait MemoryCheckingProverRep3Worker<F, CS, Network>
+pub trait MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    Network: Rep3Network + MpcStarNetWorker,
-    CS: DistributedCommitmentScheme<F>,
-    Self::Polynomials: StructuredCommitment<CS>,
+    ProofTranscript: Transcript,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    Network: Rep3NetworkWorker,
 {
-    type Polynomials;
-    type Rep3Polynomials: crate::Rep3Polynomials + ?Sized;
+    // type ReadWriteGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
+    // type InitFinalGrandProduct: BatchedGrandProduct<F, PCS, ProofTranscript> + Send + 'static;
+
+    type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>>
+        + crate::Rep3Polynomials
+        + ?Sized;
+    type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
+    type Commitments: StructuredPolynomialData<PCS::Commitment>;
+    type ExogenousOpenings: ExogenousOpenings<F> + Sync;
+
     type Preprocessing;
-    type ReadWriteOpenings: Rep3StructuredOpeningProof<
+
+    type MemoryCheckingProof: MemoryCheckingProver<
         F,
-        CS,
-        Self::Polynomials,
-        Rep3Polynomials = Self::Rep3Polynomials,
+        PCS,
+        ProofTranscript,
+        Preprocessing = Self::Preprocessing,
     >;
-    type InitFinalOpenings: Rep3StructuredOpeningProof<
-        F,
-        CS,
-        Self::Polynomials,
-        Rep3Polynomials = Self::Rep3Polynomials,
-    >;
+    // type ReadWriteOpenings: Rep3StructuredOpeningProof<
+    //     F,
+    //     PCS,
+    //     Self::Polynomials,
+    //     Rep3Polynomials = Self::Rep3Polynomials,
+    // >;
+    // type InitFinalOpenings: Rep3StructuredOpeningProof<
+    //     F,
+    //     PCS,
+    //     Self::Polynomials,
+    //     Rep3Polynomials = Self::Rep3Polynomials,
+    // >;
 
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_memory_checking")]
     fn prove_memory_checking(
+        _pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
-        setup: &CS::Setup,
         polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
-    ) -> Result<()> {
-        let (r_read_write, r_init_final) =
+    ) -> eyre::Result<()> {
+        let (r_read_write, r_init_final, multiset_hashes) =
             Self::prove_grand_products(preprocessing, polynomials, io_ctx)
                 .context("while proving grand products")?;
 
-        tracing::info_span!("open_read_write_polynomials")
-            .in_scope(|| {
-                Self::ReadWriteOpenings::open_rep3_worker(
-                    polynomials,
-                    &r_read_write,
-                    &mut io_ctx.network,
-                )
-            })
-            .context("while opening read-write polynomials")?;
-        tracing::info_span!("prove_read_write_openings")
-            .in_scope(|| {
-                Self::ReadWriteOpenings::prove_openings_rep3_worker(
-                    polynomials,
-                    &r_read_write,
-                    setup,
-                    &mut io_ctx.network,
-                )
-            })
-            .context("while proving read-write openings")?;
-        tracing::info_span!("open_init_final_polynomials")
-            .in_scope(|| {
-                Self::InitFinalOpenings::open_rep3_worker(
-                    polynomials,
-                    &r_init_final,
-                    &mut io_ctx.network,
-                )
-            })
-            .context("while opening init-final polynomials")?;
-        tracing::info_span!("prove_init_final_openings")
-            .in_scope(|| {
-                Self::InitFinalOpenings::prove_openings_rep3_worker(
-                    polynomials,
-                    &r_init_final,
-                    setup,
-                    &mut io_ctx.network,
-                )
-            })
-            .context("while proving init-final openings")?;
+        let read_write_batch_size =
+            multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
+        let init_final_batch_size =
+            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
+
+        let (_, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
+        let (_, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
+
+        Self::compute_openings(
+            opening_accumulator,
+            polynomials,
+            jolt_polynomials,
+            r_read_write_opening,
+            r_init_final_opening,
+            io_ctx,
+        )?;
 
         Ok(())
     }
@@ -100,7 +106,7 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
         io_ctx: &mut IoContext<Network>,
-    ) -> Result<(Vec<F>, Vec<F>)> {
+    ) -> Result<(Vec<F>, Vec<F>, MultisetHashes<F>)> {
         let (gamma, tau) = io_ctx.network.receive_request()?;
         io_ctx.network.send_response(polynomials.num_lookups())?;
 
@@ -114,6 +120,12 @@ where
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves, io_ctx)
                 .context("while computing init-final grand product")?;
 
+        let multiset_hashes = Self::MemoryCheckingProof::uninterleave_hashes(
+            preprocessing,
+            read_write_hashes.clone(),
+            init_final_hashes.clone(),
+        );
+
         io_ctx
             .network
             .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
@@ -125,7 +137,46 @@ where
             BatchedGrandProductProver::prove_worker(init_final_circuit, &mut io_ctx.network)
                 .context("while proving init-final grand product")?;
 
-        Ok((r_read_write, r_init_final))
+        Ok((r_read_write, r_init_final, multiset_hashes))
+    }
+
+    fn compute_openings(
+        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        let read_write_polys: Vec<_> = [
+            polynomials.read_write_values(),
+            // Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
+        ]
+        .concat();
+        let (read_write_evals, eq_read_write) =
+            Rep3DensePolynomial::batch_evaluate(&read_write_polys, r_read_write);
+
+        opening_accumulator.append(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            &read_write_evals,
+            io_ctx,
+        );
+
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) =
+            Rep3DensePolynomial::batch_evaluate(&init_final_polys, r_init_final);
+
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &init_final_evals,
+            io_ctx,
+        );
+
+        Ok(())
     }
 
     fn compute_leaves(

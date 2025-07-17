@@ -1,35 +1,55 @@
-use mpc_core::protocols::additive;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
-use jolt_core::{
-    poly::{field::JoltField, structured_poly::StructuredCommitment},
-    subprotocols::grand_product::BatchedGrandProductArgument,
-    utils::{math::Math, transcript::ProofTranscript},
-};
-use mpc_net::mpc_star::MpcStarNetCoordinator;
-use std::marker::PhantomData;
-
+use jolt_core::lasso::memory_checking::{ExogenousOpenings, Initializable};
 pub use jolt_core::lasso::memory_checking::{
-    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
+    MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
 
 use crate::{
-    poly::Rep3StructuredOpeningProof,
+    field::JoltField,
+    poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::{
-        commitment::DistributedCommitmentScheme, grand_product::BatchedGrandProductProver,
+        commitment::DistributedCommitmentScheme,
+        grand_product::{BatchedGrandProductProof, BatchedGrandProductProver},
     },
+    utils::{math::Math, transcript::Transcript},
 };
 
 pub mod worker;
 
-pub trait Rep3MemoryCheckingProver<F, CS, Polynomials, Network>:
-    MemoryCheckingProver<F, CS, Polynomials>
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct MemoryCheckingProof<F, PCS, Openings, OtherOpenings, ProofTranscript>
 where
     F: JoltField,
-    CS: DistributedCommitmentScheme<F>,
-    Polynomials: StructuredCommitment<CS>,
-    Network: MpcStarNetCoordinator,
-    Self::ReadWriteOpenings: Rep3StructuredOpeningProof<F, CS, Polynomials>,
-    Self::InitFinalOpenings: Rep3StructuredOpeningProof<F, CS, Polynomials>,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    Openings: StructuredPolynomialData<F> + Sync + CanonicalSerialize + CanonicalDeserialize,
+    OtherOpenings: ExogenousOpenings<F> + Sync,
+    ProofTranscript: Transcript,
+{
+    /// Read/write/init/final multiset hashes for each memory
+    pub multiset_hashes: MultisetHashes<F>,
+    /// The read and write grand products for every memory has the same size,
+    /// so they can be batched.
+    pub read_write_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
+    /// The init and final grand products for every memory has the same size,
+    /// so they can be batched.
+    pub init_final_grand_product: BatchedGrandProductProof<PCS, ProofTranscript>,
+    /// The openings associated with the grand products.
+    pub openings: Openings,
+    pub exogenous_openings: OtherOpenings,
+}
+
+pub trait Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>:
+    MemoryCheckingProver<F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+    Self::Openings: Initializable<F, Self::Preprocessing>,
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
     fn prove_memory_checking(
@@ -38,7 +58,7 @@ where
         network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<
-        MemoryCheckingProof<F, CS, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
+        MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
         let (
             read_write_grand_product,
@@ -49,22 +69,23 @@ where
         ) = Self::prove_grand_products_rep3(memory_size, preprocessing, network, transcript)
             .context("while proving grand products")?;
 
-        let read_write_openings = Self::ReadWriteOpenings::open_rep3(&r_read_write, network)?;
-        let read_write_opening_proof =
-            Self::ReadWriteOpenings::prove_openings_rep3(transcript, network)?;
-        let init_final_openings = Self::InitFinalOpenings::open_rep3(&r_init_final, network)?;
-        let init_final_opening_proof =
-            Self::InitFinalOpenings::prove_openings_rep3(transcript, network)?;
+        let read_write_batch_size =
+            multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
+        let init_final_batch_size =
+            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
+
+        tracing::info!("read_write_batch_size: {}", read_write_batch_size);
+        tracing::info!("init_final_batch_size: {}", init_final_batch_size);
+
+        let (openings, exogenous_openings) =
+            Self::receive_openings(preprocessing, transcript, network)?;
 
         Ok(MemoryCheckingProof {
-            _polys: PhantomData,
             multiset_hashes,
             read_write_grand_product,
             init_final_grand_product,
-            read_write_openings,
-            read_write_opening_proof,
-            init_final_openings,
-            init_final_opening_proof,
+            openings,
+            exogenous_openings,
         })
     }
 
@@ -74,17 +95,17 @@ where
         network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<(
-        BatchedGrandProductArgument<F>,
-        BatchedGrandProductArgument<F>,
+        BatchedGrandProductProof<PCS, ProofTranscript>,
+        BatchedGrandProductProof<PCS, ProofTranscript>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
     )> {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar::<F>(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar::<F>(b"Memory checking tau");
+        let gamma: F = transcript.challenge_scalar();
+        let tau: F = transcript.challenge_scalar();
         network.broadcast_request((gamma, tau))?;
-        transcript.append_protocol_name(Self::protocol_name());
+        transcript.append_message(Self::protocol_name());
 
         let num_lookups = network.receive_responses(0usize)?[0];
 
@@ -108,6 +129,9 @@ where
             &init_final_hashes_shares[1],
             &init_final_hashes_shares[2],
         );
+
+        tracing::info!("read_write_hashes: {:?}", read_write_hashes);
+        tracing::info!("init_final_hashes: {:?}", init_final_hashes);
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
@@ -141,4 +165,45 @@ where
             r_init_final,
         ))
     }
+
+    fn receive_openings(
+        preprocessing: &Self::Preprocessing,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
+        let mut exogenous_openings = Self::ExogenousOpenings::default();
+        let mut openings = Self::Openings::initialize(preprocessing);
+
+        let read_write_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+
+        let read_write_openings: Vec<&mut F> = openings
+            .read_write_values_mut()
+            .into_iter()
+            .chain(exogenous_openings.openings_mut())
+            .collect();
+
+        for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
+            *opening = *eval;
+        }
+
+        let init_final_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+
+        for (opening, eval) in openings
+            .init_final_values_mut()
+            .into_iter()
+            .zip(init_final_evals.iter())
+        {
+            *opening = *eval;
+        }
+
+        Ok((openings, exogenous_openings))
+    }
 }
+
+/// This type, used within a `StructuredPolynomialData` struct, indicates that the
+/// field has a corresponding opening but no corresponding polynomial or commitment ––
+/// the prover doesn't need to compute a witness polynomial or commitment because
+/// the verifier can compute the opening on its own.
+pub type VerifierComputedOpening<T> = Option<T>;

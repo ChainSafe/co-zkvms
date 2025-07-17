@@ -2,10 +2,10 @@
 #![allow(clippy::type_complexity)]
 
 use itertools::multizip;
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::poly::field::JoltField;
-use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
-use jolt_core::subprotocols::sumcheck::CubicSumcheckType;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::field::JoltField;
+use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::subprotocols::legacy::sumcheck::CubicSumcheckType;
 use jolt_core::utils::thread::drop_in_background_thread;
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};

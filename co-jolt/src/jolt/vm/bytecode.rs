@@ -1,9 +1,12 @@
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::utils::transcript::Transcript;
 // use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 // use crate::poly::eq_poly::EqPolynomial;
 // use crate::poly::field::JoltField;
 // use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-// use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use co_lasso::poly::commitment::CommitmentScheme;
+use co_lasso::poly::MultilinearPolynomial;
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_common::rv_trace::ELFInstruction;
 
@@ -13,7 +16,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 // use std::{collections::HashMap, marker::PhantomData};    
 
-// use co_lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier};
+use co_lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, VerifierComputedOpening};
 
 // use crate::{
 //     poly::{
@@ -24,16 +27,43 @@ use serde::{Deserialize, Serialize};
 //     utils::errors::ProofVerifyError,
 // };
 
-// #[cfg(feature = "parallel")]
-// use rayon::prelude::*;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
-// pub type BytecodeProof<F, C> = MemoryCheckingProof<
-//     F,
-//     C,
-//     BytecodePolynomials<F, C>,
-//     BytecodeReadWriteOpenings<F>,
-//     BytecodeInitFinalOpenings<F>,
-// >;
+#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BytecodeStuff<T: CanonicalSerialize + CanonicalDeserialize> {
+    /// Read/write addresses for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read addresses and write addresses are the same.
+    pub(crate) a_read_write: T,
+    /// Read/write values for offline memory-checking.
+    /// For offline memory-checking, each read is paired with a "virtual" write,
+    /// so the read values and write values are the same. There are six values
+    /// (address, bitflags, rd, rs1, rs2, imm) associated with each memory address.
+    pub(crate) v_read_write: [T; 6],
+    /// Read timestamps for offline memory-checking
+    pub(crate) t_read: T,
+    /// Final timestamps for offline memory-checking
+    pub(crate) t_final: T,
+    a_init_final: VerifierComputedOpening<T>,
+    v_init_final: VerifierComputedOpening<[T; 6]>,
+}
+
+
+pub type BytecodePolynomials<F: JoltField> = BytecodeStuff<MultilinearPolynomial<F>>;
+
+pub type BytecodeOpenings<F: JoltField> = BytecodeStuff<F>;
+
+pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
+    BytecodeStuff<PCS::Commitment>;
+
+pub type BytecodeProof<F, C> = MemoryCheckingProof<
+    F,
+    C,
+    BytecodePolynomials<F, C>,
+    BytecodeReadWriteOpenings<F>,
+    BytecodeInitFinalOpenings<F>,
+>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {

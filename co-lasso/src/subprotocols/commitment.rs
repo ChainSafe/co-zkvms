@@ -1,4 +1,12 @@
-use ark_ec::ScalarMul;
+use crate::{
+    field::JoltField,
+    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
+};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly_commit::multilinear_pc::{
@@ -7,35 +15,24 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
-use jolt_core::{
-    poly::{
-        commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
-        dense_mlpoly::DensePolynomial,
-        field::JoltField,
-    },
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
-    },
-};
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::RngCore;
 use snarks_core::poly::commitment::{aggregate_comm, aggregate_eval};
-use std::marker::PhantomData;
-use std::ops::Mul;
+use std::{borrow::Borrow, marker::PhantomData};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::poly::Rep3DensePolynomial;
 
-pub trait DistributedCommitmentScheme<F: JoltField>: CommitmentScheme<Field = F> {
+pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
+    CommitmentScheme<ProofTranscript, Field = F>
+{
     fn distributed_batch_open<Network: MpcStarNetCoordinator>(
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<Self::BatchedProof>
+    ) -> eyre::Result<Self::Proof>
     where
         Network: MpcStarNetCoordinator;
 
@@ -66,18 +63,64 @@ where
         }
     }
 
-    pub fn setup<R: RngCore>(commitment_shapes: &[CommitShape], rng: &mut R) -> PST13Setup<E> {
-        let mut max_len: usize = 0;
-        for shape in commitment_shapes {
-            max_len = max_len.max(shape.input_length);
-        }
+    pub fn setup<R: RngCore>(max_len: usize, rng: &mut R) -> PST13Setup<E> {
         let num_vars = max_len.log_2();
         let uni_params = MultilinearPC::setup(num_vars, rng);
         PST13Setup { uni_params }
     }
+
+    fn batch_prove<U, ProofTranscript: Transcript>(
+        setup: &PST13Setup<E>,
+        polynomials: &[U],
+        opening_point: &[E::ScalarField],
+        _openings: &[E::ScalarField],
+        transcript: &mut ProofTranscript,
+    ) -> Proof<E>
+    where
+        U: Borrow<DensePolynomial<E::ScalarField>> + Sync,
+    {
+        let eta: E::ScalarField = transcript.challenge_scalar();
+        let batch_poly = aggregate_poly(eta, polynomials);
+        Self::prove(
+            setup,
+            &MultilinearPolynomial::LargeScalars(batch_poly),
+            opening_point,
+            transcript,
+        )
+    }
+
+    fn batch_verify<ProofTranscript: Transcript>(
+        batch_proof: &Proof<E>,
+        setup: &PST13Setup<E>,
+        opening_point: &[E::ScalarField],
+        openings: &[E::ScalarField],
+        commitments: &[&PST13Commitment<E>],
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        let eta = transcript.challenge_scalar();
+
+        let batch_comm = aggregate_comm(
+            eta,
+            &commitments.iter().map(|&c| c.into()).collect::<Vec<_>>(),
+        );
+
+        let batch_eval = aggregate_eval(eta, openings);
+
+        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
+
+        MultilinearPC::check(
+            &setup.vk(opening_point.len()),
+            &batch_comm,
+            &opening_point_rev,
+            batch_eval,
+            &batch_proof,
+        )
+        .ok_or(ProofVerifyError::InternalError)
+    }
 }
 
-impl<E: Pairing> DistributedCommitmentScheme<E::ScalarField> for PST13<E>
+impl<E: Pairing, ProofTranscript: Transcript>
+    DistributedCommitmentScheme<E::ScalarField, ProofTranscript> for PST13<E>
 where
     E::ScalarField: JoltField,
 {
@@ -88,7 +131,7 @@ where
     where
         Network: MpcStarNetCoordinator,
     {
-        let eta: E::ScalarField = transcript.challenge_scalar(b"eta");
+        let eta: E::ScalarField = transcript.challenge_scalar();
         network.broadcast_request(eta)?;
 
         let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
@@ -119,16 +162,6 @@ where
             &opening_point_rev,
         );
 
-        // let mut evals = Vec::new();
-        // for p in polys.iter() {
-        //     evals.push(p.evaluate(&point[0..num_var - log_num_workers].to_vec()));
-        // }
-        // let response = PartialProof {
-        //     proofs: pf,
-        //     val: r,
-        //     evals: openings.to_vec(),
-        // };
-
         network.send_response(pf.proofs)
     }
 
@@ -144,7 +177,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PST13Setup<E: Pairing> {
     pub uni_params: UniversalParams<E>,
 }
@@ -159,7 +192,7 @@ impl<E: Pairing> PST13Setup<E> {
     }
 }
 
-impl<E: Pairing> CommitmentScheme for PST13<E>
+impl<E: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript> for PST13<E>
 where
     E::ScalarField: JoltField,
 {
@@ -169,64 +202,55 @@ where
     type BatchedProof = Proof<E>;
     type Commitment = PST13Commitment<E>;
 
-    fn setup(
-        shapes: &[jolt_core::poly::commitment::commitment_scheme::CommitShape],
-    ) -> Self::Setup {
+    fn setup(max_len: usize) -> Self::Setup {
         let mut rng = test_rng();
-        PST13::setup(shapes, &mut rng)
+        PST13::setup(max_len, &mut rng)
     }
 
-    fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+    fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let nv = poly.get_num_vars();
-        let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
-        let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
-            &setup.ck(nv).powers_of_g[0],
-            scalars.as_slice(),
-        )
-        .into_affine();
-        PST13Commitment { nv, g_product }
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
+                let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
+                    &setup.ck(nv).powers_of_g[0],
+                    scalars.as_slice(),
+                )
+                .into_affine();
+                PST13Commitment { nv, g_product }
+            }
+            _ => todo!(),
+        }
     }
 
-    fn batch_commit(
-        evals: &[&[Self::Field]],
-        setup: &Self::Setup,
-        _batch_type: jolt_core::poly::commitment::commitment_scheme::BatchType,
-    ) -> Vec<Self::Commitment> {
+    fn batch_commit<U>(evals: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
+    where
+        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
+    {
         let mut commitments = Vec::new();
         for evals in evals {
-            let commitment = Self::commit(&DensePolynomial::new(evals.to_vec()), setup);
+            let commitment =
+                <Self as CommitmentScheme<ProofTranscript>>::commit(evals.borrow(), setup);
             commitments.push(commitment);
         }
         commitments
     }
 
-    fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
-        todo!()
-    }
-
     fn prove(
-        poly: &DensePolynomial<Self::Field>,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
         setup: &Self::Setup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field], // point at which the polynomial is evaluated
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         assert_eq!(poly.get_num_vars(), opening_point.len());
         // reverse becasue evaluations via `DensePolynomial::bound_poly_var_top`
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        open(&setup.ck(opening_point.len()), poly, &opening_point_rev).0
-    }
-
-    fn batch_prove(
-        polynomials: &[&DensePolynomial<Self::Field>],
-        opening_point: &[Self::Field],
-        _openings: &[Self::Field],
-        setup: &Self::Setup,
-        _batch_type: jolt_core::poly::commitment::commitment_scheme::BatchType,
-        transcript: &mut ProofTranscript,
-    ) -> Self::BatchedProof {
-        let eta: Self::Field = transcript.challenge_scalar(b"eta");
-        let batch_poly = aggregate_poly(eta, &polynomials);
-        Self::prove(&batch_poly, opening_point, setup, transcript)
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                open(&setup.ck(opening_point.len()), poly, &opening_point_rev).0
+            }
+            _ => todo!(),
+        }
     }
 
     fn verify(
@@ -250,37 +274,12 @@ where
         .ok_or(ProofVerifyError::InternalError)
     }
 
-    fn batch_verify(
-        batch_proof: &Self::BatchedProof,
-        setup: &Self::Setup,
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        commitments: &[&Self::Commitment],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let eta = transcript.challenge_scalar(b"eta");
-
-        let batch_comm = aggregate_comm(
-            eta,
-            &commitments.iter().map(|&c| c.into()).collect::<Vec<_>>(),
-        );
-
-        let batch_eval = aggregate_eval(eta, openings);
-
-        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-
-        MultilinearPC::check(
-            &setup.vk(opening_point.len()),
-            &batch_comm,
-            &opening_point_rev,
-            batch_eval,
-            &batch_proof,
-        )
-        .ok_or(ProofVerifyError::InternalError)
+    fn protocol_name() -> &'static [u8] {
+        b"PST13"
     }
 
-    fn protocol_name() -> &'static [u8] {
-        todo!()
+    fn srs_size(setup: &Self::Setup) -> usize {
+        1 << setup.uni_params.num_vars
     }
 }
 
@@ -290,9 +289,19 @@ pub struct PST13Commitment<E: Pairing> {
     pub(crate) g_product: E::G1Affine,
 }
 
+impl<E: Pairing> Default for PST13Commitment<E> {
+    fn default() -> Self {
+        Self {
+            nv: 0,
+            g_product: E::G1Affine::zero(),
+        }
+    }
+}
+
 impl<E: Pairing> AppendToTranscript for PST13Commitment<E> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_point(label, &self.g_product.into_group());
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"g_product");
+        transcript.append_point(&self.g_product.into_group());
     }
 }
 
@@ -305,10 +314,13 @@ impl<E: Pairing> Into<Commitment<E>> for &PST13Commitment<E> {
     }
 }
 
-pub fn aggregate_poly<F: JoltField>(eta: F, polys: &[&DensePolynomial<F>]) -> DensePolynomial<F> {
+pub fn aggregate_poly<F: JoltField, U>(eta: F, polys: &[U]) -> DensePolynomial<F>
+where
+    U: Borrow<DensePolynomial<F>> + Sync,
+{
     let mut vars = 0;
     for p in polys {
-        let num_vars = p.get_num_vars();
+        let num_vars = p.borrow().get_num_vars();
         if num_vars > vars {
             vars = num_vars;
         }
@@ -317,7 +329,7 @@ pub fn aggregate_poly<F: JoltField>(eta: F, polys: &[&DensePolynomial<F>]) -> De
     let mut x = F::one();
     for p in polys {
         cfg_iter_mut!(evals)
-            .zip(p.evals_ref())
+            .zip(p.borrow().evals_ref())
             .for_each(|(a, b)| *a += x * b);
         x *= eta
     }

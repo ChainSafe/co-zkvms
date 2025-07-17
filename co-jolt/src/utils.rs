@@ -1,6 +1,8 @@
-pub use jolt_core::utils::{errors, gaussian_elimination, math, thread, transcript};
+pub use jolt_core::utils::{gaussian_elimination, math, thread};
 
 pub mod instruction_utils;
+
+pub use co_lasso::utils::*;
 
 pub use jolt_core::utils::{
     compute_dotproduct, count_poly_zeros, gen_random_point, index_to_field_bitvector,

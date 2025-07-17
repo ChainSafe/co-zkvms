@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use crate::utils::transcript::Transcript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use itertools::{interleave, Itertools};
@@ -88,15 +89,15 @@ pub struct InstructionCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for InstructionCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"InstructionCommitment_begin");
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"InstructionCommitment_begin");
         for commitment in &self.trace_commitment {
-            commitment.append_to_transcript(b"trace_commitment", transcript);
+            commitment.append_to_transcript(transcript);
         }
         for commitment in &self.final_commitment {
-            commitment.append_to_transcript(b"final_commitment", transcript);
+            commitment.append_to_transcript(transcript);
         }
-        transcript.append_message(label, b"InstructionCommitment_end");
+        transcript.append_message(b"InstructionCommitment_end");
     }
 }
 

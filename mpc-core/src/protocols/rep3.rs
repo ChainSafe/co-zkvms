@@ -2,8 +2,9 @@ pub mod arithmetic;
 pub mod binary;
 pub mod poly;
 pub mod rngs;
+pub mod network;
 
-pub use mpc_core::protocols::rep3::{conversion, gadgets, network, pointshare, yao};
+pub use mpc_core::protocols::rep3::{conversion, gadgets, pointshare, yao};
 
 pub use mpc_types::protocols::rep3::{
     Rep3BigUintShare, Rep3PointShare, Rep3PrimeFieldShare, combine_binary_element,

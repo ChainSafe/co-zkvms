@@ -1,16 +1,18 @@
 use eyre::{Context, Result};
 use itertools::Itertools;
-use jolt_core::poly::{dense_mlpoly::DensePolynomial, field::JoltField};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     PartyID,
 };
 
+use crate::{field::JoltField, poly::{dense_mlpoly::DensePolynomial, Rep3DensePolynomial}};
+
+pub use jolt_core::utils::*;
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::poly::Rep3DensePolynomial;
 
 pub trait Forkable: Sized + Send {
     fn fork(&mut self) -> Result<Self>;

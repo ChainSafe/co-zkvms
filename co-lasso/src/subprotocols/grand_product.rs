@@ -1,29 +1,32 @@
 use std::marker::PhantomData;
 
-use ark_serialize::*;
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
-use eyre::Context;
-use jolt_core::{
-    poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, field::JoltField, unipoly::UniPoly,
-    },
-    subprotocols::sumcheck::{CubicSumcheckType, SumcheckInstanceProof},
+use crate::{
+    field::JoltField,
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, unipoly::UniPoly},
     utils::{
         math::Math,
-        transcript::{AppendToTranscript, ProofTranscript},
+        transcript::{AppendToTranscript, Transcript},
     },
 };
+use ark_serialize::*;
+use eyre::Context;
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
 };
+use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use super::sumcheck::{self, Rep3CubicSumcheckParams};
 use crate::poly::Rep3DensePolynomial;
 
-pub use jolt_core::subprotocols::grand_product::{
-    BatchedGrandProductArgument, BatchedGrandProductCircuit, LayerProofBatched, GrandProductCircuit,
+pub use super::legacy::{
+    grand_product::{
+        BatchedGrandProductCircuit, BatchedGrandProductProof, GrandProductCircuit,
+        LayerProofBatched,
+    },
+    sumcheck::{CubicSumcheckType, SumcheckInstanceProof},
 };
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -33,16 +36,20 @@ pub struct BatchedGrandProductProver<F: JoltField> {
 
 impl<F: JoltField> BatchedGrandProductProver<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument::prove")]
-    pub fn prove<N: MpcStarNetCoordinator>(
+    pub fn prove<Network, ProofTranscript, PCS>(
         claims_to_verify: Vec<F>,
         num_layers: usize,
-        network: &mut N,
+        network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> eyre::Result<(BatchedGrandProductArgument<F>, Vec<F>)> {
-        let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
+    ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)>
+    where
+        Network: MpcStarNetCoordinator,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    {
+        let mut proof_layers: Vec<LayerProofBatched<F, ProofTranscript>> = Vec::new();
         let num_circuits = claims_to_verify.len();
-        let coeff_vec: Vec<F> =
-            transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
+        let coeff_vec: Vec<F> = transcript.challenge_vector(num_circuits);
         let first_claim: F = (0..claims_to_verify.len())
             .map(|i| (claims_to_verify[i] * coeff_vec[i]))
             .sum();
@@ -74,9 +81,9 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     &poly_shares[2],
                 );
                 let poly = UniPoly::from_coeff(coeffs);
-                poly.append_to_transcript(b"poly", transcript);
+                poly.append_to_transcript(transcript);
                 cubic_polys.push(poly.compress());
-                let r_j = transcript.challenge_scalar(b"challenge_nextround");
+                let r_j = transcript.challenge_scalar();
                 network.broadcast_request(r_j)?;
                 rand_prod.push(r_j);
 
@@ -111,15 +118,15 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
             let proof = SumcheckInstanceProof::new(cubic_polys);
 
             for i in 0..num_circuits {
-                transcript.append_scalar(b"claim_prod_left", &claims_poly_A[i]);
+                transcript.append_scalar(&claims_poly_A[i]);
 
-                transcript.append_scalar(b"claim_prod_right", &claims_poly_B[i]);
+                transcript.append_scalar(&claims_poly_B[i]);
             }
 
             if sumcheck_type == CubicSumcheckType::Prod
                 || sumcheck_type == CubicSumcheckType::ProdOnes
             {
-                let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+                let r_layer = transcript.challenge_scalar();
 
                 network.broadcast_request(r_layer)?;
 
@@ -132,6 +139,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     claims_poly_A,
                     claims_poly_B,
                     combine_prod: true,
+                    _marker: PhantomData,
                 });
             } else {
                 // CubicSumcheckType::Flags
@@ -144,19 +152,19 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
                     claims_poly_A,
                     claims_poly_B,
                     combine_prod: false,
+                    _marker: PhantomData,
                 });
             }
 
             if layer_id != 0 {
-                let coeff_vec =
-                    transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", num_circuits);
+                let coeff_vec: Vec<F> = transcript.challenge_vector(num_circuits);
                 network.broadcast_request(coeff_vec.clone())?;
             }
             drop(_enter);
         }
 
         Ok((
-            BatchedGrandProductArgument {
+            BatchedGrandProductProof {
                 proof: proof_layers,
             },
             rand,
@@ -177,7 +185,7 @@ impl<F: JoltField> BatchedGrandProductProver<F> {
             let span = tracing::trace_span!("grand_product_layer", layer);
             let _enter = span.enter();
 
-            let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
+            let eq = DensePolynomial::new(EqPolynomial::<F>::evals(&rand));
 
             let params = batch.sumcheck_layer_params(layer, eq.clone());
             network.send_response::<(usize, u8, DensePolynomial<F>)>((
