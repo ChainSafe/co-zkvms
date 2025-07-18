@@ -41,6 +41,10 @@ use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 
 use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
+mod coordinator;
+mod witness;
+mod worker;
+
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
 struct PrimarySumcheckOpenings<F>
@@ -1058,7 +1062,7 @@ where
     /// Converts instruction flag bitvectors into a sparse representation of the corresponding memory flags.
     /// A memory flag polynomial can be computed by summing over the instructions that use that memory: if a
     /// given execution step accesses the memory, it must be executing exactly one of those instructions.
-    fn memory_flag_indices(
+    pub(crate) fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
     ) -> Vec<Vec<usize>> {

@@ -4,7 +4,7 @@ pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
 use jolt_core::{
-    lasso::memory_checking::{ExogenousOpenings, Initializable, MemoryCheckingProof},
+    lasso::memory_checking::{ExogenousOpenings, Initializable},
     subprotocols::grand_product::BatchedGrandProductProof,
 };
 use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
@@ -18,7 +18,7 @@ use crate::{
     },
     utils::{math::Math, transcript::Transcript},
 };
-
+pub use jolt_core::lasso::memory_checking::MemoryCheckingProof;
 pub mod worker;
 
 pub trait Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>:
@@ -39,10 +39,10 @@ where
         + 'static;
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
-    fn prove_memory_checking(
+    fn coordinate_memory_checking(
         preprocessing: &Self::Preprocessing,
-        network: &mut Network,
         transcript: &mut ProofTranscript,
+        network: &mut Network,
     ) -> eyre::Result<
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
@@ -108,8 +108,8 @@ where
             &init_final_hashes_shares[2],
         );
 
-        tracing::info!("read_write_hashes: {:?}", read_write_hashes);
-        tracing::info!("init_final_hashes: {:?}", init_final_hashes);
+        tracing::info!("read_write_hashes: {:?}", read_write_hashes.len());
+        tracing::info!("init_final_hashes: {:?}", init_final_hashes.len());
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
@@ -178,7 +178,9 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
-    ) -> Self::Rep3ReadWriteGrandProduct;
+    ) -> Self::Rep3ReadWriteGrandProduct {
+        Self::Rep3ReadWriteGrandProduct::construct((num_lookups).log_2() + 1)
+    }
 
     fn init_final_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,

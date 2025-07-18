@@ -1,6 +1,7 @@
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
+use jolt_core::{poly::multilinear_polynomial::MultilinearPolynomial, utils};
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::Rng;
@@ -27,14 +28,20 @@ pub struct Rep3DensePolynomial<F: JoltField> {
 impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn new(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         let num_vars = evals.len().log_2();
-        // let mut share_0 = Vec::with_capacity(1 << num_vars);
-        // let mut share_1 = Vec::with_capacity(1 << num_vars);
-        // // let party = evals_rep3[0].party;
-        // for share in evals {
-        //     share_0.push(share.a);
-        //     share_1.push(share.b);
-        // }
+
         Rep3DensePolynomial { num_vars, evals }
+    }
+    pub fn new_padded(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
+        let mut poly_evals = evals;
+        while !(utils::is_power_of_two(poly_evals.len())) {
+            poly_evals.push(Rep3PrimeFieldShare::zero_share());
+        }
+        let num_vars = poly_evals.len().log_2();
+        Rep3DensePolynomial {
+            num_vars,
+            evals: poly_evals,
+        }
     }
 
     pub fn from_vec_shares(a: Vec<F>, b: Vec<F>) -> Self {
@@ -298,13 +305,15 @@ pub fn combine_polys_shares_rep3<F: JoltField>(
 }
 
 pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
-    poly: &DensePolynomial<F>,
+    poly: &MultilinearPolynomial<F>,
     rng: &mut R,
 ) -> (
     Rep3DensePolynomial<F>,
     Rep3DensePolynomial<F>,
     Rep3DensePolynomial<F>,
 ) {
+    let dense_poly = DensePolynomial::new(poly.coeffs_as_field_elements());
+
     let num_vars = poly.get_num_vars();
     if num_vars == 0 {
         return (
@@ -317,7 +326,7 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
         DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
     let t1 =
         DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
-    let t2 = (poly - &t0) - &t1;
+    let t2 = (dense_poly - &t0) - &t1;
 
     let p_share_0 = Rep3DensePolynomial::<F>::from_poly_shares(t0.clone(), t2.clone());
     let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1.clone(), t0);

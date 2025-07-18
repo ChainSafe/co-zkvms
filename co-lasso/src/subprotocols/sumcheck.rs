@@ -21,7 +21,11 @@ use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
 pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 
-pub trait Rep3BatchedCubicSumcheck<F, ProofTranscript, Network>: Bindable<F>
+pub trait Rep3Bindable<F: JoltField>: Sync {
+    fn bind(&mut self, r: F, party_id: PartyID);
+}
+
+pub trait Rep3BatchedCubicSumcheck<F, ProofTranscript, Network>: Rep3Bindable<F>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -87,10 +91,15 @@ where
 }
 
 pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorker>:
-    Bindable<F>
+    Rep3Bindable<F>
 {
-    fn compute_cubic(&self, eq_poly: &SplitEqPolynomial<F>, previous_round_claim: F) -> UniPoly<F>;
-    fn final_claims(&self) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
+    fn compute_cubic(
+        &self,
+        eq_poly: &SplitEqPolynomial<F>,
+        previous_round_claim: F,
+        party_id: PartyID,
+    ) -> UniPoly<F>;
+    fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
     #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck_worker")]
     fn prove_sumcheck(
@@ -103,9 +112,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
-
+        let party_id = io_ctx.network.get_id();
         for _ in 0..num_rounds {
-            let cubic_poly = self.compute_cubic(eq_poly, previous_claim);
+            let cubic_poly = self.compute_cubic(eq_poly, previous_claim, party_id);
             let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
             io_ctx
@@ -115,7 +124,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
-            self.bind(r_j);
+            self.bind(r_j, party_id);
             eq_poly.bind(r_j);
 
             previous_claim = cubic_poly.evaluate(&r_j);
@@ -123,7 +132,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        let final_claims = self.final_claims();
+        let final_claims = self.final_claims(party_id);
         io_ctx.network.send_response(final_claims)?;
 
         Ok((r, final_claims))

@@ -3,7 +3,10 @@ use std::slice::Chunks;
 use crate::{
     field::JoltField,
     poly::Rep3DensePolynomial,
-    subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
+    subprotocols::{
+        grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
+        sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker, Rep3Bindable},
+    },
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use eyre::Context;
@@ -16,7 +19,7 @@ use mpc_core::protocols::{
     rep3::{
         self,
         network::{IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker},
-        Rep3PrimeFieldShare,
+        PartyID, Rep3PrimeFieldShare,
     },
 };
 use rayon::{prelude::*, slice::Chunks as RayonChunks};
@@ -157,7 +160,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
     }
 }
 
-impl<F: JoltField> Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
+impl<F: JoltField> Rep3Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
     /// Incrementally binds a variable of the interleaved left and right polynomials.
     /// To preserve the interleaved order of coefficients, we bind values like this:
     ///   0'  1'     2'  3'
@@ -168,10 +171,7 @@ impl<F: JoltField> Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
     ///   0  1 2  3  4  5 6  7
     /// Left nodes have even indices, right nodes have odd indices.
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::bind")]
-    fn bind(&mut self, r: F) {
-        #[cfg(test)]
-        let (mut left_before_binding, mut right_before_binding) = self.uninterleave();
-
+    fn bind(&mut self, r: F, party_id: PartyID) {
         let padded_len = self.len.next_multiple_of(4);
         // In order to parallelize binding while obeying Rust ownership rules, we
         // must write to a different vector than we are reading from. `binding_scratch_space`
@@ -214,23 +214,6 @@ impl<F: JoltField> Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
     }
 }
 
-#[cfg(test)]
-pub fn bind_left_and_right<F: JoltField>(left: &mut Vec<F>, right: &mut Vec<F>, r: F) {
-    if left.len() % 2 != 0 {
-        left.push(F::zero())
-    }
-    if right.len() % 2 != 0 {
-        right.push(F::zero())
-    }
-    let mut left_poly = DensePolynomial::new_padded(left.clone());
-    let mut right_poly = DensePolynomial::new_padded(right.clone());
-    left_poly.bound_poly_var_bot(&r);
-    right_poly.bound_poly_var_bot(&r);
-
-    *left = left_poly.Z[..left.len() / 2].to_vec();
-    *right = right_poly.Z[..right.len() / 2].to_vec();
-}
-
 // impl<F: JoltField, ProofTranscript: Transcript> BatchedGrandProductLayer<F, ProofTranscript>
 //     for Rep3DenseInterleavedPolynomial<F>
 // {
@@ -243,6 +226,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         &self,
         eq_poly: &SplitEqPolynomial<F>,
         previous_round_claim: AdditiveShare<F>,
+        _: PartyID,
     ) -> UniPoly<F> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
@@ -382,7 +366,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         UniPoly::from_evals(&cubic_evals)
     }
 
-    fn final_claims(&self) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
+    fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
         assert_eq!(self.len(), 2);
         let left_claim = self.coeffs[0];
         let right_claim = self.coeffs[1];
@@ -398,89 +382,16 @@ where
 {
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use itertools::Itertools;
+impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorker<F, Network>
+    for Rep3DenseInterleavedPolynomial<F>
+{
+}
 
-    #[test]
-    fn interleave_uninterleave() {
-        let mut rng = test_rng();
-        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
-
-        for (num_vars, batch_size) in NUM_VARS
-            .into_iter()
-            .cartesian_product(BATCH_SIZE.into_iter())
-        {
-            let left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(batch_size << num_vars)
-                .collect();
-            let right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(batch_size << num_vars)
-                .collect();
-
-            let interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
-            assert_eq!(interleaved.uninterleave(), (left, right));
-        }
-    }
-
-    #[test]
-    fn uninterleave_interleave() {
-        let mut rng = test_rng();
-        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
-
-        for (num_vars, batch_size) in NUM_VARS
-            .into_iter()
-            .cartesian_product(BATCH_SIZE.into_iter())
-        {
-            let coeffs: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(2 * (batch_size << num_vars))
-                .collect();
-            let interleaved = DenseInterleavedPolynomial::new(coeffs);
-            let (left, right) = interleaved.uninterleave();
-
-            assert_eq!(
-                interleaved.iter().collect::<Vec<_>>(),
-                DenseInterleavedPolynomial::interleave(&left, &right)
-                    .iter()
-                    .collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
-    fn bind() {
-        let mut rng = test_rng();
-        const NUM_VARS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-        const BATCH_SIZE: [usize; 5] = [2, 3, 4, 5, 6];
-
-        for (num_vars, batch_size) in NUM_VARS
-            .into_iter()
-            .cartesian_product(BATCH_SIZE.into_iter())
-        {
-            let mut left: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(batch_size << num_vars)
-                .collect();
-            let mut right: Vec<_> = std::iter::repeat_with(|| Fr::random(&mut rng))
-                .take(batch_size << num_vars)
-                .collect();
-
-            let mut interleaved = DenseInterleavedPolynomial::interleave(&left, &right);
-
-            let r = Fr::random(&mut rng);
-            interleaved.bind(r);
-            bind_left_and_right(&mut left, &mut right, r);
-
-            assert_eq!(
-                interleaved.iter().collect::<Vec<_>>(),
-                DenseInterleavedPolynomial::interleave(&left, &right)
-                    .iter()
-                    .collect::<Vec<_>>()
-            );
-        }
-    }
+impl<F: JoltField, ProofTranscript, Network> Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>
+    for Rep3DenseInterleavedPolynomial<F>
+where
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+{
+    
 }

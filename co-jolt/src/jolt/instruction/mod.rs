@@ -40,7 +40,7 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 
     fn lookup_entry(&self) -> F;
 
-    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>) {
+    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u8>, Vec<u8>) {
         assert!(
             log_M % 2 == 0,
             "log_M must be even for operand_chunks to work"

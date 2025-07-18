@@ -1,27 +1,28 @@
 use co_lasso::{
     memory_checking::Rep3MemoryCheckingProver,
-    poly::{Rep3DensePolynomial, Rep3StructuredOpeningProof},
-    subprotocols::commitment::DistributedCommitmentScheme,
+    subprotocols::{
+        commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedDenseGrandProduct,
+        sparse_grand_product::Rep3ToggledBatchedGrandProduct,
+    },
+    utils::transcript::{AppendToTranscript, Transcript},
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::chain;
 use jolt_core::{
-    poly::{
-        field::JoltField,
-        unipoly::{CompressedUniPoly, UniPoly},
-    },
+    field::JoltField,
+    poly::unipoly::{CompressedUniPoly, UniPoly},
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{math::Math, transcript::ProofTranscript},
+    utils::math::Math,
 };
-use mpc_core::protocols::rep3::{self, PartyID};
+use mpc_core::protocols::rep3::{self, network::Rep3NetworkCoordinator, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 use std::marker::PhantomData;
 
 use super::{
-    witness::Rep3InstructionPolynomials, InstructionFinalOpenings, InstructionLookupsPreprocessing,
-    InstructionLookupsProof, InstructionPolynomials, InstructionReadWriteOpenings, PrimarySumcheck,
+    witness::Rep3InstructionLookupPolynomials, InstructionLookupPolynomials,
+    InstructionLookupsPreprocessing, InstructionLookupsProof, PrimarySumcheck,
     PrimarySumcheckOpenings,
 };
 use crate::{
@@ -32,26 +33,26 @@ use crate::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-type Preprocessing<F> = InstructionLookupsPreprocessing<F>;
-
-impl<F: JoltField, const C: usize, const M: usize, CS, Lookups, Subtables>
-    InstructionLookupsProof<C, M, F, CS, Lookups, Subtables>
+impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subtables>
+    InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
 where
-    CS: DistributedCommitmentScheme<F>,
-    Lookups: JoltInstructionSet<F>,
+    F: JoltField,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    Instructions: JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
+    ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
-    pub fn prove_rep3<Network: MpcStarNetCoordinator>(
+    pub fn prove_rep3<Network: Rep3NetworkCoordinator>(
         trace_length: usize,
-        preprocessing: &Preprocessing<F>,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
-    ) -> Result<InstructionLookupsProof<C, M, F, CS, Lookups, Subtables>> {
-        transcript.append_protocol_name(Self::protocol_name());
+    ) -> Result<InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>>
+    {
+        transcript.append_message(Self::protocol_name());
 
-        let r_eq =
-            transcript.challenge_vector::<F>(b"Jolt instruction lookups", trace_length.log_2());
+        let r_eq = transcript.challenge_vector::<F>(trace_length.log_2());
         network.broadcast_request(r_eq)?;
 
         let num_rounds = trace_length.log_2();
@@ -67,69 +68,59 @@ where
             lookup_outputs_opening: outputs_eval,
         };
 
-        let opening_proof =
-            CS::distributed_batch_open(transcript, network).context("while opening sumcheck polynomials")?;
-
-        let primary_sumcheck = PrimarySumcheck::<F, CS> {
+        let primary_sumcheck = PrimarySumcheck::<F, ProofTranscript> {
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
             openings: sumcheck_openings,
-            opening_proof,
+            _marker: PhantomData,
         };
 
         let memory_checking_proof =
-            Self::prove_memory_checking(M, preprocessing, network, transcript)
+            Self::coordinate_memory_checking(preprocessing, transcript, network)
                 .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {
-            _instructions: PhantomData,
             primary_sumcheck,
             memory_checking: memory_checking_proof,
+            _instructions: PhantomData,
+            _subtables: PhantomData,
         })
     }
 
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_primary_sumcheck")]
-    fn prove_primary_sumcheck_rep3<Network: MpcStarNetCoordinator>(
+    fn prove_primary_sumcheck_rep3<Network: Rep3NetworkCoordinator>(
         num_rounds: usize,
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<(SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>, F)> {
+    ) -> eyre::Result<(
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<F>,
+        Vec<F>,
+        Vec<F>,
+        F,
+    )> {
         // Check all polys are the same size
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-        let round_uni_poly = {
-            let [p1, p2, p3] = network
-                .receive_responses(UniPoly::from_coeff(vec![]))?
-                .try_into()
-                .unwrap();
-            UniPoly::from_coeff(additive::combine_field_elements::<F>(
-                &p1.as_slice(),
-                &p2.as_slice(),
-                &p3.as_slice(),
-            ))
-        };
-        compressed_polys.push(round_uni_poly.compress());
-        let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
+        let compressed_round_poly = CompressedUniPoly::from_vec(
+            additive::combine_field_element_vec::<F>(network.receive_responses(vec![])?),
+        );
+        compressed_round_poly.append_to_transcript(transcript);
+        compressed_polys.push(compressed_round_poly);
+        let r_j = transcript.challenge_scalar::<F>();
         network.broadcast_request(r_j)?;
         random_vars.push(r_j);
 
         for _round in 1..num_rounds {
-            let round_uni_poly = {
-                let [p1, p2, p3] = network
-                    .receive_responses(UniPoly::from_coeff(vec![]))?
-                    .try_into()
-                    .unwrap();
-                UniPoly::from_coeff(additive::combine_field_elements::<F>(
-                    &p1.as_slice(),
-                    &p2.as_slice(),
-                    &p3.as_slice(),
-                ))
-            };
-            compressed_polys.push(round_uni_poly.compress());
-            let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
+            let compressed_round_poly = CompressedUniPoly::from_vec(
+                additive::combine_field_element_vec::<F>(network.receive_responses(vec![])?),
+            );
+            compressed_round_poly.append_to_transcript(transcript);
+            compressed_polys.push(compressed_round_poly);
+            let r_j = transcript.challenge_scalar::<F>();
             network.broadcast_request(r_j)?;
             random_vars.push(r_j);
         } // End rounds
@@ -159,190 +150,30 @@ where
     }
 }
 
-impl<F: JoltField, const C: usize, const M: usize, CS, Lookups, Subtables, Network>
-    Rep3MemoryCheckingProver<F, CS, InstructionPolynomials<F, CS>, Network>
-    for InstructionLookupsProof<C, M, F, CS, Lookups, Subtables>
+use co_lasso::subprotocols::grand_product::Rep3BatchedGrandProduct;
+
+impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subtables, Network>
+    Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>
+    for InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
 where
-    CS: DistributedCommitmentScheme<F>,
-    Lookups: JoltInstructionSet<F>,
+    F: JoltField,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    ProofTranscript: Transcript,
+    Instructions: JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
-    Network: MpcStarNetCoordinator,
+    Network: Rep3NetworkCoordinator,
 {
-}
+    type Rep3ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
+    type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
 
-use mpc_net::mpc_star::MpcStarNetWorker;
-
-impl<F: JoltField, C: DistributedCommitmentScheme<F>>
-    Rep3StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
-    for InstructionReadWriteOpenings<F>
-{
-    type Rep3Polynomials = Rep3InstructionPolynomials<F>;
-
-    fn open_rep3<Network: MpcStarNetCoordinator>(
-        _opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<Self> {
-        let (dim_openings, read_openings, E_poly_openings): (
-            Vec<Vec<F>>,
-            Vec<Vec<F>>,
-            Vec<Vec<F>>,
-        ) = itertools::multiunzip(network.receive_responses((
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ))?);
-
-        let dim_openings =
-            additive::combine_field_elements(&dim_openings[0], &dim_openings[1], &dim_openings[2]);
-        let read_openings = additive::combine_field_elements(
-            &read_openings[0],
-            &read_openings[1],
-            &read_openings[2],
-        );
-
-        let E_poly_openings = additive::combine_field_elements(
-            &E_poly_openings[0],
-            &E_poly_openings[1],
-            &E_poly_openings[2],
-        );
-
-        let flag_openings = network.receive_response::<Vec<F>>(PartyID::ID0, 0, Vec::new())?;
-        Ok(Self {
-            dim_openings,
-            read_openings,
-            E_poly_openings,
-            flag_openings,
-        })
-    }
-
-    fn open_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-
-        let dim_openings: Vec<F> = polynomials
-            .dim
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let read_openings: Vec<F> = polynomials
-            .read_cts
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let E_poly_openings: Vec<F> = polynomials
-            .E_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-        let flag_openings: Vec<F> = polynomials
-            .instruction_flag_polys
-            .par_iter()
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect();
-
-        network.send_response((dim_openings, read_openings, E_poly_openings))?;
-        if network.party_id() == PartyID::ID0 {
-            network.send_response(flag_openings)?;
-        }
-
-        Ok(())
-    }
-
-    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        setup: &C::Setup,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let lookup_flag_polys = polynomials
-            .instruction_flag_polys
-            .iter()
-            .map(|p| {
-                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-                    p.evals(),
-                    network.party_id(),
-                ))
-            })
-            .collect::<Vec<_>>();
-        let read_write_polys = chain![
-            polynomials.dim.iter(),
-            polynomials.read_cts.iter(),
-            polynomials.E_polys.iter(),
-            lookup_flag_polys.iter(),
-        ]
-        .collect::<Vec<_>>();
-
-        C::distributed_batch_open_worker(&read_write_polys, setup, opening_point, network)
-    }
-
-    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Self::Proof> {
-        C::distributed_batch_open(transcript, network)
-    }
-}
-
-impl<F: JoltField, C: DistributedCommitmentScheme<F>, Subtables: JoltSubtableSet<F>>
-    Rep3StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
-    for InstructionFinalOpenings<F, Subtables>
-{
-    type Rep3Polynomials = Rep3InstructionPolynomials<F>;
-
-    fn open_rep3<Network: MpcStarNetCoordinator>(
-        _opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<Self> {
-        let final_openings = network.receive_responses::<Vec<F>>(Vec::new())?;
-        let final_openings = additive::combine_field_elements(
-            &final_openings[0],
-            &final_openings[1],
-            &final_openings[2],
-        );
-        Ok(Self {
-            _subtables: PhantomData,
-            final_openings,
-            a_init_final: None,
-            v_init_final: None,
-        })
-    }
-
-    fn open_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let final_openings = polynomials
-            .final_cts
-            .par_iter()
-            .map(|final_cts_i| final_cts_i.evaluate(&opening_point))
-            .collect::<Vec<_>>();
-
-        network.send_response(final_openings)
-    }
-
-    fn prove_openings_rep3_worker<Network: MpcStarNetWorker>(
-        polynomials: &Self::Rep3Polynomials,
-        opening_point: &[F],
-        setup: &<C>::Setup,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        C::distributed_batch_open_worker(
-            &polynomials.final_cts.iter().collect::<Vec<_>>(),
-            setup,
-            opening_point,
-            network,
-        )
-    }
-
-    fn prove_openings_rep3<Network: MpcStarNetCoordinator>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Self::Proof> {
-        C::distributed_batch_open(transcript, network)
+    fn init_final_grand_product_rep3(
+        _preprocessing: &Self::Preprocessing,
+    ) -> Self::Rep3InitFinalGrandProduct {
+        <Self::Rep3InitFinalGrandProduct as Rep3BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::construct(M.log_2())
     }
 }

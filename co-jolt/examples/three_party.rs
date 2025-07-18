@@ -7,8 +7,7 @@ use color_eyre::{
     Result,
 };
 use itertools::Itertools;
-use jolt_core::poly::structured_poly::StructuredCommitment;
-use jolt_core::utils::transcript::ProofTranscript;
+use jolt_core::utils::transcript::KeccakTranscript;
 use mpc_core::protocols::rep3;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},

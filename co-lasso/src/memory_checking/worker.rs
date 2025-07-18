@@ -33,27 +33,27 @@ where
     Network: Rep3NetworkWorker,
 {
     type ReadWriteGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
-        + Send
+        // + Send
         + 'static;
     type InitFinalGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
-        + Send
+        // + Send
         + 'static;
 
     type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>>
         + crate::Rep3Polynomials
         + ?Sized;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
-    type Commitments: StructuredPolynomialData<PCS::Commitment>;
+    // type Commitments: StructuredPolynomialData<PCS::Commitment>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync;
 
     type Preprocessing;
 
-    type MemoryCheckingProof: MemoryCheckingProver<
-        F,
-        PCS,
-        ProofTranscript,
-        Preprocessing = Self::Preprocessing,
-    >;
+    // type MemoryCheckingProof: MemoryCheckingProver<
+    //     F,
+    //     PCS,
+    //     ProofTranscript,
+    //     Preprocessing = Self::Preprocessing,
+    // >;
     // type ReadWriteOpenings: Rep3StructuredOpeningProof<
     //     F,
     //     PCS,
@@ -76,7 +76,7 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        let (r_read_write, r_init_final, multiset_hashes) = Self::prove_grand_products(
+        let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) = Self::prove_grand_products(
             preprocessing,
             polynomials,
             jolt_polynomials,
@@ -86,10 +86,6 @@ where
         )
         .context("while proving grand products")?;
 
-        let read_write_batch_size =
-            multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
-        let init_final_batch_size =
-            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
 
         let (_, r_read_write_opening) =
             r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
@@ -116,7 +112,7 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
         pcs_setup: &PCS::Setup,
-    ) -> Result<(Vec<F>, Vec<F>, MultisetHashes<F>)> {
+    ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
         let (gamma, tau) = io_ctx.network.receive_request()?;
         io_ctx.network.send_response(polynomials.num_lookups())?;
 
@@ -136,11 +132,14 @@ where
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves, io_ctx)
                 .context("while computing init-final grand product")?;
 
-        let multiset_hashes = Self::MemoryCheckingProof::uninterleave_hashes(
-            preprocessing,
-            read_write_hashes.clone(),
-            init_final_hashes.clone(),
-        );
+        tracing::info!("read_write_hashes: {:?}", read_write_hashes.len());
+        tracing::info!("init_final_hashes: {:?}", init_final_hashes.len());
+
+        // let multiset_hashes = Self::MemoryCheckingProof::uninterleave_hashes(
+        //     preprocessing,
+        //     read_write_hashes.clone(),
+        //     init_final_hashes.clone(),
+        // );
 
         io_ctx
             .network
@@ -157,13 +156,16 @@ where
             io_ctx,
         )?;
 
-        Ok((r_read_write, r_init_final, multiset_hashes))
+        let read_write_batch_size = r_read_write.len();
+        let init_final_batch_size = r_init_final.len();
+
+        Ok((r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)))
     }
 
     fn compute_openings(
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         polynomials: &Self::Rep3Polynomials,
-        jolt_polynomials: &JoltPolynomials<F>,
+        _jolt_polynomials: &JoltPolynomials<F>,
         r_read_write: &[F],
         r_init_final: &[F],
         io_ctx: &mut IoContext<Network>,
@@ -182,7 +184,7 @@ where
             r_read_write.to_vec(),
             &read_write_evals,
             io_ctx,
-        );
+        )?;
 
         let init_final_polys = polynomials.init_final_values();
         let (init_final_evals, eq_init_final) =
@@ -194,7 +196,7 @@ where
             r_init_final.to_vec(),
             &init_final_evals,
             io_ctx,
-        );
+        )?;
 
         Ok(())
     }

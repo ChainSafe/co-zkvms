@@ -53,6 +53,9 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
+     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
+     fn construct(num_layers: usize) -> Self;
+
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
 
@@ -60,8 +63,8 @@ where
     /// Each layer is mutable so that its polynomials can be bound over the course
     /// of proving.
     fn layers(
-        &self,
-    ) -> impl Iterator<Item = Box<dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>>;
+        &'_ self,
+    ) -> impl Iterator<Item = &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>;
 
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
@@ -219,447 +222,75 @@ pub struct Rep3BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<Rep3DenseInterleavedPolynomial<F>>,
 }
 
-// impl<F: JoltField, PCS, ProofTranscript> Rep3BatchedGrandProduct<F, PCS, ProofTranscript>
-//     for Rep3BatchedDenseGrandProduct<F>
-// where
-//     F: JoltField,
-//     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//     ProofTranscript: Transcript,
-// {
-//     type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
-
-//     fn construct<N: Rep3NetworkWorker>(
-//         leaves: Self::Leaves,
-//         io_ctx: &mut IoContext<N>,
-//     ) -> eyre::Result<Self> {
-//         let (leaves, batch_size) = leaves;
-//         assert!(leaves.len() % batch_size == 0);
-//         assert!((leaves.len() / batch_size).is_power_of_two());
-
-//         let num_layers = (leaves.len() / batch_size).log_2();
-//         let mut layers: Vec<Rep3DenseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
-//         layers.push(Rep3DenseInterleavedPolynomial::new(leaves));
-
-//         for i in 0..num_layers - 1 {
-//             let previous_layer = &layers[i];
-//             let new_layer = previous_layer
-//                 .layer_output(io_ctx)
-//                 .context("while computing layer output")?;
-//             layers.push(new_layer);
-//         }
-
-//         Ok(Self { layers })
-//     }
-
-//     fn num_layers(&self) -> usize {
-//         self.layers.len()
-//     }
-
-//     fn claimed_outputs(&self) -> Vec<F> {
-//         let last_layer = &self.layers[self.layers.len() - 1];
-//         last_layer
-//             .par_chunks(2)
-//             .map(|chunk| chunk[0] * chunk[1])
-//             .collect()
-//     }
-// }
-
-// #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-// pub struct BatchedGrandProductProver<F: JoltField> {
-//     _marker: PhantomData<F>,
-// }
-
-// impl<F: JoltField> BatchedGrandProductProver<F> {
-//     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument::prove")]
-//     pub fn prove<Network, ProofTranscript, PCS>(
-//         claims_to_verify: Vec<F>,
-//         num_layers: usize,
-//         network: &mut Network,
-//         transcript: &mut ProofTranscript,
-//     ) -> eyre::Result<(BatchedGrandProductArgument<PCS, ProofTranscript>, Vec<F>)>
-//     where
-//         Network: MpcStarNetCoordinator,
-//         ProofTranscript: Transcript,
-//         PCS: CommitmentScheme<ProofTranscript, Field = F>,
-//     {
-//         let mut proof_layers: Vec<LayerProofBatched<F, ProofTranscript>> = Vec::new();
-//         let num_circuits = claims_to_verify.len();
-//         let coeff_vec: Vec<F> = transcript.challenge_vector(num_circuits);
-//         let first_claim: F = (0..claims_to_verify.len())
-//             .map(|i| (claims_to_verify[i] * coeff_vec[i]))
-//             .sum();
-
-//         network.broadcast_request((first_claim, coeff_vec.clone()))?;
-
-//         let mut rand = Vec::new();
-//         for layer_id in (0..num_layers).rev() {
-//             let span = tracing::span!(tracing::Level::TRACE, "grand_product_layer", layer_id);
-//             let _enter = span.enter();
-
-//             let (num_vars, sumcheck_type) = network
-//                 .receive_responses((0usize, 0u8))
-//                 .context("while receiving sumcheck params")?[0]
-//                 .clone();
-
-//             let sumcheck_type = CubicSumcheckType::from(sumcheck_type);
-
-//             let mut cubic_polys = Vec::new();
-//             let mut rand_prod = Vec::new();
-//             for _round in 0..num_vars {
-//                 let poly_shares = network
-//                     .receive_responses(Vec::new())
-//                     .context("while receiving poly shares")?;
-//                 assert_eq!(poly_shares.len(), 3);
-//                 let coeffs: Vec<F> = additive::combine_field_elements(
-//                     &poly_shares[0],
-//                     &poly_shares[1],
-//                     &poly_shares[2],
-//                 );
-//                 let poly = UniPoly::from_coeff(coeffs);
-//                 poly.append_to_transcript(transcript);
-//                 cubic_polys.push(poly.compress());
-//                 let r_j = transcript.challenge_scalar();
-//                 network.broadcast_request(r_j)?;
-//                 rand_prod.push(r_j);
-
-//                 network.broadcast_request(poly.evaluate(&r_j))?;
-//             }
-
-//             let claims_prod: (
-//                 Vec<Vec<Rep3PrimeFieldShare<F>>>,
-//                 Vec<Vec<Rep3PrimeFieldShare<F>>>,
-//             ) = network
-//                 .receive_responses((Vec::new(), Vec::new()))
-//                 .context("while receiving claims prod")?
-//                 .into_iter()
-//                 .unzip();
-//             let (claims_poly_A, claims_poly_B) = {
-//                 let (claims_poly_a_shares, claims_poly_b_shares) = claims_prod;
-//                 assert_eq!(claims_poly_a_shares.len(), 3);
-//                 assert_eq!(claims_poly_b_shares.len(), 3);
-//                 let claims_poly_a = rep3::combine_field_elements(
-//                     claims_poly_a_shares[0].as_slice(),
-//                     claims_poly_a_shares[1].as_slice(),
-//                     claims_poly_a_shares[2].as_slice(),
-//                 );
-//                 let claims_poly_b = rep3::combine_field_elements(
-//                     claims_poly_b_shares[0].as_slice(),
-//                     claims_poly_b_shares[1].as_slice(),
-//                     claims_poly_b_shares[2].as_slice(),
-//                 );
-//                 (claims_poly_a, claims_poly_b)
-//             };
-
-//             let proof = SumcheckInstanceProof::new(cubic_polys);
-
-//             for i in 0..num_circuits {
-//                 transcript.append_scalar(&claims_poly_A[i]);
-
-//                 transcript.append_scalar(&claims_poly_B[i]);
-//             }
-
-//             if sumcheck_type == CubicSumcheckType::Prod
-//                 || sumcheck_type == CubicSumcheckType::ProdOnes
-//             {
-//                 let r_layer = transcript.challenge_scalar();
-
-//                 network.broadcast_request(r_layer)?;
-
-//                 let mut ext = vec![r_layer];
-//                 ext.extend(rand_prod);
-//                 rand = ext;
-
-//                 proof_layers.push(LayerProofBatched {
-//                     proof,
-//                     claims_poly_A,
-//                     claims_poly_B,
-//                     combine_prod: true,
-//                     _marker: PhantomData,
-//                 });
-//             } else {
-//                 // CubicSumcheckType::Flags
-//                 // Flag layers do not need the additional bit as the randomness from the previous layers have already fully determined
-//                 assert_eq!(layer_id, 0);
-//                 rand = rand_prod;
-
-//                 proof_layers.push(LayerProofBatched {
-//                     proof,
-//                     claims_poly_A,
-//                     claims_poly_B,
-//                     combine_prod: false,
-//                     _marker: PhantomData,
-//                 });
-//             }
-
-//             if layer_id != 0 {
-//                 let coeff_vec: Vec<F> = transcript.challenge_vector(num_circuits);
-//                 network.broadcast_request(coeff_vec.clone())?;
-//             }
-//             drop(_enter);
-//         }
-
-//         Ok((
-//             BatchedGrandProductArgument {
-//                 proof: proof_layers,
-//             },
-//             rand,
-//         ))
-//     }
-
-//     #[tracing::instrument(skip_all, name = "BatchedGrandProductProver::prove_worker")]
-//     pub fn prove_worker<N: MpcStarNetWorker>(
-//         mut batch: BatchedRep3GrandProductCircuit<F>,
-//         network: &mut N,
-//     ) -> eyre::Result<Vec<F>> {
-//         // In first layer coordinator can compute claim since we sent circuits hashes (claims_to_verify) earlier
-//         let (mut claim, mut coeff_vec) = network.receive_request::<(F, Vec<F>)>()?;
-//         let mut claims_to_verify = Vec::new();
-
-//         let mut rand = Vec::new();
-//         for layer in (0..batch.num_layers()).rev() {
-//             let span = tracing::trace_span!("grand_product_layer", layer);
-//             let _enter = span.enter();
-
-//             let eq = DensePolynomial::new(EqPolynomial::<F>::evals(&rand));
-
-//             let params = batch.sumcheck_layer_params(layer, eq.clone());
-//             network.send_response::<(usize, u8, DensePolynomial<F>)>((
-//                 params.num_rounds,
-//                 params.sumcheck_type.into(),
-//                 eq,
-//             ))?;
-
-//             let sumcheck_type = params.sumcheck_type;
-//             let (rand_prod, claims_prod) =
-//                 sumcheck::rep3_prove_cubic_batched(&claim, params, &coeff_vec, network)?;
-
-//             let (claims_poly_a, claims_poly_b, _) = claims_prod;
-
-//             network.send_response((claims_poly_a.clone(), claims_poly_b.clone()))?;
-
-//             if sumcheck_type == CubicSumcheckType::Prod
-//                 || sumcheck_type == CubicSumcheckType::ProdOnes
-//             {
-//                 // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
-//                 // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
-//                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
-
-//                 // produce a random challenge to condense two claims into a single claim
-
-//                 let r_layer = network.receive_request()?;
-//                 claims_to_verify = (0..batch.circuits.len())
-//                     .map(|i| claims_poly_a[i] + (claims_poly_b[i] - claims_poly_a[i]) * r_layer)
-//                     .collect::<Vec<_>>();
-//                 let mut ext = vec![r_layer];
-//                 ext.extend(rand_prod);
-//                 rand = ext;
-//             } else {
-//                 // CubicSumcheckType::Flags
-//                 // Flag layers do not need the additional bit as the randomness from the previous layers have already fully determined
-//                 assert_eq!(layer, 0);
-//                 rand = rand_prod;
-//             }
-
-//             // In all other layers we need to receive coeffs and coordinator help to open claim
-//             if layer != 0 {
-//                 // produce a fresh set of coeffs and a joint claim
-//                 coeff_vec = network.receive_request()?;
-//                 claim = (0..claims_to_verify.len())
-//                     .map(|i| (claims_to_verify[i] * coeff_vec[i]).into_additive())
-//                     .sum(); // it's okay to remain additive since in the next round we just use it for substraction `e - evals_combined_0`
-//             }
-//             drop(_enter);
-//         }
-
-//         Ok(rand)
-//     }
-// }
-
-// #[derive(Debug, Clone)]
-// pub struct Rep3GrandProductCircuit<F: JoltField> {
-//     pub left_vec: Vec<Rep3DensePolynomial<F>>,
-//     pub right_vec: Vec<Rep3DensePolynomial<F>>,
-// }
-
-// impl<F: JoltField> Rep3GrandProductCircuit<F> {
-//     #[tracing::instrument(skip_all, name = "GrandProductCircuit::new", level = "trace")]
-//     pub fn new<N: Rep3Network>(
-//         leaves: &Rep3DensePolynomial<F>,
-//         io_ctx: &mut IoContext<N>,
-//     ) -> eyre::Result<Self> {
-//         let mut left_vec = Vec::new();
-//         let mut right_vec = Vec::new();
-
-//         let num_layers = leaves.len().log_2();
-//         let (outp_left, outp_right) = leaves.split(leaves.len() / 2);
-
-//         left_vec.push(outp_left);
-//         right_vec.push(outp_right);
-
-//         for i in 0..num_layers - 1 {
-//             let (outp_left, outp_right) = Self::compute_layer(&left_vec[i], &right_vec[i], io_ctx)?;
-//             left_vec.push(outp_left);
-//             right_vec.push(outp_right);
-//         }
-
-//         Ok(Self {
-//             left_vec,
-//             right_vec,
-//         })
-//     }
-
-//     #[tracing::instrument(skip_all, name = "GrandProductCircuit::new_split", level = "trace")]
-//     pub fn new_split<N: Rep3Network>(
-//         left_leaves: Rep3DensePolynomial<F>,
-//         right_leaves: Rep3DensePolynomial<F>,
-//         io_ctx: &mut IoContext<N>,
-//     ) -> eyre::Result<Self> {
-//         let num_layers = left_leaves.len().log_2() + 1;
-//         let mut left_vec = Vec::with_capacity(num_layers);
-//         let mut right_vec = Vec::with_capacity(num_layers);
-
-//         left_vec.push(left_leaves);
-//         right_vec.push(right_leaves);
-
-//         for i in 0..num_layers - 1 {
-//             let (outp_left, outp_right) = Self::compute_layer(&left_vec[i], &right_vec[i], io_ctx)?;
-//             left_vec.push(outp_left);
-//             right_vec.push(outp_right);
-//         }
-
-//         Ok(Self {
-//             left_vec,
-//             right_vec,
-//         })
-//     }
-
-//     pub fn evaluate(&self) -> F {
-//         let len = self.left_vec.len();
-//         assert_eq!(self.left_vec[len - 1].num_vars(), 0);
-//         assert_eq!(self.right_vec[len - 1].num_vars(), 0);
-//         self.left_vec[len - 1][0] * self.right_vec[len - 1][0]
-//     }
-
-//     pub fn take_layer(
-//         &mut self,
-//         layer_id: usize,
-//     ) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
-//         let left = std::mem::replace(
-//             &mut self.left_vec[layer_id],
-//             Rep3DensePolynomial::new(vec![Rep3PrimeFieldShare::zero_share()]),
-//         );
-//         let right = std::mem::replace(
-//             &mut self.right_vec[layer_id],
-//             Rep3DensePolynomial::new(vec![Rep3PrimeFieldShare::zero_share()]),
-//         );
-//         (left, right)
-//     }
-
-//     fn compute_layer<N: Rep3Network>(
-//         inp_left: &Rep3DensePolynomial<F>,
-//         inp_right: &Rep3DensePolynomial<F>,
-//         io_ctx: &mut IoContext<N>,
-//     ) -> eyre::Result<(Rep3DensePolynomial<F>, Rep3DensePolynomial<F>)> {
-//         let len = inp_left.len() + inp_right.len();
-
-//         let outp_left = rep3::arithmetic::mul_vec(
-//             &inp_left.evals_ref()[0..len / 4],
-//             &inp_right.evals_ref()[0..len / 4],
-//             io_ctx,
-//         )
-//         .context("while multiplying left")?;
-//         let outp_right = rep3::arithmetic::mul_vec(
-//             &inp_left.evals_ref()[len / 4..len / 2],
-//             &inp_right.evals_ref()[len / 4..len / 2],
-//             io_ctx,
-//         )
-//         .context("while multiplying right")?;
-
-//         Ok((
-//             Rep3DensePolynomial::new(outp_left),
-//             Rep3DensePolynomial::new(outp_right),
-//         ))
-//     }
-// }
-
-// pub struct BatchedRep3GrandProductCircuit<F: JoltField> {
-//     pub circuits: Vec<Rep3GrandProductCircuit<F>>,
-
-//     pub flags_present: bool,
-//     pub flags: Option<Vec<DensePolynomial<F>>>,
-//     pub fingerprint_polys: Option<Vec<Rep3DensePolynomial<F>>>,
-// }
-
-// impl<F: JoltField> BatchedRep3GrandProductCircuit<F> {
-//     pub fn new_batch(circuits: Vec<Rep3GrandProductCircuit<F>>) -> Self {
-//         Self {
-//             circuits,
-//             flags_present: false,
-//             flags: None,
-//             fingerprint_polys: None,
-//         }
-//     }
-
-//     pub fn new_batch_flags(
-//         circuits: Vec<Rep3GrandProductCircuit<F>>,
-//         flags: Vec<DensePolynomial<F>>,
-//         fingerprint_polys: Vec<Rep3DensePolynomial<F>>,
-//     ) -> Self {
-//         assert_eq!(circuits.len(), fingerprint_polys.len());
-
-//         Self {
-//             circuits,
-//             flags_present: true,
-//             flags: Some(flags),
-//             fingerprint_polys: Some(fingerprint_polys),
-//         }
-//     }
-
-//     pub fn num_layers(&self) -> usize {
-//         let prod_layers = self.circuits[0].left_vec.len();
-
-//         if self.flags.is_some() {
-//             prod_layers + 1
-//         } else {
-//             prod_layers
-//         }
-//     }
-
-//     pub fn sumcheck_layer_params(
-//         &mut self,
-//         layer_id: usize,
-//         eq: DensePolynomial<F>,
-//     ) -> Rep3CubicSumcheckParams<F> {
-//         if self.flags_present && layer_id == 0 {
-//             let flags = self.flags.as_ref().unwrap();
-//             debug_assert_eq!(flags[0].len(), eq.len());
-
-//             let num_rounds = eq.get_num_vars();
-
-//             // Each of these is needed exactly once, transfer ownership rather than clone.
-//             let fingerprint_polys = self.fingerprint_polys.take().unwrap();
-//             let flags = self.flags.take().unwrap();
-//             Rep3CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, num_rounds)
-//         } else {
-//             // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
-//             let layer_id = if self.flags_present {
-//                 layer_id - 1
-//             } else {
-//                 layer_id
-//             };
-
-//             let num_rounds = self.circuits[0].left_vec[layer_id].num_vars();
-
-//             let (lefts, rights): (Vec<Rep3DensePolynomial<F>>, Vec<Rep3DensePolynomial<F>>) = self
-//                 .circuits
-//                 .iter_mut()
-//                 .map(|circuit| circuit.take_layer(layer_id))
-//                 .unzip();
-//             if self.flags_present {
-//                 Rep3CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
-//             } else {
-//                 Rep3CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
-//             }
-//         }
-//     }
-// }
+impl<F: JoltField, PCS, ProofTranscript, Network>
+    Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
+    for Rep3BatchedDenseGrandProduct<F>
+where
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkWorker,
+{
+    type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
+
+    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self> {
+        let (leaves, batch_size) = leaves;
+        assert!(leaves.len() % batch_size == 0);
+        assert!((leaves.len() / batch_size).is_power_of_two());
+
+        let num_layers = (leaves.len() / batch_size).log_2();
+        let mut layers: Vec<Rep3DenseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
+        layers.push(Rep3DenseInterleavedPolynomial::new(leaves));
+
+        for i in 0..num_layers - 1 {
+            let previous_layer = &layers[i];
+            let new_layer = previous_layer.layer_output(io_ctx)?;
+            layers.push(new_layer);
+        }
+
+        Ok(Self { layers })
+    }
+
+    fn num_layers(&self) -> usize {
+        self.layers.len()
+    }
+
+    fn claimed_outputs(&self) -> Vec<F> {
+        let last_layer = &self.layers[self.layers.len() - 1];
+        last_layer
+            .par_chunks(2)
+            .map(|chunk| chunk[0] * chunk[1])
+            .collect()
+    }
+
+    fn layers(
+        &'_ mut self,
+    ) -> impl Iterator<Item = &'_ mut dyn Rep3BatchedGrandProductLayerWorker<F, Network>> {
+        self.layers
+            .iter_mut()
+            .map(|layer| layer as &mut dyn Rep3BatchedGrandProductLayerWorker<F, Network>)
+            .rev()
+    }
+}
+
+impl<F: JoltField, PCS, ProofTranscript, Network>
+    Rep3BatchedGrandProduct<F, PCS, ProofTranscript, Network> for Rep3BatchedDenseGrandProduct<F>
+where
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+{
+    fn construct(num_layers: usize) -> Self {
+        Self { layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers] }
+    }
+
+    fn num_layers(&self) -> usize {
+        self.layers.len()
+    }
+
+    fn layers(
+        &'_ self,
+    ) -> impl Iterator<Item = &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>
+    {
+        self.layers.iter().map(|layer| layer as &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>)
+    }
+}

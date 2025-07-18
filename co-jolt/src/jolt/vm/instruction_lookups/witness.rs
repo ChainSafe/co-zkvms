@@ -1,17 +1,20 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
 use co_lasso::{
+    memory_checking::StructuredPolynomialData,
     poly::{combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial},
     subprotocols::commitment::DistributedCommitmentScheme,
-    utils::{self, Forkable},
+    utils::{self, transcript::Transcript, Forkable},
 };
 use color_eyre::eyre::Context;
 use itertools::{chain, multizip, Itertools};
 use jolt_core::{
-    poly::{
-        commitment::commitment_scheme::BatchType, dense_mlpoly::DensePolynomial, field::JoltField,
-    },
-    utils::math::Math,
+    field::JoltField, jolt::vm::instruction_lookups::InstructionLookupPolynomials,
+    poly::dense_mlpoly::DensePolynomial, utils::math::Math,
+};
+use jolt_core::{
+    jolt::vm::instruction_lookups::InstructionLookupStuff,
+    poly::multilinear_polynomial::MultilinearPolynomial,
 };
 use mpc_core::protocols::{
     rep3::{
@@ -25,22 +28,22 @@ use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::Rng;
 use std::{iter, marker::PhantomData};
 
+use super::InstructionLookupsProof;
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{
     jolt::{
-        instruction::Rep3JoltInstructionSet,
+        instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
         subtable::JoltSubtableSet,
-        vm::instruction_lookups::{
-            InstructionCommitment, InstructionLookupsPreprocessing, InstructionPolynomials,
-        },
+        vm::instruction_lookups::InstructionLookupsPreprocessing,
     },
     poly::commitment::commitment_scheme::CommitmentScheme,
 };
 
 #[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Rep3InstructionPolynomials<F: JoltField> {
+pub struct Rep3InstructionLookupPolynomials<F: JoltField> {
     /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
     /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
     /// `m` (# lookups).
@@ -64,176 +67,86 @@ pub struct Rep3InstructionPolynomials<F: JoltField> {
     /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (# lookups).
     ///
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
-    pub instruction_flag_polys: Vec<DensePolynomial<F>>,
+    pub instruction_flags: Vec<MultilinearPolynomial<F>>,
 
-    /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
-    /// construction of the memory flag polynomials in `read_write_grand_product`.
-    pub instruction_flag_bitvectors: Vec<Vec<u64>>,
+    pub instruction_flags_rep3: Vec<Rep3DensePolynomial<F>>,
 
     /// The lookup output for each instruction of the execution trace.
     pub lookup_outputs: Rep3DensePolynomial<F>,
 }
 
-impl<F: JoltField> Rep3InstructionPolynomials<F> {
-    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::commit")]
-    pub fn commit<CS: DistributedCommitmentScheme<F>>(
-        &self,
-        setup: &CS::Setup,
-        network: &mut impl MpcStarNetWorker,
-    ) -> eyre::Result<()> {
-        let dims_share_a = self
-            .dim
+impl<F: JoltField> StructuredPolynomialData<Rep3DensePolynomial<F>>
+    for Rep3InstructionLookupPolynomials<F>
+{
+    fn read_write_values(&self) -> Vec<&Rep3DensePolynomial<F>> {
+        self.dim
             .iter()
-            .map(|poly| poly.copy_share_a())
-            .collect::<Vec<_>>();
-        let read_cts_share_a = self
-            .read_cts
-            .iter()
-            .map(|poly| poly.copy_share_a())
-            .collect::<Vec<_>>();
-        let e_polys_share_a = self
-            .E_polys
-            .iter()
-            .map(|poly| poly.copy_share_a())
-            .collect::<Vec<_>>();
-        let lookup_outputs_share_a = self.lookup_outputs.copy_share_a();
-        let trace_polys: Vec<&DensePolynomial<F>> = chain![
-            dims_share_a.iter(),
-            read_cts_share_a.iter(),
-            e_polys_share_a.iter(),
-            iter::once(&lookup_outputs_share_a),
-        ]
-        .collect();
-
-        let final_cts = self
-            .final_cts
-            .iter()
-            .map(|poly| poly.copy_poly_shares().0)
-            .collect::<Vec<_>>();
-        let trace_commitment = CS::batch_commit_polys_ref(&trace_polys, setup, BatchType::Big);
-        let lookup_flag_polys_commitment = CS::batch_commit_polys_ref(
-            &self.instruction_flag_polys.iter().collect::<Vec<_>>(),
-            setup,
-            BatchType::Big,
-        );
-        let final_commitment = CS::batch_commit_polys(&final_cts, setup, BatchType::Big);
-
-        if network.party_id() == PartyID::ID0 {
-            network.send_response(lookup_flag_polys_commitment)?;
-        }
-
-        network.send_response(InstructionCommitment::<CS> {
-            trace_commitment,
-            final_commitment,
-        })
+            .chain(self.read_cts.iter())
+            .chain(self.E_polys.iter())
+            .chain(self.instruction_flags_rep3.iter())
+            .chain([&self.lookup_outputs])
+            .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::receive_commitments")]
-    pub fn receive_commitments<CS: DistributedCommitmentScheme<F>>(
-        network: &mut impl MpcStarNetCoordinator,
-    ) -> eyre::Result<InstructionCommitment<CS>> {
-        // lookup flag polys commitment are not secret shared
-        let lookup_flag_polys_commitment: Vec<CS::Commitment> =
-            network.receive_response(PartyID::ID0, 0, Default::default())?;
+    fn init_final_values(&self) -> Vec<&Rep3DensePolynomial<F>> {
+        self.final_cts.iter().collect()
+    }
 
-        let [share1, share2, share3] = network
-            .receive_responses(InstructionCommitment::<CS> {
-                trace_commitment: Default::default(),
-                final_commitment: Default::default(),
-            })?
-            .try_into()
-            .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+    fn read_write_values_mut(&mut self) -> Vec<&mut Rep3DensePolynomial<F>> {
+        self.dim
+            .iter_mut()
+            .chain(self.read_cts.iter_mut())
+            .chain(self.E_polys.iter_mut())
+            .chain(self.instruction_flags_rep3.iter_mut())
+            .chain([&mut self.lookup_outputs])
+            .collect()
+    }
 
-        let mut trace_commitment = multizip((
-            share1.trace_commitment,
-            share2.trace_commitment,
-            share3.trace_commitment,
-        ))
-        .map(|(trace1, trace2, trace3)| CS::combine_commitments(&[trace1, trace2, trace3]))
-        .collect_vec();
-
-        // need to insert lookup flag polys commitment after e_polys commitments and before lookup outputs commitment
-        let after_e_polys_idx = trace_commitment.len().saturating_sub(1);
-        trace_commitment.splice(
-            after_e_polys_idx..after_e_polys_idx,
-            lookup_flag_polys_commitment,
-        );
-
-        let final_commitment = multizip((
-            share1.final_commitment,
-            share2.final_commitment,
-            share3.final_commitment,
-        ))
-        .map(|(final1, final2, final3)| CS::combine_commitments(&[final1, final2, final3]))
-        .collect_vec();
-
-        Ok(InstructionCommitment::<CS> {
-            trace_commitment,
-            final_commitment,
-        })
+    fn init_final_values_mut(&mut self) -> Vec<&mut Rep3DensePolynomial<F>> {
+        self.final_cts.iter_mut().collect()
     }
 }
 
-impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionPolynomials<F> {
+impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionLookupPolynomials<F> {
     fn num_lookups(&self) -> usize {
         self.dim[0].len()
     }
 }
 
-pub struct Rep3InstructionWitnessSolver<
-    const C: usize,
-    const M: usize,
-    F: JoltField,
-    CS,
-    Lookups: Rep3JoltInstructionSet<F>,
-    Subtables: JoltSubtableSet<F>,
-    N: Rep3Network,
-> {
-    pub io_ctx0: IoContext<N>,
-    pub io_ctx1: IoContext<N>,
-    _marker: PhantomData<(F, CS, Lookups, Subtables)>,
-}
-
-impl<const C: usize, const M: usize, F: JoltField, CS, Instructions, Subtables, Network>
-    Rep3InstructionWitnessSolver<C, M, F, CS, Instructions, Subtables, Network>
+impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subtables>
+    InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
 where
-    CS: DistributedCommitmentScheme<F>,
-    Instructions: Rep3JoltInstructionSet<F>,
+    F: JoltField,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
-    Network: Rep3Network,
+    ProofTranscript: Transcript,
 {
-    pub fn new(net: Network) -> color_eyre::Result<Self> {
-        let mut io_context0 = IoContext::init(net).context("failed to initialize io context")?;
-        let io_context1 = io_context0.fork().context("failed to fork io context")?;
-
-        Ok(Self {
-            io_ctx0: io_context0,
-            io_ctx1: io_context1,
-            _marker: PhantomData,
-        })
-    }
-
-    #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::polynomialize")]
-    pub fn polynomialize(
-        &mut self,
-        preprocessing: &InstructionLookupsPreprocessing<F>,
+    #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness_rep3")]
+    pub fn generate_witness_rep3<Network: Rep3Network>(
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
         mut ops: Vec<Option<Instructions>>,
-    ) -> eyre::Result<Rep3InstructionPolynomials<F>> {
+        network: Network,
+    ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>> {
+        let mut network = BiNetwork::new(network)?;
         let num_reads = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices = self.subtable_lookup_indices(&mut ops)?;
+        let subtable_lookup_indices =
+            Self::subtable_lookup_indices_rep3(&mut ops, &mut network.io_ctx0)?;
 
         let materialized_subtable_luts = preprocessing
             .materialized_subtables
             .clone()
             .into_iter()
-            .map(|subtable| PublicPrivateLut::Public(subtable))
+            .map(|subtable| {
+                PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
+            })
             .collect_vec();
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             utils::fork_map(
                 0..preprocessing.num_memories,
-                self,
+                &mut network,
                 |memory_index, solver| {
                     let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
@@ -246,7 +159,7 @@ where
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = op {
                             let memories_used = &preprocessing.instruction_to_memory_indices
-                                [Instructions::enum_index(op)];
+                                [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
                                 let memory_address = &access_sequence[j];
 
@@ -317,7 +230,7 @@ where
         let dims = tracing::info_span!("b2a dims").in_scope(|| {
             utils::fork_map(
                 subtable_lookup_indices,
-                &mut self.io_ctx0,
+                &mut network.io_ctx0,
                 |access_sequence, mut io_ctx0| {
                     let mut dim = vec![
                         Rep3PrimeFieldShare::zero_share();
@@ -338,33 +251,46 @@ where
 
         for (j, op) in ops.iter().enumerate() {
             if let Some(op) = op {
-                instruction_flag_bitvectors[Instructions::enum_index(op)][j] = 1;
+                instruction_flag_bitvectors
+                    [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)][j] = 1;
             }
         }
 
-        let instruction_flag_polys: Vec<_> = cfg_iter!(instruction_flag_bitvectors)
-            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+        let party_id = network.io_ctx0.id;
+        let instruction_flag_rep3_polys: Vec<_> = cfg_iter!(instruction_flag_bitvectors)
+            .map(|flag_bitvector| {
+                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
+                    DensePolynomial::from_u64(flag_bitvector).evals(),
+                    party_id,
+                ))
+            })
             .collect();
 
-        let lookup_outputs = Self::compute_lookup_outputs(&ops, num_reads, &mut self.io_ctx0)?;
+        let instruction_flag_polys: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
+            .into_par_iter()
+            .map(MultilinearPolynomial::from)
+            .collect();
 
-        Ok(Rep3InstructionPolynomials {
+        let lookup_outputs =
+            Self::compute_lookup_outputs_rep3(&ops, num_reads, &mut network.io_ctx0)?;
+
+        Ok(Rep3InstructionLookupPolynomials {
             dim: dims,
             read_cts,
             final_cts,
-            instruction_flag_polys,
-            instruction_flag_bitvectors,
+            instruction_flags: instruction_flag_polys,
+            instruction_flags_rep3: instruction_flag_rep3_polys,
             E_polys: e_polys,
             lookup_outputs,
         })
     }
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
-    fn subtable_lookup_indices(
-        &mut self,
+    fn subtable_lookup_indices_rep3<Network: Rep3Network>(
         lookups: &mut [Option<Instructions>],
+        io_ctx0: &mut IoContext<Network>,
     ) -> eyre::Result<Vec<Vec<Rep3BigUintShare<F>>>> {
-        Instructions::operands_to_binary(lookups, &mut self.io_ctx0)?;
+        Instructions::operands_to_binary(lookups, io_ctx0)?;
 
         let num_chunks = C;
         let log_M = M.log_2();
@@ -391,7 +317,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::compute_lookup_outputs")]
-    fn compute_lookup_outputs(
+    fn compute_lookup_outputs_rep3<Network: Rep3Network>(
         ops: &[Option<Instructions>],
         num_reads: usize,
         io_ctx: &mut IoContext<Network>,
@@ -412,130 +338,182 @@ where
     }
 }
 
-impl<F: JoltField> Rep3InstructionPolynomials<F> {
-    pub fn combine_polynomials<CS: CommitmentScheme<Field = F>>(
-        polynomials_shares: Vec<Self>,
-    ) -> InstructionPolynomials<F, CS> {
+impl<F: JoltField> Rep3InstructionLookupPolynomials<F> {
+    pub fn combine_polynomials(polynomials_shares: Vec<Self>) -> InstructionLookupPolynomials<F> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
-        let dims = multizip((share1.dim, share2.dim, share3.dim))
-            .map(|(dim1, dim2, dim3)| combine_poly_shares_rep3(vec![dim1, dim2, dim3]))
+        let dim = multizip((share1.dim, share2.dim, share3.dim))
+            .map(|(dim1, dim2, dim3)| {
+                MultilinearPolynomial::from(
+                    combine_poly_shares_rep3(vec![dim1, dim2, dim3])
+                        .evals()
+                        .into_iter()
+                        .map(|x| x.to_u64().unwrap() as u16)
+                        .collect_vec(),
+                )
+            })
             .collect_vec();
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
-            .map(|(read1, read2, read3)| combine_poly_shares_rep3(vec![read1, read2, read3]))
+            .map(|(read1, read2, read3)| {
+                MultilinearPolynomial::from(
+                    combine_poly_shares_rep3(vec![read1, read2, read3])
+                        .evals()
+                        .into_iter()
+                        .map(|x| x.to_u64().unwrap() as u32)
+                        .collect_vec(),
+                )
+            })
             .collect_vec();
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
-            .map(|(final1, final2, final3)| combine_poly_shares_rep3(vec![final1, final2, final3]))
+            .map(|(final1, final2, final3)| {
+                MultilinearPolynomial::from(
+                    combine_poly_shares_rep3(vec![final1, final2, final3])
+                        .evals()
+                        .into_iter()
+                        .map(|x| x.to_u64().unwrap() as u32)
+                        .collect_vec(),
+                )
+            })
             .collect_vec();
 
         let e_polys = multizip((share1.E_polys, share2.E_polys, share3.E_polys))
-            .map(|(e1, e2, e3)| combine_poly_shares_rep3(vec![e1, e2, e3]))
+            .map(|(e1, e2, e3)| {
+                MultilinearPolynomial::from(
+                    combine_poly_shares_rep3(vec![e1, e2, e3])
+                        .evals()
+                        .into_iter()
+                        .map(|x| x.to_u64().unwrap() as u32)
+                        .collect_vec(),
+                )
+            })
             .collect_vec();
 
-        let lookup_outputs = combine_poly_shares_rep3(vec![
-            share1.lookup_outputs,
-            share2.lookup_outputs,
-            share3.lookup_outputs,
-        ]);
+        let lookup_outputs = MultilinearPolynomial::from(
+            combine_poly_shares_rep3(vec![
+                share1.lookup_outputs,
+                share2.lookup_outputs,
+                share3.lookup_outputs,
+            ])
+            .evals()
+            .into_iter()
+            .map(|x| x.to_u64().unwrap() as u32)
+            .collect_vec(),
+        );
 
-        InstructionPolynomials {
-            _marker: PhantomData,
-            dim: dims,
+        InstructionLookupPolynomials {
+            dim,
             read_cts,
             final_cts,
-            instruction_flag_polys: share1.instruction_flag_polys.clone(),
-            instruction_flag_bitvectors: share1.instruction_flag_bitvectors.clone(),
+            instruction_flags: share1.instruction_flags.clone(),
             E_polys: e_polys,
             lookup_outputs,
+            a_init_final: None,
+            v_init_final: None,
         }
     }
-}
 
-impl<const C: usize, const M: usize, F: JoltField, CS, Lookups, Subtables, Network> Forkable
-    for Rep3InstructionWitnessSolver<C, M, F, CS, Lookups, Subtables, Network>
-where
-    CS: DistributedCommitmentScheme<F>,
-    Lookups: Rep3JoltInstructionSet<F>,
-    Subtables: JoltSubtableSet<F>,
-    Network: Rep3Network,
-{
-    fn fork(&mut self) -> eyre::Result<Self> {
-        Ok(Self {
-            io_ctx0: self.io_ctx0.fork()?,
-            io_ctx1: self.io_ctx1.fork()?,
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<F, C> InstructionPolynomials<F, C>
-where
-    F: JoltField,
-    C: CommitmentScheme<Field = F>,
-{
-    pub fn into_secret_shares_rep3<R: Rng>(
-        self,
+    pub fn generate_secret_shares_rep3<R: Rng>(
+        polynomials: &InstructionLookupPolynomials<F>,
         rng: &mut R,
-    ) -> eyre::Result<[Rep3InstructionPolynomials<F>; 3]> {
+    ) -> eyre::Result<[Self; 3]> {
         let (dim0, dim1, dim2) = itertools::multiunzip(
-            self.dim
+            polynomials
+                .dim
                 .iter()
                 .map(|poly| generate_poly_shares_rep3(poly, rng)),
         );
 
         let (read_cts0, read_cts1, read_cts2) = itertools::multiunzip(
-            self.read_cts
+            polynomials
+                .read_cts
                 .iter()
                 .map(|poly| generate_poly_shares_rep3(poly, rng)),
         );
 
         let (final_cts0, final_cts1, final_cts2) = itertools::multiunzip(
-            self.final_cts
+            polynomials
+                .final_cts
                 .iter()
                 .map(|poly| generate_poly_shares_rep3(poly, rng)),
         );
 
         let (e_polys0, e_polys1, e_polys2) = itertools::multiunzip(
-            self.E_polys
+            polynomials
+                .E_polys
                 .iter()
                 .map(|poly| generate_poly_shares_rep3(poly, rng)),
         );
 
         let (lookup_outputs0, lookup_outputs1, lookup_outputs2) =
-            generate_poly_shares_rep3(&self.lookup_outputs, rng);
+            generate_poly_shares_rep3(&polynomials.lookup_outputs, rng);
 
-        let p0 = Rep3InstructionPolynomials {
+        let get_instruction_flags_rep3 = |party_id: PartyID| -> Vec<Rep3DensePolynomial<F>> {
+            polynomials
+                .instruction_flags
+                .iter()
+                .map(|poly| {
+                    Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
+                        poly.coeffs_as_field_elements(),
+                        party_id,
+                    ))
+                })
+                .collect_vec()
+        };
+
+        let p0 = Rep3InstructionLookupPolynomials {
             dim: dim0,
             read_cts: read_cts0,
             final_cts: final_cts0,
             E_polys: e_polys0,
             lookup_outputs: lookup_outputs0,
-            instruction_flag_polys: self.instruction_flag_polys.clone(),
-            instruction_flag_bitvectors: self.instruction_flag_bitvectors.clone(),
+            instruction_flags: polynomials.instruction_flags.clone(),
+            instruction_flags_rep3: get_instruction_flags_rep3(PartyID::ID0),
         };
 
-        let p1 = Rep3InstructionPolynomials {
+        let p1 = Rep3InstructionLookupPolynomials {
             dim: dim1,
             read_cts: read_cts1,
             final_cts: final_cts1,
             E_polys: e_polys1,
             lookup_outputs: lookup_outputs1,
-            instruction_flag_polys: self.instruction_flag_polys.clone(),
-            instruction_flag_bitvectors: self.instruction_flag_bitvectors.clone(),
+            instruction_flags: polynomials.instruction_flags.clone(),
+            instruction_flags_rep3: get_instruction_flags_rep3(PartyID::ID1),
         };
 
-        let p2 = Rep3InstructionPolynomials {
+        let p2 = Rep3InstructionLookupPolynomials {
             dim: dim2,
             read_cts: read_cts2,
             final_cts: final_cts2,
             E_polys: e_polys2,
             lookup_outputs: lookup_outputs2,
-            instruction_flag_polys: self.instruction_flag_polys,
-            instruction_flag_bitvectors: self.instruction_flag_bitvectors,
+            instruction_flags: polynomials.instruction_flags.clone(),
+            instruction_flags_rep3: get_instruction_flags_rep3(PartyID::ID2),
         };
 
         Ok([p0, p1, p2])
+    }
+}
+
+struct BiNetwork<Network: Rep3Network> {
+    pub io_ctx0: IoContext<Network>,
+    pub io_ctx1: IoContext<Network>,
+}
+
+impl<Network: Rep3Network> BiNetwork<Network> {
+    pub fn new(net: Network) -> eyre::Result<Self> {
+        let mut io_ctx0 = IoContext::init(net)?;
+        let io_ctx1 = io_ctx0.fork()?;
+        Ok(Self { io_ctx0, io_ctx1 })
+    }
+}
+
+impl<Network: Rep3Network> Forkable for BiNetwork<Network> {
+    fn fork(&mut self) -> eyre::Result<Self> {
+        Ok(Self {
+            io_ctx0: self.io_ctx0.fork()?,
+            io_ctx1: self.io_ctx1.fork()?,
+        })
     }
 }
