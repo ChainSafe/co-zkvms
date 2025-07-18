@@ -29,14 +29,14 @@ use crate::poly::Rep3DensePolynomial;
 pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     CommitmentScheme<ProofTranscript, Field = F>
 {
-    fn distributed_batch_open<Network: MpcStarNetCoordinator>(
+    fn distributed_batch_open<Network>(
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Self::Proof>
     where
         Network: MpcStarNetCoordinator;
 
-    fn distributed_batch_open_worker<Network: MpcStarNetWorker>(
+    fn distributed_batch_open_worker<Network>(
         polys: &[&Rep3DensePolynomial<F>],
         ck: &Self::Setup,
         opening_point: &[F],
@@ -45,7 +45,7 @@ pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript>
     where
         Network: MpcStarNetWorker;
 
-    fn combine_commitments(commitments: &[Self::Commitment]) -> Self::Commitment;
+    fn combine_commitment_shares(commitments: &[&Self::Commitment]) -> Self::Commitment;
 }
 
 #[derive(Clone)]
@@ -165,7 +165,7 @@ where
         network.send_response(pf.proofs)
     }
 
-    fn combine_commitments(commitments: &[PST13Commitment<E>]) -> PST13Commitment<E> {
+    fn combine_commitment_shares(commitments: &[&PST13Commitment<E>]) -> PST13Commitment<E> {
         let mut g_product = E::G1::zero();
         for commitment in commitments {
             g_product += commitment.g_product;

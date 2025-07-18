@@ -33,7 +33,7 @@ use co_lasso::{
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
 use jolt_core::field::JoltField;
-use jolt_core::jolt::vm::instruction_lookups::{
+pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,
     InstructionLookupsPreprocessing,
 };
@@ -42,8 +42,8 @@ use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 use super::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 
 mod coordinator;
-mod witness;
-mod worker;
+pub mod witness;
+pub mod worker;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
@@ -493,83 +493,6 @@ pub struct PrimarySumcheck<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-#[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
-pub fn preprocess<const C: usize, const M: usize, F: JoltField, InstructionSet, Subtables>(
-) -> InstructionLookupsPreprocessing<C, F>
-where
-    InstructionSet: JoltInstructionSet<F>,
-    Subtables: JoltSubtableSet<F>,
-{
-    let materialized_subtables = materialize_subtables::<M, F, Subtables>();
-
-    // Build a mapping from subtable type => chunk indices that access that subtable type
-    let mut subtable_indices: Vec<SubtableIndices> =
-        vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
-    for instruction in InstructionSet::iter() {
-        for (subtable, indices) in instruction.subtables(C, M) {
-            subtable_indices[Subtables::enum_index(subtable)].union_with(&indices);
-        }
-    }
-
-    let mut subtable_to_memory_indices = Vec::with_capacity(Subtables::COUNT);
-    let mut memory_to_subtable_index = vec![];
-    let mut memory_to_dimension_index = vec![];
-
-    let mut memory_index = 0;
-    for (subtable_index, dimension_indices) in subtable_indices.iter().enumerate() {
-        subtable_to_memory_indices
-            .push((memory_index..memory_index + dimension_indices.len()).collect_vec());
-        memory_to_subtable_index.extend(vec![subtable_index; dimension_indices.len()]);
-        memory_to_dimension_index.extend(dimension_indices.iter());
-        memory_index += dimension_indices.len();
-    }
-    let num_memories = memory_index;
-
-    let mut instruction_to_memory_indices = vec![vec![]; InstructionSet::COUNT];
-    for instruction in InstructionSet::iter() {
-        for (subtable, dimension_indices) in instruction.subtables(C, M) {
-            let memory_indices: Vec<_> = subtable_to_memory_indices
-                [Subtables::enum_index(subtable)]
-            .iter()
-            .filter(|memory_index| {
-                dimension_indices.contains(memory_to_dimension_index[**memory_index])
-            })
-            .collect();
-            instruction_to_memory_indices[InstructionSet::enum_index(&instruction)]
-                .extend(memory_indices);
-        }
-    }
-
-    InstructionLookupsPreprocessing {
-        num_memories,
-        materialized_subtables,
-        subtable_to_memory_indices,
-        memory_to_subtable_index,
-        memory_to_dimension_index,
-        instruction_to_memory_indices,
-        _field: PhantomData,
-    }
-}
-
-/// Materializes all subtables used by this Jolt instance.
-#[tracing::instrument(skip_all)]
-fn materialize_subtables<const M: usize, F: JoltField, Subtables>() -> Vec<Vec<u32>>
-where
-    Subtables: JoltSubtableSet<F>,
-{
-    let mut subtables = Vec::with_capacity(Subtables::COUNT);
-    for subtable in Subtables::iter() {
-        subtables.push(
-            subtable
-                .materialize(M)
-                .into_iter()
-                .map(|x| x.to_u64().unwrap().try_into().unwrap())
-                .collect(),
-        );
-    }
-    subtables
-}
-
 impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTranscript>
     InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>
 where
@@ -740,6 +663,59 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
+    pub fn preprocess() -> InstructionLookupsPreprocessing<C, F> {
+        let materialized_subtables = Self::materialize_subtables();
+
+        // Build a mapping from subtable type => chunk indices that access that subtable type
+        let mut subtable_indices: Vec<SubtableIndices> =
+            vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
+        for instruction in InstructionSet::iter() {
+            for (subtable, indices) in instruction.subtables(C, M) {
+                subtable_indices[Subtables::enum_index(subtable)].union_with(&indices);
+            }
+        }
+
+        let mut subtable_to_memory_indices = Vec::with_capacity(Subtables::COUNT);
+        let mut memory_to_subtable_index = vec![];
+        let mut memory_to_dimension_index = vec![];
+
+        let mut memory_index = 0;
+        for (subtable_index, dimension_indices) in subtable_indices.iter().enumerate() {
+            subtable_to_memory_indices
+                .push((memory_index..memory_index + dimension_indices.len()).collect_vec());
+            memory_to_subtable_index.extend(vec![subtable_index; dimension_indices.len()]);
+            memory_to_dimension_index.extend(dimension_indices.iter());
+            memory_index += dimension_indices.len();
+        }
+        let num_memories = memory_index;
+
+        let mut instruction_to_memory_indices = vec![vec![]; InstructionSet::COUNT];
+        for instruction in InstructionSet::iter() {
+            for (subtable, dimension_indices) in instruction.subtables(C, M) {
+                let memory_indices: Vec<_> = subtable_to_memory_indices
+                    [Subtables::enum_index(subtable)]
+                .iter()
+                .filter(|memory_index| {
+                    dimension_indices.contains(memory_to_dimension_index[**memory_index])
+                })
+                .collect();
+                instruction_to_memory_indices[InstructionSet::enum_index(&instruction)]
+                    .extend(memory_indices);
+            }
+        }
+
+        InstructionLookupsPreprocessing {
+            num_memories,
+            materialized_subtables,
+            subtable_to_memory_indices,
+            memory_to_subtable_index,
+            memory_to_dimension_index,
+            instruction_to_memory_indices,
+            _field: PhantomData,
+        }
+    }
+
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness")]
     pub fn generate_witness(
@@ -777,7 +753,8 @@ where
                             read_cts_i[j] = counter;
                             final_cts_i[memory_address] = counter + 1;
                             subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address].into();
+                                [subtable_index][memory_address]
+                                .into();
                         }
                     }
                 }
@@ -1145,6 +1122,22 @@ where
             })
             .collect()
     }
+
+     /// Materializes all subtables used by this Jolt instance.
+     #[tracing::instrument(skip_all)]
+     fn materialize_subtables() -> Vec<Vec<u32>> {
+         let mut subtables = Vec::with_capacity(Subtables::COUNT);
+         for subtable in Subtables::iter() {
+             subtables.push(
+                 subtable
+                     .materialize(M)
+                     .into_iter()
+                     .map(|x| x.to_u64().unwrap().try_into().unwrap())
+                     .collect(),
+             );
+         }
+         subtables
+     }
 
     fn protocol_name() -> &'static [u8] {
         b"Jolt instruction lookups"

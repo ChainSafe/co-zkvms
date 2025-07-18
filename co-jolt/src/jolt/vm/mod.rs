@@ -31,6 +31,16 @@ pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
 }
 
 impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, InstructionSet> {
+    pub fn from_instruction_lookup(instruction_lookup: Option<InstructionSet>) -> Self {
+        Self {
+            instruction_lookup,
+            bytecode_row: BytecodeRow::no_op(0),
+            memory_ops: [MemoryOp::noop_read(), MemoryOp::noop_read(), MemoryOp::noop_write(), MemoryOp::noop_read()],
+            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
+            _field: PhantomData,
+        }
+    }
+
     fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,

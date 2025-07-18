@@ -4,13 +4,16 @@ use co_lasso::{
     memory_checking::StructuredPolynomialData,
     poly::{combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial},
     subprotocols::commitment::DistributedCommitmentScheme,
-    utils::{self, transcript::Transcript, Forkable},
+    utils::{self, transcript::{KeccakTranscript, Transcript}, Forkable},
 };
 use color_eyre::eyre::Context;
 use itertools::{chain, multizip, Itertools};
 use jolt_core::{
-    field::JoltField, jolt::vm::instruction_lookups::InstructionLookupPolynomials,
-    poly::dense_mlpoly::DensePolynomial, utils::math::Math,
+    field::JoltField,
+    jolt::vm::instruction_lookups::{InstructionLookupCommitments, InstructionLookupPolynomials},
+    lasso::memory_checking::Initializable,
+    poly::dense_mlpoly::DensePolynomial,
+    utils::math::Math,
 };
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
@@ -19,7 +22,7 @@ use jolt_core::{
 use mpc_core::protocols::{
     rep3::{
         self, arithmetic,
-        network::{IoContext, Rep3Network},
+        network::{IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker},
         PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
@@ -417,7 +420,7 @@ impl<F: JoltField> Rep3InstructionLookupPolynomials<F> {
     pub fn generate_secret_shares_rep3<R: Rng>(
         polynomials: &InstructionLookupPolynomials<F>,
         rng: &mut R,
-    ) -> eyre::Result<[Self; 3]> {
+    ) -> [Self; 3] {
         let (dim0, dim1, dim2) = itertools::multiunzip(
             polynomials
                 .dim
@@ -492,7 +495,116 @@ impl<F: JoltField> Rep3InstructionLookupPolynomials<F> {
             instruction_flags_rep3: get_instruction_flags_rep3(PartyID::ID2),
         };
 
-        Ok([p0, p1, p2])
+        [p0, p1, p2]
+    }
+}
+
+impl<F: JoltField> Rep3InstructionLookupPolynomials<F> {
+    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::commit")]
+    pub fn commit<const C: usize, PCS, Network>(
+        &self,
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
+        setup: &PCS::Setup,
+        network: &mut Network,
+    ) -> eyre::Result<()>
+    where
+        PCS: DistributedCommitmentScheme<F, KeccakTranscript>,
+        Network: Rep3NetworkWorker,
+    {
+        let mut commitments =
+            InstructionLookupCommitments::<PCS, KeccakTranscript>::initialize(preprocessing);
+
+        let trace_polys = self
+            .dim
+            .iter()
+            .chain(self.read_cts.iter())
+            .chain(self.E_polys.iter())
+            .chain([&self.lookup_outputs])
+            .map(|poly| MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
+            .collect_vec();
+
+        let trace_polys_ref = trace_polys.iter().collect::<Vec<_>>();
+
+        let trace_commitments = PCS::batch_commit(&trace_polys_ref, setup);
+
+        commitments
+            .dim
+            .iter_mut()
+            .chain(commitments.read_cts.iter_mut())
+            .chain(commitments.E_polys.iter_mut())
+            .chain([&mut commitments.lookup_outputs])
+            .zip(trace_commitments.into_iter())
+            .for_each(|(dest, src)| *dest = src);
+
+        if network.party_id() == PartyID::ID0 {
+            let lookup_flag_polys_commitment =
+                PCS::batch_commit(&self.instruction_flags.iter().collect::<Vec<_>>(), setup);
+            network.send_response(lookup_flag_polys_commitment)?;
+        }
+
+        commitments.final_cts = PCS::batch_commit(
+            &self
+                .final_cts
+                .iter()
+                .map(|poly| MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
+                .collect_vec(),
+            setup,
+        );
+
+        network.send_response(commitments)
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3InstructionPolynomials::receive_commitments")]
+    pub fn receive_commitments<const C: usize, PCS, ProofTranscript, Network>(
+        preprocessing: &InstructionLookupsPreprocessing<C, F>,
+        network: &mut Network,
+    ) -> eyre::Result<InstructionLookupCommitments<PCS, ProofTranscript>>
+    where
+        ProofTranscript: Transcript,
+        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        Network: Rep3NetworkCoordinator,
+    {
+        let mut commitments =
+            InstructionLookupCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+
+        // lookup flag polys commitment are not secret shared
+        let lookup_flag_polys_commitments: Vec<PCS::Commitment> =
+            network.receive_response(PartyID::ID0, 0, Default::default())?;
+
+        let [share1, share2, share3] = network
+            .receive_responses(InstructionLookupCommitments::<PCS, ProofTranscript>::default())?
+            .try_into()
+            .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+
+        let mut trace_commitments = multizip((
+            share1.read_write_values(),
+            share2.read_write_values(),
+            share3.read_write_values(),
+        ))
+        .map(|(trace1, trace2, trace3)| PCS::combine_commitment_shares(&[trace1, trace2, trace3]))
+        .collect_vec();
+
+        commitments
+            .dim
+            .iter_mut()
+            .chain(commitments.read_cts.iter_mut())
+            .chain(commitments.E_polys.iter_mut())
+            .chain([&mut commitments.lookup_outputs])
+            .chain(commitments.instruction_flags.iter_mut())
+            .zip(
+                trace_commitments
+                    .into_iter()
+                    .chain(lookup_flag_polys_commitments),
+            )
+            .for_each(|(dest, src)| *dest = src);
+
+        commitments.final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
+            .map(|(final1, final2, final3)| {
+                PCS::combine_commitment_shares(&[&final1, &final2, &final3])
+            })
+            .collect_vec();
+
+        Ok(commitments)
     }
 }
 

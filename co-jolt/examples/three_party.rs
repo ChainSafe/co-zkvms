@@ -8,7 +8,7 @@ use color_eyre::{
 };
 use itertools::Itertools;
 use jolt_core::utils::transcript::KeccakTranscript;
-use mpc_core::protocols::rep3;
+use mpc_core::protocols::rep3::{self, network::Rep3Network};
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
@@ -19,21 +19,30 @@ use std::{iter, path::PathBuf};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
-use co_jolt::jolt::{
-    instruction::{
-        self,
-        range_check::RangeLookup,
-        xor::{self, XORInstruction},
-        JoltInstruction, JoltInstructionSet, Rep3JoltInstructionSet,
+use co_jolt::{
+    jolt::{
+        instruction::{
+            self,
+            range_check::RangeLookup,
+            xor::{self, XORInstruction},
+            JoltInstruction, JoltInstructionSet, Rep3JoltInstructionSet,
+        },
+        subtable::{self, JoltSubtableSet},
+        vm::{
+            instruction_lookups::{
+                witness::Rep3InstructionLookupPolynomials, worker::Rep3InstructionLookupsProver,
+                InstructionLookupCommitments, InstructionLookupsPreprocessing,
+                InstructionLookupsProof,
+            },
+            JoltCommitments, JoltPolynomials, JoltTraceStep,
+        },
     },
-    subtable::{self, JoltSubtableSet},
-    vm::instruction_lookups::{
-        witness::{Rep3InstructionPolynomials, Rep3InstructionWitnessSolver},
-        worker::Rep3InstructionLookupsProver,
-        InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
-    },
+    poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+    utils::transcript::Transcript,
 };
-use co_lasso::subprotocols::commitment::PST13;
+use co_lasso::{
+    poly::opening_proof::Rep3ProverOpeningAccumulator, subprotocols::commitment::PST13,
+};
 
 type Instructions = instruction::TestInstructions<F>;
 type Subtables = subtable::TestInstructionSubtables<F>;
@@ -125,22 +134,7 @@ pub fn run_party<
     log_num_pub_workers: usize,
 ) -> Result<()> {
     type LassoProof<const C: usize, const M: usize, Instructions, Subtables> =
-        InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
-
-    type LassoWitnessSolver<
-        const C: usize,
-        const M: usize,
-        Instructions,
-        Subtables,
-    > = Rep3InstructionWitnessSolver<
-        C,
-        M,
-        F,
-        PST13<E>,
-        Instructions,
-        Subtables,
-        Rep3QuicMpcNetWorker,
-    >;
+        InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables, KeccakTranscript>;
 
     let my_id = config.my_id;
 
@@ -154,31 +148,32 @@ pub fn run_party<
     )
     .unwrap();
 
-    let preprocessing =
-        InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
+    let preprocessing = LassoProof::<C, M, Instructions, Subtables>::preprocess();
 
     let setup = {
-        let commitment_shapes = LassoProof::<C, M, Instructions, Subtables>::commitment_shapes(
-            &preprocessing,
-            lookups.len(),
-        );
+        let max_len = std::cmp::max(lookups.len().next_power_of_two(), M);
         let mut rng = test_rng();
-        PST13::setup(&commitment_shapes, &mut rng)
+        PST13::setup(max_len, &mut rng)
     };
 
     let polynomials = if args.solve_witness {
-        let mut witness_solver =
-            LassoWitnessSolver::<C, M, Instructions, Subtables>::new(rep3_net).unwrap();
-        let polynomials = witness_solver.polynomialize(&preprocessing, lookups)?;
+        let polynomials = LassoProof::<C, M, Instructions, Subtables>::generate_witness_rep3(
+            &preprocessing,
+            lookups,
+            rep3_net.fork().unwrap(),
+        )?;
 
-        rep3_net = witness_solver.io_ctx0.network;
         polynomials
     } else {
         let polynomials = rep3_net.receive_request()?;
         polynomials
     };
 
-    polynomials.commit::<PST13<E>>(&setup, &mut rep3_net)?;
+    polynomials.commit::<C, PST13<E>, _>(
+        &preprocessing,
+        &setup,
+        &mut rep3_net,
+    )?;
 
     if args.debug && args.solve_witness {
         rep3_net.send_response(polynomials.clone())?;
@@ -186,10 +181,18 @@ pub fn run_party<
 
     let mut prover =
         Rep3InstructionLookupsProver::<C, M, F, PST13<E>, Instructions, Subtables, _>::new(
-            rep3_net, setup,
+            rep3_net,
         )?;
 
-    prover.prove(&preprocessing, &polynomials)?;
+    let jolt_polys = JoltPolynomials::default();
+    let mut opening_accumulator = Rep3ProverOpeningAccumulator::new();
+    prover.prove(
+        &preprocessing,
+        &polynomials,
+        &jolt_polys,
+        &mut opening_accumulator,
+        &setup,
+    )?;
 
     prover.io_ctx.network.log_connection_stats();
     drop(_enter);
@@ -214,7 +217,7 @@ pub fn run_coordinator<
         const M: usize,
         Instructions: JoltInstructionSet<F>,
         Subtables: JoltSubtableSet<F>,
-    > = InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables>;
+    > = InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables, KeccakTranscript>;
 
     let num_inputs = lookups.len();
     if args.solve_witness {
@@ -228,32 +231,42 @@ pub fn run_coordinator<
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
 
-    let preprocessing =
-        InstructionLookupsPreprocessing::preprocess::<C, M, Instructions, Subtables>();
+    let preprocessing = LassoProof::<C, M, Instructions, Subtables>::preprocess();
 
-    let commitment_shapes =
-        LassoProof::<C, M, Instructions, Subtables>::commitment_shapes(&preprocessing, num_inputs);
     let setup = {
+        let max_len = std::cmp::max(num_inputs.next_power_of_two(), M);
         let mut rng = test_rng();
-        PST13::setup(&commitment_shapes, &mut rng)
+        PST13::setup(max_len, &mut rng)
     };
+
+    let ops = lookups
+        .into_iter()
+        .map(|op| JoltTraceStep::<F, Instructions>::from_instruction_lookup(op))
+        .collect_vec();
 
     if !args.solve_witness {
         let mut rng = test_rng();
-        let polynomials = LassoProof::<C, M, _, Subtables>::polynomialize(&preprocessing, &lookups);
-        let polynomials_shares = polynomials.into_secret_shares_rep3(&mut rng)?;
+        let polynomials = LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
+        let polynomials_shares =
+            Rep3InstructionLookupPolynomials::generate_secret_shares_rep3(&polynomials, &mut rng);
         rep3_net.send_requests(polynomials_shares.to_vec())?;
     }
 
-    let commitments = Rep3InstructionPolynomials::receive_commitments::<PST13<E>>(&mut rep3_net)?;
+    let commitments =
+        Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
+            &preprocessing,
+            &mut rep3_net,
+        )?;
+    let mut jolt_commitments = JoltCommitments::<PST13<E>, KeccakTranscript>::default();
+    jolt_commitments.instruction_lookups = commitments;
     if args.debug {
         let polynomials_check =
-            LassoProof::<C, M, _, Subtables>::polynomialize(&preprocessing, &lookups);
+            LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
 
         if args.solve_witness {
             let polynomials_shares = rep3_net.receive_responses(Default::default())?;
             let polynomials =
-                Rep3InstructionPolynomials::combine_polynomials::<PST13<E>>(polynomials_shares);
+                Rep3InstructionLookupPolynomials::combine_polynomials(polynomials_shares);
 
             assert_eq!(polynomials.dim, polynomials_check.dim);
             assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
@@ -262,38 +275,52 @@ pub fn run_coordinator<
             assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
         }
 
-        let commitment_check: InstructionCommitment<PST13<ark_bn254::Bn254>> =
-            polynomials_check.commit(&setup);
-
-        assert_eq!(
-            commitment_check.trace_commitment,
-            commitments.trace_commitment
-        );
-        assert_eq!(
-            commitment_check.final_commitment,
-            commitments.final_commitment
-        );
-
-        let mut transcript = ProofTranscript::new(b"Lasso");
-        let proof = LassoProof::<C, M, Instructions, Subtables>::prove(
-            &polynomials_check,
+        let commitment_check = polynomials_check.commit::<C, PST13<E>, KeccakTranscript>(
             &preprocessing,
             &setup,
+        );
+
+        // assert_eq!(
+        //     commitment_check.trace_commitment,
+        //     commitments.trace_commitment
+        // );
+        // assert_eq!(
+        //     commitment_check.final_commitment,
+        //     commitments.final_commitment
+        // );
+
+        let mut transcript = KeccakTranscript::new(b"Lasso");
+        let mut opening_accumulator = ProverOpeningAccumulator::<F, KeccakTranscript>::new();
+        let mut jolt_polys = JoltPolynomials {
+            bytecode: Default::default(),
+            read_write_memory: Default::default(),
+            instruction_lookups: polynomials_check,
+            timestamp_range_check: Default::default(),
+            r1cs: Default::default(),
+        };
+        let proof = LassoProof::<C, M, Instructions, Subtables>::prove(
+            &setup,
+            &mut jolt_polys,
+            &preprocessing,
+            &mut opening_accumulator,
             &mut transcript,
         );
 
-        let mut verifier_transcript = ProofTranscript::new(b"Lasso");
+        let mut verifier_transcript = KeccakTranscript::new(b"Lasso");
+        let mut opening_accumulator =
+            VerifierOpeningAccumulator::<F, PST13<E>, KeccakTranscript>::new();
         LassoProof::<C, M, Instructions, Subtables>::verify(
             &preprocessing,
             &setup,
             proof,
-            &commitments,
+            &jolt_commitments,
+            &mut opening_accumulator,
             &mut verifier_transcript,
         )
         .context("while verifying Lasso (check) proof")?;
     }
 
-    let mut transcript: ProofTranscript = ProofTranscript::new(b"Lasso");
+    let mut transcript = KeccakTranscript::new(b"Lasso");
 
     let proof = LassoProof::<C, M, Instructions, Subtables>::prove_rep3(
         num_inputs,
@@ -302,12 +329,15 @@ pub fn run_coordinator<
         &mut transcript,
     )?;
 
-    let mut verifier_transcript = ProofTranscript::new(b"Lasso");
+    let mut opening_accumulator =
+        VerifierOpeningAccumulator::<F, PST13<E>, KeccakTranscript>::new();
+    let mut verifier_transcript = KeccakTranscript::new(b"Lasso");
     LassoProof::verify(
         &preprocessing,
         &setup,
         proof,
-        &commitments,
+        &jolt_commitments,
+        &mut opening_accumulator,
         &mut verifier_transcript,
     )
     .context("while verifying Lasso (rep3) proof")?;

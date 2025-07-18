@@ -1,7 +1,8 @@
 mod three_party;
 
 use clap::Parser;
-use co_jolt::{host, jolt::{instruction::JoltInstructionSet, vm::rv32i_vm::RV32I}, poly::field::JoltField};
+use jolt_core::field::JoltField;
+use co_jolt::{host, jolt::{instruction::JoltInstructionSet, vm::rv32i_vm::RV32I}};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
