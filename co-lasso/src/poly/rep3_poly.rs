@@ -166,8 +166,9 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
-        cfg_iter!(self.evals)
-            .zip_eq(cfg_iter!(chis))
+        self.evals
+            .par_iter()
+            .zip_eq(chis.par_iter())
             .map(|(eval, chi)| rep3::arithmetic::mul_public(*eval, *chi).into_additive())
             .sum()
     }

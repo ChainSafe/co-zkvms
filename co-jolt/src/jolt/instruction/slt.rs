@@ -132,7 +132,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
             eq_prod = rep3::arithmetic::mul(eq_prod, *eq_i, io_ctx)?;
         }
 
-        let ltu_sum = rep3::arithmetic::reshare_to_rep3(ltu_sum, io_ctx)?;
+        let ltu_sum = rep3::arithmetic::reshare_additive(ltu_sum, io_ctx)?;
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
         rep3::arithmetic::add_mul(gt_msb[0], eq_msb[0], ltu_sum, io_ctx)

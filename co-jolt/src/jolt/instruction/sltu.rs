@@ -109,7 +109,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
             sum += ltu[i] * eq_prod;
             eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
         }
-        Ok(rep3::arithmetic::reshare_to_rep3(sum, io_ctx)?)
+        Ok(rep3::arithmetic::reshare_additive(sum, io_ctx)?)
     }
 
     fn to_indices_rep3(

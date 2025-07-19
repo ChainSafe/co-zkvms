@@ -1,11 +1,26 @@
+use jolt_core::poly::multilinear_polynomial::BindingOrder;
 pub use jolt_core::poly::opening_proof::*;
-use mpc_core::protocols::{additive, rep3::{self, network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker}}};
+use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+use jolt_core::utils::transcript::{AppendToTranscript, KeccakTranscript};
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    additive,
+    rep3::{
+        self,
+        network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker},
+    },
+};
 
 use crate::{
     field::JoltField,
     poly::{MultilinearPolynomial, Rep3DensePolynomial},
+    subprotocols::commitment::DistributedCommitmentScheme,
     utils::transcript::Transcript,
 };
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// An opening computed by the prover.
 pub struct Rep3ProverOpening<F: JoltField> {
@@ -20,6 +35,8 @@ pub struct Rep3ProverOpening<F: JoltField> {
     pub opening_point: Vec<F>,
     /// The claimed opening.
     pub claim: F,
+    /// The claimed opening.
+    claim_rep3: Option<Rep3PrimeFieldShare<F>>,
 }
 
 impl<F: JoltField> Rep3ProverOpening<F> {
@@ -34,6 +51,7 @@ impl<F: JoltField> Rep3ProverOpening<F> {
             eq_poly,
             opening_point,
             claim,
+            claim_rep3: None,
         }
     }
 }
@@ -99,5 +117,254 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .sum();
         network.broadcast_request((rho, batched_claim))?;
         Ok(claims)
+    }
+
+    /// Reduces the multiple openings accumulated into a single opening proof,
+    /// using a single sumcheck.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
+    pub fn reduce_and_prove<PCS, ProofTranscript, Network>(
+        pcs_setup: &PCS::Setup,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<ReducedOpeningProof<F, PCS, ProofTranscript>>
+    where
+        Network: Rep3NetworkCoordinator,
+        ProofTranscript: Transcript,
+        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    {
+        // Generate coefficients for random linear combination
+        let rho: F = transcript.challenge_scalar();
+        network.broadcast_request(rho)?;
+
+        let max_num_vars = network.receive_response(PartyID::ID0, 0, 0usize)?;
+
+        let mut r: Vec<F> = Vec::new();
+        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+        for round in 0..max_num_vars {
+            let uni_poly = UniPoly::from_coeff(additive::combine_field_element_vec(
+                network.receive_responses(vec![])?,
+            ));
+            let compressed_poly = uni_poly.compress();
+
+            // append the prover's message to the transcript
+            compressed_poly.append_to_transcript(transcript);
+            let r_j = transcript.challenge_scalar();
+            r.push(r_j);
+            let new_claim = uni_poly.evaluate(&r_j);
+
+            network.broadcast_request((r_j, new_claim))?;
+
+            compressed_polys.push(compressed_poly);
+        }
+
+        let sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
+
+        let sumcheck_claims =
+            additive::combine_field_element_vec(network.receive_responses(vec![])?);
+
+        transcript.append_scalars(&sumcheck_claims);
+
+        let gamma: F = transcript.challenge_scalar();
+        network.broadcast_request(gamma)?;
+
+        // Reduced opening proof
+        let joint_opening_proof = PCS::recieve_prove(network)?;
+
+        Ok(ReducedOpeningProof {
+            sumcheck_proof,
+            sumcheck_claims,
+            joint_opening_proof,
+        })
+    }
+
+    /// Reduces the multiple openings accumulated into a single opening proof,
+    /// using a single sumcheck.
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
+    pub fn reduce_and_prove_worker<PCS, Network>(
+        &mut self,
+        pcs_setup: &PCS::Setup,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()>
+    where
+        Network: Rep3NetworkWorker,
+        PCS: DistributedCommitmentScheme<F>,
+    {
+        // Generate coefficients for random linear combination
+        let rho: F = io_ctx.network.receive_request()?;
+        let mut rho_powers = vec![F::one()];
+        for i in 1..self.openings.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        // TODO(moodlezoup): surely there's a better way to do this
+        let unbound_polys = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial.clone())
+            .collect::<Vec<_>>();
+
+        // Use sumcheck reduce many openings to one
+        let (r_sumcheck, sumcheck_claims) =
+            self.prove_batch_opening_reduction(&rho_powers, io_ctx)?;
+
+        io_ctx.network.send_response(sumcheck_claims)?;
+
+        let gamma: F = io_ctx.network.receive_request()?;
+        let mut gamma_powers = vec![F::one()];
+        for i in 1..self.openings.len() {
+            gamma_powers.push(gamma_powers[i - 1] * gamma);
+        }
+
+        let joint_poly = Rep3DensePolynomial::linear_combination(
+            &unbound_polys.iter().collect::<Vec<_>>(),
+            &gamma_powers,
+        );
+
+        // Reduced opening proof
+        PCS::prove_rep3(&joint_poly, pcs_setup, &r_sumcheck, &mut io_ctx.network)?;
+
+        Ok(())
+    }
+
+    /// Proves the sumcheck used to prove the reduction of many openings into one.
+    #[tracing::instrument(skip_all, name = "prove_batch_opening_reduction")]
+    pub fn prove_batch_opening_reduction<Network: Rep3NetworkWorker>(
+        &mut self,
+        coeffs: &[F],
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<(Vec<F>, Vec<F>)> {
+        let max_num_vars = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial.num_vars())
+            .max()
+            .unwrap();
+
+        if io_ctx.id == PartyID::ID0 {
+            io_ctx.network.send_response(max_num_vars)?;
+        }
+
+        let opening_claims = rep3::arithmetic::reshare_additive_many(
+            &self
+                .openings
+                .par_iter()
+                .map(|opening| opening.claim)
+                .collect::<Vec<_>>(),
+            io_ctx,
+        )?;
+        // Compute random linear combination of the claims, accounting for the fact that the
+        // polynomials may be of different sizes
+        let mut e: F = coeffs
+            .par_iter()
+            .zip(opening_claims.par_iter())
+            .zip(self.openings.par_iter_mut())
+            .map(|((coeff, claim), opening)| {
+                let scaled_claim = if opening.polynomial.num_vars() != max_num_vars {
+                    rep3::arithmetic::mul_public(
+                        *claim,
+                        F::from_u64_unchecked(1 << (max_num_vars - opening.polynomial.num_vars())),
+                    )
+                } else {
+                    *claim
+                };
+                opening.claim_rep3 = Some(*claim);
+                rep3::arithmetic::mul_public(scaled_claim, *coeff).into_additive()
+            })
+            .sum();
+
+        let mut r: Vec<F> = Vec::new();
+
+        for round in 0..max_num_vars {
+            let remaining_rounds = max_num_vars - round;
+            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, e);
+            io_ctx.network.send_response(uni_poly.as_vec())?;
+            let compressed_poly = uni_poly.compress();
+
+            // append the prover's message to the transcript
+            let (r_j, new_claim) = io_ctx.network.receive_request()?;
+            r.push(r_j);
+            e = new_claim;
+
+            self.openings.par_iter_mut().for_each(|opening| {
+                if remaining_rounds <= opening.opening_point.len() {
+                    rayon::join(
+                        || opening.eq_poly.bind(r_j, BindingOrder::HighToLow),
+                        || opening.polynomial.bind(r_j, BindingOrder::HighToLow),
+                    );
+                }
+            });
+        }
+
+        let claims: Vec<_> = self
+            .openings
+            .iter()
+            .map(|opening| opening.polynomial[0].into_additive())
+            .collect();
+
+        Ok((r, claims))
+    }
+
+    /// Computes the univariate (quadratic) polynomial that serves as the
+    /// prover's message in each round of the sumcheck in `prove_batch_opening_reduction`.
+    #[tracing::instrument(skip_all)]
+    fn compute_quadratic(
+        &self,
+        coeffs: &[F],
+        remaining_sumcheck_rounds: usize,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
+        let evals: Vec<(F, F)> = self
+            .openings
+            .par_iter()
+            .zip(coeffs.par_iter())
+            .map(|(opening, coeff)| {
+                if remaining_sumcheck_rounds <= opening.opening_point.len() {
+                    let mle_half = opening.polynomial.len() / 2;
+                    let eval_0 = (0..mle_half)
+                        .map(|i| {
+                            rep3::arithmetic::mul_public(
+                                opening.polynomial[i],
+                                opening.eq_poly[i] * coeff,
+                            )
+                            .into_additive()
+                        })
+                        .sum();
+                    let eval_2 = (0..mle_half)
+                        .map(|i| {
+                            let poly_bound_point = opening.polynomial[i + mle_half]
+                                + opening.polynomial[i + mle_half]
+                                - opening.polynomial[i];
+                            let eq_bound_point = opening.eq_poly[i + mle_half]
+                                + opening.eq_poly[i + mle_half]
+                                - opening.eq_poly[i];
+                            rep3::arithmetic::mul_public(poly_bound_point, eq_bound_point * coeff)
+                                .into_additive()
+                        })
+                        .sum();
+                    (eval_0, eval_2)
+                } else {
+                    // debug_assert!(!opening.polynomial.is_bound());
+                    let remaining_variables =
+                        remaining_sumcheck_rounds - opening.opening_point.len() - 1;
+                    let scaled_claim = rep3::arithmetic::mul_public(
+                        opening.claim_rep3.unwrap(),
+                        F::from_u64_unchecked(1 << remaining_variables) * coeff,
+                    )
+                    .into_additive();
+                    (scaled_claim, scaled_claim)
+                }
+            })
+            .collect();
+
+        let evals_combined_0: F = (0..evals.len()).map(|i| evals[i].0).sum();
+        let evals_combined_2: F = (0..evals.len()).map(|i| evals[i].1).sum();
+        let evals = vec![
+            evals_combined_0,
+            previous_round_claim - evals_combined_0,
+            evals_combined_2,
+        ];
+
+        UniPoly::from_evals(&evals)
     }
 }

@@ -9,7 +9,11 @@ pub use mpc_core::protocols::rep3::{
     network::{IoContext, Rep3Network},
 };
 
+use crate::protocols::additive::AdditiveShare;
 use crate::protocols::rep3::rngs::SSRandom;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub fn generate_shares_rep3<F: PrimeField, R: Rng>(
     val: F,
@@ -44,12 +48,24 @@ pub fn get_mask_scalar_rep3<F: PrimeField, R: RngCore + FeedableRNG>(
     mask_share
 }
 
-pub fn reshare_to_rep3<F: PrimeField, N: Rep3Network>(
-    additive: F,
+pub fn reshare_additive<F: PrimeField, N: Rep3Network>(
+    additive: AdditiveShare<F>,
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
     let prev_share: F = io_ctx.network.reshare(additive)?;
     Ok(Rep3PrimeFieldShare::new(additive, prev_share))
+}
+
+pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
+    additive_shares: &[AdditiveShare<F>],
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    let b_shares: Vec<F> = io_ctx.network.reshare_many(additive_shares)?;
+    Ok(additive_shares
+        .into_par_iter()
+        .zip(b_shares.into_par_iter())
+        .map(|(a, b)| Rep3PrimeFieldShare::new(*a, b))
+        .collect())
 }
 
 /// Convenience method for \[a\] * (\[b\] * c)
@@ -60,7 +76,9 @@ pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.
-pub fn combine_field_elements_vec<F: PrimeField>(shares: Vec<Vec<Rep3PrimeFieldShare<F>>>) -> Vec<F> {
+pub fn combine_field_elements_vec<F: PrimeField>(
+    shares: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+) -> Vec<F> {
     let [s0, s1, s2]: [Vec<_>; 3] = shares.try_into().unwrap();
     mpc_core::protocols::rep3::combine_field_elements(&s0, &s1, &s2)
 }

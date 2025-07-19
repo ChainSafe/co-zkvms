@@ -15,7 +15,10 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::{
+    poly::multilinear_polynomial::MultilinearPolynomial, utils::transcript::KeccakTranscript,
+};
+use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::RngCore;
 use snarks_core::poly::commitment::{aggregate_comm, aggregate_eval};
@@ -26,7 +29,7 @@ use rayon::prelude::*;
 
 use crate::poly::Rep3DensePolynomial;
 
-pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
+pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript = KeccakTranscript>:
     CommitmentScheme<ProofTranscript, Field = F>
 {
     fn distributed_batch_open<Network>(
@@ -44,6 +47,19 @@ pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript>
     ) -> eyre::Result<()>
     where
         Network: MpcStarNetWorker;
+
+    fn recieve_prove<Network>(network: &mut Network) -> eyre::Result<Self::Proof>
+    where
+        Network: Rep3NetworkCoordinator;
+
+    fn prove_rep3<Network>(
+        poly: &Rep3DensePolynomial<F>,
+        ck: &Self::Setup,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<()>
+    where
+        Network: Rep3NetworkWorker;
 
     fn combine_commitment_shares(commitments: &[&Self::Commitment]) -> Self::Commitment;
 }
@@ -174,6 +190,38 @@ where
             nv: commitments[0].nv,
             g_product: g_product.into_affine(),
         }
+    }
+
+    fn recieve_prove<Network>(network: &mut Network) -> eyre::Result<Proof<E>>
+    where
+        Network: Rep3NetworkCoordinator,
+    {
+        let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
+            network.receive_responses(Vec::new())?.try_into().unwrap();
+
+        let proofs = itertools::multizip((pf0, pf1, pf2))
+            .map(|(a, b, c)| (a + b + c).into_affine())
+            .collect::<Vec<_>>();
+
+        Ok(Proof { proofs })
+    }
+
+    fn prove_rep3<Network>(
+        poly: &Rep3DensePolynomial<E::ScalarField>,
+        setup: &Self::Setup,
+        opening_point: &[E::ScalarField],
+        network: &mut Network,
+    ) -> eyre::Result<()>
+    where
+        Network: Rep3NetworkWorker,
+    {
+        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
+        let (pf, _) = open(
+            &setup.ck(poly.num_vars()),
+            &poly.copy_share_a(),
+            &opening_point_rev,
+        );
+        network.send_response(pf.proofs)
     }
 }
 
