@@ -37,18 +37,22 @@ pub struct Rep3SparseInterleavedPolynomial<F: JoltField> {
     pub(crate) coalesced: Option<Rep3DenseInterleavedPolynomial<F>>,
     /// The length of the layer if it were represented by a single dense vector.
     pub(crate) dense_len: usize,
+
+    pub(crate) one: Rep3PrimeFieldShare<F>,
 }
 
 impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
     pub fn new(
         coeffs: Vec<Vec<SparseCoefficient<Rep3PrimeFieldShare<F>>>>,
         dense_len: usize,
+        party_id: PartyID,
     ) -> Self {
         let batch_size = coeffs.len();
         assert!((dense_len / batch_size).is_power_of_two());
+        let one: Rep3PrimeFieldShare<F> = rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
         if (dense_len / batch_size) <= 2 {
             // Coalesce
-            let mut coalesced = vec![Rep3PrimeFieldShare::zero_share(); dense_len];
+            let mut coalesced = vec![one; dense_len];
             coeffs
                 .iter()
                 .flatten()
@@ -57,12 +61,14 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 dense_len,
                 coeffs: vec![vec![]; batch_size],
                 coalesced: Some(Rep3DenseInterleavedPolynomial::new(coalesced)),
+                one,
             }
         } else {
             Self {
                 dense_len,
                 coeffs,
                 coalesced: None,
+                one,
             }
         }
     }
@@ -86,7 +92,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         if let Some(coalesced) = &self.coalesced {
             coalesced.coeffs[..coalesced.len()].to_vec()
         } else {
-            let mut coalesced = vec![Rep3PrimeFieldShare::zero_share(); self.dense_len];
+            let mut coalesced = vec![self.one; self.dense_len];
             self.coeffs
                 .iter()
                 .flatten()
@@ -95,51 +101,6 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         }
     }
 
-    #[cfg(test)]
-    pub fn interleave(
-        left: &Vec<Rep3PrimeFieldShare<F>>,
-        right: &Vec<Rep3PrimeFieldShare<F>>,
-        batch_size: usize,
-    ) -> Self {
-        use itertools::Itertools;
-        assert_eq!(left.len(), right.len());
-
-        if left.len() <= batch_size {
-            // Coalesced
-            let coalesced: Vec<_> = left.iter().interleave(right).cloned().collect();
-            let dense_len = coalesced.len();
-            return Self {
-                coeffs: vec![vec![]; batch_size],
-                coalesced: Some(Rep3DenseInterleavedPolynomial::new(coalesced)),
-                dense_len,
-            };
-        }
-
-        let mut coeffs: Vec<Vec<SparseCoefficient<Rep3PrimeFieldShare<F>>>> = vec![];
-        let mut index_offset = 0usize;
-        for (left_chunk, right_chunk) in left
-            .chunks(left.len() / batch_size)
-            .zip(right.chunks(right.len() / batch_size))
-        {
-            coeffs.push(
-                left_chunk
-                    .iter()
-                    .interleave(right_chunk)
-                    .enumerate()
-                    .filter_map(|(index, coeff)| {
-                        if coeff.is_one() {
-                            None
-                        } else {
-                            Some((index_offset + index, *coeff).into())
-                        }
-                    })
-                    .collect(),
-            );
-            index_offset += left_chunk.len() + right_chunk.len();
-        }
-
-        Self::new(coeffs, left.len() + right.len())
-    }
 
     /// Uninterleaves a `SparseInterleavedPolynomial` into two vectors
     /// containing the left and right coefficients.
@@ -147,8 +108,8 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         if let Some(coalesced) = &self.coalesced {
             coalesced.uninterleave()
         } else {
-            let mut left = vec![Rep3PrimeFieldShare::zero_share(); self.dense_len / 2];
-            let mut right = vec![Rep3PrimeFieldShare::zero_share(); self.dense_len / 2];
+            let mut left = vec![self.one; self.dense_len / 2];
+            let mut right = vec![self.one; self.dense_len / 2];
 
             self.coeffs.iter().flatten().for_each(|coeff| {
                 if coeff.index % 2 == 0 {
@@ -177,6 +138,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 dense_len: self.dense_len / 2,
                 coeffs: vec![vec![]; self.batch_size()],
                 coalesced: Some(coalesced.layer_output(io_ctx)?),
+                one: self.one,
             })
         } else {
             let one_share = rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
@@ -217,7 +179,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 .collect::<eyre::Result<Vec<_>>>()
                 .context("while computing layer output")?;
 
-            Ok(Self::new(coeffs, self.dense_len / 2))
+            Ok(Self::new(coeffs, self.dense_len / 2, io_ctx.id))
         }
     }
 }
@@ -266,10 +228,10 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
 
                         let neighbors = [
                             segment.get(j + 1).cloned().unwrap_or(
-                                (current.index + 1, Rep3PrimeFieldShare::zero_share()).into(),
+                                (current.index + 1, self.one).into(),
                             ),
                             segment.get(j + 2).cloned().unwrap_or(
-                                (current.index + 2, Rep3PrimeFieldShare::zero_share()).into(),
+                                (current.index + 2, self.one).into(),
                             ),
                         ];
                         let find_neighbor = |query_index: usize| {
@@ -282,7 +244,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
                                         None
                                     }
                                 })
-                                .unwrap_or(Rep3PrimeFieldShare::zero_share())
+                                .unwrap_or(self.one)
                         };
 
                         match current.index % 4 {

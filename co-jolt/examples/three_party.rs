@@ -159,8 +159,7 @@ pub fn run_party<
     let setup = {
         let max_len = std::cmp::max(lookups.len().next_power_of_two(), M);
         let mut rng = test_rng();
-        // PST13::setup(max_len, &mut rng)
-        PST13Setup::default()
+        PST13::setup(max_len, &mut rng)
     };
 
     let mut polynomials = if args.solve_witness {
@@ -177,11 +176,11 @@ pub fn run_party<
     };
 
 
-    // polynomials.commit::<C, PST13<E>, _>(
-    //     &preprocessing,
-    //     &setup,
-    //     &mut rep3_net,
-    // )?;
+    polynomials.commit::<C, PST13<E>, _>(
+        &preprocessing,
+        &setup,
+        &mut rep3_net,
+    )?;
 
     if args.debug && args.solve_witness {
         rep3_net.send_response(polynomials.clone())?;
@@ -239,7 +238,6 @@ pub fn run_coordinator<
         tracing::warn!("Witness solving disabled");
     }
 
-    // init_tracing();
     let mut rep3_net =
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
@@ -266,13 +264,13 @@ pub fn run_coordinator<
         rep3_net.send_requests(polynomials_shares.to_vec())?;
     }
 
-    // let commitments =
-    //     Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
-    //         &preprocessing,
-    //         &mut rep3_net,
-    //     )?;
+    let commitments =
+        Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
+            &preprocessing,
+            &mut rep3_net,
+        )?;
     let mut jolt_commitments = JoltCommitments::<PST13<E>, KeccakTranscript>::default();
-    // jolt_commitments.instruction_lookups = commitments;
+    jolt_commitments.instruction_lookups = commitments;
     if args.debug {
         let polynomials_check =
             LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
@@ -293,7 +291,6 @@ pub fn run_coordinator<
             &preprocessing,
             &setup,
         );
-        jolt_commitments.instruction_lookups = commitment_check;
         // assert_eq!(
         //     commitment_check.trace_commitment,
         //     commitments.trace_commitment
@@ -340,7 +337,6 @@ pub fn run_coordinator<
 
     let mut transcript = KeccakTranscript::new(b"Lasso");
 
-    println!("proving rep3");
     let proof = LassoProof::<C, M, Instructions, Subtables>::prove_rep3(
         num_inputs,
         &preprocessing,

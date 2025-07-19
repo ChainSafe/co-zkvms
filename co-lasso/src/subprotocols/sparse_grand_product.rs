@@ -136,7 +136,7 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
         name = "BatchedGrandProductToggleLayer::layer_output",
         level = "trace"
     )]
-    fn layer_output(&self) -> Rep3SparseInterleavedPolynomial<F> {
+    fn layer_output(&self, party_id: PartyID) -> Rep3SparseInterleavedPolynomial<F> {
         let values: Vec<_> = self
             .fingerprints
             .par_iter()
@@ -152,7 +152,7 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
             })
             .collect();
 
-        Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2)
+        Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2, party_id)
     }
 
     /// Coalesces flags and fingerprints into one (dense) vector each.
@@ -447,24 +447,65 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let t1 = flag_eval_2.mul_0_optimized(eq_evals.1);
                         let t2 = flag_eval_3.mul_0_optimized(eq_evals.2);
 
-                        let e0 = additive::sub_public(
+                        let e0 = additive::add_public(
                             rep3::arithmetic::mul_public(fingerprints[0], t0).into_additive(),
                             eq_evals.0 - t0,
                             party_id,
                         );
 
+       
 
-                        let e1 = additive::sub_public(
+                        let e1 = additive::add_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
                             eq_evals.1 - t1,
                             party_id,
                         );
 
-                        let e2 = additive::sub_public(
+                        let e2 = additive::add_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
                             eq_evals.2 - t2,
                             party_id,
                         );
+
+                        // let e0 = rep3::arithmetic::mul_public(
+                        //     rep3::arithmetic::add_public(
+                        //         rep3::arithmetic::mul_public(fingerprints[0], flags[0]),
+                        //         F::one() - flags[0],
+                        //         party_id,
+                        //     ),
+                        //     eq_evals.0,
+                        // )
+                        // .into_additive();
+
+                        // let e0 = rep3::arithmetic::mul_public(
+                        //     rep3::arithmetic::add_public(
+                        //         rep3::arithmetic::mul_public(fingerprints[0], flags[0]),
+                        //         F::one() - flags[0],
+                        //         party_id,
+                        //     ),
+                        //     eq_evals.0,
+                        // )
+                        // .into_additive();
+
+                        // let e1 = rep3::arithmetic::mul_public(
+                        //     rep3::arithmetic::add_public(
+                        //         rep3::arithmetic::mul_public(fingerprint_eval_2, flag_eval_2),
+                        //         F::one() - flag_eval_2,
+                        //         party_id,
+                        //     ),
+                        //     eq_evals.1,
+                        // )
+                        // .into_additive();
+
+                        // let e2 = rep3::arithmetic::mul_public(
+                        //     rep3::arithmetic::add_public(
+                        //         rep3::arithmetic::mul_public(fingerprint_eval_3, flag_eval_3),
+                        //         F::one() - flag_eval_3,
+                        //         party_id,
+                        //     ),
+                        //     eq_evals.2,
+                        // )
+                        // .into_additive();
 
                         (e0, e1, e2)
                     })
@@ -518,21 +559,21 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             let t1 = flag_eval_2.mul_0_optimized(t0_1);
                             let t2 = flag_eval_3.mul_0_optimized(t0_2);
 
-                            inner_sum.0 += additive::sub_public(
+                            inner_sum.0 += additive::add_public(
                                 rep3::arithmetic::mul_public(fingerprint_chunk[0], t0)
                                     .into_additive(),
                                 t0_0 - t0,
                                 party_id,
                             );
 
-                            inner_sum.1 += additive::sub_public(
+                            inner_sum.1 += additive::add_public(
                                 rep3::arithmetic::mul_public(fingerprint_eval_2, t1)
                                     .into_additive(),
                                 t0_1 - t1,
                                 party_id,
                             );
 
-                            inner_sum.2 += additive::sub_public(
+                            inner_sum.2 += additive::add_public(
                                 rep3::arithmetic::mul_public(fingerprint_eval_3, t2)
                                     .into_additive(),
                                 t0_2 - t2,
@@ -1021,16 +1062,10 @@ where
 
         let toggle_layer = Rep3BatchedGrandProductToggleLayer::new(flags, fingerprints);
         let mut sparse_layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
-        sparse_layers.push(toggle_layer.layer_output());
+        sparse_layers.push(toggle_layer.layer_output(io_ctx.id));
 
         for i in 0..num_sparse_layers {
             let previous_layer = &sparse_layers[i];
-            if i < 2 {
-                for chunk in previous_layer.coeffs.iter() {
-                    let open_coeffs = rep3::arithmetic::open_vec::<F, Network>(&chunk.iter().map(|coeff| coeff.value).collect_vec(), io_ctx)?;
-                    tracing::info!("construct layer {} open_coeffs: {:?}", i, &open_coeffs);
-                }
-            }
             sparse_layers.push(previous_layer.layer_output(io_ctx)?);
         }
 

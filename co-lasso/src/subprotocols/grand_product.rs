@@ -35,7 +35,7 @@ use mpc_core::protocols::{
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rayon::prelude::*;
 
-use super::sumcheck::{self, Rep3CubicSumcheckParams};
+use super::sumcheck::{self};
 use crate::poly::Rep3DensePolynomial;
 
 pub use super::legacy::{
@@ -82,20 +82,14 @@ where
             additive::combine_field_element_vec::<F>(network.receive_responses(Vec::new())?);
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
-        tracing::info!("output_mle: {:?}", output_mle);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
-        tracing::info!("initial r: {:?}", r);
-        tracing::info!("initial claim: {:?}", claim);
 
         network.broadcast_request((r.clone(), claim))?;
 
         for layer in self.layers() {
-            proof_layers.push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
-            let claim: F = network.receive_responses::<F>(F::zero())?.into_iter().sum();
-            tracing::info!("layer claim: {:?}", claim);
-            tracing::info!("layer r: {:?}", r);
-            tracing::info!("--------------------");
+            proof_layers
+                .push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
         }
 
         Ok(BatchedGrandProductProof {
@@ -149,7 +143,6 @@ where
 
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
-            io_ctx.network.send_response(claim)?;
         }
 
         Ok(r)

@@ -164,7 +164,6 @@ where
     )> {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
-        tracing::info!("poly_len: {:?}", poly_len);
         memory_polys
             .iter()
             .for_each(|E_poly| debug_assert_eq!(E_poly.len(), poly_len));
@@ -172,13 +171,6 @@ where
             .iter()
             .for_each(|flag_poly| debug_assert_eq!(flag_poly.len(), poly_len));
         debug_assert_eq!(lookup_outputs_poly.len(), poly_len);
-
-        // for poly in memory_polys.iter() {
-        //     let poly_open = rep3::arithmetic::open_vec::<F, Network>(poly.evals_ref(), io_ctx)?;
-        //     tracing::info!("poly_open: {:?}", poly_open.iter().positions(|x| x.is_one()).collect_vec());
-        // }
-        // let lookup_outputs_poly_open = rep3::arithmetic::open_vec::<F, Network>(lookup_outputs_poly.evals_ref(), io_ctx)?;
-        // tracing::info!("lookup_outputs_poly_open: {:?}", &lookup_outputs_poly_open.iter().positions(|x| x.is_one()).collect_vec());
 
         let mut previous_claim = F::zero();
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);

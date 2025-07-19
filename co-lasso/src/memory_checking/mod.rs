@@ -84,9 +84,6 @@ where
 
         let num_lookups = network.receive_responses(0usize)?[0];
 
-        // let fingerprints = rep3::arithmetic::combine_field_elements_vec::<F>(network.receive_responses::<_>(Vec::default())?);
-        // tracing::info!("fingerprints: {:?}", fingerprints);
-
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
                 .receive_responses((Vec::default(), Vec::default()))
