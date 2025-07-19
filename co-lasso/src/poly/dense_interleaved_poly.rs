@@ -99,7 +99,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         Self::new(interleaved)
     }
 
-    pub fn uninterleave(&self) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
+    pub fn uninterleave(&self) -> (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) {
         let left: Vec<_> = self.coeffs[..self.len].iter().copied().step_by(2).collect();
         let mut right: Vec<_> = self.coeffs[..self.len]
             .iter()
@@ -110,10 +110,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         if right.len() < left.len() {
             right.resize(left.len(), Rep3PrimeFieldShare::zero_share());
         }
-        (
-            Rep3DensePolynomial::new(left),
-            Rep3DensePolynomial::new(right),
-        )
+        (left, right)
     }
 
     pub fn layer_output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Self> {
@@ -126,37 +123,9 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         // Ok(Self::new(output))
 
         let (left, right) = self.uninterleave();
-        let (left_poly, right_poly) = Self::compute_layer(&left, &right, io_ctx)?;
-        Ok(Self::interleave(
-            left_poly.evals_ref(),
-            right_poly.evals_ref(),
-        ))
-    }
-
-    fn compute_layer<N: Rep3Network>(
-        inp_left: &Rep3DensePolynomial<F>,
-        inp_right: &Rep3DensePolynomial<F>,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<(Rep3DensePolynomial<F>, Rep3DensePolynomial<F>)> {
-        let len = inp_left.len() + inp_right.len();
-
-        let outp_left = rep3::arithmetic::mul_vec(
-            &inp_left.evals_ref()[0..len / 4],
-            &inp_right.evals_ref()[0..len / 4],
-            io_ctx,
-        )
-        .context("while multiplying left")?;
-        let outp_right = rep3::arithmetic::mul_vec(
-            &inp_left.evals_ref()[len / 4..len / 2],
-            &inp_right.evals_ref()[len / 4..len / 2],
-            io_ctx,
-        )
-        .context("while multiplying right")?;
-
-        Ok((
-            Rep3DensePolynomial::new(outp_left),
-            Rep3DensePolynomial::new(outp_right),
-        ))
+        let prod =
+            rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")?;
+        Ok(Self::new(prod))
     }
 }
 
@@ -170,7 +139,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
     ///   |  |\  \   |  |\  \
     ///   0  1 2  3  4  5 6  7
     /// Left nodes have even indices, right nodes have odd indices.
-    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::bind")]
+    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::bind", level = "trace")]
     fn bind(&mut self, r: F, party_id: PartyID) {
         let padded_len = self.len.next_multiple_of(4);
         // In order to parallelize binding while obeying Rust ownership rules, we
@@ -221,7 +190,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F, Network>
     for Rep3DenseInterleavedPolynomial<F>
 {
-    #[tracing::instrument(skip_all, name = "Rep3DenseInterleavedPolynomial::compute_cubic")]
+    #[tracing::instrument(skip_all, name = "Rep3DenseInterleavedPolynomial::compute_cubic", level = "trace")]
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
@@ -387,11 +356,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
 {
 }
 
-impl<F: JoltField, ProofTranscript, Network> Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>
-    for Rep3DenseInterleavedPolynomial<F>
+impl<F: JoltField, ProofTranscript, Network>
+    Rep3BatchedGrandProductLayer<F, ProofTranscript, Network> for Rep3DenseInterleavedPolynomial<F>
 where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    
 }

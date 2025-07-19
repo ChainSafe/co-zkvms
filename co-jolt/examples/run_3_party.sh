@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 mkdir -p data
-cargo build --example three_party --release
+cargo build --example three_party
 
 cd ../mpc-net
 cargo build --bin gen_cert --release
@@ -14,7 +14,7 @@ cd ../co-jolt
 
 log_num_inputs=${1:-6}
 
-../target/release/examples/three_party -c examples/config_coordinator.toml --log-num-inputs $log_num_inputs &
-../target/release/examples/three_party -c examples/config_party1.toml --log-num-inputs $log_num_inputs &
-../target/release/examples/three_party -c examples/config_party2.toml --log-num-inputs $log_num_inputs &
-../target/release/examples/three_party -c examples/config_party3.toml --log-num-inputs $log_num_inputs 
+../target/debug/examples/three_party -c examples/config_coordinator.toml --log-num-inputs $log_num_inputs &
+../target/debug/examples/three_party -c examples/config_party1.toml --log-num-inputs $log_num_inputs &
+../target/debug/examples/three_party -c examples/config_party2.toml --log-num-inputs $log_num_inputs &
+../target/debug/examples/three_party -c examples/config_party3.toml --log-num-inputs $log_num_inputs 

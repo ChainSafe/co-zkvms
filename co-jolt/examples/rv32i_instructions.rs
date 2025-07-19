@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
     let mut program = host::Program::new("fibonacci-guest");
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
+    let inputs = postcard::to_stdvec(&5u32).unwrap();
     let (_, instruction_trace) = program.trace::<F>(&inputs);
 
     if config.is_coordinator {

@@ -41,7 +41,7 @@ use co_jolt::{
     utils::transcript::Transcript,
 };
 use co_lasso::{
-    poly::opening_proof::Rep3ProverOpeningAccumulator, subprotocols::commitment::PST13,
+    poly::opening_proof::Rep3ProverOpeningAccumulator, subprotocols::commitment::{PST13Setup, PST13},
 };
 
 type Instructions = instruction::TestInstructions<F>;
@@ -61,6 +61,9 @@ pub struct Args {
 
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
     pub debug: bool,
+
+    #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
+    pub trace_parties: bool,
 }
 
 const C: usize = 2; // num chunks
@@ -69,7 +72,7 @@ type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
 fn main() -> Result<()> {
-    init_tracing();
+    // init_tracing();
     let args = Args::parse();
     let num_inputs = 1 << args.log_num_inputs;
     rustls::crypto::aws_lc_rs::default_provider()
@@ -133,6 +136,9 @@ pub fn run_party<
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
+    if args.trace_parties && config.my_id == 0 {
+        init_tracing();
+    }
     type LassoProof<const C: usize, const M: usize, Instructions, Subtables> =
         InstructionLookupsProof<C, M, F, PST13<E>, Instructions, Subtables, KeccakTranscript>;
 
@@ -153,10 +159,11 @@ pub fn run_party<
     let setup = {
         let max_len = std::cmp::max(lookups.len().next_power_of_two(), M);
         let mut rng = test_rng();
-        PST13::setup(max_len, &mut rng)
+        // PST13::setup(max_len, &mut rng)
+        PST13Setup::default()
     };
 
-    let polynomials = if args.solve_witness {
+    let mut polynomials = if args.solve_witness {
         let polynomials = LassoProof::<C, M, Instructions, Subtables>::generate_witness_rep3(
             &preprocessing,
             lookups,
@@ -169,14 +176,19 @@ pub fn run_party<
         polynomials
     };
 
-    polynomials.commit::<C, PST13<E>, _>(
-        &preprocessing,
-        &setup,
-        &mut rep3_net,
-    )?;
+
+    // polynomials.commit::<C, PST13<E>, _>(
+    //     &preprocessing,
+    //     &setup,
+    //     &mut rep3_net,
+    // )?;
 
     if args.debug && args.solve_witness {
         rep3_net.send_response(polynomials.clone())?;
+    }
+
+    if args.debug {
+        return Ok(());
     }
 
     let mut prover =
@@ -188,7 +200,7 @@ pub fn run_party<
     let mut opening_accumulator = Rep3ProverOpeningAccumulator::new();
     prover.prove(
         &preprocessing,
-        &polynomials,
+        &mut polynomials,
         &jolt_polys,
         &mut opening_accumulator,
         &setup,
@@ -212,6 +224,7 @@ pub fn run_coordinator<
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
+    init_tracing();
     type LassoProof<
         const C: usize,
         const M: usize,
@@ -237,6 +250,7 @@ pub fn run_coordinator<
         let max_len = std::cmp::max(num_inputs.next_power_of_two(), M);
         let mut rng = test_rng();
         PST13::setup(max_len, &mut rng)
+        // PST13Setup::default()
     };
 
     let ops = lookups
@@ -252,13 +266,13 @@ pub fn run_coordinator<
         rep3_net.send_requests(polynomials_shares.to_vec())?;
     }
 
-    let commitments =
-        Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
-            &preprocessing,
-            &mut rep3_net,
-        )?;
+    // let commitments =
+    //     Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
+    //         &preprocessing,
+    //         &mut rep3_net,
+    //     )?;
     let mut jolt_commitments = JoltCommitments::<PST13<E>, KeccakTranscript>::default();
-    jolt_commitments.instruction_lookups = commitments;
+    // jolt_commitments.instruction_lookups = commitments;
     if args.debug {
         let polynomials_check =
             LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
@@ -279,7 +293,7 @@ pub fn run_coordinator<
             &preprocessing,
             &setup,
         );
-
+        jolt_commitments.instruction_lookups = commitment_check;
         // assert_eq!(
         //     commitment_check.trace_commitment,
         //     commitments.trace_commitment
@@ -320,15 +334,19 @@ pub fn run_coordinator<
         .context("while verifying Lasso (check) proof")?;
     }
 
+    if args.debug {
+        return Ok(());
+    }
+
     let mut transcript = KeccakTranscript::new(b"Lasso");
 
+    println!("proving rep3");
     let proof = LassoProof::<C, M, Instructions, Subtables>::prove_rep3(
         num_inputs,
         &preprocessing,
         &mut rep3_net,
         &mut transcript,
     )?;
-
     let mut opening_accumulator =
         VerifierOpeningAccumulator::<F, PST13<E>, KeccakTranscript>::new();
     let mut verifier_transcript = KeccakTranscript::new(b"Lasso");
@@ -349,6 +367,7 @@ pub fn init_tracing() {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy();
+        // .add_directive("jolt_core=trace".parse().unwrap());
 
     let subscriber = Registry::default()
         .with(env_filter)

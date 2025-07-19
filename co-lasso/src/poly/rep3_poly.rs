@@ -1,7 +1,7 @@
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
-use jolt_core::{poly::multilinear_polynomial::MultilinearPolynomial, utils};
+use jolt_core::{poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation}, utils};
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::Rng;
@@ -54,10 +54,11 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn from_poly_shares(a: DensePolynomial<F>, b: DensePolynomial<F>) -> Self {
-        assert_eq!(a.evals_ref().len(), 1 << a.get_num_vars());
-        assert_eq!(b.evals_ref().len(), 1 << b.get_num_vars());
         assert_eq!(a.evals_ref().len(), b.evals_ref().len());
-        Rep3DensePolynomial::from_vec_shares(a.evals(), b.evals())
+        Rep3DensePolynomial::from_vec_shares(
+            a.evals()[..1 << a.get_num_vars()].to_vec(),
+            b.evals()[..1 << b.get_num_vars()].to_vec(),
+        )
     }
 
     pub fn into_poly_shares(self) -> (DensePolynomial<F>, DensePolynomial<F>) {
@@ -99,16 +100,25 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         )
     }
 
-    // pub fn split_evals(&self, idx: usize) -> (Self, Self) {
-    //     let (a, b) = self.copy_poly_shares();
-    //     let (left_a, right_a) = a.split_evals(idx);
-    //     let (left_b, right_b) = b.split_evals(idx);
-    //     assert!(idx < self.len());
-    //     (
-    //         Self::from_poly_shares(left_a, left_b),
-    //         Self::from_poly_shares(right_a, right_b),
-    //     )
-    // }
+    #[inline]
+    pub fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<Rep3PrimeFieldShare<F>> {
+        let (a, b) = self.copy_poly_shares();
+
+        let evals_a = MultilinearPolynomial::LargeScalars(a).sumcheck_evals(index, degree, order);
+        let evals_b = MultilinearPolynomial::LargeScalars(b).sumcheck_evals(index, degree, order);
+
+        assert_eq!(evals_a.len(), evals_b.len());
+        evals_a.into_iter().zip(evals_b.into_iter()).map(|(a, b)| Rep3PrimeFieldShare::new(a, b)).collect()
+    }
+
+    #[inline]
+    pub fn bind(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
+        }
+    }
+
 
     pub fn split_evals(
         &self,
@@ -117,10 +127,18 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         (&self.evals[..idx], &self.evals[idx..])
     }
 
-    pub fn fix_var_top(&mut self, r: &F) {
+    pub fn bound_poly_var_top(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
         a.bound_poly_var_top(r);
         b.bound_poly_var_top(r);
+
+        *self = Self::from_poly_shares(a, b);
+    }
+
+    pub fn bound_poly_var_bot(&mut self, r: &F) {
+        let (mut a, mut b) = self.copy_poly_shares();
+        a.bound_poly_var_bot(r);
+        b.bound_poly_var_bot(r);
 
         *self = Self::from_poly_shares(a, b);
     }
@@ -312,7 +330,7 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     Rep3DensePolynomial<F>,
     Rep3DensePolynomial<F>,
 ) {
-    let dense_poly = DensePolynomial::new(poly.coeffs_as_field_elements());
+    let dense_poly = DensePolynomial::new_padded(poly.coeffs_as_field_elements());
 
     let num_vars = poly.get_num_vars();
     if num_vars == 0 {

@@ -3,7 +3,8 @@ use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
-use jolt_core::subprotocols::grand_product::BatchedGrandProduct;
+use jolt_core::subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct};
+use jolt_core::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 // use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -69,8 +70,8 @@ where
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
-    type ReadWriteGrandProduct = InstructionGrandProduct<F>;
-    type InitFinalGrandProduct = InstructionGrandProduct<F>;
+    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
 
     type Polynomials = InstructionLookupPolynomials<F>;
     type Openings = InstructionLookupOpenings<F>;
@@ -90,82 +91,94 @@ where
     fn compute_leaves(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         polynomials: &Self::Polynomials,
-        _: &jolt_core::jolt::vm::JoltPolynomials<F>,
+        _: &JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, PCS, ProofTranscript>>::Leaves,
+    ) {
         let gamma_squared = gamma.square();
+        let gamma = *gamma;
+
         let num_lookups = polynomials.dim[0].len();
 
-        let read_write_leaves = (0..preprocessing.num_memories)
+        let read_write_leaves: Vec<_> = (0..preprocessing.num_memories)
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
 
-                let dim: &DensePolynomial<F> = (&polynomials.dim[dim_index]).try_into().unwrap();
-                let E_poly: &DensePolynomial<F> =
+                let dim: &CompactPolynomial<u16, F> =
+                    (&polynomials.dim[dim_index]).try_into().unwrap();
+                let E_poly: &CompactPolynomial<u32, F> =
                     (&polynomials.E_polys[memory_index]).try_into().unwrap();
-                let read_cts: &DensePolynomial<F> =
+                let read_cts: &CompactPolynomial<u32, F> =
                     (&polynomials.read_cts[memory_index]).try_into().unwrap();
 
                 let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
-                        let a = &dim[i];
-                        let v = &E_poly[i];
-                        let t = &read_cts[i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
+                        let a = dim[i];
+                        let v = E_poly[i];
+                        let t = read_cts[i];
+                        t.field_mul(gamma_squared) + v.field_mul(gamma) + F::from_u16(a) - *tau
                     })
                     .collect();
-                let write_fingerprints = read_fingerprints
-                    .iter()
-                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                let t_adjustment = 1u64.field_mul(gamma_squared);
+                let write_fingerprints: Vec<F> = (0..num_lookups)
+                    .map(|i| read_fingerprints[i] + t_adjustment)
                     .collect();
-                [
-                    DensePolynomial::new(read_fingerprints),
-                    DensePolynomial::new(write_fingerprints),
-                ]
+                [read_fingerprints, write_fingerprints]
             })
             .collect();
 
-        let init_final_leaves: Vec<DensePolynomial<F>> = preprocessing
+        let init_final_leaves: Vec<F> = preprocessing
             .materialized_subtables
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
-                let init_fingerprints: Vec<F> = (0..M)
-                    .map(|i| {
-                        let a = &F::from_u64(i as u64).unwrap();
-                        let v = &subtable[i];
-                        // let t = F::zero();
-                        // Compute h(a,v,t) where t == 0
-                        v.field_mul(*gamma) + *a - *tau
-                    })
-                    .collect();
+                let mut leaves: Vec<F> = unsafe_allocate_zero_vec(
+                    M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1),
+                );
+                // Init leaves
+                (0..M).for_each(|i| {
+                    let a = &F::from_u16(i as u16);
+                    let v: u32 = subtable[i];
+                    // let t = F::zero();
+                    // Compute h(a,v,t) where t == 0
+                    leaves[i] = v.field_mul(gamma) + *a - *tau;
+                });
+                // Final leaves
+                let mut leaf_index = M;
+                for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
+                    let final_cts: &CompactPolynomial<u32, F> =
+                        (&polynomials.final_cts[*memory_index]).try_into().unwrap();
+                    (0..M).for_each(|i| {
+                        leaves[leaf_index] = leaves[i] + final_cts[i].field_mul(gamma_squared);
+                        leaf_index += 1;
+                    });
+                }
 
-                let final_leaves: Vec<DensePolynomial<F>> = preprocessing
-                    .subtable_to_memory_indices[subtable_index]
-                    .iter()
-                    .map(|memory_index| {
-                        let final_cts: &DensePolynomial<F> =
-                            (&polynomials.final_cts[*memory_index]).try_into().unwrap();
-                        let final_fingerprints = (0..M)
-                            .map(|i| {
-                                init_fingerprints[i]
-                                    + mul_0_1_optimized(&final_cts[i], &gamma_squared)
-                            })
-                            .collect();
-                        DensePolynomial::new(final_fingerprints)
-                    })
-                    .collect();
-
-                let mut polys = Vec::with_capacity(C + 1);
-                polys.push(DensePolynomial::new(init_fingerprints));
-                polys.extend(final_leaves);
-                polys
+                leaves
             })
             .collect();
 
-        (read_write_leaves, init_final_leaves)
+        let memory_flags = Self::memory_flag_indices(
+            preprocessing,
+            polynomials
+                .instruction_flags
+                .iter()
+                .map(|poly| poly.try_into().unwrap())
+                .collect(),
+        );
+
+        (
+            (memory_flags, read_write_leaves),
+            (
+                init_final_leaves,
+                // # init = # subtables; # final = # memories
+                Self::NUM_SUBTABLES + preprocessing.num_memories,
+            ),
+        )
     }
 
     fn interleave<T: Copy + Clone>(
@@ -529,8 +542,8 @@ where
                 preprocessing,
                 num_rounds,
                 eq_poly,
-                &mut polynomials.instruction_lookups.E_polys,
-                &mut polynomials.instruction_lookups.instruction_flags,
+                &mut polynomials.instruction_lookups.E_polys.clone(),
+                &mut polynomials.instruction_lookups.instruction_flags.clone(),
                 &mut polynomials.instruction_lookups.lookup_outputs.clone(),
                 transcript,
             );
@@ -559,13 +572,13 @@ where
         primary_sumcheck_openings.push(outputs_eval);
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
-        opening_accumulator.append(
-            &primary_sumcheck_polys,
-            eq_primary_sumcheck,
-            r_primary_sumcheck,
-            &primary_sumcheck_openings,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &primary_sumcheck_polys,
+        //     eq_primary_sumcheck,
+        //     r_primary_sumcheck,
+        //     &primary_sumcheck_openings,
+        //     transcript,
+        // );
 
         let primary_sumcheck = PrimarySumcheck {
             sumcheck_proof: primary_sumcheck_proof,
@@ -643,12 +656,12 @@ where
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
-        opening_accumulator.append(
-            &primary_sumcheck_commitments,
-            r_primary_sumcheck.clone(),
-            &primary_sumcheck_openings,
-            transcript,
-        );
+        // opening_accumulator.append(
+        //     &primary_sumcheck_commitments,
+        //     r_primary_sumcheck.clone(),
+        //     &primary_sumcheck_openings,
+        //     transcript,
+        // );
 
         Self::verify_memory_checking(
             preprocessing,
@@ -739,7 +752,7 @@ where
 
                 let mut final_cts_i = vec![0u32; M];
                 let mut read_cts_i = vec![0u32; m];
-                let mut subtable_lookups = vec![F::zero(); m];
+                let mut subtable_lookups = vec![0u32; m];
 
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(instr) = &op.instruction_lookup {
@@ -753,8 +766,7 @@ where
                             read_cts_i[j] = counter;
                             final_cts_i[memory_address] = counter + 1;
                             subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address]
-                                .into();
+                                [subtable_index][memory_address];
                         }
                     }
                 }
@@ -802,7 +814,7 @@ where
             .collect();
 
         let mut lookup_outputs = Self::compute_lookup_outputs(ops);
-        lookup_outputs.resize(m, F::zero());
+        lookup_outputs.resize(m, 0);
         let lookup_outputs = MultilinearPolynomial::from(lookup_outputs);
 
         InstructionLookupPolynomials {
@@ -917,7 +929,7 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, level = "trace")]
     fn primary_sumcheck_prover_message(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
@@ -1110,73 +1122,37 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<F, InstructionSet>>) -> Vec<F> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<F, InstructionSet>>) -> Vec<u32> {
         instructions
             .par_iter()
             .map(|op| {
                 if let Some(instr) = &op.instruction_lookup {
-                    instr.lookup_entry()
+                    instr.lookup_entry().to_u64().unwrap().try_into().unwrap()
                 } else {
-                    F::zero()
+                    0
                 }
             })
             .collect()
     }
 
-     /// Materializes all subtables used by this Jolt instance.
-     #[tracing::instrument(skip_all)]
-     fn materialize_subtables() -> Vec<Vec<u32>> {
-         let mut subtables = Vec::with_capacity(Subtables::COUNT);
-         for subtable in Subtables::iter() {
-             subtables.push(
-                 subtable
-                     .materialize(M)
-                     .into_iter()
-                     .map(|x| x.to_u64().unwrap().try_into().unwrap())
-                     .collect(),
-             );
-         }
-         subtables
-     }
+    /// Materializes all subtables used by this Jolt instance.
+    #[tracing::instrument(skip_all)]
+    fn materialize_subtables() -> Vec<Vec<u32>> {
+        let mut subtables = Vec::with_capacity(Subtables::COUNT);
+        for subtable in Subtables::iter() {
+            subtables.push(
+                subtable
+                    .materialize(M)
+                    .into_iter()
+                    .map(|x| x.to_u64().unwrap().try_into().unwrap())
+                    .collect(),
+            );
+        }
+        subtables
+    }
 
     fn protocol_name() -> &'static [u8] {
         b"Jolt instruction lookups"
-    }
-}
-
-pub struct InstructionGrandProduct<F: JoltField>(PhantomData<F>);
-
-impl<F, PCS, ProofTranscript> BatchedGrandProduct<F, PCS, ProofTranscript>
-    for InstructionGrandProduct<F>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    ProofTranscript: Transcript,
-{
-    type Leaves = Vec<DensePolynomial<F>>;
-    type Config = ();
-
-    fn construct_with_config(leaves: Self::Leaves, config: Self::Config) -> Self {
-        todo!()
-    }
-
-    fn num_layers(&self) -> usize {
-        todo!()
-    }
-
-    fn claimed_outputs(&self) -> Vec<F> {
-        todo!()
-    }
-
-    fn layers(
-        &'_ mut self,
-    ) -> impl Iterator<
-        Item = &'_ mut dyn jolt_core::subprotocols::grand_product::BatchedGrandProductLayer<
-            F,
-            ProofTranscript,
-        >,
-    > {
-        std::iter::empty()
     }
 }
 

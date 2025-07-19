@@ -53,8 +53,8 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-     fn construct(num_layers: usize) -> Self;
+    /// Constructs the grand product circuit(s) from `leaves` with the default configuration
+    fn construct(num_layers: usize) -> Self;
 
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
@@ -81,11 +81,21 @@ where
         let outputs =
             additive::combine_field_element_vec::<F>(network.receive_responses(Vec::new())?);
         transcript.append_scalars(&outputs);
-        let r: Vec<F> = transcript.challenge_vector(outputs.len().log_2());
-        network.broadcast_request(r)?;
+        let output_mle = DensePolynomial::new_padded(outputs);
+        tracing::info!("output_mle: {:?}", output_mle);
+        let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
+        let mut claim = output_mle.evaluate(&r);
+        tracing::info!("initial r: {:?}", r);
+        tracing::info!("initial claim: {:?}", claim);
+
+        network.broadcast_request((r.clone(), claim))?;
 
         for layer in self.layers() {
-            proof_layers.push(layer.coordinate_prove_layer(transcript, network)?);
+            proof_layers.push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
+            let claim: F = network.receive_responses::<F>(F::zero())?.into_iter().sum();
+            tracing::info!("layer claim: {:?}", claim);
+            tracing::info!("layer r: {:?}", r);
+            tracing::info!("--------------------");
         }
 
         Ok(BatchedGrandProductProof {
@@ -134,12 +144,12 @@ where
         // a single claim.
         let outputs = self.claimed_outputs();
         io_ctx.network.send_response(outputs.clone())?;
-        let output_mle = DensePolynomial::new_padded(outputs);
-        let mut r: Vec<F> = io_ctx.network.receive_request()?;
-        let mut claim = output_mle.evaluate(&r);
+        let (mut r, mut claim): (Vec<F>, F) = io_ctx.network.receive_request()?;
+        claim = additive::promote_to_trivial_share(claim, io_ctx.network.get_id());
 
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
+            io_ctx.network.send_response(claim)?;
         }
 
         Ok(r)
@@ -156,21 +166,31 @@ where
     /// Proves a single layer of a batched grand product circuit
     fn coordinate_prove_layer(
         &self,
+        claim: &mut F,
+        r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
         let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0, 0)?;
 
-        let (sumcheck_proof, _, sumcheck_claims) =
+        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);
         transcript.append_scalar(&right_claim);
 
+        r_sumcheck
+            .into_par_iter()
+            .rev()
+            .collect_into_vec(r_grand_product);
+
         // produce a random challenge to condense two claims into a single claim
         let r_layer: F = transcript.challenge_scalar();
         network.broadcast_request(r_layer)?;
+
+        *claim = left_claim + r_layer * (right_claim - left_claim);
+        r_grand_product.push(r_layer);
 
         Ok(BatchedGrandProductLayerProof {
             proof: sumcheck_proof,
@@ -280,7 +300,9 @@ where
     Network: Rep3NetworkCoordinator,
 {
     fn construct(num_layers: usize) -> Self {
-        Self { layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers] }
+        Self {
+            layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers],
+        }
     }
 
     fn num_layers(&self) -> usize {
@@ -291,6 +313,8 @@ where
         &'_ self,
     ) -> impl Iterator<Item = &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>
     {
-        self.layers.iter().map(|layer| layer as &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>)
+        self.layers
+            .iter()
+            .map(|layer| layer as &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>)
     }
 }

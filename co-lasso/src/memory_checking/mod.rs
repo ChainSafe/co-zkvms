@@ -7,7 +7,7 @@ use jolt_core::{
     lasso::memory_checking::{ExogenousOpenings, Initializable},
     subprotocols::grand_product::BatchedGrandProductProof,
 };
-use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
+use mpc_core::protocols::{additive, rep3::{self, network::Rep3NetworkCoordinator}};
 
 use crate::{
     field::JoltField,
@@ -55,9 +55,6 @@ where
         let init_final_batch_size =
             multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
 
-        tracing::info!("read_write_batch_size: {}", read_write_batch_size);
-        tracing::info!("init_final_batch_size: {}", init_final_batch_size);
-
         let (openings, exogenous_openings) =
             Self::receive_openings(preprocessing, transcript, network)?;
 
@@ -87,6 +84,9 @@ where
 
         let num_lookups = network.receive_responses(0usize)?[0];
 
+        // let fingerprints = rep3::arithmetic::combine_field_elements_vec::<F>(network.receive_responses::<_>(Vec::default())?);
+        // tracing::info!("fingerprints: {:?}", fingerprints);
+
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
                 .receive_responses((Vec::default(), Vec::default()))
@@ -107,9 +107,6 @@ where
             &init_final_hashes_shares[1],
             &init_final_hashes_shares[2],
         );
-
-        tracing::info!("read_write_hashes: {:?}", read_write_hashes.len());
-        tracing::info!("init_final_hashes: {:?}", init_final_hashes.len());
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
@@ -140,6 +137,7 @@ where
         ))
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
         preprocessing: &Self::Preprocessing,
         transcript: &mut ProofTranscript,

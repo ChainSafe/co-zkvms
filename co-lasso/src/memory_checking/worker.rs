@@ -76,16 +76,16 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) = Self::prove_grand_products(
-            preprocessing,
-            polynomials,
-            jolt_polynomials,
-            opening_accumulator,
-            io_ctx,
-            pcs_setup,
-        )
-        .context("while proving grand products")?;
-
+        let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) =
+            Self::prove_grand_products(
+                preprocessing,
+                polynomials,
+                jolt_polynomials,
+                opening_accumulator,
+                io_ctx,
+                pcs_setup,
+            )
+            .context("while proving grand products")?;
 
         let (_, r_read_write_opening) =
             r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
@@ -132,15 +132,6 @@ where
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves, io_ctx)
                 .context("while computing init-final grand product")?;
 
-        tracing::info!("read_write_hashes: {:?}", read_write_hashes.len());
-        tracing::info!("init_final_hashes: {:?}", init_final_hashes.len());
-
-        // let multiset_hashes = Self::MemoryCheckingProof::uninterleave_hashes(
-        //     preprocessing,
-        //     read_write_hashes.clone(),
-        //     init_final_hashes.clone(),
-        // );
-
         io_ctx
             .network
             .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
@@ -156,10 +147,14 @@ where
             io_ctx,
         )?;
 
-        let read_write_batch_size = r_read_write.len();
-        let init_final_batch_size = r_init_final.len();
+        let read_write_batch_size = read_write_hashes.len();
+        let init_final_batch_size = init_final_hashes.len();
 
-        Ok((r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)))
+        Ok((
+            r_read_write,
+            r_init_final,
+            (read_write_batch_size, init_final_batch_size),
+        ))
     }
 
     fn compute_openings(
@@ -175,6 +170,7 @@ where
             // Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
         ]
         .concat();
+
         let (read_write_evals, eq_read_write) =
             Rep3DensePolynomial::batch_evaluate(&read_write_polys, r_read_write);
 

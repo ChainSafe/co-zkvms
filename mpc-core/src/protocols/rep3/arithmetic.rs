@@ -57,3 +57,10 @@ pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -
     a * mul_public(b, c)
 }
 
+/// Reconstructs a vector of field elements from its arithmetic replicated shares.
+/// # Panics
+/// Panics if the provided `Vec` sizes do not match.
+pub fn combine_field_elements_vec<F: PrimeField>(shares: Vec<Vec<Rep3PrimeFieldShare<F>>>) -> Vec<F> {
+    let [s0, s1, s2]: [Vec<_>; 3] = shares.try_into().unwrap();
+    mpc_core::protocols::rep3::combine_field_elements(&s0, &s1, &s2)
+}

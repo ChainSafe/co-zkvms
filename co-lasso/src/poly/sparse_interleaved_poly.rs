@@ -76,7 +76,11 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         Rep3DensePolynomial::new_padded(self.coalesce())
     }
 
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::coalesce")]
+    #[tracing::instrument(
+        skip_all,
+        name = "SparseInterleavedPolynomial::coalesce",
+        level = "trace"
+    )]
     /// Coalesces a `SparseInterleavedPolynomial` into a `DenseInterleavedPolynomial`.
     pub fn coalesce(&self) -> Vec<Rep3PrimeFieldShare<F>> {
         if let Some(coalesced) = &self.coalesced {
@@ -139,7 +143,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
 
     /// Uninterleaves a `SparseInterleavedPolynomial` into two vectors
     /// containing the left and right coefficients.
-    pub fn uninterleave(&self) -> (Rep3DensePolynomial<F>, Rep3DensePolynomial<F>) {
+    pub fn uninterleave(&self) -> (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) {
         if let Some(coalesced) = &self.coalesced {
             coalesced.uninterleave()
         } else {
@@ -153,10 +157,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                     right[coeff.index / 2] = coeff.value;
                 }
             });
-            (
-                Rep3DensePolynomial::new(left),
-                Rep3DensePolynomial::new(right),
-            )
+            (left, right)
         }
     }
 
@@ -165,7 +166,11 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
     ///      /\        /\        /\        /\
     ///     /  \      /  \      /  \      /  \
     ///    L0  R0    L1  R1    L2  R2    L3  R3   <- This layer
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::layer_output")]
+    #[tracing::instrument(
+        skip_all,
+        name = "SparseInterleavedPolynomial::layer_output",
+        level = "trace"
+    )]
     pub fn layer_output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Self> {
         if let Some(coalesced) = &self.coalesced {
             Ok(Self {
@@ -174,6 +179,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 coalesced: Some(coalesced.layer_output(io_ctx)?),
             })
         } else {
+            let one_share = rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
             let coeffs = self
                 .coeffs
                 .iter()
@@ -188,7 +194,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                         if coeff.index % 2 == 0 {
                             // Left node; try to find corresponding right node
                             let right = segment.get(j + 1).cloned().unwrap_or(
-                                (coeff.index + 1, Rep3PrimeFieldShare::zero_share()).into(),
+                                (coeff.index + 1, one_share).into(),
                             );
                             if right.index == coeff.index + 1 {
                                 // Corresponding right node was found; multiply them together
@@ -230,7 +236,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
     ///
     /// If `self` is not coalesced, we basically do the same thing but with the
     /// sparse vectors in `self.coeffs`, and many more cases to check 😬
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind")]
+    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind", level = "trace")]
     fn bind(&mut self, r: F, party_id: PartyID) {
         #[cfg(test)]
         let (mut left_before_binding, mut right_before_binding) = self.uninterleave();
@@ -299,19 +305,34 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
                                 // been bound yet, we need to bind the neighbor first to preserve
                                 // the monotonic ordering of the bound layer.
                                 if next_left_node_to_process <= current.index + 1 {
-                                    let left_neighbor = find_neighbor(current.index + 1);
-                                    // if !left_neighbor.is_one() {
-                                    //     segment[bound_index] = (
-                                    //         current.index / 2,
-                                    //         F::one() + r * (left_neighbor - F::one()),
-                                    //         rep3::arithmetic::add_mul_public(, b, c)
-                                    //     )
-                                    //         .into();
-                                    //     bound_index += 1;
-                                    // }
+                                    let left_neighbour_if_not_bound =
+                                        segment.get(j + 1).map_or(None, |n| {
+                                            if n.index == current.index + 1 {
+                                                Some(n.value)
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(left_neighbor) = left_neighbour_if_not_bound {
+                                        segment[bound_index] = (
+                                            current.index / 2,
+                                            rep3::arithmetic::add_public(
+                                                rep3::arithmetic::mul_public(
+                                                    rep3::arithmetic::sub_shared_by_public(
+                                                        left_neighbor,
+                                                        F::one(),
+                                                        party_id,
+                                                    ),
+                                                    r,
+                                                ),
+                                                F::one(),
+                                                party_id,
+                                            ),
+                                        )
+                                            .into();
+                                        bound_index += 1;
+                                    }
                                     next_left_node_to_process = current.index + 3;
-
-                                    unimplemented!();
                                 }
 
                                 // Find sibling right node
@@ -414,12 +435,17 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     ///
     /// If `self` is not coalesced, we basically do the same thing but with with the
     /// sparse vectors in `self.coeffs`, some fancy optimizations, and many more cases to check 😬
-    #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::compute_cubic")]
+    #[tracing::instrument(
+        skip_all,
+        name = "SparseInterleavedPolynomial::compute_cubic",
+        level = "trace"
+    )]
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
         previous_round_claim: F,
         party_id: PartyID,
+        // io_ctx: &mut IoContext<Network>,
     ) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
             return Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
@@ -491,12 +517,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             let right_eval_3 = right_eval_2 + m_right;
 
                             let eq_evals = eq_evals[block_index];
-                            let e1 = additive::sub_public(
-                                rep3::arithmetic::mul_mul_public(left.0, right.0, eq_evals.1),
+                            let e0 = additive::sub_public(
+                                rep3::arithmetic::mul_mul_public(left.0, right.0, eq_evals.0),
                                 eq_evals.0,
                                 party_id,
                             );
-                            let e2 = additive::sub_public(
+                            let e1 = additive::sub_public(
                                 rep3::arithmetic::mul_mul_public(
                                     left_eval_2,
                                     right_eval_2,
@@ -505,7 +531,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 eq_evals.1,
                                 party_id,
                             );
-                            let e3 = additive::sub_public(
+                            let e2 = additive::sub_public(
                                 rep3::arithmetic::mul_mul_public(
                                     left_eval_3,
                                     right_eval_3,
@@ -515,7 +541,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 party_id,
                             );
 
-                            (e1, e2, e3)
+                            (e0, e1, e2)
                         })
                 })
                 .reduce(
@@ -524,9 +550,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 );
 
             (
-                eq_eval_sums.0 + deltas.0,
-                eq_eval_sums.1 + deltas.1,
-                eq_eval_sums.2 + deltas.2,
+                additive::add_public(deltas.0, eq_eval_sums.0, party_id),
+                additive::add_public(deltas.1, eq_eval_sums.1, party_id),
+                additive::add_public(deltas.2, eq_eval_sums.2, party_id),
             )
         } else {
             // This is a more complicated version of the `else` case in
@@ -705,9 +731,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             };
 
             (
-                evals_assuming_all_ones.0 + deltas.0,
-                evals_assuming_all_ones.1 + deltas.1,
-                evals_assuming_all_ones.2 + deltas.2,
+                additive::add_public(deltas.0, evals_assuming_all_ones.0, party_id),
+                additive::add_public(deltas.1, evals_assuming_all_ones.1, party_id),
+                additive::add_public(deltas.2, evals_assuming_all_ones.2, party_id),
             )
         };
 

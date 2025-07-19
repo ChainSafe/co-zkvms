@@ -1,5 +1,5 @@
 pub use jolt_core::poly::opening_proof::*;
-use mpc_core::protocols::rep3::{self, network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker}};
+use mpc_core::protocols::{additive, rep3::{self, network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker}}};
 
 use crate::{
     field::JoltField,
@@ -85,8 +85,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        let [share1, share2, share3] = network.receive_responses(vec![])?.try_into().unwrap();
-        let claims = rep3::combine_field_elements(&share1, &share2, &share3);
+        let claims = additive::combine_field_element_vec(network.receive_responses(vec![])?);
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
         for i in 1..claims.len() {

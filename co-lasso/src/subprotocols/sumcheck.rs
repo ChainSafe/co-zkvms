@@ -41,18 +41,24 @@ where
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _ in 0..num_rounds {
-            let compressed_poly = CompressedUniPoly::<F>::from_vec(
+        for round in 0..num_rounds {
+            let round_poly = UniPoly::<F>::from_coeff(
                 additive::combine_field_element_vec(network.receive_responses(Vec::new())?),
             );
+            let compressed_poly = round_poly.compress();
+            if round < 3 {
+                tracing::info!("round {} compressed_poly: {:?}", round, compressed_poly);
+            }
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
             // derive the verifier's challenge for the next round
             let r_j = transcript.challenge_scalar();
-            network.broadcast_request(r_j)?;
-
             r.push(r_j);
 
+            let claim = round_poly.evaluate(&r_j);
+            network.broadcast_request((r_j, claim))?;
+
+  
             cubic_polys.push(compressed_poly);
         }
 
@@ -113,21 +119,23 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
         let party_id = io_ctx.network.get_id();
-        for _ in 0..num_rounds {
+        for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim, party_id);
-            let compressed_poly = cubic_poly.compress();
             // append the prover's message to the transcript
             io_ctx
                 .network
-                .send_response(compressed_poly.coeffs_except_linear_term)?;
-            let r_j = io_ctx.network.receive_request()?;
+                .send_response(cubic_poly.as_vec())?;
+            let (r_j, next_claim) = io_ctx.network.receive_request()?;
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
             self.bind(r_j, party_id);
             eq_poly.bind(r_j);
 
-            previous_claim = cubic_poly.evaluate(&r_j);
+            // poly coeffs are additive shares but evaluation requires multiplication
+            // e = poly.evaluate(&r_j);
+            // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
+            previous_claim = additive::promote_to_trivial_share(next_claim, party_id);
         }
 
         debug_assert_eq!(eq_poly.len(), 1);
@@ -376,7 +384,7 @@ pub fn prove_cubic_batched_prod<F: JoltField, N: MpcStarNetWorker>(
             .chain(params.poly_Bs.par_iter_mut());
 
         rayon::join(
-            || poly_iter.for_each(|poly| poly.fix_var_top(&r_j)),
+            || poly_iter.for_each(|poly| poly.bound_poly_var_top(&r_j)),
             || params.poly_eq.bound_poly_var_top(&r_j),
         );
 
@@ -664,7 +672,7 @@ pub fn prove_cubic_batched_flags<F: JoltField, N: MpcStarNetWorker>(
         params
             .poly_As
             .par_iter_mut()
-            .for_each(|poly| poly.fix_var_top(&r_j));
+            .for_each(|poly| poly.bound_poly_var_top(&r_j));
         drop(_poly_As_enter);
         drop(poly_As_span);
 

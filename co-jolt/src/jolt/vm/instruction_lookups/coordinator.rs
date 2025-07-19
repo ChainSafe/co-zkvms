@@ -105,23 +105,16 @@ where
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-        let compressed_round_poly = CompressedUniPoly::from_vec(
-            additive::combine_field_element_vec::<F>(network.receive_responses(vec![])?),
-        );
-        compressed_round_poly.append_to_transcript(transcript);
-        compressed_polys.push(compressed_round_poly);
-        let r_j = transcript.challenge_scalar::<F>();
-        network.broadcast_request(r_j)?;
-        random_vars.push(r_j);
-
-        for _round in 1..num_rounds {
-            let compressed_round_poly = CompressedUniPoly::from_vec(
+        for _round in 0..num_rounds {
+            let round_poly = UniPoly::from_coeff(
                 additive::combine_field_element_vec::<F>(network.receive_responses(vec![])?),
             );
+            let compressed_round_poly = round_poly.compress();
             compressed_round_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_round_poly);
             let r_j = transcript.challenge_scalar::<F>();
-            network.broadcast_request(r_j)?;
+            let new_claim = round_poly.evaluate(&r_j);
+            network.broadcast_request((r_j, new_claim))?;
             random_vars.push(r_j);
         } // End rounds
 

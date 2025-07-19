@@ -182,6 +182,21 @@ pub struct PST13Setup<E: Pairing> {
     pub uni_params: UniversalParams<E>,
 }
 
+impl<E: Pairing> Default for PST13Setup<E> {
+    fn default() -> Self {
+        Self {
+            uni_params: UniversalParams {
+                num_vars: 0,
+                powers_of_g: vec![],
+                powers_of_h: vec![],
+                g: E::G1Affine::zero(),
+                h: E::G2Affine::zero(),
+                h_mask: vec![],
+            },
+        }
+    }
+}
+
 impl<E: Pairing> PST13Setup<E> {
     pub fn ck(&self, num_vars: usize) -> CommitterKey<E> {
         MultilinearPC::trim(&self.uni_params, num_vars).0
@@ -209,18 +224,14 @@ where
 
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let nv = poly.get_num_vars();
-        match poly {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
-                let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
-                    &setup.ck(nv).powers_of_g[0],
-                    scalars.as_slice(),
-                )
-                .into_affine();
-                PST13Commitment { nv, g_product }
-            }
-            _ => todo!(),
-        }
+        let poly = DensePolynomial::new(poly.coeffs_as_field_elements());
+        let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
+        let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
+            &setup.ck(nv).powers_of_g[0],
+            scalars.as_slice(),
+        )
+        .into_affine();
+        PST13Commitment { nv, g_product }
     }
 
     fn batch_commit<U>(evals: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
@@ -234,6 +245,20 @@ where
             commitments.push(commitment);
         }
         commitments
+    }
+
+    fn combine_commitments(
+        commitments: &[&Self::Commitment],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let comm = aggregate_comm::<E>(
+            coeffs[0],
+            &commitments.iter().map(|&c| c.into()).collect::<Vec<_>>(),
+        );
+        PST13Commitment {
+            nv: commitments[0].nv,
+            g_product: comm.g_product,
+        }
     }
 
     fn prove(

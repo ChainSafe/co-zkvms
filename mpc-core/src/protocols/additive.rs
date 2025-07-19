@@ -7,17 +7,25 @@ use crate::protocols::rep3::rngs::SSRandom;
 
 pub type AdditiveShare<F> = F;
 
-pub fn add_public<F: PrimeField>(shared: AdditiveShare<F>, public: F, id: PartyID) -> AdditiveShare<F> {
+pub fn add_public<F: PrimeField>(
+    shared: AdditiveShare<F>,
+    public: F,
+    id: PartyID,
+) -> AdditiveShare<F> {
     let mut res = shared;
     match id {
         PartyID::ID0 => res += public,
-        PartyID::ID1 => {},
+        PartyID::ID1 => {}
         PartyID::ID2 => {}
     }
     res
 }
 
-pub fn sub_public<F: PrimeField>(shared: AdditiveShare<F>, public: F, id: PartyID) -> AdditiveShare<F> {
+pub fn sub_public<F: PrimeField>(
+    shared: AdditiveShare<F>,
+    public: F,
+    id: PartyID,
+) -> AdditiveShare<F> {
     add_public(shared, -public, id)
 }
 
@@ -29,7 +37,10 @@ pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(
     zero_share
 }
 
-pub fn promote_to_trivial_shares<F: PrimeField>(public_values: Vec<F>, id: PartyID) -> Vec<AdditiveShare<F>> {
+pub fn promote_to_trivial_shares<F: PrimeField>(
+    public_values: Vec<F>,
+    id: PartyID,
+) -> Vec<AdditiveShare<F>> {
     public_values
         .into_iter()
         .map(|value| promote_to_trivial_share(value, id))
@@ -44,11 +55,7 @@ pub fn promote_to_trivial_share<F: PrimeField>(public_value: F, id: PartyID) -> 
     }
 }
 
-pub fn combine_field_elements<F: PrimeField>(
-    share1: &[F],
-    share2: &[F],
-    share3: &[F],
-) -> Vec<F> {
+pub fn combine_field_elements<F: PrimeField>(share1: &[F], share2: &[F], share3: &[F]) -> Vec<F> {
     assert_eq!(share1.len(), share2.len());
     assert_eq!(share2.len(), share3.len());
 
@@ -60,18 +67,11 @@ pub fn combine_field_elements<F: PrimeField>(
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.
-pub fn combine_field_element_vec<F: PrimeField>(
-    shares: Vec<Vec<F>>,
-) -> Vec<F> {
-   let [s0, s1, s2]: [Vec<F>; 3] = shares.try_into().unwrap();
-   combine_field_elements(&s0, &s1, &s2)
+pub fn combine_field_element_vec<F: PrimeField>(shares: Vec<Vec<F>>) -> Vec<F> {
+    let [s0, s1, s2]: [Vec<F>; 3] = shares.try_into().unwrap();
+    combine_field_elements(&s0, &s1, &s2)
 }
 
-
-pub fn combine_field_element<F: PrimeField>(
-    share1: &F,
-    share2: &F,
-    share3: &F,
-) -> F {
+pub fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F {
     *share1 + *share2 + *share3
 }
