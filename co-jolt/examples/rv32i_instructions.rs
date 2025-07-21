@@ -1,5 +1,3 @@
-mod three_party;
-
 use ark_std::test_rng;
 use clap::Parser;
 use co_jolt::{
@@ -17,7 +15,7 @@ use co_jolt::{
     poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     utils::transcript::{KeccakTranscript, Transcript},
 };
-use co_lasso::{memory_checking::StructuredPolynomialData, subprotocols::commitment::PST13};
+use co_jolt::{lasso::memory_checking::StructuredPolynomialData, subprotocols::commitment::PST13};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
@@ -33,8 +31,12 @@ use mpc_net::{
     mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
+use std::path::PathBuf;
 
-use crate::three_party::{init_tracing, Args};
+use clap::Subcommand;
+use tracing_subscriber::{
+    fmt::Layer as ForestLayer, prelude::*, util::SubscriberInitExt, EnvFilter, Registry,
+};
 
 type Instructions = co_jolt::jolt::vm::rv32i_vm::RV32I<F>;
 type Subtables = co_jolt::jolt::vm::rv32i_vm::RV32ISubtables<F>;
@@ -46,6 +48,25 @@ type E = ark_bn254::Bn254;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+#[derive(Parser)]
+pub struct Args {
+    /// The config file path
+    #[clap(short, long, value_name = "FILE")]
+    pub config_file: PathBuf,
+
+    #[clap(short, long, value_name = "NUM_INPUTS", default_value = "8")]
+    pub log_num_inputs: usize,
+
+    #[arg(short, long, value_name = "SOLVE_WITNESS", env = "SOLVE_WITNESS")]
+    pub solve_witness: bool,
+
+    #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
+    pub debug: bool,
+
+    #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
+    pub trace_parties: bool,
+}
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -235,4 +256,17 @@ fn print_used_instructions<F: JoltField>(instruction_trace: &[Option<RV32I<F>>])
         .sorted()
         .collect::<Vec<_>>();
     tracing::info!("opcodes_used: {:?}", opcodes_used);
+}
+
+pub fn init_tracing() {
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy();
+    // .add_directive("jolt_core=trace".parse().unwrap());
+
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(ForestLayer::default());
+
+    let _ = tracing::subscriber::set_global_default(subscriber);
 }

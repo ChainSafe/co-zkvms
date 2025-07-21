@@ -1,7 +1,6 @@
 use std::slice::Chunks;
 
 use crate::{
-    field::JoltField,
     poly::Rep3DensePolynomial,
     subprotocols::{
         grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
@@ -10,6 +9,7 @@ use crate::{
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use eyre::Context;
+use jolt_core::field::JoltField;
 use jolt_core::subprotocols::{
     grand_product::BatchedGrandProductLayer,
     sumcheck::{BatchedCubicSumcheck, Bindable},
@@ -190,7 +190,11 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F, Network>
     for Rep3DenseInterleavedPolynomial<F>
 {
-    #[tracing::instrument(skip_all, name = "Rep3DenseInterleavedPolynomial::compute_cubic", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3DenseInterleavedPolynomial::compute_cubic",
+        level = "trace"
+    )]
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,

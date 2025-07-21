@@ -1,12 +1,12 @@
-use co_lasso::{
-    memory_checking::Rep3MemoryCheckingProver,
+use crate::{
+    lasso::memory_checking::Rep3MemoryCheckingProver,
     poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::{
         commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::transcript::{AppendToTranscript, Transcript},
 };
+use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::chain;
@@ -132,7 +132,7 @@ where
     }
 }
 
-use co_lasso::subprotocols::grand_product::Rep3BatchedGrandProduct;
+use crate::subprotocols::grand_product::Rep3BatchedGrandProduct;
 
 impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subtables, Network>
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>

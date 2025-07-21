@@ -1,11 +1,12 @@
+pub mod witness;
+
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::utils::transcript::Transcript;
+use jolt_core::utils::transcript::Transcript;
 // use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 // use crate::poly::eq_poly::EqPolynomial;
 // use jolt_core::field::JoltField;
-// use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+// use jolt_core::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_lasso::poly::multilinear_polynomial::MultilinearPolynomial;
 
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_common::rv_trace::ELFInstruction;
@@ -13,14 +14,17 @@ use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 
 use jolt_core::field::JoltField;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 // use std::{collections::HashMap, marker::PhantomData};
-
-use co_lasso::memory_checking::{
-    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData, VerifierComputedOpening
+use crate::lasso::memory_checking::{
+    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
+    VerifierComputedOpening,
 };
+
+pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 
 // use crate::{
 //     poly::{
@@ -99,51 +103,23 @@ impl<T: CanonicalSerialize + CanonicalDeserialize> StructuredPolynomialData<T>
 //     BytecodeInitFinalOpenings<F>,
 // >;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BytecodeRow {
-    /// Memory address as read from the ELF.
-    address: usize,
-    /// Packed instruction/circuit flags, used for r1cs
-    bitflags: u64,
-    /// Index of the destination register for this instruction (0 if register is unused).
-    rd: u64,
-    /// Index of the first source register for this instruction (0 if register is unused).
-    rs1: u64,
-    /// Index of the second source register for this instruction (0 if register is unused).
-    rs2: u64,
-    /// "Immediate" value for this instruction (0 if unused).
-    imm: u64,
+pub trait BytecodeRowExt {
+    fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64
+    where
+        InstructionSet: JoltInstructionSet<F>;
+
+    fn from_instruction_ext<F: JoltField, InstructionSet>(instruction: &ELFInstruction) -> Self
+    where
+        InstructionSet: JoltInstructionSet<F>;
 }
 
-impl BytecodeRow {
-    pub fn new(address: usize, bitflags: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
-        Self {
-            address,
-            bitflags,
-            rd,
-            rs1,
-            rs2,
-            imm,
-        }
-    }
-
-    pub fn no_op(address: usize) -> Self {
-        Self {
-            address,
-            bitflags: 0,
-            rd: 0,
-            rs1: 0,
-            rs2: 0,
-            imm: 0,
-        }
-    }
-
+impl BytecodeRowExt for BytecodeRow {
     /// Packs the instruction's circuit flags and instruction flags into a single u64 bitvector.
     /// The layout is:
     ///     circuit flags || instruction flags
     /// where instruction flags is a one-hot bitvector corresponding to the instruction's
     /// index in the `InstructionSet` enum.
-    pub fn bitflags<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64
+    fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64
     where
         InstructionSet: JoltInstructionSet<F>,
     {
@@ -166,17 +142,18 @@ impl BytecodeRow {
         bitvector
     }
 
-    pub fn from_instruction<F: JoltField, InstructionSet>(instruction: &ELFInstruction) -> Self
+    fn from_instruction_ext<F: JoltField, InstructionSet>(instruction: &ELFInstruction) -> Self
     where
         InstructionSet: JoltInstructionSet<F>,
     {
         Self {
             address: instruction.address as usize,
-            bitflags: Self::bitflags::<InstructionSet, F>(instruction),
-            rd: instruction.rd.unwrap_or(0),
-            rs1: instruction.rs1.unwrap_or(0),
-            rs2: instruction.rs2.unwrap_or(0),
-            imm: instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
+            bitflags: Self::bitflags_ext::<InstructionSet, F>(instruction),
+            rd: instruction.rd.unwrap_or(0) as u8,
+            rs1: instruction.rs1.unwrap_or(0) as u8,
+            rs2: instruction.rs2.unwrap_or(0) as u8,
+            imm: instruction.imm.unwrap_or(0) as i64, // imm is always cast to its 32-bit repr, signed or unsigned
+            virtual_sequence_remaining: None,
         }
     }
 }

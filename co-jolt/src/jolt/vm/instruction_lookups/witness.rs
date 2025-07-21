@@ -1,8 +1,11 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_into_iter, cfg_iter};
-use co_lasso::{
-    memory_checking::StructuredPolynomialData,
-    poly::{combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial},
+use crate::{
+    lasso::memory_checking::StructuredPolynomialData,
+    poly::{
+        combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial,
+        Rep3MultilinearPolynomial,
+    },
     subprotocols::commitment::DistributedCommitmentScheme,
     utils::{
         self,
@@ -53,18 +56,8 @@ use crate::{
 };
 
 pub type Rep3InstructionLookupPolynomials<F: JoltField> =
-    InstructionLookupStuff<Rep3DensePolynomial<F>, PublicInstructionLookupPolynomials<F>>;
+    InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
-#[derive(Debug, Clone, Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PublicInstructionLookupPolynomials<F: JoltField> {
-    pub instruction_flags: Vec<MultilinearPolynomial<F>>,
-}
-
-// impl<F: JoltField> co_lasso::Rep3Polynomials for Rep3InstructionLookupPolynomials<F> {
-//     fn num_lookups(&self) -> usize {
-//         self.dim[0].len()
-//     }
-// }
 
 impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>
     for Rep3InstructionLookupPolynomials<F>
@@ -167,9 +160,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     }
 
                     (
-                        Rep3DensePolynomial::new(read_cts_i),
-                        Rep3DensePolynomial::new(final_cts_i),
-                        Rep3DensePolynomial::new(subtable_lookups),
+                        Rep3MultilinearPolynomial::from(read_cts_i),
+                        Rep3MultilinearPolynomial::from(final_cts_i),
+                        Rep3MultilinearPolynomial::from(subtable_lookups),
                     )
                 },
             )
@@ -186,7 +179,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             },
         );
 
-        let dims = tracing::info_span!("b2a dims").in_scope(|| {
+        let dim = tracing::info_span!("b2a dims").in_scope(|| {
             utils::fork_map(
                 subtable_lookup_indices,
                 &mut network.io_ctx,
@@ -200,7 +193,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         dim[i] = rep3::conversion::b2a_selector(&access_sequence[i], &mut io_ctx0)
                             .unwrap();
                     }
-                    Rep3DensePolynomial::new(dim)
+                    Rep3MultilinearPolynomial::from(dim)
                 },
             )
         })?;
@@ -216,94 +209,63 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         }
 
         let party_id = network.io_ctx.id;
-        let instruction_flags_rep3: Vec<_> = cfg_iter!(instruction_flag_bitvectors)
-            .map(|flag_bitvector| {
-                Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-                    DensePolynomial::from_u64(flag_bitvector).evals(),
-                    party_id,
-                ))
-            })
-            .collect();
-
-        let instruction_flags: Vec<MultilinearPolynomial<F>> = instruction_flag_bitvectors
+        let instruction_flags: Vec<_> = instruction_flag_bitvectors
             .into_par_iter()
-            .map(MultilinearPolynomial::from)
+            .map(|flag_bitvector| {
+                Rep3MultilinearPolynomial::public_with_trivial_share(
+                    MultilinearPolynomial::from(flag_bitvector),
+                    party_id,
+                )
+            })
             .collect();
 
         let lookup_outputs = compute_lookup_outputs_rep3(&ops, num_reads, &mut network.io_ctx)?;
 
         Ok(Rep3InstructionLookupPolynomials {
-            dim: dims,
+            dim,
             read_cts,
             final_cts,
-            instruction_flags: instruction_flags_rep3,
+            instruction_flags,
             E_polys: e_polys,
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
-            aux_stuff: PublicInstructionLookupPolynomials { instruction_flags },
         })
     }
 
     fn combine_polynomials(
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials_shares: Vec<Self>,
-    ) -> InstructionLookupPolynomials<F> {
+    ) -> eyre::Result<InstructionLookupPolynomials<F>> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dim = multizip((share1.dim, share2.dim, share3.dim))
             .map(|(dim1, dim2, dim3)| {
-                MultilinearPolynomial::from(
-                    combine_poly_shares_rep3(vec![dim1, dim2, dim3])
-                        .evals()
-                        .into_iter()
-                        .map(|x| x.to_u64().unwrap() as u16)
-                        .collect_vec(),
-                )
+                Rep3MultilinearPolynomial::try_combine_shares(vec![dim1, dim2, dim3])
             })
-            .collect_vec();
+            .collect::<eyre::Result<Vec<_>>>()?;
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
             .map(|(read1, read2, read3)| {
-                MultilinearPolynomial::from(
-                    combine_poly_shares_rep3(vec![read1, read2, read3])
-                        .evals()
-                        .into_iter()
-                        .map(|x| x.to_u64().unwrap() as u32)
-                        .collect_vec(),
-                )
+                Rep3MultilinearPolynomial::try_combine_shares(vec![read1, read2, read3])
             })
-            .collect_vec();
+            .collect::<eyre::Result<Vec<_>>>()?;
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
             .map(|(final1, final2, final3)| {
-                MultilinearPolynomial::from(
-                    combine_poly_shares_rep3(vec![final1, final2, final3])
-                        .evals()
-                        .into_iter()
-                        .map(|x| x.to_u64().unwrap() as u32)
-                        .collect_vec(),
-                )
+                Rep3MultilinearPolynomial::try_combine_shares(vec![final1, final2, final3])
             })
-            .collect_vec();
+            .collect::<eyre::Result<Vec<_>>>()?;
 
         let e_polys = multizip((share1.E_polys, share2.E_polys, share3.E_polys))
-            .map(|(e1, e2, e3)| {
-                MultilinearPolynomial::from(
-                    combine_poly_shares_rep3(vec![e1, e2, e3])
-                        .evals()
-                        .into_iter()
-                        .map(|x| x.to_u64().unwrap() as u32)
-                        .collect_vec(),
-                )
-            })
-            .collect_vec();
+            .map(|(e1, e2, e3)| Rep3MultilinearPolynomial::try_combine_shares(vec![e1, e2, e3]))
+            .collect::<eyre::Result<Vec<_>>>()?;
 
         let lookup_outputs = MultilinearPolynomial::from(
             combine_poly_shares_rep3(vec![
-                share1.lookup_outputs,
-                share2.lookup_outputs,
-                share3.lookup_outputs,
+                share1.lookup_outputs.try_into()?,
+                share2.lookup_outputs.try_into()?,
+                share3.lookup_outputs.try_into()?,
             ])
             .evals()
             .into_iter()
@@ -311,17 +273,22 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .collect_vec(),
         );
 
-        InstructionLookupPolynomials {
+        let instruction_flags = share1
+            .instruction_flags
+            .into_iter()
+            .map(|p| p.try_into())
+            .collect::<eyre::Result<Vec<_>>>()?;
+
+        Ok(InstructionLookupPolynomials {
             dim,
             read_cts,
             final_cts,
-            instruction_flags: share1.aux_stuff.instruction_flags.clone(),
+            instruction_flags,
             E_polys: e_polys,
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
-            aux_stuff: Default::default(),
-        }
+        })
     }
 
     fn generate_secret_shares<R: Rng>(
@@ -360,15 +327,12 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let (lookup_outputs0, lookup_outputs1, lookup_outputs2) =
             generate_poly_shares_rep3(&polynomials.lookup_outputs, rng);
 
-        let get_instruction_flags_rep3 = |party_id: PartyID| -> Vec<Rep3DensePolynomial<F>> {
+        let get_instruction_flags_rep3 = |party_id: PartyID| -> Vec<Rep3MultilinearPolynomial<F>> {
             polynomials
                 .instruction_flags
                 .iter()
                 .map(|poly| {
-                    Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-                        poly.coeffs_as_field_elements(),
-                        party_id,
-                    ))
+                    Rep3MultilinearPolynomial::public_with_trivial_share(poly.clone(), party_id)
                 })
                 .collect_vec()
         };
@@ -380,9 +344,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             E_polys: e_polys0,
             lookup_outputs: lookup_outputs0,
             instruction_flags: get_instruction_flags_rep3(PartyID::ID0),
-            aux_stuff: PublicInstructionLookupPolynomials {
-                instruction_flags: polynomials.instruction_flags.clone(),
-            },
             a_init_final: None,
             v_init_final: None,
         };
@@ -394,9 +355,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             E_polys: e_polys1,
             lookup_outputs: lookup_outputs1,
             instruction_flags: get_instruction_flags_rep3(PartyID::ID1),
-            aux_stuff: PublicInstructionLookupPolynomials {
-                instruction_flags: polynomials.instruction_flags.clone(),
-            },
             a_init_final: None,
             v_init_final: None,
         };
@@ -408,9 +366,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             E_polys: e_polys2,
             lookup_outputs: lookup_outputs2,
             instruction_flags: get_instruction_flags_rep3(PartyID::ID2),
-            aux_stuff: PublicInstructionLookupPolynomials {
-                instruction_flags: polynomials.instruction_flags.clone(),
-            },
             a_init_final: None,
             v_init_final: None,
         };
@@ -473,8 +428,8 @@ fn compute_lookup_outputs_rep3<
     ops: &[JoltTraceStep<F, Instructions>],
     num_reads: usize,
     io_ctx: &mut IoContext<Network>,
-) -> eyre::Result<Rep3DensePolynomial<F>> {
-    // TODO: use co_lasso::utils::chunk_map
+) -> eyre::Result<Rep3MultilinearPolynomial<F>> {
+    // TODO: use jolt_core::utils::chunk_map
     let mut outputs = ops
         .iter()
         .map(|op| {
@@ -486,7 +441,7 @@ fn compute_lookup_outputs_rep3<
         })
         .collect::<eyre::Result<Vec<_>>>()?;
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
-    Ok(Rep3DensePolynomial::new(outputs))
+    Ok(Rep3MultilinearPolynomial::from(outputs))
 }
 
 struct BiNetwork<Network: Rep3Network> {

@@ -7,7 +7,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
-use crate::utils::transcript::Transcript;
+use jolt_core::utils::transcript::Transcript;
 use ark_serialize::*;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 

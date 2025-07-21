@@ -239,7 +239,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let max_num_vars = self
             .openings
             .iter()
-            .map(|opening| opening.polynomial.num_vars())
+            .map(|opening| opening.polynomial.get_num_vars())
             .max()
             .unwrap();
 
@@ -253,10 +253,10 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .par_iter()
             .zip(self.openings.par_iter_mut())
             .map(|(coeff, opening)| {
-                let scaled_claim = if opening.polynomial.num_vars() != max_num_vars {
+                let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
                     rep3::arithmetic::mul_public(
                         opening.claim,
-                        F::from_u64_unchecked(1 << (max_num_vars - opening.polynomial.num_vars())),
+                        F::from_u64_unchecked(1 << (max_num_vars - opening.polynomial.get_num_vars())),
                     )
                 } else {
                     opening.claim

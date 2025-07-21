@@ -4,6 +4,7 @@ pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
 use jolt_core::{
+    field::JoltField,
     lasso::memory_checking::{ExogenousOpenings, Initializable},
     subprotocols::grand_product::BatchedGrandProductProof,
 };
@@ -13,7 +14,6 @@ use mpc_core::protocols::{
 };
 
 use crate::{
-    field::JoltField,
     poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::{
         commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProduct,
@@ -161,8 +161,8 @@ where
         // let init_final_evals: Vec<F> =
         //     Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
-        let init_final_evals = additive::combine_field_element_vec(network.receive_responses(vec![])?);
-
+        let init_final_evals =
+            additive::combine_field_element_vec(network.receive_responses(vec![])?);
 
         for (opening, eval) in openings
             .init_final_values_mut()

@@ -1,8 +1,9 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_lasso::memory_checking::StructuredPolynomialData;
-use co_lasso::poly::commitment::commitment_scheme::CommitmentScheme;
-use co_lasso::subprotocols::commitment::DistributedCommitmentScheme;
-use co_lasso::utils::transcript::{KeccakTranscript, Transcript};
+use crate::lasso::memory_checking::StructuredPolynomialData;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
+use crate::subprotocols::commitment::DistributedCommitmentScheme;
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use itertools::{multizip, Itertools};
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::instruction_lookups::{
@@ -14,17 +15,14 @@ use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use mpc_core::protocols::rep3::network::{
     IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::PartyID;
 use rand::Rng;
 
 use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
 use crate::jolt::vm::JoltTraceStep;
 
-#[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Rep3JoltPolynomials<F: JoltField> {
-    pub instruction_lookups: Rep3InstructionLookupPolynomials<F>,
-}
+pub type Rep3JoltPolynomials<F: JoltField> = JoltStuff<Rep3MultilinearPolynomial<F>>;
 
 pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     type PublicPolynomials;
@@ -32,7 +30,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     fn combine_polynomials(
         preprocessing: &Preprocessing,
         polynomials_shares: Vec<Self>,
-    ) -> Self::PublicPolynomials;
+    ) -> eyre::Result<Self::PublicPolynomials>;
 
     fn generate_secret_shares<R: Rng>(
         preprocessing: &Preprocessing,
@@ -63,7 +61,7 @@ where
     fn combine_polynomials(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         polynomials_shares: Vec<Self>,
-    ) -> Self::PublicPolynomials {
+    ) -> eyre::Result<Self::PublicPolynomials> {
         let instructions_shares: Vec<_> = polynomials_shares
             .into_iter()
             .map(|p| {
@@ -78,12 +76,12 @@ where
         let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
             &preprocessing.instruction_lookups,
             instructions_shares,
-        );
+        )?;
 
-        JoltPolynomials {
+        Ok(JoltPolynomials {
             instruction_lookups,
             ..Default::default()
-        }
+        })
     }
 
     fn generate_secret_shares<R: Rng>(
@@ -130,6 +128,7 @@ where
 
         Ok(Self {
             instruction_lookups,
+            ..Default::default()
         })
     }
 }
@@ -142,8 +141,8 @@ where
 //     // _field: PhantomData<F>,
 // }
 
-impl<F: JoltField> Rep3JoltPolynomials<F> {
-    pub fn commit<const C: usize, PCS, ProofTranscript, Network>(
+pub trait Rep3JoltPolynomialsExt<F: JoltField> {
+    fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         io_ctx: &mut IoContext<Network>,
@@ -151,53 +150,9 @@ impl<F: JoltField> Rep3JoltPolynomials<F> {
     where
         PCS: DistributedCommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
-        Network: Rep3NetworkWorker,
-    {
-        let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+        Network: Rep3NetworkWorker;
 
-        let trace_polys = Self::read_write_values_except_flags(&self.instruction_lookups)
-            .map(|poly| MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
-            .collect_vec();
-
-        let trace_polys_ref = trace_polys.iter().collect::<Vec<_>>();
-
-        let trace_commitments = PCS::batch_commit(&trace_polys_ref, &preprocessing.generators);
-
-        Self::read_write_values_except_flags_mut(&mut commitments.instruction_lookups)
-            .zip(trace_commitments.into_iter())
-            .for_each(|(dest, src)| *dest = src);
-
-        commitments.instruction_lookups.final_cts = PCS::batch_commit(
-            &self
-                .instruction_lookups
-                .final_cts
-                .iter()
-                .map(|poly| MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
-                .collect_vec(),
-            &preprocessing.generators,
-        );
-
-        io_ctx
-            .network
-            .send_response(commitments.instruction_lookups)?;
-
-        if io_ctx.id == PartyID::ID0 {
-            let lookup_flag_polys_commitment = PCS::batch_commit(
-                &self
-                    .instruction_lookups
-                    .aux_stuff
-                    .instruction_flags
-                    .iter()
-                    .collect::<Vec<_>>(),
-                &preprocessing.generators,
-            );
-            io_ctx.network.send_response(lookup_flag_polys_commitment)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn receive_commitments<const C: usize, PCS, ProofTranscript, Network>(
+    fn receive_commitments<const C: usize, PCS, ProofTranscript, Network>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,
     ) -> eyre::Result<JoltCommitments<PCS, ProofTranscript>>
@@ -220,9 +175,9 @@ impl<F: JoltField> Rep3JoltPolynomials<F> {
             network.receive_response(PartyID::ID0, 0, Default::default())?;
 
         let trace_commitments = multizip((
-            Self::read_write_values_except_flags(&share1),
-            Self::read_write_values_except_flags(&share2),
-            Self::read_write_values_except_flags(&share3),
+            read_write_values_except_flags(&share1),
+            read_write_values_except_flags(&share2),
+            read_write_values_except_flags(&share3),
         ))
         .map(|(trace1, trace2, trace3)| PCS::combine_commitment_shares(&[trace1, trace2, trace3]))
         .collect_vec();
@@ -250,34 +205,81 @@ impl<F: JoltField> Rep3JoltPolynomials<F> {
 
         Ok(commitments)
     }
+}
 
-    fn read_write_values_except_flags<T, U>(
-        stuff: &InstructionLookupStuff<T, U>,
-    ) -> impl Iterator<Item = &T>
+impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
+    fn commit<const C: usize, PCS, ProofTranscript, Network>(
+        &self,
+        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()>
     where
-        T: CanonicalSerialize + CanonicalDeserialize,
-        U: CanonicalSerialize + CanonicalDeserialize + Default,
+        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        ProofTranscript: Transcript,
+        Network: Rep3NetworkWorker,
     {
-        stuff
-            .dim
-            .iter()
-            .chain(stuff.read_cts.iter())
-            .chain(stuff.E_polys.iter())
-            .chain([&stuff.lookup_outputs])
-    }
+        let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-    fn read_write_values_except_flags_mut<T, U>(
-        stuff: &mut InstructionLookupStuff<T, U>,
-    ) -> impl Iterator<Item = &mut T>
-    where
-        T: CanonicalSerialize + CanonicalDeserialize,
-        U: CanonicalSerialize + CanonicalDeserialize + Default,
-    {
-        stuff
-            .dim
-            .iter_mut()
-            .chain(stuff.read_cts.iter_mut())
-            .chain(stuff.E_polys.iter_mut())
-            .chain([&mut stuff.lookup_outputs])
+        let trace_polys = read_write_values_except_flags(&self.instruction_lookups)
+            .map(|poly| MultilinearPolynomial::LargeScalars(poly.as_shared().copy_share_a()))
+            .collect_vec();
+
+        let trace_polys_ref = trace_polys.iter().collect::<Vec<_>>();
+
+        let trace_commitments = PCS::batch_commit(&trace_polys_ref, &preprocessing.generators);
+
+        read_write_values_except_flags_mut(&mut commitments.instruction_lookups)
+            .zip(trace_commitments.into_iter())
+            .for_each(|(dest, src)| *dest = src);
+
+        commitments.instruction_lookups.final_cts = PCS::batch_commit(
+            &self
+                .instruction_lookups
+                .final_cts
+                .iter()
+                .map(|poly| MultilinearPolynomial::LargeScalars(poly.as_shared().copy_share_a()))
+                .collect_vec(),
+            &preprocessing.generators,
+        );
+
+        io_ctx
+            .network
+            .send_response(commitments.instruction_lookups)?;
+
+        if io_ctx.id == PartyID::ID0 {
+            let lookup_flag_polys_commitment = PCS::batch_commit(
+                &self.instruction_lookups.instruction_flags.try_into_public(),
+                &preprocessing.generators,
+            );
+            io_ctx.network.send_response(lookup_flag_polys_commitment)?;
+        }
+
+        Ok(())
     }
+}
+
+fn read_write_values_except_flags<T>(stuff: &InstructionLookupStuff<T>) -> impl Iterator<Item = &T>
+where
+    T: CanonicalSerialize + CanonicalDeserialize,
+{
+    stuff
+        .dim
+        .iter()
+        .chain(stuff.read_cts.iter())
+        .chain(stuff.E_polys.iter())
+        .chain([&stuff.lookup_outputs])
+}
+
+fn read_write_values_except_flags_mut<T>(
+    stuff: &mut InstructionLookupStuff<T>,
+) -> impl Iterator<Item = &mut T>
+where
+    T: CanonicalSerialize + CanonicalDeserialize,
+{
+    stuff
+        .dim
+        .iter_mut()
+        .chain(stuff.read_cts.iter_mut())
+        .chain(stuff.E_polys.iter_mut())
+        .chain([&mut stuff.lookup_outputs])
 }

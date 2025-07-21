@@ -8,7 +8,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
+use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
 use itertools::multizip;
 use rayon::prelude::*;

@@ -217,7 +217,7 @@ where
     {
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         let (pf, _) = open(
-            &setup.ck(poly.num_vars()),
+            &setup.ck(poly.get_num_vars()),
             &poly.copy_share_a(),
             &opening_point_rev,
         );

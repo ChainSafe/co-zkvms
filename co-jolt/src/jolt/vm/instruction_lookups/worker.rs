@@ -1,9 +1,9 @@
-use co_lasso::{
-    memory_checking::worker::MemoryCheckingProverRep3Worker,
+use crate::{
+    lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::Rep3ProverOpeningAccumulator, unipoly::CompressedUniPoly,
-        Rep3DensePolynomial,
+        Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
         commitment::DistributedCommitmentScheme,
@@ -107,19 +107,16 @@ where
         let eq_poly = MultilinearPolynomial::from(eq_evals);
         let num_rounds = trace_length.log_2();
 
-        let (mut r_primary_sumcheck, flag_evals, E_evals, outputs_eval) = Self::prove_primary_sumcheck(
-            preprocessing,
-            num_rounds,
-            eq_poly,
-            &mut polynomials.instruction_lookups.E_polys.clone(),
-            &mut polynomials
-                .instruction_lookups
-                .aux_stuff
-                .instruction_flags
-                .clone(),
-            &mut polynomials.instruction_lookups.lookup_outputs.clone(),
-            io_ctx,
-        )?;
+        let (mut r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
+            Self::prove_primary_sumcheck(
+                preprocessing,
+                num_rounds,
+                eq_poly,
+                &mut polynomials.instruction_lookups.E_polys.clone(),
+                &mut polynomials.instruction_lookups.instruction_flags.clone(),
+                &mut polynomials.instruction_lookups.lookup_outputs.clone(),
+                io_ctx,
+            )?;
         r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
 
         let primary_sumcheck_polys = polynomials
@@ -135,7 +132,7 @@ where
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         opening_accumulator.append(
-            &primary_sumcheck_polys,
+            &primary_sumcheck_polys.try_into_shared(),
             eq_primary_sumcheck,
             r_primary_sumcheck,
             &primary_sumcheck_openings,
@@ -167,9 +164,9 @@ where
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
         mut eq_poly: MultilinearPolynomial<F>,
-        memory_polys: &mut [Rep3DensePolynomial<F>],
-        flag_polys: &mut [MultilinearPolynomial<F>],
-        lookup_outputs_poly: &mut Rep3DensePolynomial<F>,
+        memory_polys: &mut [Rep3MultilinearPolynomial<F>],
+        flag_polys: &mut [Rep3MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<(
         Vec<AdditiveShare<F>>,
@@ -194,7 +191,7 @@ where
             let univariate_poly = Self::primary_sumcheck_prover_message(
                 preprocessing,
                 &eq_poly,
-                flag_polys,
+                &flag_polys,
                 memory_polys,
                 lookup_outputs_poly,
                 previous_claim,
@@ -213,8 +210,8 @@ where
             let _bind_enter = _bind_span.enter();
             flag_polys
                 .par_iter_mut()
-                .chain([&mut eq_poly].into_par_iter())
                 .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+            eq_poly.bind(r_j, BindingOrder::LowToHigh);
             memory_polys
                 .par_iter_mut()
                 .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
@@ -231,13 +228,18 @@ where
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
         let flag_evals = flag_polys
             .iter()
-            .map(|poly| additive::promote_to_trivial_share(poly.final_sumcheck_claim(), io_ctx.id))
+            .map(|poly| {
+                additive::promote_to_trivial_share(
+                    poly.as_public().final_sumcheck_claim(),
+                    io_ctx.id,
+                )
+            })
             .collect();
         let memory_evals = memory_polys
             .iter()
-            .map(|poly| poly[0].into_additive())
+            .map(|poly| poly.as_shared()[0].into_additive())
             .collect();
-        let outputs_eval = lookup_outputs_poly[0].into_additive();
+        let outputs_eval = lookup_outputs_poly.as_shared()[0].into_additive();
 
         Ok((r, flag_evals, memory_evals, outputs_eval))
     }
@@ -246,9 +248,9 @@ where
     fn primary_sumcheck_prover_message(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
-        flag_polys: &[MultilinearPolynomial<F>],
-        subtable_polys: &[Rep3DensePolynomial<F>],
-        lookup_outputs_poly: &mut Rep3DensePolynomial<F>,
+        flag_polys: &[Rep3MultilinearPolynomial<F>],
+        subtable_polys: &[Rep3MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         previous_claim: F,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<UniPoly<F>> {
@@ -256,17 +258,23 @@ where
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
-        let mut evaluations: Vec<_> = co_lasso::utils::try_fork_chunks(
+        let mut evaluations: Vec<_> = crate::utils::try_fork_chunks(
             0..mle_half,
             io_ctx,
             8, // TODO: make configurable
             |i, io_ctx| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                let output_evals =
-                    lookup_outputs_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
+                    i,
+                    degree,
+                    BindingOrder::LowToHigh,
+                );
                 let flag_evals: Vec<Vec<F>> = flag_polys
                     .iter()
-                    .map(|poly| poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh))
+                    .map(|poly| {
+                        poly.as_public()
+                            .sumcheck_evals(i, degree, BindingOrder::LowToHigh)
+                    })
                     .collect();
                 // Subtable evals are lazily computed in the for-loop below
                 let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
@@ -289,6 +297,7 @@ where
                             .map(|memory_index| {
                                 if subtable_evals[*memory_index].is_empty() {
                                     subtable_evals[*memory_index] = subtable_polys[*memory_index]
+                                        .as_shared()
                                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                                 }
                                 subtable_evals[*memory_index][j]
@@ -435,7 +444,6 @@ where
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkWorker,
 {
-    type Rep3ExogenousPolynomials = Rep3JoltPolynomials<F>;
     type Rep3Polynomials = Rep3InstructionLookupPolynomials<F>;
     type Preprocessing = InstructionLookupsPreprocessing<C, F>;
 
@@ -452,7 +460,7 @@ where
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        _exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
+        _jolt_polynomials: &Rep3JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
         io_ctx: &mut IoContext<Network>,
@@ -478,12 +486,15 @@ where
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                let dim = polynomials.dim[dim_index].as_shared();
+                let e_polys = polynomials.E_polys[memory_index].as_shared();
+                let read_cts = polynomials.read_cts[memory_index].as_shared();
 
                 let read_fingerprints: Vec<_> = (0..num_lookups)
                     .map(|i| {
-                        let a = &polynomials.dim[dim_index][i];
-                        let v = &polynomials.E_polys[memory_index][i];
-                        let t = &polynomials.read_cts[memory_index][i];
+                        let a = &dim[i];
+                        let v = &e_polys[i];
+                        let t = &read_cts[i];
                         rep3::arithmetic::sub_shared_by_public(
                             (t * gamma_squared) + (v * *gamma) + *a,
                             *tau,
@@ -526,7 +537,7 @@ where
                 // Final leaves
                 let mut leaf_index = M;
                 for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
-                    let final_cts = &polynomials.final_cts[*memory_index];
+                    let final_cts = &polynomials.final_cts[*memory_index].as_shared();
                     (0..M).for_each(|i| {
                         leaves[leaf_index] =
                             leaves[i] + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
@@ -549,10 +560,10 @@ where
         >::memory_flag_indices(
             preprocessing,
             polynomials
-                .aux_stuff
                 .instruction_flags
-                .iter()
-                .map(|poly| poly.try_into().unwrap())
+                .try_into_public()
+                .into_iter()
+                .map(|p| p.try_into().unwrap())
                 .collect(),
         );
 

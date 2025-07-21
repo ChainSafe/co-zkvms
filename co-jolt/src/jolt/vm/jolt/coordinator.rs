@@ -1,7 +1,5 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::test_rng;
-use co_lasso::{
-    memory_checking::StructuredPolynomialData,
+use crate::{
+    lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
@@ -9,14 +7,16 @@ use co_lasso::{
         },
     },
     subprotocols::commitment::DistributedCommitmentScheme,
-    utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::test_rng;
+use jolt_core::utils::{thread::drop_in_background_thread, transcript::Transcript};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
 use strum::EnumCount;
 
-use crate::jolt::vm::jolt::witness::Rep3Polynomials;
+use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomialsExt};
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
     subtable::JoltSubtableSet,

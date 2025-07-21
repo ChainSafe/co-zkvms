@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "co-jolt",
-    "co-lasso",
     # "co-noir",
     "co-spartan",
     "mpc-net",

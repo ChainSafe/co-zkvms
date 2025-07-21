@@ -1,5 +1,5 @@
-use co_lasso::poly::commitment::commitment_scheme::CommitmentScheme;
-use co_lasso::utils::transcript::Transcript;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::utils::transcript::Transcript;
 use enum_dispatch::enum_dispatch;
 use jolt_core::field::JoltField;
 use jolt_core::r1cs::constraints::JoltRV32IMConstraints;

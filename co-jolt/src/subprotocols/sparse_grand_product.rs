@@ -16,7 +16,7 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::Transcript;
+use jolt_core::utils::transcript::Transcript;
 use itertools::Itertools;
 use jolt_core::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;

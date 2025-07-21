@@ -62,7 +62,6 @@ postcard = { version = "1.0.8", default-features = false, features = [
 mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
-co-lasso = { path = "../co-lasso" }
 
 
 

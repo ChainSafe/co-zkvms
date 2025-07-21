@@ -1,7 +1,10 @@
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
-use jolt_core::{poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation}, utils};
+use jolt_core::{
+    poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+    utils,
+};
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::Rng;
@@ -9,7 +12,7 @@ use std::ops::Index;
 
 use crate::{
     field::JoltField,
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, Rep3MultilinearPolynomial},
     utils::math::Math,
 };
 
@@ -101,14 +104,23 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     #[inline]
-    pub fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<Rep3PrimeFieldShare<F>> {
+    pub fn sumcheck_evals(
+        &self,
+        index: usize,
+        degree: usize,
+        order: BindingOrder,
+    ) -> Vec<Rep3PrimeFieldShare<F>> {
         let (a, b) = self.copy_poly_shares();
 
         let evals_a = MultilinearPolynomial::LargeScalars(a).sumcheck_evals(index, degree, order);
         let evals_b = MultilinearPolynomial::LargeScalars(b).sumcheck_evals(index, degree, order);
 
         assert_eq!(evals_a.len(), evals_b.len());
-        evals_a.into_iter().zip(evals_b.into_iter()).map(|(a, b)| Rep3PrimeFieldShare::new(a, b)).collect()
+        evals_a
+            .into_iter()
+            .zip(evals_b.into_iter())
+            .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
+            .collect()
     }
 
     #[inline]
@@ -118,7 +130,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             BindingOrder::HighToLow => self.bound_poly_var_top(&r),
         }
     }
-
 
     pub fn split_evals(
         &self,
@@ -218,12 +229,12 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial::new(lc_coeffs)
     }
 
-    pub fn num_vars(&self) -> usize {
+    pub fn get_num_vars(&self) -> usize {
         self.num_vars
     }
 
     pub fn len(&self) -> usize {
-        1 << self.num_vars()
+        1 << self.get_num_vars()
     }
 
     pub fn is_bound(&self) -> bool {
@@ -327,18 +338,18 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     poly: &MultilinearPolynomial<F>,
     rng: &mut R,
 ) -> (
-    Rep3DensePolynomial<F>,
-    Rep3DensePolynomial<F>,
-    Rep3DensePolynomial<F>,
+    Rep3MultilinearPolynomial<F>,
+    Rep3MultilinearPolynomial<F>,
+    Rep3MultilinearPolynomial<F>,
 ) {
     let dense_poly = DensePolynomial::new_padded(poly.coeffs_as_field_elements());
 
     let num_vars = poly.get_num_vars();
     if num_vars == 0 {
         return (
-            Rep3DensePolynomial::<F>::zero(),
-            Rep3DensePolynomial::<F>::zero(),
-            Rep3DensePolynomial::<F>::zero(),
+            Rep3DensePolynomial::<F>::zero().into(),
+            Rep3DensePolynomial::<F>::zero().into(),
+            Rep3DensePolynomial::<F>::zero().into(),
         );
     }
     let t0 =
@@ -351,7 +362,7 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1.clone(), t0);
     let p_share_2 = Rep3DensePolynomial::<F>::from_poly_shares(t2, t1);
 
-    (p_share_0, p_share_1, p_share_2)
+    (p_share_0.into(), p_share_1.into(), p_share_2.into())
 }
 
 #[cfg(test)]

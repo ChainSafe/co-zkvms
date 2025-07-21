@@ -4,9 +4,8 @@ pub mod worker;
 
 use std::{collections::BTreeMap, iter, marker::PhantomData};
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_lasso::{
-    memory_checking::StructuredPolynomialData,
+use crate::{
+    lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
@@ -15,6 +14,7 @@ use co_lasso::{
     },
     utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{MemoryLayout, MemoryOp, NUM_CIRCUIT_FLAGS},
@@ -26,8 +26,9 @@ use strum::EnumCount;
 
 use super::bytecode::BytecodeRow;
 use crate::jolt::{
-    instruction::JoltInstructionSet, subtable::JoltSubtableSet,
-    vm::instruction_lookups::InstructionLookupsProof,
+    instruction::JoltInstructionSet,
+    subtable::JoltSubtableSet,
+    vm::{instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32I},
 };
 use jolt_core::{
     field::JoltField,
@@ -87,6 +88,19 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
         let unpadded_length = trace.len();
         let padded_length = unpadded_length.next_power_of_two();
         trace.resize(padded_length, Self::no_op());
+    }
+}
+
+impl<F: JoltField> Into<jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I>>
+    for JoltTraceStep<F, RV32I<F>>
+{
+    fn into(self) -> jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I> {
+        jolt_core::jolt::vm::JoltTraceStep {
+            instruction_lookup: None,
+            bytecode_row: self.bytecode_row,
+            memory_ops: self.memory_ops,
+            circuit_flags: self.circuit_flags,
+        }
     }
 }
 

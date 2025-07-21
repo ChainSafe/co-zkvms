@@ -1,6 +1,5 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use co_lasso::{
-    memory_checking::StructuredPolynomialData,
+use crate::{
+    lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
@@ -10,6 +9,7 @@ use co_lasso::{
     subprotocols::commitment::DistributedCommitmentScheme,
     utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
@@ -22,7 +22,7 @@ use crate::jolt::{
     vm::{
         instruction_lookups::{worker::Rep3InstructionLookupsProver, InstructionLookupsProof},
         rv32i_vm::{RV32IJoltVM, RV32I},
-        witness::{Rep3JoltPolynomials, Rep3Polynomials},
+        witness::{Rep3JoltPolynomials, Rep3JoltPolynomialsExt, Rep3Polynomials},
         Jolt, JoltCommitments, JoltPolynomials, JoltProof, JoltTraceStep,
     },
 };

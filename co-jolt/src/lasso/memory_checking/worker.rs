@@ -3,7 +3,8 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::Itertools;
 use jolt_core::{
-    jolt::vm::JoltPolynomials,
+    field::JoltField,
+    jolt::vm::{JoltPolynomials, JoltStuff},
     lasso::memory_checking::{
         ExogenousOpenings, Initializable, MemoryCheckingProver, MultisetHashes,
         StructuredPolynomialData,
@@ -11,17 +12,23 @@ use jolt_core::{
     poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
 };
-use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3NetworkWorker},
+    PartyID,
+};
 use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
-    field::JoltField,
-    poly::{opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial},
+    poly::{
+        opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial,
+        Rep3MultilinearPolynomial, Rep3PolysConversion,
+    },
     subprotocols::{
         commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProductWorker,
     },
     utils,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -40,8 +47,8 @@ where
         // + Send
         + 'static;
 
-    type Rep3ExogenousPolynomials: ?Sized;
-    type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>> + ?Sized;
+    // type Rep3ExogenousPolynomials: ?Sized;
+    type Rep3Polynomials: StructuredPolynomialData<Rep3MultilinearPolynomial<F>> + ?Sized;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
     // type Commitments: StructuredPolynomialData<PCS::Commitment>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync;
@@ -72,7 +79,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
+        jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
@@ -80,7 +87,7 @@ where
             Self::prove_grand_products(
                 preprocessing,
                 polynomials,
-                exogenous_polynomials,
+                jolt_polynomials,
                 opening_accumulator,
                 io_ctx,
                 pcs_setup,
@@ -95,7 +102,7 @@ where
         Self::compute_openings(
             opening_accumulator,
             polynomials,
-            exogenous_polynomials,
+            jolt_polynomials,
             r_read_write_opening,
             r_init_final_opening,
             io_ctx,
@@ -108,7 +115,7 @@ where
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
+        jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
         pcs_setup: &PCS::Setup,
@@ -121,7 +128,7 @@ where
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,
             polynomials,
-            exogenous_polynomials,
+            jolt_polynomials,
             &gamma,
             &tau,
             io_ctx,
@@ -162,16 +169,16 @@ where
     fn compute_openings(
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         polynomials: &Self::Rep3Polynomials,
-        _exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
+        jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         r_read_write: &[F],
         r_init_final: &[F],
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        let read_write_polys: Vec<_> = [
-            polynomials.read_write_values(),
-            // Self::ExogenousOpenings::exogenous_data(jolt_polynomials),
-        ]
-        .concat();
+        let read_write_polys: Vec<&_> = polynomials
+            .read_write_values()
+            .into_iter()
+            .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
+            .try_into_shared();
 
         let (read_write_evals, eq_read_write) =
             Rep3DensePolynomial::batch_evaluate(&read_write_polys, r_read_write);
@@ -184,7 +191,7 @@ where
             io_ctx,
         )?;
 
-        let init_final_polys = polynomials.init_final_values();
+        let init_final_polys = polynomials.init_final_values().try_into_shared();
         let (init_final_evals, eq_init_final) =
             Rep3DensePolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
@@ -207,7 +214,7 @@ where
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
+        jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         gamma: &F,
         tau: &F,
         io_ctx: &mut IoContext<Network>,
@@ -265,4 +272,22 @@ where
     }
 
     fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize;
+}
+
+pub trait Rep3ExogenousOpenings<F: JoltField>:
+    Default + CanonicalSerialize + CanonicalDeserialize
+{
+    type Rep3ExogenousPolynomials: ?Sized;
+    /// Returns a `Vec` of references to the openings contained in `self`.
+    /// Ordering should mirror `openings_mut`.
+    fn openings(&self) -> Vec<&F>;
+    /// Returns a `Vec` of mutable references to the openings contained in `self`.
+    /// Ordering should mirror `openings`.
+    fn openings_mut(&mut self) -> Vec<&mut F>;
+    /// Cherry-picks the "exogenous" polynomials/commitments needed by an offline-memory
+    /// checking instance. The ordering of the returned polynoials/commitments should
+    /// mirror `openings`/`openings_mut`.
+    fn exogenous_polys(
+        polys: &Self::Rep3ExogenousPolynomials,
+    ) -> Vec<&Rep3MultilinearPolynomial<F>>;
 }
