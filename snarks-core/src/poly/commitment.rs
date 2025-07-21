@@ -24,6 +24,17 @@ pub fn aggregate_comm<E: Pairing>(eta: E::ScalarField, comms: &[Commitment<E>]) 
     res
 }
 
+pub fn aggregate_comm_with_powers<E: Pairing>(
+    powers: &[E::ScalarField],
+    comms: &[Commitment<E>],
+) -> Commitment<E> {
+    let mut res = comms[0].clone();
+    for i in 1..comms.len() {
+        res.g_product = (res.g_product + (comms[i].g_product * powers[i])).into();
+    }
+    res
+}
+
 pub fn aggregate_proof<E: Pairing>(eta: E::ScalarField, pfs: &[Proof<E>]) -> Proof<E> {
     let mut res = pfs[0].clone();
     let mut x = eta;

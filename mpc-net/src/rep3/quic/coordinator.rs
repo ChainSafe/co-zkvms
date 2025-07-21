@@ -92,7 +92,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn broadcast_request<
-        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize + Clone,
+        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
     >(
         &mut self,
         data: T,
@@ -111,7 +111,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn send_requests<
-        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize + Clone,
+        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
     >(
         &mut self,
         data: Vec<T>,

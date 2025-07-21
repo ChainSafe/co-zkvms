@@ -1,6 +1,10 @@
 use ark_ff::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
-use mpc_core::protocols::rep3::PartyID;
+use eyre::Context;
+use mpc_core::protocols::rep3::{
+    PartyID,
+    network::{IoContext, Rep3Network},
+};
 use rand::RngCore;
 
 use crate::protocols::rep3::rngs::SSRandom;
@@ -21,13 +25,23 @@ pub fn add_public<F: PrimeField>(
     res
 }
 
-pub fn sub_public<F: PrimeField>(
+pub fn sub_shared_by_public<F: PrimeField>(
     shared: AdditiveShare<F>,
     public: F,
     id: PartyID,
 ) -> AdditiveShare<F> {
     add_public(shared, -public, id)
 }
+
+/// Performs subtraction between a shared value and a public value, returning public - shared.
+pub fn sub_public_by_shared<F: PrimeField>(
+    public: F,
+    shared: AdditiveShare<F>,
+    id: PartyID,
+) -> AdditiveShare<F> {
+    add_public(-shared, public, id)
+}
+
 
 pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(
     rng: &mut SSRandom<R>,
@@ -74,4 +88,24 @@ pub fn combine_field_element_vec<F: PrimeField>(shares: Vec<Vec<F>>) -> Vec<F> {
 
 pub fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F {
     *share1 + *share2 + *share3
+}
+
+pub fn open_vec<F: PrimeField, Network: Rep3Network>(
+    a: Vec<F>,
+    io_ctx: &mut IoContext<Network>,
+) -> eyre::Result<Vec<F>> {
+    io_ctx.network.send_many(io_ctx.id.prev_id(), &a)?;
+    io_ctx.network.send_many(io_ctx.id.next_id(), &a)?;
+    let prev = io_ctx
+        .network
+        .recv_many(io_ctx.id.prev_id())
+        .context("while receiving previous shares")?;
+    let next = io_ctx
+        .network
+        .recv_many(io_ctx.id.next_id())
+        .context("while sending shares")?;
+
+    let res = combine_field_elements(&a, &prev, &next);
+
+    Ok(res)
 }

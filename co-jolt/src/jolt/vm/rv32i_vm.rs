@@ -1,9 +1,12 @@
-use jolt_core::field::JoltField;
+use co_lasso::poly::commitment::commitment_scheme::CommitmentScheme;
+use co_lasso::utils::transcript::Transcript;
 use enum_dispatch::enum_dispatch;
+use jolt_core::field::JoltField;
+use jolt_core::r1cs::constraints::JoltRV32IMConstraints;
 use rand::prelude::StdRng;
-use std::any::TypeId;
-use strum_macros::{EnumCount, AsRefStr, EnumIter};
 use serde::{Deserialize, Serialize};
+use std::any::TypeId;
+use strum_macros::{AsRefStr, EnumCount, EnumIter};
 
 // use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
@@ -21,6 +24,7 @@ use crate::jolt::subtable::{
     srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
     JoltSubtableSet, LassoSubtable, SubtableId,
 };
+use crate::jolt::vm::{Jolt, JoltProof};
 use paste::paste;
 
 use mpc_core::protocols::rep3::{
@@ -87,14 +91,17 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-// impl<F, CS> Jolt<F, CS, C, M> for RV32IJoltVM
-// where
-//     F: JoltField,
-//     CS: CommitmentScheme<Field = F>,
-// {
-//     type InstructionSet = RV32I;
-//     type Subtables = RV32ISubtables<F>;
-// }
+impl<F, PCS, ProofTranscript> Jolt<F, PCS, C, M, ProofTranscript> for RV32IJoltVM
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+{
+    type InstructionSet = RV32I<F>;
+    type Subtables = RV32ISubtables<F>;
 
-// pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
+    // type Constraints = JoltRV32IMConstraints;
+}
 
+pub type RV32IJoltProof<F, PCS, ProofTranscript> =
+    JoltProof<C, M, F, PCS, RV32I<F>, RV32ISubtables<F>, ProofTranscript>;

@@ -479,12 +479,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             let right_eval_3 = right_eval_2 + m_right;
 
                             let eq_evals = eq_evals[block_index];
-                            let e0 = additive::sub_public(
+                            let e0 = additive::sub_shared_by_public(
                                 rep3::arithmetic::mul_mul_public(left.0, right.0, eq_evals.0),
                                 eq_evals.0,
                                 party_id,
                             );
-                            let e1 = additive::sub_public(
+                            let e1 = additive::sub_shared_by_public(
                                 rep3::arithmetic::mul_mul_public(
                                     left_eval_2,
                                     right_eval_2,
@@ -493,7 +493,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 eq_evals.1,
                                 party_id,
                             );
-                            let e2 = additive::sub_public(
+                            let e2 = additive::sub_shared_by_public(
                                 rep3::arithmetic::mul_mul_public(
                                     left_eval_3,
                                     right_eval_3,
@@ -590,7 +590,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                     // ),
                                     // E1_evals[x1].1 * (left_eval_2 * right_eval_2 - F::one()),
                                     // E1_evals[x1].2 * (left_eval_3 * right_eval_3 - F::one()),
-                                    additive::sub_public(
+                                    additive::sub_shared_by_public(
                                         rep3::arithmetic::mul_mul_public(
                                             left.0,
                                             right.0,
@@ -599,7 +599,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                         E1_evals[x1].0 * eq_poly.E2[x2],
                                         party_id,
                                     ),
-                                    additive::sub_public(
+                                    additive::sub_shared_by_public(
                                         rep3::arithmetic::mul_mul_public(
                                             left_eval_2,
                                             right_eval_2,
@@ -608,7 +608,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                         E1_evals[x1].1 * eq_poly.E2[x2],
                                         party_id,
                                     ),
-                                    additive::sub_public(
+                                    additive::sub_shared_by_public(
                                         rep3::arithmetic::mul_mul_public(
                                             left_eval_3,
                                             right_eval_3,

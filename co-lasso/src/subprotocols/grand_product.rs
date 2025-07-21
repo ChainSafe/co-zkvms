@@ -38,13 +38,6 @@ use rayon::prelude::*;
 use super::sumcheck::{self};
 use crate::poly::Rep3DensePolynomial;
 
-pub use super::legacy::{
-    grand_product::{
-        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
-        LayerProofBatched,
-    },
-    sumcheck::{CubicSumcheckType, SumcheckInstanceProof},
-};
 
 pub trait Rep3BatchedGrandProduct<F, PCS, ProofTranscript, Network: Rep3NetworkCoordinator>:
     Sized

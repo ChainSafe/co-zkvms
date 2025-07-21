@@ -572,13 +572,13 @@ where
         primary_sumcheck_openings.push(outputs_eval);
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
-        // opening_accumulator.append(
-        //     &primary_sumcheck_polys,
-        //     eq_primary_sumcheck,
-        //     r_primary_sumcheck,
-        //     &primary_sumcheck_openings,
-        //     transcript,
-        // );
+        opening_accumulator.append(
+            &primary_sumcheck_polys,
+            eq_primary_sumcheck,
+            r_primary_sumcheck,
+            &primary_sumcheck_openings,
+            transcript,
+        );
 
         let primary_sumcheck = PrimarySumcheck {
             sumcheck_proof: primary_sumcheck_proof,
@@ -656,12 +656,12 @@ where
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
-        // opening_accumulator.append(
-        //     &primary_sumcheck_commitments,
-        //     r_primary_sumcheck.clone(),
-        //     &primary_sumcheck_openings,
-        //     transcript,
-        // );
+        opening_accumulator.append(
+            &primary_sumcheck_commitments,
+            r_primary_sumcheck.clone(),
+            &primary_sumcheck_openings,
+            transcript,
+        );
 
         Self::verify_memory_checking(
             preprocessing,
@@ -826,6 +826,7 @@ where
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
+            aux_stuff: Default::default(),
         }
     }
 
@@ -1127,7 +1128,7 @@ where
             .par_iter()
             .map(|op| {
                 if let Some(instr) = &op.instruction_lookup {
-                    instr.lookup_entry().to_u64().unwrap().try_into().unwrap()
+                    instr.lookup_entry().to_u64().unwrap() as u32
                 } else {
                     0
                 }
@@ -1152,7 +1153,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Jolt instruction lookups"
+        b"Instruction lookups check"
     }
 }
 

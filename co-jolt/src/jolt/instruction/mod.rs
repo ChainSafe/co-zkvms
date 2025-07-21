@@ -2,18 +2,18 @@ use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
 use jolt_core::field::JoltField;
 use jolt_tracer::ELFInstruction;
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3BigUintShare,
 };
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use paste::paste;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
-use strum::{EnumCount, IntoEnumIterator};
-use strum_macros::{EnumCount, AsRefStr, EnumIter};
 use std::fmt::Debug;
+use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::{AsRefStr, EnumCount, EnumIter};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
 
@@ -82,11 +82,20 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>>;
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 }
 
 pub trait JoltInstructionSet<F: JoltField>:
-    JoltInstruction<F> + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + AsRef<str> + Send + Sync 
+    JoltInstruction<F>
+    + IntoEnumIterator
+    + EnumCount
+    + for<'a> TryFrom<&'a ELFInstruction>
+    + AsRef<str>
+    + Send
+    + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -106,45 +115,49 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
         byte as usize
     }
 
+    fn promote_public_operands_to_binary<'a>(
+        ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
+        id: PartyID,
+    ) {
+        ops.filter_map(|mut op| op.as_mut()).for_each(|op| {
+            let (op1, op2) = op.operands_mut();
+            match (&op1, &op2) {
+                (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {
+                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*x).into(),
+                    ));
+                    *op2.unwrap() = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*y).into(),
+                    ));
+                }
+                (Rep3Operand::Public(x), _) => {
+                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*x).into(),
+                    ));
+                }
+                (_, Some(Rep3Operand::Public(y))) => {
+                    *op2.unwrap() = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                        id,
+                        &(*y).into(),
+                    ));
+                }
+                _ => {}
+            }
+        });
+    }
+
     #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::operands_to_binary")]
-    fn operands_to_binary<N: Rep3Network>(
-        ops: &mut [Option<Self>],
+    fn operands_a2b_many<'a, N: Rep3Network>(
+        ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
-        let id = io_ctx.network.get_id();
-        ark_std::cfg_iter_mut!(ops)
-            .filter_map(|op| op.as_mut())
-            .for_each(|op| {
-                let (op1, op2) = op.operands_mut();
-                match (&op1, &op2) {
-                    (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {
-                        *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                            id,
-                            &(*x).into(),
-                        ));
-                        *op2.unwrap() = Rep3Operand::Binary(
-                            rep3::binary::promote_to_trivial_share(id, &(*y).into()),
-                        );
-                    }
-                    (Rep3Operand::Public(x), _) => {
-                        *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
-                            id,
-                            &(*x).into(),
-                        ));
-                    }
-                    (_, Some(Rep3Operand::Public(y))) => {
-                        *op2.unwrap() = Rep3Operand::Binary(
-                            rep3::binary::promote_to_trivial_share(id, &(*y).into()),
-                        );
-                    }
-                    _ => {}
-                }
-            });
-
         let (inputs, field_operands): (
             Vec<Vec<Rep3PrimeFieldShare<F>>>,
             Vec<Vec<&mut Rep3Operand<F>>>,
-        ) = ark_std::cfg_iter_mut!(ops)
+        ) = ops
             .filter_map(|op| op.as_mut())
             .map(|op| {
                 let (op1, op2) = op.operands_mut();

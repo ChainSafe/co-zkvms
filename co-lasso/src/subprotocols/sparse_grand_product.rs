@@ -58,63 +58,6 @@ struct Rep3BatchedGrandProductToggleLayer<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
-    #[cfg(test)]
-    fn to_dense(&self) -> (DensePolynomial<F>, Rep3DensePolynomial<F>) {
-        if let Some(coalesced_flags) = &self.coalesced_flags {
-            let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
-            (
-                DensePolynomial::new(coalesced_flags.clone()),
-                Rep3DensePolynomial::new(coalesced_fingerprints.clone()),
-            )
-        } else if self.flag_values.is_empty() {
-            let fingerprints: Vec<_> = self.fingerprints.concat();
-            let mut flags = vec![Rep3PrimeFieldShare::zero_share(); fingerprints.len()];
-            for (batch_index, flag_indices) in self.flag_indices.iter().enumerate() {
-                for flag_index in flag_indices {
-                    flags[batch_index * self.layer_len + flag_index] = F::one();
-                    flags[batch_index * self.layer_len + self.layer_len / 2 + flag_index] =
-                        F::one();
-                }
-            }
-            // Fingerprints are padded with 0s, flags are padded with 1s
-            flags.resize(flags.len().next_power_of_two(), F::one());
-
-            (
-                DensePolynomial::new(flags),
-                Rep3DensePolynomial::new_padded(fingerprints),
-            )
-        } else {
-            let fingerprints: Vec<_> = self
-                .fingerprints
-                .iter()
-                .flat_map(|f| f[..self.layer_len / 2].iter())
-                .cloned()
-                .collect();
-            let mut flags = vec![F::zero(); fingerprints.len()];
-            for (batch_index, (flag_indices, flag_values)) in self
-                .flag_indices
-                .iter()
-                .zip(self.flag_values.iter())
-                .enumerate()
-            {
-                for (flag_index, flag_value) in flag_indices.iter().zip(flag_values) {
-                    flags[batch_index * self.layer_len + flag_index] = *flag_value;
-                    flags[batch_index * self.layer_len + self.layer_len / 2 + flag_index] =
-                        *flag_value;
-                }
-            }
-            // Fingerprints are padded with 0s, flags are padded with 1s
-            flags.resize(flags.len().next_power_of_two(), F::one());
-
-            (
-                DensePolynomial::new(flags),
-                Rep3DensePolynomial::new_padded(fingerprints),
-            )
-        }
-    }
-}
-
-impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
     fn new(flag_indices: Vec<Vec<usize>>, fingerprints: Vec<Vec<Rep3PrimeFieldShare<F>>>) -> Self {
         let layer_len = 2 * fingerprints[0].len();
         let batched_layer_len = fingerprints.len() * layer_len;
@@ -213,9 +156,6 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3BatchedGrandProductToggleLayer<F> {
         level = "trace"
     )]
     fn bind(&mut self, r: F, party_id: PartyID) {
-        #[cfg(test)]
-        let (mut flags_before_binding, mut fingerprints_before_binding) = self.to_dense();
-
         if let Some(coalesced_flags) = &mut self.coalesced_flags {
             // Polynomials have already been coalesced, so bind the coalesced vectors.
             let mut bound_flags = vec![F::one(); coalesced_flags.len() / 2];
@@ -237,21 +177,6 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3BatchedGrandProductToggleLayer<F> {
             }
             self.coalesced_fingerprints = Some(bound_fingerprints);
             self.batched_layer_len /= 2;
-
-            #[cfg(test)]
-            {
-                let (bound_flags, _) = self.to_dense();
-                flags_before_binding.bound_poly_var_bot(&r);
-                fingerprints_before_binding.bound_poly_var_bot(&r);
-                assert_eq!(
-                    bound_flags.Z[..bound_flags.len()],
-                    flags_before_binding.Z[..flags_before_binding.len()]
-                );
-                // assert_eq!(
-                //     bound_fingerprints.Z[..bound_fingerprints.len()],
-                //     fingerprints_before_binding.Z[..fingerprints_before_binding.len()]
-                // );
-            }
 
             return;
         }
@@ -355,39 +280,11 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3BatchedGrandProductToggleLayer<F> {
         self.layer_len /= 2;
         self.batched_layer_len /= 2;
 
-        // #[cfg(test)]
-        // {
-        //     let (bound_flags, bound_fingerprints) = self.to_dense();
-        //     flags_before_binding.bound_poly_var_bot(&r);
-        //     fingerprints_before_binding.bound_poly_var_bot(&r);
-        //     assert_eq!(
-        //         bound_flags.Z[..bound_flags.len()],
-        //         flags_before_binding.Z[..flags_before_binding.len()]
-        //     );
-        //     assert_eq!(
-        //         bound_fingerprints.Z[..bound_fingerprints.len()],
-        //         fingerprints_before_binding.Z[..fingerprints_before_binding.len()]
-        //     );
-        // }
-
         if self.layer_len == 2 {
             // Time to coalesce
             assert!(self.coalesced_fingerprints.is_none());
             assert!(self.coalesced_flags.is_none());
             self.coalesce();
-
-            #[cfg(test)]
-            {
-                let (bound_flags, bound_fingerprints) = self.to_dense();
-                assert_eq!(
-                    bound_flags.Z[..bound_flags.len()],
-                    flags_before_binding.Z[..flags_before_binding.len()]
-                );
-                assert_eq!(
-                    bound_fingerprints.Z[..bound_fingerprints.len()],
-                    fingerprints_before_binding.Z[..fingerprints_before_binding.len()]
-                );
-            }
         }
     }
 }
@@ -452,8 +349,6 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             eq_evals.0 - t0,
                             party_id,
                         );
-
-       
 
                         let e1 = additive::add_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
@@ -699,7 +594,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let t1 = flag_eval_2.mul_01_optimized(eq_evals.1);
                         let t2 = flag_eval_3.mul_01_optimized(eq_evals.2);
 
-                        delta.0 += additive::sub_public(
+                        delta.0 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprints.0, t0).into_additive(),
                             t0,
                             party_id,
@@ -709,7 +604,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         //     flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
                         // );
 
-                        delta.1 += additive::sub_public(
+                        delta.1 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
                             t1,
                             party_id,
@@ -718,7 +613,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         // delta.2 += eq_evals.2.mul_0_optimized(
                         //     flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
                         // );
-                        delta.2 += additive::sub_public(
+                        delta.2 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
                             t2,
                             party_id,
@@ -844,19 +739,19 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let t1 = flag_eval_2.mul_0_optimized(E1_evals[x1].1 * eq_poly.E2[x2]);
                         let t2 = flag_eval_3.mul_0_optimized(E1_evals[x1].2 * eq_poly.E2[x2]);
 
-                        delta.0 += additive::sub_public(
+                        delta.0 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprints.0, t0).into_additive(),
                             t0,
                             party_id,
                         );
 
-                        delta.1 += additive::sub_public(
+                        delta.1 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
                             t1,
                             party_id,
                         );
 
-                        delta.2 += additive::sub_public(
+                        delta.2 += additive::sub_shared_by_public(
                             rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
                             t2,
                             party_id,

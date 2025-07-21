@@ -13,8 +13,8 @@ pub trait MpcStarNetCoordinator {
         worker_id: usize,
         default_response: T,
     ) -> Result<T>;
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: T) -> Result<()>;
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: Vec<T>) -> Result<()>;
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()>;
 
     fn log_num_pub_workers(&self) -> usize;
     fn log_num_workers_per_party(&self) -> usize;

@@ -73,7 +73,8 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRLInstruction
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
                 let x = *x as u32;
                 let y = (*y % WORD_SIZE as u64) as u32;
-                x.checked_shr(y).unwrap_or(0).into()
+                // x.checked_shr(y).unwrap_or(0).into()
+                (x.wrapping_shr(y)).into()
             }
             _ => panic!("SRLInstruction::lookup_entry called with non-public operands"),
         }

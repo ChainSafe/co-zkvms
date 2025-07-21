@@ -1,5 +1,6 @@
 use co_lasso::{
     memory_checking::Rep3MemoryCheckingProver,
+    poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::{
         commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
@@ -57,9 +58,24 @@ where
 
         let num_rounds = trace_length.log_2();
 
-        let (primary_sumcheck_proof, _r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
+        let primary_sumcheck_proof =
             Self::prove_primary_sumcheck_rep3(num_rounds, transcript, network)
                 .context("while proving primary sumcheck")?;
+
+        let mut flag_evals = vec![F::zero(); Self::NUM_INSTRUCTIONS];
+        let mut E_evals = vec![F::zero(); preprocessing.num_memories];
+        let mut outputs_eval = F::zero();
+
+        let claims = Rep3ProverOpeningAccumulator::<F>::receive_claims(transcript, network)?;
+
+        E_evals
+            .iter_mut()
+            .chain(flag_evals.iter_mut())
+            .chain([&mut outputs_eval])
+            .zip(claims.into_iter())
+            .for_each(|(eval, claim)| {
+                *eval = claim;
+            });
 
         // Create a single opening proof for the flag_evals and memory_evals
         let sumcheck_openings = PrimarySumcheckOpenings {
@@ -93,22 +109,16 @@ where
         num_rounds: usize,
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<(
-        SumcheckInstanceProof<F, ProofTranscript>,
-        Vec<F>,
-        Vec<F>,
-        Vec<F>,
-        F,
-    )> {
+    ) -> eyre::Result<SumcheckInstanceProof<F, ProofTranscript>> {
         // Check all polys are the same size
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         for _round in 0..num_rounds {
-            let round_poly = UniPoly::from_coeff(
-                additive::combine_field_element_vec::<F>(network.receive_responses(vec![])?),
-            );
+            let round_poly = UniPoly::from_coeff(additive::combine_field_element_vec::<F>(
+                network.receive_responses(vec![])?,
+            ));
             let compressed_round_poly = round_poly.compress();
             compressed_round_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_round_poly);
@@ -118,28 +128,7 @@ where
             random_vars.push(r_j);
         } // End rounds
 
-        // Pass evaluations at point r back in proof:
-        // - flags(r) * NUM_INSTRUCTIONS
-        // - E(r) * NUM_SUBTABLES
-
-        // Polys are fully defined so we can just take the first (and only) evaluation
-        // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
-
-        let flag_evals = network.receive_response(PartyID::ID0, 0, vec![])?;
-        let [(me1, oe1), (me2, oe2), (me3, oe3)] = network
-            .receive_responses((vec![], Rep3PrimeFieldShare::zero_share()))?
-            .try_into()
-            .unwrap();
-        let memory_evals = rep3::combine_field_elements(&me1, &me2, &me3);
-        let outputs_eval = rep3::combine_field_element(oe1, oe2, oe3);
-
-        Ok((
-            SumcheckInstanceProof::new(compressed_polys),
-            random_vars,
-            flag_evals,
-            memory_evals,
-            outputs_eval,
-        ))
+        Ok(SumcheckInstanceProof::new(compressed_polys))
     }
 }
 

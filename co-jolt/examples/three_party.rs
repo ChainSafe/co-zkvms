@@ -2,13 +2,17 @@ use ark_ff::Zero;
 use ark_poly_commit::multilinear_pc::MultilinearPC;
 use ark_std::test_rng;
 use clap::Parser;
+use co_jolt::jolt::vm::witness::Rep3Polynomials;
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
 use itertools::Itertools;
-use jolt_core::utils::transcript::KeccakTranscript;
-use mpc_core::protocols::rep3::{self, network::Rep3Network};
+use jolt_core::{jolt::vm::JoltVerifierPreprocessing, utils::transcript::KeccakTranscript};
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+};
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
@@ -34,6 +38,7 @@ use co_jolt::{
                 InstructionLookupCommitments, InstructionLookupsPreprocessing,
                 InstructionLookupsProof,
             },
+            witness::Rep3JoltPolynomials,
             JoltCommitments, JoltPolynomials, JoltTraceStep,
         },
     },
@@ -41,7 +46,8 @@ use co_jolt::{
     utils::transcript::Transcript,
 };
 use co_lasso::{
-    poly::opening_proof::Rep3ProverOpeningAccumulator, subprotocols::commitment::{PST13Setup, PST13},
+    poly::opening_proof::Rep3ProverOpeningAccumulator,
+    subprotocols::commitment::{PST13Setup, PST13},
 };
 
 type Instructions = instruction::TestInstructions<F>;
@@ -154,58 +160,72 @@ pub fn run_party<
     )
     .unwrap();
 
-    let preprocessing = LassoProof::<C, M, Instructions, Subtables>::preprocess();
-
     let setup = {
         let max_len = std::cmp::max(lookups.len().next_power_of_two(), M);
         let mut rng = test_rng();
         PST13::setup(max_len, &mut rng)
     };
 
+    let preprocessing = {
+        let instruction_lookups_preprocessing =
+            LassoProof::<C, M, Instructions, Subtables>::preprocess();
+        JoltVerifierPreprocessing::<C, F, PST13<E>, KeccakTranscript> {
+            instruction_lookups: instruction_lookups_preprocessing,
+            generators: setup,
+            bytecode: Default::default(),
+            read_write_memory: Default::default(),
+            memory_layout: Default::default(),
+        }
+    };
+
+    let mut io_ctx = IoContext::init(rep3_net).unwrap();
+
+
     let mut polynomials = if args.solve_witness {
-        let polynomials = LassoProof::<C, M, Instructions, Subtables>::generate_witness_rep3(
-            &preprocessing,
-            lookups,
-            rep3_net.fork().unwrap(),
+        let mut ops = lookups
+            .into_iter()
+            .map(|op| JoltTraceStep::<F, Instructions>::from_instruction_lookup(op))
+            .collect_vec();
+
+        let polynomials = Rep3InstructionLookupPolynomials::generate_witness_rep3(
+            &preprocessing.instruction_lookups,
+            &mut ops,
+            M,
+            io_ctx.fork().unwrap(),
         )?;
 
-        polynomials
+        Rep3JoltPolynomials {
+            instruction_lookups: polynomials,
+        }
     } else {
-        let polynomials = rep3_net.receive_request()?;
+        let polynomials = io_ctx.network.receive_request()?;
         polynomials
     };
 
 
-    polynomials.commit::<C, PST13<E>, _>(
-        &preprocessing,
-        &setup,
-        &mut rep3_net,
-    )?;
+    polynomials.commit::<C, PST13<E>, KeccakTranscript, _>(&preprocessing, &mut io_ctx)?;
 
     if args.debug && args.solve_witness {
-        rep3_net.send_response(polynomials.clone())?;
+        // rep3_net.send_response(polynomials.clone())?;
     }
 
     if args.debug {
         return Ok(());
     }
 
-    let mut prover =
-        Rep3InstructionLookupsProver::<C, M, F, PST13<E>, Instructions, Subtables, _>::new(
-            rep3_net,
-        )?;
-
-    let jolt_polys = JoltPolynomials::default();
-    let mut opening_accumulator = Rep3ProverOpeningAccumulator::new();
-    prover.prove(
-        &preprocessing,
+    let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
+    Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, _>::prove::<
+        PST13<E>,
+        KeccakTranscript,
+    >(
+        &preprocessing.instruction_lookups,
         &mut polynomials,
-        &jolt_polys,
         &mut opening_accumulator,
-        &setup,
+        &preprocessing.generators,
+        &mut io_ctx,
     )?;
 
-    prover.io_ctx.network.log_connection_stats();
+    io_ctx.network.log_connection_stats();
     drop(_enter);
     Ok(())
 }
@@ -242,13 +262,22 @@ pub fn run_coordinator<
         Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
             .unwrap();
 
-    let preprocessing = LassoProof::<C, M, Instructions, Subtables>::preprocess();
-
     let setup = {
         let max_len = std::cmp::max(num_inputs.next_power_of_two(), M);
         let mut rng = test_rng();
         PST13::setup(max_len, &mut rng)
         // PST13Setup::default()
+    };
+    let preprocessing = {
+        let instruction_lookups_preprocessing =
+            LassoProof::<C, M, Instructions, Subtables>::preprocess();
+        JoltVerifierPreprocessing::<C, F, PST13<E>, KeccakTranscript> {
+            instruction_lookups: instruction_lookups_preprocessing,
+            generators: setup,
+            bytecode: Default::default(),
+            read_write_memory: Default::default(),
+            memory_layout: Default::default(),
+        }
     };
 
     let ops = lookups
@@ -258,27 +287,37 @@ pub fn run_coordinator<
 
     if !args.solve_witness {
         let mut rng = test_rng();
-        let polynomials = LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
-        let polynomials_shares =
-            Rep3InstructionLookupPolynomials::generate_secret_shares_rep3(&polynomials, &mut rng);
-        rep3_net.send_requests(polynomials_shares.to_vec())?;
+        let instruction_lookups = LassoProof::<C, M, _, Subtables>::generate_witness(
+            &preprocessing.instruction_lookups,
+            &ops,
+        );
+        let polynomials = JoltPolynomials {
+            instruction_lookups,
+            ..Default::default()
+        };
+        let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
+            &preprocessing,
+            &polynomials,
+            &mut rng,
+        );
+        rep3_net.send_requests(polynomials_shares)?;
     }
 
-    let commitments =
-        Rep3InstructionLookupPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
-            &preprocessing,
-            &mut rep3_net,
-        )?;
-    let mut jolt_commitments = JoltCommitments::<PST13<E>, KeccakTranscript>::default();
-    jolt_commitments.instruction_lookups = commitments;
+    let commitments = Rep3JoltPolynomials::receive_commitments::<C, PST13<E>, KeccakTranscript, _>(
+        &preprocessing,
+        &mut rep3_net,
+    )?;
     if args.debug {
-        let polynomials_check =
-            LassoProof::<C, M, _, Subtables>::generate_witness(&preprocessing, &ops);
+        let polynomials_check = LassoProof::<C, M, _, Subtables>::generate_witness(
+            &preprocessing.instruction_lookups,
+            &ops,
+        );
 
         if args.solve_witness {
             let polynomials_shares = rep3_net.receive_responses(Default::default())?;
             let polynomials =
-                Rep3InstructionLookupPolynomials::combine_polynomials(polynomials_shares);
+                Rep3JoltPolynomials::combine_polynomials(&preprocessing, polynomials_shares);
+            let polynomials = polynomials.instruction_lookups;
 
             assert_eq!(polynomials.dim, polynomials_check.dim);
             assert_eq!(polynomials.read_cts, polynomials_check.read_cts);
@@ -287,10 +326,8 @@ pub fn run_coordinator<
             assert_eq!(polynomials.lookup_outputs, polynomials_check.lookup_outputs);
         }
 
-        let commitment_check = polynomials_check.commit::<C, PST13<E>, KeccakTranscript>(
-            &preprocessing,
-            &setup,
-        );
+        // let commitment_check =
+        //     polynomials_check.commit::<C, PST13<E>, KeccakTranscript>(&preprocessing, &setup);
         // assert_eq!(
         //     commitment_check.trace_commitment,
         //     commitments.trace_commitment
@@ -310,9 +347,9 @@ pub fn run_coordinator<
             r1cs: Default::default(),
         };
         let proof = LassoProof::<C, M, Instructions, Subtables>::prove(
-            &setup,
+            &preprocessing.generators,
             &mut jolt_polys,
-            &preprocessing,
+            &preprocessing.instruction_lookups,
             &mut opening_accumulator,
             &mut transcript,
         );
@@ -321,10 +358,10 @@ pub fn run_coordinator<
         let mut opening_accumulator =
             VerifierOpeningAccumulator::<F, PST13<E>, KeccakTranscript>::new();
         LassoProof::<C, M, Instructions, Subtables>::verify(
-            &preprocessing,
-            &setup,
+            &preprocessing.instruction_lookups,
+            &preprocessing.generators,
             proof,
-            &jolt_commitments,
+            &commitments,
             &mut opening_accumulator,
             &mut verifier_transcript,
         )
@@ -339,7 +376,7 @@ pub fn run_coordinator<
 
     let proof = LassoProof::<C, M, Instructions, Subtables>::prove_rep3(
         num_inputs,
-        &preprocessing,
+        &preprocessing.instruction_lookups,
         &mut rep3_net,
         &mut transcript,
     )?;
@@ -347,10 +384,10 @@ pub fn run_coordinator<
         VerifierOpeningAccumulator::<F, PST13<E>, KeccakTranscript>::new();
     let mut verifier_transcript = KeccakTranscript::new(b"Lasso");
     LassoProof::verify(
-        &preprocessing,
-        &setup,
+        &preprocessing.instruction_lookups,
+        &preprocessing.generators,
         proof,
-        &jolt_commitments,
+        &commitments,
         &mut opening_accumulator,
         &mut verifier_transcript,
     )
@@ -363,7 +400,7 @@ pub fn init_tracing() {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy();
-        // .add_directive("jolt_core=trace".parse().unwrap());
+    // .add_directive("jolt_core=trace".parse().unwrap());
 
     let subscriber = Registry::default()
         .with(env_filter)

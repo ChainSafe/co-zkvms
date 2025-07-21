@@ -1,6 +1,7 @@
 use ark_std::cfg_iter;
 use color_eyre::eyre::Result;
 use eyre::Context;
+use itertools::Itertools;
 use jolt_core::{
     jolt::vm::JoltPolynomials,
     lasso::memory_checking::{
@@ -19,7 +20,7 @@ use crate::{
     subprotocols::{
         commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProductWorker,
     },
-    utils, Rep3Polynomials as _,
+    utils,
 };
 
 #[cfg(feature = "parallel")]
@@ -39,9 +40,8 @@ where
         // + Send
         + 'static;
 
-    type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>>
-        + crate::Rep3Polynomials
-        + ?Sized;
+    type Rep3ExogenousPolynomials: ?Sized;
+    type Rep3Polynomials: StructuredPolynomialData<Rep3DensePolynomial<F>> + ?Sized;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
     // type Commitments: StructuredPolynomialData<PCS::Commitment>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync;
@@ -72,7 +72,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        jolt_polynomials: &JoltPolynomials<F>,
+        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
@@ -80,7 +80,7 @@ where
             Self::prove_grand_products(
                 preprocessing,
                 polynomials,
-                jolt_polynomials,
+                exogenous_polynomials,
                 opening_accumulator,
                 io_ctx,
                 pcs_setup,
@@ -95,7 +95,7 @@ where
         Self::compute_openings(
             opening_accumulator,
             polynomials,
-            jolt_polynomials,
+            exogenous_polynomials,
             r_read_write_opening,
             r_init_final_opening,
             io_ctx,
@@ -108,18 +108,20 @@ where
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        jolt_polynomials: &JoltPolynomials<F>,
+        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
         pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
         let (gamma, tau) = io_ctx.network.receive_request()?;
-        io_ctx.network.send_response(polynomials.num_lookups())?;
+        io_ctx
+            .network
+            .send_response(Self::num_lookups(polynomials))?;
 
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,
             polynomials,
-            jolt_polynomials,
+            exogenous_polynomials,
             &gamma,
             &tau,
             io_ctx,
@@ -160,7 +162,7 @@ where
     fn compute_openings(
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         polynomials: &Self::Rep3Polynomials,
-        _jolt_polynomials: &JoltPolynomials<F>,
+        _exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
         r_read_write: &[F],
         r_init_final: &[F],
         io_ctx: &mut IoContext<Network>,
@@ -186,13 +188,15 @@ where
         let (init_final_evals, eq_init_final) =
             Rep3DensePolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
-        opening_accumulator.append(
-            &polynomials.init_final_values(),
-            DensePolynomial::new(eq_init_final),
-            r_init_final.to_vec(),
-            &init_final_evals,
-            io_ctx,
-        )?;
+        io_ctx.network.send_response(init_final_evals)?;
+
+        // opening_accumulator.append(
+        //     &polynomials.init_final_values(),
+        //     DensePolynomial::new(eq_init_final),
+        //     r_init_final.to_vec(),
+        //     &init_final_evals,
+        //     io_ctx,
+        // )?;
 
         Ok(())
     }
@@ -203,7 +207,7 @@ where
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
-        exogenous_polynomials: &JoltPolynomials<F>,
+        exogenous_polynomials: &Self::Rep3ExogenousPolynomials,
         gamma: &F,
         tau: &F,
         io_ctx: &mut IoContext<Network>,
@@ -259,4 +263,6 @@ where
         let claims = batched_circuit.claimed_outputs();
         Ok((batched_circuit, claims))
     }
+
+    fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize;
 }

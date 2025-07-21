@@ -4,7 +4,6 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::subprotocols::legacy::sumcheck::CubicSumcheckType;
 use itertools::multizip;
 use jolt_core::subprotocols::sumcheck::Bindable;
 use jolt_core::utils::thread::drop_in_background_thread;
