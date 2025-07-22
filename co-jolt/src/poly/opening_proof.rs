@@ -100,6 +100,26 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_public")]
+    pub fn append_public(&mut self, opening: ProverOpening<F>) {
+        let ProverOpening {
+            polynomial,
+            eq_poly,
+            opening_point,
+            claim,
+            ..
+        } = opening;
+
+        // let opening = Rep3ProverOpening::new(
+        //     polynomial.into(),
+        //     eq_poly.clone(),
+        //     opening_point.clone(),
+        //     claim,
+        // );
+        // self.openings.push(opening);
+        todo!()
+    }
+
     pub fn receive_claims<ProofTranscript: Transcript, Network: Rep3NetworkCoordinator>(
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -222,7 +242,6 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             &gamma_powers,
         );
 
-
         // Reduced opening proof
         PCS::prove_rep3(&joint_poly, pcs_setup, &r_sumcheck, &mut io_ctx.network)?;
 
@@ -256,7 +275,9 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                 let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
                     rep3::arithmetic::mul_public(
                         opening.claim,
-                        F::from_u64_unchecked(1 << (max_num_vars - opening.polynomial.get_num_vars())),
+                        F::from_u64_unchecked(
+                            1 << (max_num_vars - opening.polynomial.get_num_vars()),
+                        ),
                     )
                 } else {
                     opening.claim

@@ -1,12 +1,13 @@
 pub mod instruction_utils;
 pub mod element;
+pub mod transcript;
 
 pub use jolt_core::{
     field::JoltField,
     utils::{
         compute_dotproduct, gaussian_elimination, gen_random_point, index_to_field_bitvector,
         is_power_of_two, math, mul_0_1_optimized, mul_0_optimized, split_bits, thread,
-        transcript, errors,
+        errors,
     },
 };
 use jolt_core::utils::transcript::Transcript;

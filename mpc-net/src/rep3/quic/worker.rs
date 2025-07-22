@@ -54,15 +54,24 @@ impl Rep3QuicMpcNetWorker {
         log_num_workers_per_party: usize,
         log_num_pub_workers: usize,
     ) -> Result<Self> {
-        ensure!(config.parties.len() == 3, "REP3 protocol requires exactly 3 parties");
-        ensure!(config.coordinator.is_some(), "REP3 star protocol requires a coordinator");
+        ensure!(
+            config.parties.len() == 3,
+            "REP3 protocol requires exactly 3 parties"
+        );
+        ensure!(
+            config.coordinator.is_some(),
+            "REP3 star protocol requires a coordinator"
+        );
         let id = PartyWorkerID::new(config.my_id, config.worker);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         let (net_handler, chan_next, chan_prev, chan_coordinator) = runtime.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config).await?;
-            let chan_coordinator = net_handler.get_coordinator_byte_channel().await?.map(ChannelHandle::manage);
+            let chan_coordinator = net_handler
+                .get_coordinator_byte_channel()
+                .await?
+                .map(ChannelHandle::manage);
             let mut channels = net_handler.get_byte_channels().await?;
             let chan_next = channels
                 .remove(&id.party_id().next_id().into())
@@ -73,8 +82,6 @@ impl Rep3QuicMpcNetWorker {
             if !channels.is_empty() {
                 bail!("unexpected channels found")
             }
-
-
 
             let chan_next = ChannelHandle::manage(chan_next);
             let chan_prev = ChannelHandle::manage(chan_prev);
@@ -147,7 +154,12 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while serializing data")?;
 
-        std::mem::drop(self.chan_coordinator.as_ref().unwrap().blocking_send(Bytes::from(ser_data)));
+        std::mem::drop(
+            self.chan_coordinator
+                .as_ref()
+                .unwrap()
+                .blocking_send(Bytes::from(ser_data)),
+        );
         Ok(())
     }
 
@@ -191,9 +203,48 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .sum();
         (sent_bytes, recv_bytes)
     }
-    
+
     fn party_id(&self) -> PartyID {
         self.id.party_id()
+    }
+
+    fn fork_with_coordinator(&mut self) -> Result<Self> {
+        let id = self.id.clone();
+        let net_handler = Arc::clone(&self.net_handler);
+        let (chan_next, chan_prev, chan_coordinator) = net_handler.runtime.block_on(async {
+            let chan_coordinator = net_handler
+                .inner
+                .get_coordinator_byte_channel()
+                .await?
+                .map(ChannelHandle::manage);
+
+            let mut channels = net_handler.inner.get_byte_channels().await?;
+
+            let chan_next = channels
+                .remove(&id.party_id().next_id().into())
+                .expect("to find next channel");
+            let chan_prev = channels
+                .remove(&id.party_id().prev_id().into())
+                .expect("to find prev channel");
+            if !channels.is_empty() {
+                panic!("unexpected channels found")
+            }
+
+            let chan_next = ChannelHandle::manage(chan_next);
+            let chan_prev = ChannelHandle::manage(chan_prev);
+
+            Ok::<_, Report>((chan_next, chan_prev, chan_coordinator))
+        })?;
+
+        Ok(Self {
+            id,
+            net_handler: net_handler,
+            chan_next,
+            chan_prev,
+            chan_coordinator,
+            log_num_pub_workers: self.log_num_pub_workers,
+            log_num_workers_per_party: self.log_num_workers_per_party,
+        })
     }
 }
 

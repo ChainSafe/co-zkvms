@@ -1,17 +1,21 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
-use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupStuff,
 };
+use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
+use jolt_core::jolt::vm::timestamp_range_check::{
+    TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
+};
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
 use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use mpc_core::protocols::rep3::network::{
     IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
@@ -21,6 +25,12 @@ use rand::Rng;
 use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
 use crate::jolt::vm::JoltTraceStep;
+
+#[derive(Debug, Clone, Copy, Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltWitnessMeta {
+    pub trace_length: usize,
+    pub read_write_memory_size: usize,
+}
 
 pub type Rep3JoltPolynomials<F: JoltField> = JoltStuff<Rep3MultilinearPolynomial<F>>;
 
@@ -205,6 +215,10 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
 
         Ok(commitments)
     }
+
+    fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F>;
+
+    fn get_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F>;
 }
 
 impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
@@ -255,6 +269,59 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         }
 
         Ok(())
+    }
+
+    fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F> {
+        let TimestampRangeCheckStuff {
+            read_cts_read_timestamp,
+            read_cts_global_minus_read,
+            final_cts_read_timestamp,
+            final_cts_global_minus_read,
+            identity,
+        } = std::mem::take(&mut self.timestamp_range_check);
+
+        let read_cts_read_timestamp = read_cts_read_timestamp.map(|poly| poly.try_into().unwrap());
+        let read_cts_global_minus_read =
+            read_cts_global_minus_read.map(|poly| poly.try_into().unwrap());
+        let final_cts_read_timestamp =
+            final_cts_read_timestamp.map(|poly| poly.try_into().unwrap());
+        let final_cts_global_minus_read =
+            final_cts_global_minus_read.map(|poly| poly.try_into().unwrap());
+
+        let identity = identity.map(|poly| poly.try_into().unwrap());
+        TimestampRangeCheckPolynomials {
+            read_cts_read_timestamp,
+            read_cts_global_minus_read,
+            final_cts_read_timestamp,
+            final_cts_global_minus_read,
+            identity,
+        }
+    }
+
+    fn get_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F> {
+        let t_read_rd = std::mem::take(&mut self.read_write_memory.t_read_rd)
+            .try_into()
+            .unwrap();
+        let t_read_rs1 = std::mem::take(&mut self.read_write_memory.t_read_rs1)
+            .try_into()
+            .unwrap();
+        let t_read_rs2 = std::mem::take(&mut self.read_write_memory.t_read_rs2)
+            .try_into()
+            .unwrap();
+        let t_final = std::mem::take(&mut self.read_write_memory.t_read_ram)
+            .try_into()
+            .unwrap();
+
+        JoltPolynomials {
+            read_write_memory: ReadWriteMemoryStuff {
+                t_read_rd,
+                t_read_rs1,
+                t_read_rs2,
+                t_final,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 }
 

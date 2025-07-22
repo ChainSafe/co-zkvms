@@ -1,18 +1,22 @@
 use std::marker::PhantomData;
 
+use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3JoltDevice;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::poly::Rep3MultilinearPolynomial;
+use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
+use crate::utils::transcript::TranscriptExt;
+use itertools::Itertools;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     ReadWriteMemoryStuff, RegisterAddressOpenings,
 };
+use jolt_core::jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
@@ -58,7 +62,7 @@ impl<F, PCS, ProofTranscript, Network> Rep3ReadWriteMemoryProver<F, PCS, ProofTr
 where
     F: JoltField,
     PCS: DistributedCommitmentScheme<F, ProofTranscript>,
-    ProofTranscript: Transcript,
+    ProofTranscript: TranscriptExt,
     Network: Rep3NetworkWorker,
 {
     fn prove(
@@ -85,13 +89,35 @@ where
             io_ctx,
         )?;
 
-        // let timestamp_validity_proof = TimestampValidityProof::prove(
-        //     generators,
-        //     &polynomials.timestamp_range_check,
-        //     polynomials,
-        //     opening_accumulator,
-        //     transcript,
-        // );
+        let state: Option<ProofTranscript::State> = io_ctx.network.receive_request()?;
+
+        if let Some(state) = state {
+            let mut transcript = ProofTranscript::from_state(state);
+            let mut opening_accumulator_public =
+                ProverOpeningAccumulator::<F, ProofTranscript>::new();
+
+            let timestamp_range_check_polynomials =
+                polynomials.get_timestamp_range_check_polynomials();
+            let jolt_polynomials =
+                polynomials.get_exogenous_polynomials_for_timestamp_range_check();
+
+            let timestamp_validity_proof = TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
+                pcs_setup,
+                &timestamp_range_check_polynomials,
+                &jolt_polynomials,
+                &mut opening_accumulator_public,
+                &mut transcript,
+            );
+
+            io_ctx.network.send_response(timestamp_validity_proof)?;
+
+            opening_accumulator_public
+                .openings
+                .into_iter()
+                .for_each(|opening| {
+                    opening_accumulator.append_public(opening);
+                });
+        }
 
         Ok(())
     }
@@ -363,6 +389,6 @@ where
     }
 
     fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize {
-        todo!()
+        polynomials.v_final.len()
     }
 }

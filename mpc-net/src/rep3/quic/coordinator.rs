@@ -6,6 +6,7 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
+use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
 use mpc_types::protocols::rep3::id::PartyID;
@@ -27,6 +28,7 @@ pub struct Rep3QuicNetCoordinator {
     pub(crate) net_handler: Arc<MpcNetworkHandlerWrapper<MpcNetworkCoordinatorHandler>>,
     pub(crate) log_num_pub_workers: usize,
     pub(crate) log_num_workers_per_party: usize,
+    pub(crate) stats_checkpoints: Vec<(u64, u64)>,
 }
 
 impl Rep3QuicNetCoordinator {
@@ -56,11 +58,14 @@ impl Rep3QuicNetCoordinator {
             Ok::<_, Report>((net_handler, channels))
         })?;
 
+        let num_workers = channels.len();
+
         Ok(Self {
             channels,
             net_handler: Arc::new(MpcNetworkHandlerWrapper::new(runtime, net_handler)),
             log_num_pub_workers,
             log_num_workers_per_party,
+            stats_checkpoints: vec![(0, 0); num_workers],
         })
     }
 }
@@ -110,9 +115,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
-    fn send_requests<
-        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-    >(
+    fn send_requests<T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize>(
         &mut self,
         data: Vec<T>,
     ) -> Result<()> {
@@ -128,6 +131,44 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
+    fn send_request<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        data: T,
+    ) -> Result<()> {
+        let channel = self
+            .channels
+            .get_mut(&PartyWorkerID::new(party_id.into(), worker_id).global_worker_id())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such party"))?;
+        let size = data.uncompressed_size();
+        let mut ser_data = Vec::with_capacity(size);
+        data.serialize_uncompressed(&mut ser_data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            .context("while serializing data")?;
+        std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
+        Ok(())
+    }
+
+    fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        _default_response: T,
+    ) -> Result<T> {
+        let channel = self
+            .channels
+            .get_mut(&PartyWorkerID::new(party_id.into(), worker_id).global_worker_id())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such party"))?;
+        let response = channel
+            .blocking_recv()
+            .blocking_recv()
+            .context("while receiving response")??;
+        T::deserialize_uncompressed_unchecked(&response[..])
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+            .context("while deserializing response")
+    }
+
     fn log_num_pub_workers(&self) -> usize {
         self.log_num_pub_workers
     }
@@ -136,37 +177,77 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         self.log_num_workers_per_party
     }
 
+    fn reset_stats(&mut self) {
+        for (i, conn) in &self.net_handler.inner.connections {
+            let stats = conn.stats();
+            self.stats_checkpoints[*i].0 += stats.udp_tx.bytes;
+            self.stats_checkpoints[*i].1 += stats.udp_rx.bytes;
+        }
+    }
+
     fn total_bandwidth_used(&self) -> (u64, u64) {
         let sent_bytes = self
             .net_handler
             .inner
             .connections
             .iter()
-            .map(|(_, conn)| conn.stats().udp_tx.bytes as u64)
+            .zip(self.stats_checkpoints.iter())
+            .map(|((_, conn), (sent, _))| conn.stats().udp_tx.bytes as u64 - sent)
             .sum();
         let recv_bytes = self
             .net_handler
             .inner
             .connections
             .iter()
-            .map(|(_, conn)| conn.stats().udp_rx.bytes as u64)
+            .zip(self.stats_checkpoints.iter())
+            .map(|((_, conn), (_, recv))| conn.stats().udp_rx.bytes as u64 - recv)
             .sum();
         (sent_bytes, recv_bytes)
     }
-    
-    fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        party_id: PartyID,
-        worker_id: usize,
-        _default_response: T,
-    ) -> Result<T> {
-        let channel = self.channels.get_mut(&PartyWorkerID::new(party_id.into(), worker_id).global_worker_id()).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "no such party")
+
+    fn log_connection_stats(&self, label: Option<&str>) {
+        for (i, conn) in &self.net_handler.inner.connections {
+            let stats = conn.stats();
+            tracing::info!(
+                "{}: Connection {} stats: SENT: {} bytes RECV: {} bytes",
+                label.unwrap_or("Coordinator stats"),
+                i,
+                ByteSize(stats.udp_tx.bytes - self.stats_checkpoints[*i].0),
+                ByteSize(stats.udp_rx.bytes - self.stats_checkpoints[*i].1)
+            );
+        }
+        let (sent_bytes, recv_bytes) = self.total_bandwidth_used();
+        tracing::info!(
+            "{} total: SENT: {} bytes RECV: {} bytes",
+            label.unwrap_or("Coordinator stats"),
+            ByteSize(sent_bytes),
+            ByteSize(recv_bytes)
+        );
+    }
+
+    fn fork(&mut self) -> Result<Self> {
+        // let id = self.id.clone();
+        let net_handler = Arc::clone(&self.net_handler);
+        let channels = net_handler.runtime.block_on(async {
+            let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
+                .inner
+                .get_byte_channels()
+                .await
+                .context("getting byte channels")?
+                .into_iter()
+                .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
+                .collect();
+
+            Ok::<_, Report>(channels)
         })?;
-        let response = channel.blocking_recv().blocking_recv().context("while receiving response")??;
-        T::deserialize_uncompressed_unchecked(&response[..])
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
-            .context("while deserializing response")
+
+        Ok(Self {
+            channels,
+            net_handler: net_handler,
+            log_num_pub_workers: self.log_num_pub_workers,
+            log_num_workers_per_party: self.log_num_workers_per_party,
+            stats_checkpoints: self.stats_checkpoints.clone(),
+        })
     }
 }
 
@@ -351,10 +432,7 @@ impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
 
             tracing::debug!("coordinator closing conn = {id}");
 
-            conn.close(
-                0u32.into(),
-                format!("close from coordinator").as_bytes(),
-            );
+            conn.close(0u32.into(), format!("close from coordinator").as_bytes());
         }
         for endpoint in self.endpoints.iter() {
             endpoint.wait_idle().await;

@@ -39,31 +39,11 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
-        let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        for _round in 0..num_rounds {
-            let round_poly = UniPoly::<F>::from_coeff(additive::combine_field_element_vec(
-                network.receive_responses(Vec::new())?,
-            ));
-            let compressed_poly = round_poly.compress();
-
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-            // derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar();
-            r.push(r_j);
-
-            let claim = round_poly.evaluate(&r_j);
-
-            network.broadcast_request((r_j, claim))?;
-
-            cubic_polys.push(compressed_poly);
-        }
+        let (sumcheck_proof, r) = coordinate_prove_arbitrary(num_rounds, transcript, network)?;
 
         let final_claims = self.receive_final_claims(network)?;
 
-        Ok((SumcheckInstanceProof::new(cubic_polys), r, final_claims))
+        Ok((sumcheck_proof, r, final_claims))
     }
 
     fn receive_final_claims(&self, network: &mut Network) -> eyre::Result<(F, F)> {
@@ -149,7 +129,7 @@ pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
     num_rounds: usize,
     transcript: &mut ProofTranscript,
     network: &mut Network,
-) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>)>
+) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)>
 where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
@@ -176,9 +156,7 @@ where
         cubic_polys.push(compressed_poly);
     }
 
-    let final_claims = additive::combine_field_element_vec(network.receive_responses(Vec::new())?);
-
-    Ok((SumcheckInstanceProof::new(cubic_polys), r, final_claims))
+    Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
 
 #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
@@ -237,6 +215,7 @@ where
 
         eval_points.insert(1, previous_claim - eval_points[0]);
         let univariate_poly = UniPoly::from_evals(&eval_points);
+        io_ctx.network.send_response(univariate_poly.as_vec())?;
 
         // append the prover's message to the transcript
         // compressed_poly.append_to_transcript(transcript);

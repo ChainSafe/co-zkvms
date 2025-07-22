@@ -1,8 +1,8 @@
+use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
-use crate::Result;
 
-pub trait MpcStarNetCoordinator {
+pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         default_response: T,
@@ -13,16 +13,38 @@ pub trait MpcStarNetCoordinator {
         worker_id: usize,
         default_response: T,
     ) -> Result<T>;
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()>;
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()>;
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()>;
+
+    fn send_request<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+        worker_id: usize,
+        data: T,
+    ) -> Result<()>;
 
     fn log_num_pub_workers(&self) -> usize;
     fn log_num_workers_per_party(&self) -> usize;
     fn total_bandwidth_used(&self) -> (u64, u64);
+
+    /// Print the connection stats of the network
+    fn log_connection_stats(&self, label: Option<&str>);
+    fn reset_stats(&mut self);
+
+    fn fork(&mut self) -> Result<Self>;
 }
 
-pub trait MpcStarNetWorker {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
+pub trait MpcStarNetWorker: Sized {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()>;
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
     fn log_num_pub_workers(&self) -> usize;
@@ -32,4 +54,6 @@ pub trait MpcStarNetWorker {
     fn total_bandwidth_used(&self) -> (u64, u64);
 
     fn party_id(&self) -> PartyID;
+
+    fn fork_with_coordinator(&mut self) -> Result<Self>;
 }

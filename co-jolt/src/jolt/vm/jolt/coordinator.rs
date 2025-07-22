@@ -1,4 +1,5 @@
 use crate::{
+    jolt::vm::witness::JoltWitnessMeta,
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -10,7 +11,10 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
-use jolt_core::utils::{thread::drop_in_background_thread, transcript::Transcript};
+use jolt_core::{
+    jolt::vm::JoltVerifierPreprocessing,
+    utils::{thread::drop_in_background_thread, transcript::Transcript},
+};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
@@ -43,10 +47,42 @@ where
     ProofTranscript: Transcript,
     Self::InstructionSet: Rep3JoltInstructionSet<F>,
 {
-    #[tracing::instrument(skip_all, name = "Jolt::prove")]
-    fn prove_rep3<Network: Rep3NetworkCoordinator>(
+    fn init_rep3<Network: Rep3NetworkCoordinator>(
+        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         trace: Option<Vec<JoltTraceStep<F, Self::InstructionSet>>>,
-        preprocessing: &JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        network: &mut Network,
+    ) -> eyre::Result<JoltWitnessMeta> {
+        let meta = match trace {
+            Some(mut trace) => {
+                let trace_length = trace.len();
+                JoltTraceStep::pad(&mut trace);
+                let mut rng = test_rng();
+                let polynomials = Self::generate_witness(&preprocessing, &trace);
+
+                let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
+                    &preprocessing,
+                    &polynomials,
+                    &mut rng,
+                );
+                network.send_requests(polynomials_shares)?;
+                network.broadcast_request(trace_length)?;
+                JoltWitnessMeta {
+                    trace_length,
+                    read_write_memory_size: polynomials.read_write_memory.v_final.len(),
+                }
+            }
+            None => {
+                network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0, Default::default())?
+            }
+        };
+
+        Ok(meta)
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3Jolt::prove")]
+    fn prove_rep3<Network: Rep3NetworkCoordinator>(
+        meta: JoltWitnessMeta,
+        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,
     ) -> eyre::Result<(
         JoltProof<
@@ -64,30 +100,9 @@ where
     )> {
         // icicle::icicle_init();
 
-        let trace_length = match trace {
-            Some(mut trace) => {
-                let trace_length = trace.len();
-                JoltTraceStep::pad(&mut trace);
-                let mut rng = test_rng();
-                let polynomials = Self::generate_witness(&preprocessing.shared, &trace);
-
-                let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
-                    &preprocessing.shared,
-                    &polynomials,
-                    &mut rng,
-                );
-                network.send_requests(polynomials_shares)?;
-                trace_length
-            }
-            None => {
-                let trace_length = network.receive_response::<usize>(PartyID::ID0, 0, 0)?;
-                trace_length
-            }
-        };
-
-        // let trace_length = trace.len();
+        let trace_length = meta.trace_length;
         let padded_trace_length = trace_length.next_power_of_two();
-        let srs_size = PCS::srs_size(&preprocessing.shared.generators);
+        let srs_size = PCS::srs_size(&preprocessing.generators);
         let padded_log2 = padded_trace_length.log_2();
         let srs_log2 = srs_size.log_2();
 
@@ -109,8 +124,7 @@ where
 
         // r1cs_builder.compute_aux(&mut jolt_polynomials);
 
-        let jolt_commitments =
-            Rep3JoltPolynomials::receive_commitments(&preprocessing.shared, network)?;
+        let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
         // transcript.append_scalar(&spartan_key.vk_digest);
 
@@ -125,7 +139,7 @@ where
 
         let instruction_lookups = InstructionLookupsProof::prove_rep3(
             trace_length,
-            &preprocessing.shared.instruction_lookups,
+            &preprocessing.instruction_lookups,
             network,
             &mut transcript,
         )?;

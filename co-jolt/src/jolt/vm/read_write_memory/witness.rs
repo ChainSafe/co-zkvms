@@ -1,8 +1,10 @@
 use crate::poly::Rep3MultilinearPolynomial;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::rv_trace::MemoryLayout;
-use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
+use jolt_core::{
+    field::JoltField, jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials,
+};
 
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 

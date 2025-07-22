@@ -6,10 +6,10 @@ use crate::{
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
 };
-use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::chain;
+use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use jolt_core::{
     field::JoltField,
     poly::unipoly::{CompressedUniPoly, UniPoly},
@@ -92,7 +92,7 @@ where
         };
 
         let memory_checking_proof =
-            Self::coordinate_memory_checking(preprocessing, transcript, network)
+            Self::coordinate_memory_checking(preprocessing, M, transcript, network)
                 .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {
@@ -147,15 +147,4 @@ where
 {
     type Rep3ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
-
-    fn init_final_grand_product_rep3(
-        _preprocessing: &Self::Preprocessing,
-    ) -> Self::Rep3InitFinalGrandProduct {
-        <Self::Rep3InitFinalGrandProduct as Rep3BatchedGrandProduct<
-            F,
-            PCS,
-            ProofTranscript,
-            Network,
-        >>::construct(M.log_2())
-    }
 }

@@ -1,10 +1,12 @@
 use std::marker::PhantomData;
 
+use crate::jolt::vm::jolt::witness::JoltWitnessMeta;
 use crate::lasso::memory_checking::{MemoryCheckingProver, Rep3MemoryCheckingProver};
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
+use crate::utils::transcript::TranscriptExt;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
 use jolt_core::poly::compact_polynomial::CompactPolynomial;
@@ -48,15 +50,11 @@ where
 {
     fn prove_rep3(
         pcs_setup: &PCS::Setup,
+        meta: JoltWitnessMeta,
         preprocessing: &ReadWriteMemoryPreprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReadWriteMemoryProof<F, PCS, ProofTranscript>>;
-
-    fn coordinate_prove_outputs(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<OutputSumcheckProof<F, PCS, ProofTranscript>>;
 }
 
 impl<F, PCS, ProofTranscript, Network>
@@ -65,47 +63,58 @@ impl<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
     PCS: DistributedCommitmentScheme<F, ProofTranscript>,
-    ProofTranscript: Transcript,
+    ProofTranscript: TranscriptExt,
     Network: Rep3NetworkCoordinator,
 {
     fn prove_rep3(
         pcs_setup: &PCS::Setup,
+        meta: JoltWitnessMeta,
         preprocessing: &ReadWriteMemoryPreprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReadWriteMemoryProof<F, PCS, ProofTranscript>> {
+        let memory_size = meta.read_write_memory_size;
+
         let memory_checking_proof =
-            Self::coordinate_memory_checking(preprocessing, transcript, network)?;
+            Self::coordinate_memory_checking(preprocessing, memory_size, transcript, network)?;
+
+        let output_proof = coordinate_prove_outputs(memory_size, transcript, network)?;
+
+        network.send_requests(vec![Some(transcript.state()), None, None])?;
 
         Ok(ReadWriteMemoryProof {
             memory_checking_proof,
-            output_proof: todo!(),
+            output_proof,
             timestamp_validity_proof: todo!(),
         })
     }
+}
 
-    fn coordinate_prove_outputs(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<OutputSumcheckProof<F, PCS, ProofTranscript>> {
-        let memory_size = network.receive_response(PartyID::ID0, 0, 0usize)?;
-        let num_rounds = memory_size.log_2();
-        let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
-        network.broadcast_request(r_eq)?;
-        let (sumcheck_proof, r_sumcheck, sumcheck_openings) =
-            sumcheck::coordinate_prove_arbitrary::<F, _, Network>(
-                num_rounds, transcript, network,
-            )?;
+fn coordinate_prove_outputs<F, PCS, ProofTranscript, Network>(
+    memory_size: usize,
+    transcript: &mut ProofTranscript,
+    network: &mut Network,
+) -> eyre::Result<OutputSumcheckProof<F, PCS, ProofTranscript>>
+where
+    F: JoltField,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+{
+    let num_rounds = memory_size.log_2();
+    let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
+    network.broadcast_request(r_eq)?;
+    let (sumcheck_proof, _) =
+        sumcheck::coordinate_prove_arbitrary::<F, _, Network>(num_rounds, transcript, network)?;
 
-        let sumcheck_openings = Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+    let sumcheck_openings = Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
-        Ok(OutputSumcheckProof {
-            num_rounds,
-            sumcheck_proof,
-            opening: sumcheck_openings[2],
-            _pcs: PhantomData,
-        })
-    }
+    Ok(OutputSumcheckProof {
+        num_rounds,
+        sumcheck_proof,
+        opening: sumcheck_openings[2],
+        _pcs: PhantomData,
+    })
 }
 
 impl<F, PCS, ProofTranscript, Network> Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>
@@ -119,10 +128,4 @@ where
     type Rep3ReadWriteGrandProduct = Rep3BatchedDenseGrandProduct<F>;
 
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
-
-    fn init_final_grand_product_rep3(
-        _preprocessing: &Self::Preprocessing,
-    ) -> Self::Rep3InitFinalGrandProduct {
-        todo!()
-    }
 }

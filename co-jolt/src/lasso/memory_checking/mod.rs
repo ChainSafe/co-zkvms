@@ -43,13 +43,14 @@ where
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
     fn coordinate_memory_checking(
         preprocessing: &Self::Preprocessing,
+        memory_size: usize,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
         let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
-            Self::prove_grand_products_rep3(preprocessing, network, transcript)
+            Self::prove_grand_products_rep3(preprocessing, memory_size, network, transcript)
                 .context("while proving grand products")?;
 
         let (openings, exogenous_openings) =
@@ -66,6 +67,7 @@ where
 
     fn prove_grand_products_rep3(
         preprocessing: &Self::Preprocessing,
+        memory_size: usize,
         network: &mut Network,
         transcript: &mut ProofTranscript,
     ) -> eyre::Result<(
@@ -111,7 +113,7 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
-        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing);
+        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
 
         let read_write_grand_product = read_write_circuit.cooridinate_prove_grand_product(
             read_write_hashes,
@@ -179,7 +181,10 @@ where
 
     fn init_final_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
-    ) -> Self::Rep3InitFinalGrandProduct;
+        memory_size: usize,
+    ) -> Self::Rep3InitFinalGrandProduct {
+        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2())
+    }
 }
 
 /// This type, used within a `StructuredPolynomialData` struct, indicates that the

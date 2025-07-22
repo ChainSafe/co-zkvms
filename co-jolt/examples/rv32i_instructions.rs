@@ -22,7 +22,10 @@ use color_eyre::{
 };
 use itertools::Itertools;
 use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing};
-use mpc_core::protocols::rep3::{self, network::Rep3Network};
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+};
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::MpcStarNetWorker,
@@ -125,7 +128,7 @@ pub fn run_party(
     // }
 
     let network = Rep3QuicMpcNetWorker::new_with_coordinator(
-        config,
+        config.clone(),
         log_num_workers_per_party,
         log_num_pub_workers,
     )
@@ -133,11 +136,16 @@ pub fn run_party(
 
     let preprocessing = RV32IJoltVM::prover_preprocess(trace.len());
 
-    let mut prover = JoltRep3Prover::<F, C, M, Instructions, Subtables, _>::new(network)?;
+    let mut prover =
+        JoltRep3Prover::<F, C, M, Instructions, Subtables, PST13<E>, KeccakTranscript, _>::init(
+            None,
+            preprocessing,
+            network,
+        )?;
 
-    prover.prove::<PST13<E>, KeccakTranscript>(None, preprocessing)?;
+    prover.prove()?;
 
-    // prover.io_ctx.network.log_connection_stats();
+    prover.io_ctx.network.log_connection_stats();
     drop(_enter);
     Ok(())
 }
@@ -160,12 +168,19 @@ pub fn run_coordinator(
     let preprocessing: JoltProverPreprocessing<C, F, PST13<E>, KeccakTranscript> =
         RV32IJoltVM::prover_preprocess(1 << num_inputs.next_power_of_two());
 
-    let mut rep3_net =
-        Rep3QuicNetCoordinator::new(config, log_num_workers_per_party, log_num_pub_workers)
-            .unwrap();
+    let mut network = Rep3QuicNetCoordinator::new(
+        config.clone(),
+        log_num_workers_per_party,
+        log_num_pub_workers,
+    )
+    .unwrap();
 
-    let (proof, commitments) =
-        RV32IJoltVM::prove_rep3(Some(trace.clone()), &preprocessing, &mut rep3_net)?;
+    let meta = RV32IJoltVM::init_rep3(&preprocessing.shared, Some(trace.clone()), &mut network)?;
+
+    network.log_connection_stats(Some("Coordinator send witness communication"));
+    network.reset_stats();
+
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(meta, &preprocessing.shared, &mut network)?;
 
     if args.debug {
         let (proof_check, commitments_check) =
@@ -238,6 +253,8 @@ pub fn run_coordinator(
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments)
         .context("while verifying Lasso (rep3) proof")?;
+
+    network.log_connection_stats(None);
 
     Ok(())
 }
