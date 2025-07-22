@@ -907,7 +907,7 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0, 0)?;
+        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;

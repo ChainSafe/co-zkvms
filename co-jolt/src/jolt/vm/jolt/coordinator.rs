@@ -72,7 +72,7 @@ where
                 }
             }
             None => {
-                network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0, Default::default())?
+                network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?
             }
         };
 

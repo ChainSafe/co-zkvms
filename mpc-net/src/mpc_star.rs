@@ -5,13 +5,11 @@ use mpc_types::protocols::rep3::id::PartyID;
 pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
-        default_response: T,
     ) -> Result<Vec<T>>;
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,
         worker_id: usize,
-        default_response: T,
     ) -> Result<T>;
     fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,

@@ -51,10 +51,7 @@ where
             Vec<Rep3PrimeFieldShare<F>>,
             Vec<Rep3PrimeFieldShare<F>>,
         ) = network
-            .receive_responses::<(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>((
-                Default::default(),
-                Default::default(),
-            ))?
+            .receive_responses::<(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>()?
             .into_iter()
             .unzip();
 
@@ -139,7 +136,7 @@ where
 
     for _round in 0..num_rounds {
         let round_poly = UniPoly::<F>::from_coeff(additive::combine_field_element_vec(
-            network.receive_responses(Vec::new())?,
+            network.receive_responses()?,
         ));
         let compressed_poly = round_poly.compress();
 

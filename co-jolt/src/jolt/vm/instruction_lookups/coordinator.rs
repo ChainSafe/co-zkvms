@@ -117,7 +117,7 @@ where
 
         for _round in 0..num_rounds {
             let round_poly = UniPoly::from_coeff(additive::combine_field_element_vec::<F>(
-                network.receive_responses(vec![])?,
+                network.receive_responses()?,
             ));
             let compressed_round_poly = round_poly.compress();
             compressed_round_poly.append_to_transcript(transcript);

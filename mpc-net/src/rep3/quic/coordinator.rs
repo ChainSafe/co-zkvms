@@ -73,7 +73,6 @@ impl Rep3QuicNetCoordinator {
 impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
-        _default_response: T,
     ) -> Result<Vec<T>> {
         let mut responses_bytes = Vec::new();
         for (_, channel) in self.channels.iter_mut() {
@@ -154,7 +153,6 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         &mut self,
         party_id: PartyID,
         worker_id: usize,
-        _default_response: T,
     ) -> Result<T> {
         let channel = self
             .channels

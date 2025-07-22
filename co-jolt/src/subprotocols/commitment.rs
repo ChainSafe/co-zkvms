@@ -151,7 +151,7 @@ where
         network.broadcast_request(eta)?;
 
         let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
-            network.receive_responses(Vec::new())?.try_into().unwrap();
+            network.receive_responses()?.try_into().unwrap();
 
         let proofs = itertools::multizip((pf0, pf1, pf2))
             .map(|(a, b, c)| (a + b + c).into_affine())
@@ -197,7 +197,7 @@ where
         Network: Rep3NetworkCoordinator,
     {
         let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
-            network.receive_responses(Vec::new())?.try_into().unwrap();
+            network.receive_responses()?.try_into().unwrap();
 
         let proofs = itertools::multizip((pf0, pf1, pf2))
             .map(|(a, b, c)| (a + b + c).into_affine())

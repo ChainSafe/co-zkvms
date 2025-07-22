@@ -72,7 +72,7 @@ where
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
         let outputs =
-            additive::combine_field_element_vec::<F>(network.receive_responses(Vec::new())?);
+            additive::combine_field_element_vec::<F>(network.receive_responses()?);
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
@@ -157,7 +157,7 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0, 0)?;
+        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;

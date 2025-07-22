@@ -81,11 +81,11 @@ where
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
 
-        let num_lookups = network.receive_responses(0usize)?[0];
+        let num_lookups = network.receive_responses()?[0];
 
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network
-                .receive_responses((Vec::default(), Vec::default()))
+                .receive_responses()
                 .context("while receiving hashes")?
                 .into_iter()
                 .unzip();
@@ -159,7 +159,7 @@ where
         //     Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
         let init_final_evals =
-            additive::combine_field_element_vec(network.receive_responses(vec![])?);
+            additive::combine_field_element_vec(network.receive_responses()?);
 
         for (opening, eval) in openings
             .init_final_values_mut()

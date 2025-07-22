@@ -82,10 +82,14 @@ where
 
         network.send_requests(vec![Some(transcript.state()), None, None])?;
 
+        let (timestamp_validity_proof, transcript_state) =
+            network.receive_response(PartyID::ID0, 0)?;
+        transcript.update_state(transcript_state);
+
         Ok(ReadWriteMemoryProof {
             memory_checking_proof,
             output_proof,
-            timestamp_validity_proof: todo!(),
+            timestamp_validity_proof,
         })
     }
 }

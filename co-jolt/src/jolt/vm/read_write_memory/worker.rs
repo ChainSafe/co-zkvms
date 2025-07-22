@@ -65,7 +65,7 @@ where
     ProofTranscript: TranscriptExt,
     Network: Rep3NetworkWorker,
 {
-    fn prove(
+    pub fn prove(
         pcs_setup: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &mut Rep3JoltPolynomials<F>,
@@ -109,14 +109,12 @@ where
                 &mut transcript,
             );
 
-            io_ctx.network.send_response(timestamp_validity_proof)?;
-
-            opening_accumulator_public
-                .openings
-                .into_iter()
-                .for_each(|opening| {
-                    opening_accumulator.append_public(opening);
-                });
+            opening_accumulator.append_public(&opening_accumulator_public.openings[0], io_ctx)?;
+            io_ctx
+                .network
+                .send_response((timestamp_validity_proof, transcript.state()))?;
+        } else {
+            opening_accumulator.receive_public_opening(io_ctx)?;
         }
 
         Ok(())

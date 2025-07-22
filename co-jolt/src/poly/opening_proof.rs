@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding,
@@ -24,6 +25,7 @@ use crate::{
 use rayon::prelude::*;
 
 /// An opening computed by the prover.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3ProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -101,7 +103,11 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_public")]
-    pub fn append_public(&mut self, opening: ProverOpening<F>) {
+    pub fn append_public<Network: Rep3NetworkWorker>(
+        &mut self,
+        opening: &ProverOpening<F>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
         let ProverOpening {
             polynomial,
             eq_poly,
@@ -110,21 +116,44 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             ..
         } = opening;
 
-        // let opening = Rep3ProverOpening::new(
-        //     polynomial.into(),
-        //     eq_poly.clone(),
-        //     opening_point.clone(),
-        //     claim,
-        // );
-        // self.openings.push(opening);
-        todo!()
+        let eq_poly: DensePolynomial<F> = eq_poly.clone().try_into().unwrap();
+
+        let opening_for = |party_id: PartyID| -> Rep3ProverOpening<F> {
+            let polynomial = Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
+                polynomial.coeffs_as_field_elements(),
+                party_id,
+            ));
+            let claim = rep3::arithmetic::promote_to_trivial_share(party_id, *claim);
+
+            Rep3ProverOpening::new(polynomial, eq_poly.clone(), opening_point.clone(), claim)
+        };
+
+        self.openings.push(opening_for(io_ctx.id));
+
+        io_ctx
+            .network
+            .send(io_ctx.id.next_id(), opening_for(io_ctx.id.next_id()))?;
+        io_ctx
+            .network
+            .send(io_ctx.id.prev_id(), opening_for(io_ctx.id.prev_id()))?;
+
+        Ok(())
+    }
+
+    pub fn receive_public_opening<Network: Rep3NetworkWorker>(
+        &mut self,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        let opening = io_ctx.network.receive_request()?;
+        self.openings.push(opening);
+        Ok(())
     }
 
     pub fn receive_claims<ProofTranscript: Transcript, Network: Rep3NetworkCoordinator>(
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        let claims = additive::combine_field_element_vec(network.receive_responses(vec![])?);
+        let claims = additive::combine_field_element_vec(network.receive_responses()?);
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
         for i in 1..claims.len() {
@@ -156,14 +185,14 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let rho: F = transcript.challenge_scalar();
         network.broadcast_request(rho)?;
 
-        let max_num_vars = network.receive_response(PartyID::ID0, 0, 0usize)?;
+        let max_num_vars = network.receive_response(PartyID::ID0, 0)?;
 
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..max_num_vars {
             let uni_poly = UniPoly::from_coeff(additive::combine_field_element_vec(
-                network.receive_responses(vec![])?,
+                network.receive_responses()?,
             ));
             let compressed_poly = uni_poly.compress();
 
@@ -181,7 +210,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
         let sumcheck_claims =
-            additive::combine_field_element_vec(network.receive_responses(vec![])?);
+            additive::combine_field_element_vec(network.receive_responses()?);
 
         transcript.append_scalars(&sumcheck_claims);
 

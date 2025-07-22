@@ -11,6 +11,7 @@ use jolt_core::poly::multilinear_polynomial::{
 };
 use jolt_core::{field::JoltField, poly::compact_polynomial::CompactPolynomial};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
+use rayon::iter::IntoParallelIterator;
 
 // pub type MultilinearPolynomial<F> = DensePolynomial<F>;
 

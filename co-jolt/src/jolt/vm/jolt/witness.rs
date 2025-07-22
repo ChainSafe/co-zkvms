@@ -176,13 +176,13 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         let instruction_commitments = &mut commitments.instruction_lookups;
 
         let [share1, share2, share3] = network
-            .receive_responses(InstructionLookupCommitments::<PCS, ProofTranscript>::default())?
+            .receive_responses()?
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
         // lookup flag polys commitment are not secret shared
         let lookup_flag_polys_commitments: Vec<PCS::Commitment> =
-            network.receive_response(PartyID::ID0, 0, Default::default())?;
+            network.receive_response(PartyID::ID0, 0)?;
 
         let trace_commitments = multizip((
             read_write_values_except_flags(&share1),
