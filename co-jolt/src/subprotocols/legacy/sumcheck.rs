@@ -172,7 +172,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
     /// - `r_eval_point`: Final random point of evaluation
     /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
-    #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
+    #[tracing::instrument(skip_all, name = "Sumcheck.prove", level = "trace")]
     pub fn prove_arbitrary<Func>(
         _claim: &F,
         num_rounds: usize,

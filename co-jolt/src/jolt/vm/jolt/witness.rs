@@ -1,3 +1,5 @@
+use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
+use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
@@ -6,16 +8,17 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::instruction_lookups::{
-    InstructionLookupCommitments, InstructionLookupStuff,
+    InstructionLookupCommitments, InstructionLookupStuff, InstructionLookupsPreprocessing,
 };
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use jolt_core::jolt::vm::timestamp_range_check::{
     TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
 };
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
-use jolt_core::lasso::memory_checking::Initializable;
+use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
+use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::network::{
     IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
@@ -37,14 +40,9 @@ pub type Rep3JoltPolynomials<F: JoltField> = JoltStuff<Rep3MultilinearPolynomial
 pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     type PublicPolynomials;
 
-    fn combine_polynomials(
-        preprocessing: &Preprocessing,
-        polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials>;
-
     fn generate_secret_shares<R: Rng>(
-        preprocessing: &Preprocessing,
-        polynomials: &Self::PublicPolynomials,
+        _preprocessing: &Preprocessing,
+        polynomials: Self::PublicPolynomials,
         rng: &mut R,
     ) -> Vec<Self>;
 
@@ -57,6 +55,11 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     where
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
         Network: Rep3Network;
+
+    fn combine_polynomials(
+        preprocessing: &Preprocessing,
+        polynomials_shares: Vec<Self>,
+    ) -> eyre::Result<Self::PublicPolynomials>;
 }
 
 impl<F: JoltField, const C: usize, PCS, ProofTranscript>
@@ -68,50 +71,52 @@ where
 {
     type PublicPolynomials = JoltPolynomials<F>;
 
-    fn combine_polynomials(
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        let instructions_shares: Vec<_> = polynomials_shares
-            .into_iter()
-            .map(|p| {
-                let Rep3JoltPolynomials {
-                    instruction_lookups,
-                    ..
-                } = p;
-                instruction_lookups
-            })
-            .collect();
-
-        let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
-            &preprocessing.instruction_lookups,
-            instructions_shares,
-        )?;
-
-        Ok(JoltPolynomials {
-            instruction_lookups,
-            ..Default::default()
-        })
-    }
-
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_secret_shares")]
     fn generate_secret_shares<R: Rng>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        polynomials: &Self::PublicPolynomials,
+        polynomials: Self::PublicPolynomials,
         rng: &mut R,
     ) -> Vec<Self> {
+        let JoltPolynomials {
+            instruction_lookups,
+            read_write_memory,
+            timestamp_range_check,
+            ..
+        } = polynomials;
+
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_secret_shares(
             &preprocessing.instruction_lookups,
-            &polynomials.instruction_lookups,
+            instruction_lookups,
             rng,
         );
 
-        let jolt_polys_shares = instruction_lookups
-            .into_iter()
-            .map(|instruction_lookups| Self {
+        let read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_secret_shares(
+            &preprocessing.read_write_memory,
+            read_write_memory,
+            rng,
+        );
+
+        let timestamp_range_check = Rep3TimestampRangeCheckPolynomials::generate_secret_shares(
+            &NoPreprocessing,
+            timestamp_range_check,
+            rng,
+        );
+
+        let jolt_polys_shares = itertools::multizip((
+            instruction_lookups,
+            read_write_memory,
+            timestamp_range_check,
+        ))
+        .into_iter()
+        .map(
+            |(instruction_lookups, read_write_memory, timestamp_range_check)| Self {
                 instruction_lookups,
+                read_write_memory,
+                timestamp_range_check,
                 ..Default::default()
-            })
-            .collect_vec();
+            },
+        )
+        .collect_vec();
 
         jolt_polys_shares
     }
@@ -141,16 +146,33 @@ where
             ..Default::default()
         })
     }
+
+    fn combine_polynomials(
+        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        polynomials_shares: Vec<Self>,
+    ) -> eyre::Result<Self::PublicPolynomials> {
+        let instructions_shares: Vec<_> = polynomials_shares
+            .into_iter()
+            .map(|p| {
+                let Rep3JoltPolynomials {
+                    instruction_lookups,
+                    ..
+                } = p;
+                instruction_lookups
+            })
+            .collect();
+
+        let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
+            &preprocessing.instruction_lookups,
+            instructions_shares,
+        )?;
+
+        Ok(JoltPolynomials {
+            instruction_lookups,
+            ..Default::default()
+        })
+    }
 }
-
-// pub struct Rep3JoltTraceStep<F: JoltField, InstructionSet: Rep3JoltInstructionSet<F>> {
-//     pub instruction_lookup: Option<InstructionSet<F>>,
-//     // pub bytecode_row: BytecodeRow,
-//     // pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
-//     // pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
-//     // _field: PhantomData<F>,
-// }
-
 pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
@@ -162,6 +184,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         ProofTranscript: Transcript,
         Network: Rep3NetworkWorker;
 
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::receive_commitments")]
     fn receive_commitments<const C: usize, PCS, ProofTranscript, Network>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,
@@ -222,6 +245,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::commit")]
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,

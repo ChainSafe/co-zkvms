@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
-use crate::jolt::vm::read_write_memory::witness::Rep3JoltDevice;
+use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
@@ -69,7 +69,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &mut Rep3JoltPolynomials<F>,
-        program_io: &Rep3JoltDevice<F>,
+        program_io: &Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
@@ -122,7 +122,7 @@ where
 
     fn prove_outputs(
         polynomials: &Rep3ReadWriteMemoryPolynomials<F>,
-        program_io: &Rep3JoltDevice<F>,
+        program_io: &Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {

@@ -118,6 +118,23 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(poly) => poly.get_num_vars(),
         }
     }
+
+    pub fn public_with_trivial_share_vec(
+        polys: Vec<MultilinearPolynomial<F>>,
+        party_id: PartyID,
+    ) -> Vec<Self> {
+        polys
+            .iter()
+            .map(|poly| Self::public_with_trivial_share(poly.clone(), party_id))
+            .collect()
+    }
+
+    pub fn public_vec(polys: Vec<MultilinearPolynomial<F>>) -> Vec<Self> {
+        polys
+            .iter()
+            .map(|poly| Self::public(poly.clone()))
+            .collect()
+    }
 }
 
 impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {

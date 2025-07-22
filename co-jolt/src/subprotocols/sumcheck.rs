@@ -32,7 +32,7 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck")]
+    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck", level = "trace")]
     fn coordinate_prove_sumcheck(
         &self,
         num_rounds: usize,
@@ -83,7 +83,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     ) -> UniPoly<F>;
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
-    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck_worker")]
+    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck_worker", level = "trace")]
     fn prove_sumcheck(
         &mut self,
         claim: &F,
@@ -121,7 +121,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     }
 }
 
-#[tracing::instrument(skip_all, name = "Sumcheck.prove")]
+#[tracing::instrument(skip_all, name = "Sumcheck.prove", level = "trace")]
 pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
     num_rounds: usize,
     transcript: &mut ProofTranscript,
@@ -156,7 +156,7 @@ where
     Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
 
-#[tracing::instrument(skip_all, name = "Sumcheck.prove")]
+#[tracing::instrument(skip_all, name = "sumcheck::prove_arbitrary_worker")]
 pub fn prove_arbitrary_worker<F: JoltField, Func, Network: Rep3NetworkWorker>(
     claim: &F,
     num_rounds: usize,

@@ -18,11 +18,7 @@ use rayon::prelude::*;
 pub fn generate_shares_rep3<F: PrimeField, R: Rng>(
     val: F,
     rng: &mut R,
-) -> (
-    Rep3PrimeFieldShare<F>,
-    Rep3PrimeFieldShare<F>,
-    Rep3PrimeFieldShare<F>,
-) {
+) -> Vec<Rep3PrimeFieldShare<F>> {
     let t0 = F::rand(rng);
     let t1 = F::rand(rng);
     let t2 = val - t0 - t1;
@@ -30,7 +26,7 @@ pub fn generate_shares_rep3<F: PrimeField, R: Rng>(
     let p_share_0 = Rep3PrimeFieldShare::new(t0, t2); // Party 0 gets (t_0, t_2)
     let p_share_1 = Rep3PrimeFieldShare::new(t1, t0); // Party 1 gets (t_1, t_0)
     let p_share_2 = Rep3PrimeFieldShare::new(t2, t1); // Party 2 gets (t_2, t_1)
-    (p_share_0, p_share_1, p_share_2)
+    vec![p_share_0, p_share_1, p_share_2]
 }
 
 pub fn open<F: PrimeField>(shares: [Rep3PrimeFieldShare<F>; 3], id: usize) -> F {

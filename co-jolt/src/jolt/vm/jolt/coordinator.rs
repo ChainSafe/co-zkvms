@@ -1,5 +1,5 @@
 use crate::{
-    jolt::vm::witness::JoltWitnessMeta,
+    jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::JoltWitnessMeta},
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -47,33 +47,40 @@ where
     ProofTranscript: Transcript,
     Self::InstructionSet: Rep3JoltInstructionSet<F>,
 {
+    #[tracing::instrument(skip_all, name = "Rep3Jolt::init")]
     fn init_rep3<Network: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        trace: Option<Vec<JoltTraceStep<F, Self::InstructionSet>>>,
+        witness: Option<(Vec<JoltTraceStep<F, Self::InstructionSet>>, JoltDevice)>,
         network: &mut Network,
     ) -> eyre::Result<JoltWitnessMeta> {
-        let meta = match trace {
-            Some(mut trace) => {
+        let meta = match witness {
+            Some((mut trace, program_io)) => {
                 let trace_length = trace.len();
                 JoltTraceStep::pad(&mut trace);
                 let mut rng = test_rng();
-                let polynomials = Self::generate_witness(&preprocessing, &trace);
+                let polynomials = Self::generate_witness(&preprocessing, trace, &program_io);
+                let read_write_memory_size = polynomials.read_write_memory.v_final.len();
 
                 let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
                     &preprocessing,
-                    &polynomials,
+                    polynomials,
                     &mut rng,
                 );
-                network.send_requests(polynomials_shares)?;
-                network.broadcast_request(trace_length)?;
+                let program_io_shares =
+                    Rep3ProgramIO::<F>::generate_secret_shares(program_io, &mut rng);
+                let witness_shares: Vec<_> = polynomials_shares
+                    .into_iter()
+                    .zip(program_io_shares)
+                    .map(|(polynomials, program_io)| (polynomials, program_io, trace_length))
+                    .collect();
+
+                network.send_requests(witness_shares)?;
                 JoltWitnessMeta {
                     trace_length,
-                    read_write_memory_size: polynomials.read_write_memory.v_final.len(),
+                    read_write_memory_size,
                 }
             }
-            None => {
-                network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?
-            }
+            None => network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?,
         };
 
         Ok(meta)

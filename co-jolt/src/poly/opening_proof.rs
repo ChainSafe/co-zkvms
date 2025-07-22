@@ -348,7 +348,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
     /// Computes the univariate (quadratic) polynomial that serves as the
     /// prover's message in each round of the sumcheck in `prove_batch_opening_reduction`.
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "Rep3ProverOpeningAccumulator::compute_quadratic", level = "trace")]
     fn compute_quadratic(
         &self,
         coeffs: &[F],

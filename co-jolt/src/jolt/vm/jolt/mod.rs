@@ -33,7 +33,9 @@ use crate::jolt::{
 use jolt_core::{
     field::JoltField,
     jolt::vm::{
-        instruction_lookups::InstructionLookupsPreprocessing, JoltProverPreprocessing, JoltStuff,
+        instruction_lookups::InstructionLookupsPreprocessing,
+        read_write_memory::ReadWriteMemoryPolynomials,
+        timestamp_range_check::TimestampValidityProof, JoltProverPreprocessing, JoltStuff,
         JoltVerifierPreprocessing,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
@@ -91,10 +93,12 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
     }
 }
 
-impl<F: JoltField> Into<jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I>>
-    for JoltTraceStep<F, RV32I<F>>
+type JoltTraceStepNative = jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I>;
+
+impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> Into<JoltTraceStepNative>
+    for JoltTraceStep<F, InstructionSet>
 {
-    fn into(self) -> jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I> {
+    fn into(self) -> JoltTraceStepNative {
         jolt_core::jolt::vm::JoltTraceStep {
             instruction_lookup: None,
             bytecode_row: self.bytecode_row,
@@ -247,11 +251,13 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::generate_witness")]
     fn generate_witness(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        trace: &Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        program_io: &JoltDevice,
     ) -> JoltPolynomials<F> {
-        let instruction_polynomials =
+        let instruction_lookups =
             InstructionLookupsProof::<
                 C,
                 M,
@@ -260,9 +266,21 @@ where
                 Self::InstructionSet,
                 Self::Subtables,
                 ProofTranscript,
-            >::generate_witness(&preprocessing.instruction_lookups, trace);
+            >::generate_witness(&preprocessing.instruction_lookups, &trace);
+
+        let trace: Vec<JoltTraceStepNative> = trace.into_iter().map(|step| step.into()).collect();
+
+        let read_write_memory = ReadWriteMemoryPolynomials::generate_witness(
+            program_io,
+            &preprocessing.read_write_memory,
+            &trace,
+        );
+        let timestamp_range_check =
+            TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(&read_write_memory);
         JoltPolynomials {
-            instruction_lookups: instruction_polynomials,
+            instruction_lookups,
+            read_write_memory,
+            timestamp_range_check,
             ..Default::default()
         }
     }
@@ -271,7 +289,7 @@ where
     fn prove(
         // program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
-        mut preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,

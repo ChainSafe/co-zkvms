@@ -1,5 +1,8 @@
 use crate::{
-    jolt::vm::jolt::witness::JoltWitnessMeta,
+    jolt::vm::{
+        jolt::witness::JoltWitnessMeta,
+        read_write_memory::witness::{Rep3ProgramIO, Rep3ProgramIOInput},
+    },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -57,7 +60,7 @@ pub struct JoltRep3Prover<
     pub preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     pub polynomials: Rep3JoltPolynomials<F>,
     pub trace_length: usize,
-    instruction_lookups: Rep3InstructionLookupsProver<C, M, F, Instructions, Subtables, Network>,
+    _instruction_lookups: Rep3InstructionLookupsProver<C, M, F, Instructions, Subtables, Network>,
 }
 
 impl<F, const C: usize, const M: usize, Instructions, Subtables, PCS, ProofTranscript, Network>
@@ -70,8 +73,9 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
+    #[tracing::instrument(skip_all, name = "JoltRep3Prover::init")]
     pub fn init(
-        trace: Option<Vec<JoltTraceStep<F, Instructions>>>,
+        witness: Option<(Vec<JoltTraceStep<F, Instructions>>, Rep3ProgramIOInput<F>)>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         network: Network,
     ) -> eyre::Result<Self>
@@ -81,8 +85,8 @@ where
     {
         let mut io_ctx = IoContext::init(network).context("failed to initialize io context")?;
 
-        let (trace_length, polynomials) = match trace {
-            Some(mut trace) => {
+        let (polynomials, program_io, trace_length) = match witness {
+            Some((mut trace, program_io)) => {
                 JoltTraceStep::pad(&mut trace);
 
                 let polynomials = Rep3JoltPolynomials::generate_witness_rep3(
@@ -90,6 +94,12 @@ where
                     &mut trace,
                     M,
                     io_ctx.fork().context("failed to fork io context")?,
+                )?;
+
+                let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
+                    &preprocessing.shared.read_write_memory,
+                    program_io,
+                    &mut io_ctx,
                 )?;
 
                 let trace_length = trace.len();
@@ -103,13 +113,9 @@ where
                     io_ctx.network.send_response(meta)?;
                 }
 
-                (trace_length, polynomials)
+                (polynomials, program_io, trace_length)
             }
-            None => {
-                let polynomials = io_ctx.network.receive_request()?;
-                let trace_length = io_ctx.network.receive_request()?;
-                (trace_length, polynomials)
-            }
+            None => io_ctx.network.receive_request()?,
         };
 
         Ok(Self {
@@ -117,11 +123,11 @@ where
             polynomials,
             preprocessing,
             trace_length,
-            instruction_lookups: Rep3InstructionLookupsProver::new(),
+            _instruction_lookups: Rep3InstructionLookupsProver::new(),
         })
     }
 
-    #[tracing::instrument(skip_all, name = "Jolt::prove")]
+    #[tracing::instrument(skip_all, name = "JoltRep3Prover::prove")]
     pub fn prove(&mut self) -> eyre::Result<()>
     where
         PCS: DistributedCommitmentScheme<F, ProofTranscript>,

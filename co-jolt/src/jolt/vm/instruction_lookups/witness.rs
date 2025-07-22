@@ -1,10 +1,8 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_into_iter, cfg_iter};
 use crate::{
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
-        combine_poly_shares_rep3, generate_poly_shares_rep3, Rep3DensePolynomial,
-        Rep3MultilinearPolynomial,
+        combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
+        Rep3DensePolynomial, Rep3MultilinearPolynomial,
     },
     subprotocols::commitment::DistributedCommitmentScheme,
     utils::{
@@ -13,6 +11,8 @@ use crate::{
         Forkable,
     },
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{cfg_into_iter, cfg_iter};
 use color_eyre::eyre::Context;
 use itertools::{chain, multizip, Itertools};
 use jolt_core::{
@@ -57,7 +57,6 @@ use crate::{
 
 pub type Rep3InstructionLookupPolynomials<F: JoltField> =
     InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
-
 
 impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>
     for Rep3InstructionLookupPolynomials<F>
@@ -293,84 +292,45 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
     fn generate_secret_shares<R: Rng>(
         _: &InstructionLookupsPreprocessing<C, F>,
-        polynomials: &InstructionLookupPolynomials<F>,
+        polynomials: InstructionLookupPolynomials<F>,
         rng: &mut R,
     ) -> Vec<Self> {
-        let (dim0, dim1, dim2) = itertools::multiunzip(
-            polynomials
-                .dim
-                .iter()
-                .map(|poly| generate_poly_shares_rep3(poly, rng)),
-        );
+        let InstructionLookupStuff {
+            dim,
+            read_cts,
+            final_cts,
+            E_polys,
+            lookup_outputs,
+            instruction_flags,
+            ..
+        } = polynomials;
 
-        let (read_cts0, read_cts1, read_cts2) = itertools::multiunzip(
-            polynomials
-                .read_cts
-                .iter()
-                .map(|poly| generate_poly_shares_rep3(poly, rng)),
-        );
+        let mut dim_shares = generate_poly_shares_rep3_vec(&dim, rng);
 
-        let (final_cts0, final_cts1, final_cts2) = itertools::multiunzip(
-            polynomials
-                .final_cts
-                .iter()
-                .map(|poly| generate_poly_shares_rep3(poly, rng)),
-        );
+        let mut read_cts_shares = generate_poly_shares_rep3_vec(&read_cts, rng);
 
-        let (e_polys0, e_polys1, e_polys2) = itertools::multiunzip(
-            polynomials
-                .E_polys
-                .iter()
-                .map(|poly| generate_poly_shares_rep3(poly, rng)),
-        );
+        let mut final_cts_shares = generate_poly_shares_rep3_vec(&final_cts, rng);
 
-        let (lookup_outputs0, lookup_outputs1, lookup_outputs2) =
-            generate_poly_shares_rep3(&polynomials.lookup_outputs, rng);
+        let mut e_polys_shares = generate_poly_shares_rep3_vec(&E_polys, rng);
 
-        let get_instruction_flags_rep3 = |party_id: PartyID| -> Vec<Rep3MultilinearPolynomial<F>> {
-            polynomials
-                .instruction_flags
-                .iter()
-                .map(|poly| {
-                    Rep3MultilinearPolynomial::public_with_trivial_share(poly.clone(), party_id)
-                })
-                .collect_vec()
-        };
+        let mut lookup_outputs_shares = generate_poly_shares_rep3(&lookup_outputs, rng);
 
-        let p0 = Self {
-            dim: dim0,
-            read_cts: read_cts0,
-            final_cts: final_cts0,
-            E_polys: e_polys0,
-            lookup_outputs: lookup_outputs0,
-            instruction_flags: get_instruction_flags_rep3(PartyID::ID0),
-            a_init_final: None,
-            v_init_final: None,
-        };
-
-        let p1 = Rep3InstructionLookupPolynomials {
-            dim: dim1,
-            read_cts: read_cts1,
-            final_cts: final_cts1,
-            E_polys: e_polys1,
-            lookup_outputs: lookup_outputs1,
-            instruction_flags: get_instruction_flags_rep3(PartyID::ID1),
-            a_init_final: None,
-            v_init_final: None,
-        };
-
-        let p2 = Rep3InstructionLookupPolynomials {
-            dim: dim2,
-            read_cts: read_cts2,
-            final_cts: final_cts2,
-            E_polys: e_polys2,
-            lookup_outputs: lookup_outputs2,
-            instruction_flags: get_instruction_flags_rep3(PartyID::ID2),
-            a_init_final: None,
-            v_init_final: None,
-        };
-
-        vec![p0, p1, p2]
+        let party_ids = [PartyID::ID0, PartyID::ID1, PartyID::ID2];
+        (0..3)
+            .map(|i| Self {
+                dim: std::mem::take(&mut dim_shares[i]),
+                read_cts: std::mem::take(&mut read_cts_shares[i]),
+                final_cts: std::mem::take(&mut final_cts_shares[i]),
+                E_polys: std::mem::take(&mut e_polys_shares[i]),
+                lookup_outputs: std::mem::take(&mut lookup_outputs_shares[i]),
+                instruction_flags: Rep3MultilinearPolynomial::public_with_trivial_share_vec(
+                    instruction_flags.clone(),
+                    party_ids[i],
+                ),
+                a_init_final: None,
+                v_init_final: None,
+            })
+            .collect()
     }
 }
 

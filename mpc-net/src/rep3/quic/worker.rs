@@ -139,7 +139,11 @@ impl Rep3QuicMpcNetWorker {
 
     /// Print the connection stats of the network
     pub fn log_connection_stats(&self) {
-        self.net_handler.inner.log_connection_stats()
+        // hack: wait arbitrary time for all send/recv tasks till now to complete
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        self.net_handler
+            .runtime
+            .block_on(async { self.net_handler.inner.log_connection_stats() })
     }
 }
 
@@ -500,6 +504,15 @@ impl MpcNetworkHandlerWorker {
             tracing::info!(
                 "Connection {} stats: SENT: {} bytes RECV: {} bytes",
                 i,
+                ByteSize(stats.udp_tx.bytes),
+                ByteSize(stats.udp_rx.bytes)
+            );
+        }
+
+        if let Some(conn) = self.coordinator_connection.as_ref() {
+            let stats = conn.stats();
+            tracing::info!(
+                "Coordinator connection stats: SENT: {} bytes RECV: {} bytes",
                 ByteSize(stats.udp_tx.bytes),
                 ByteSize(stats.udp_rx.bytes)
             );

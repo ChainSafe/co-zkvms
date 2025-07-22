@@ -125,7 +125,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .collect()
     }
 
-
     pub fn split_evals(
         &self,
         idx: usize,
@@ -135,20 +134,14 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(
-            || a.bound_poly_var_top(r),
-            || b.bound_poly_var_top(r),
-        );
+        rayon::join(|| a.bound_poly_var_top(r), || b.bound_poly_var_top(r));
 
         *self = Self::from_poly_shares(a, b);
     }
 
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(
-            || a.bound_poly_var_bot(r),
-            || b.bound_poly_var_bot(r),
-        );
+        rayon::join(|| a.bound_poly_var_bot(r), || b.bound_poly_var_bot(r));
 
         *self = Self::from_poly_shares(a, b);
     }
@@ -383,20 +376,16 @@ pub fn combine_polys_shares_rep3<F: JoltField>(
 pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     poly: &MultilinearPolynomial<F>,
     rng: &mut R,
-) -> (
-    Rep3MultilinearPolynomial<F>,
-    Rep3MultilinearPolynomial<F>,
-    Rep3MultilinearPolynomial<F>,
-) {
+) -> Vec<Rep3MultilinearPolynomial<F>> {
     let dense_poly = DensePolynomial::new_padded(poly.coeffs_as_field_elements());
 
     let num_vars = poly.get_num_vars();
     if num_vars == 0 {
-        return (
+        return vec![
             Rep3DensePolynomial::<F>::zero().into(),
             Rep3DensePolynomial::<F>::zero().into(),
             Rep3DensePolynomial::<F>::zero().into(),
-        );
+        ];
     }
     let t0 =
         DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
@@ -408,7 +397,36 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
     let p_share_1 = Rep3DensePolynomial::<F>::from_poly_shares(t1.clone(), t0);
     let p_share_2 = Rep3DensePolynomial::<F>::from_poly_shares(t2, t1);
 
-    (p_share_0.into(), p_share_1.into(), p_share_2.into())
+    vec![p_share_0.into(), p_share_1.into(), p_share_2.into()]
+}
+
+pub fn generate_poly_shares_rep3_vec<F: JoltField, R: Rng>(
+    polys: &[MultilinearPolynomial<F>],
+    rng: &mut R,
+) -> Vec<Vec<Rep3MultilinearPolynomial<F>>> {
+    if polys.is_empty() {
+        return Vec::new();
+    }
+
+    let poly_shares: Vec<Vec<_>> = polys
+        .iter()
+        .map(|poly| generate_poly_shares_rep3(poly, rng))
+        .collect();
+
+    let num_shares = poly_shares[0].len();
+    let num_polys = polys.len();
+
+    let mut shares_of_polys: Vec<Vec<Rep3MultilinearPolynomial<F>>> = (0..num_shares)
+        .map(|_| Vec::with_capacity(num_polys))
+        .collect();
+
+    for poly_shares in poly_shares {
+        for (i, share) in poly_shares.into_iter().enumerate() {
+            shares_of_polys[i].push(share);
+        }
+    }
+
+    shares_of_polys
 }
 
 #[cfg(test)]

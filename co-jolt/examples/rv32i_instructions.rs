@@ -22,6 +22,7 @@ use color_eyre::{
 };
 use itertools::Itertools;
 use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing};
+use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -87,7 +88,7 @@ fn main() -> Result<()> {
 
     let mut program = host::Program::new("fibonacci-guest");
     let inputs = postcard::to_stdvec(&9u32).unwrap();
-    let (_, instruction_trace) = program.trace::<F>(&inputs);
+    let (program_io, instruction_trace) = program.trace::<F>(&inputs);
 
     if config.is_coordinator {
         print_used_instructions(&instruction_trace);
@@ -99,9 +100,9 @@ fn main() -> Result<()> {
         .collect_vec();
 
     if config.is_coordinator {
-        run_coordinator(args, config, trace, 1, 1)?;
+        run_coordinator(args, config, trace, program_io, 1, 1)?;
     } else {
-        run_party(args, config, trace, 1, 1)?;
+        run_party(args, config, trace, program_io, 1, 1)?;
     }
 
     Ok(())
@@ -111,6 +112,7 @@ pub fn run_party(
     args: Args,
     config: NetworkConfig,
     trace: Vec<JoltTraceStep<F, Instructions>>,
+    program_io: JoltDevice,
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
@@ -155,6 +157,7 @@ pub fn run_coordinator(
     args: Args,
     config: NetworkConfig,
     trace: Vec<JoltTraceStep<F, Instructions>>,
+    program_io: JoltDevice,
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
@@ -175,7 +178,11 @@ pub fn run_coordinator(
     )
     .unwrap();
 
-    let meta = RV32IJoltVM::init_rep3(&preprocessing.shared, Some(trace.clone()), &mut network)?;
+    let meta = RV32IJoltVM::init_rep3(
+        &preprocessing.shared,
+        Some((trace.clone(), program_io)),
+        &mut network,
+    )?;
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();

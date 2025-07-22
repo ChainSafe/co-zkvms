@@ -176,6 +176,9 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn reset_stats(&mut self) {
+        // hack: wait arbitrary time for all send/recv tasks till now to complete
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        
         for (i, conn) in &self.net_handler.inner.connections {
             let stats = conn.stats();
             self.stats_checkpoints[*i].0 += stats.udp_tx.bytes;
@@ -204,6 +207,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn log_connection_stats(&self, label: Option<&str>) {
+        // hack: wait arbitrary time for all send/recv tasks till now to complete
+        std::thread::sleep(std::time::Duration::from_secs(1));
         for (i, conn) in &self.net_handler.inner.connections {
             let stats = conn.stats();
             tracing::info!(
