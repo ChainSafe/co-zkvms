@@ -1,4 +1,5 @@
 pub mod instruction_utils;
+pub mod element;
 
 pub use jolt_core::{
     field::JoltField,

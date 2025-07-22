@@ -273,21 +273,3 @@ where
 
     fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize;
 }
-
-pub trait Rep3ExogenousOpenings<F: JoltField>:
-    Default + CanonicalSerialize + CanonicalDeserialize
-{
-    type Rep3ExogenousPolynomials: ?Sized;
-    /// Returns a `Vec` of references to the openings contained in `self`.
-    /// Ordering should mirror `openings_mut`.
-    fn openings(&self) -> Vec<&F>;
-    /// Returns a `Vec` of mutable references to the openings contained in `self`.
-    /// Ordering should mirror `openings`.
-    fn openings_mut(&mut self) -> Vec<&mut F>;
-    /// Cherry-picks the "exogenous" polynomials/commitments needed by an offline-memory
-    /// checking instance. The ordering of the returned polynoials/commitments should
-    /// mirror `openings`/`openings_mut`.
-    fn exogenous_polys(
-        polys: &Self::Rep3ExogenousPolynomials,
-    ) -> Vec<&Rep3MultilinearPolynomial<F>>;
-}

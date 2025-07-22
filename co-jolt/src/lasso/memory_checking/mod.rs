@@ -52,11 +52,6 @@ where
             Self::prove_grand_products_rep3(preprocessing, network, transcript)
                 .context("while proving grand products")?;
 
-        let read_write_batch_size =
-            multiset_hashes.read_hashes.len() + multiset_hashes.write_hashes.len();
-        let init_final_batch_size =
-            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len();
-
         let (openings, exogenous_openings) =
             Self::receive_openings(preprocessing, transcript, network)?;
 

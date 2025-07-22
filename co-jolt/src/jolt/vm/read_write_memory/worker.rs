@@ -1,20 +1,25 @@
 use std::marker::PhantomData;
 
+use crate::jolt::vm::read_write_memory::witness::Rep3JoltDevice;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
+use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
+use crate::subprotocols::sumcheck;
+use crate::utils::element::SharedOrPublic;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
-    ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing, ReadWriteMemoryStuff,
-    RegisterAddressOpenings,
+    memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
+    ReadWriteMemoryStuff, RegisterAddressOpenings,
 };
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
 use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -47,6 +52,147 @@ const RAM: usize = 3;
 
 pub struct Rep3ReadWriteMemoryProver<F: JoltField, PCS, ProofTranscript, Network> {
     pub _marker: PhantomData<(F, PCS, ProofTranscript, Network)>,
+}
+
+impl<F, PCS, ProofTranscript, Network> Rep3ReadWriteMemoryProver<F, PCS, ProofTranscript, Network>
+where
+    F: JoltField,
+    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkWorker,
+{
+    fn prove(
+        pcs_setup: &PCS::Setup,
+        preprocessing: &ReadWriteMemoryPreprocessing,
+        polynomials: &mut Rep3JoltPolynomials<F>,
+        program_io: &Rep3JoltDevice<F>,
+        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        Self::prove_memory_checking(
+            pcs_setup,
+            preprocessing,
+            &polynomials.read_write_memory,
+            polynomials,
+            opening_accumulator,
+            io_ctx,
+        )?;
+
+        Self::prove_outputs(
+            &polynomials.read_write_memory,
+            program_io,
+            opening_accumulator,
+            io_ctx,
+        )?;
+
+        // let timestamp_validity_proof = TimestampValidityProof::prove(
+        //     generators,
+        //     &polynomials.timestamp_range_check,
+        //     polynomials,
+        //     opening_accumulator,
+        //     transcript,
+        // );
+
+        Ok(())
+    }
+
+    fn prove_outputs(
+        polynomials: &Rep3ReadWriteMemoryPolynomials<F>,
+        program_io: &Rep3JoltDevice<F>,
+        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        let memory_size = polynomials.v_final.len();
+        if io_ctx.id == PartyID::ID0 {
+            io_ctx.network.send_response(memory_size)?;
+        }
+        let num_rounds = memory_size.log_2();
+        let r_eq: Vec<F> = io_ctx.network.receive_request()?;
+        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
+
+        let input_start_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        ) as u64;
+        let ram_start_index =
+            memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
+
+        let io_witness_range: Vec<u8> = (0..memory_size as u64)
+            .map(|i| {
+                if i >= input_start_index && i < ram_start_index {
+                    1
+                } else {
+                    0
+                }
+            })
+            .collect();
+
+        let mut v_io = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
+        let mut input_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        );
+        // Convert input bytes into words and populate `v_io`
+        for (i, word) in program_io.input_words.iter().enumerate() {
+            v_io[input_index] = *word;
+            input_index += 1;
+        }
+        let mut output_index = memory_address_to_witness_index(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        );
+        // Convert output bytes into words and populate `v_io`
+        for (i, word) in program_io.output_words.iter().enumerate() {
+            v_io[output_index] = *word;
+            output_index += 1;
+        }
+
+        // Copy panic bit
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.panic,
+            &program_io.memory_layout,
+        )] = program_io.panic;
+
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.termination,
+            &program_io.memory_layout,
+        )] = program_io.panic;
+
+        let mut sumcheck_polys = vec![
+            eq.into(),
+            MultilinearPolynomial::from(io_witness_range).into(),
+            polynomials.v_final.clone().into(),
+            Rep3MultilinearPolynomial::from(v_io).into(),
+        ];
+
+        // eq * io_witness_range * (v_final - v_io)
+        let output_check_fn = |vals: &[SharedOrPublic<F>]| -> F {
+            rep3::arithmetic::mul_public(
+                *vals[2].as_shared() - *vals[3].as_shared(),
+                *vals[0].as_public() * *vals[1].as_public(),
+            )
+            .into_additive()
+        };
+
+        let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker::<F, _, Network>(
+            &F::zero(),
+            num_rounds,
+            &mut sumcheck_polys,
+            output_check_fn,
+            3,
+            io_ctx,
+        )?;
+
+        opening_accumulator.append(
+            &[polynomials.v_final.as_shared()],
+            DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
+            r_sumcheck.to_vec(),
+            &[sumcheck_openings[2]],
+            io_ctx,
+        )?;
+
+        Ok(())
+    }
 }
 
 impl<F, PCS, ProofTranscript, Network>

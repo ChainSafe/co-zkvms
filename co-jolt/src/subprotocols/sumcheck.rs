@@ -4,7 +4,9 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::utils::element::SharedOrPublic;
 use itertools::multizip;
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::subprotocols::sumcheck::Bindable;
 use jolt_core::utils::thread::drop_in_background_thread;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
@@ -14,7 +16,7 @@ use mpc_net::mpc_star::MpcStarNetWorker;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-use crate::poly::Rep3DensePolynomial;
+use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
@@ -40,7 +42,7 @@ where
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for round in 0..num_rounds {
+        for _round in 0..num_rounds {
             let round_poly = UniPoly::<F>::from_coeff(additive::combine_field_element_vec(
                 network.receive_responses(Vec::new())?,
             ));
@@ -140,4 +142,119 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         Ok((r, final_claims))
     }
+}
+
+#[tracing::instrument(skip_all, name = "Sumcheck.prove")]
+pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
+    num_rounds: usize,
+    transcript: &mut ProofTranscript,
+    network: &mut Network,
+) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>)>
+where
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+{
+    let mut r: Vec<F> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    for _round in 0..num_rounds {
+        let round_poly = UniPoly::<F>::from_coeff(additive::combine_field_element_vec(
+            network.receive_responses(Vec::new())?,
+        ));
+        let compressed_poly = round_poly.compress();
+
+        // append the prover's message to the transcript
+        compressed_poly.append_to_transcript(transcript);
+        // derive the verifier's challenge for the next round
+        let r_j = transcript.challenge_scalar();
+        r.push(r_j);
+
+        let claim = round_poly.evaluate(&r_j);
+
+        network.broadcast_request((r_j, claim))?;
+
+        cubic_polys.push(compressed_poly);
+    }
+
+    let final_claims = additive::combine_field_element_vec(network.receive_responses(Vec::new())?);
+
+    Ok((SumcheckInstanceProof::new(cubic_polys), r, final_claims))
+}
+
+#[tracing::instrument(skip_all, name = "Sumcheck.prove")]
+pub fn prove_arbitrary_worker<F: JoltField, Func, Network: Rep3NetworkWorker>(
+    claim: &F,
+    num_rounds: usize,
+    polys: &mut Vec<Rep3MultilinearPolynomial<F>>,
+    comb_func: Func,
+    combined_degree: usize,
+    io_ctx: &mut IoContext<Network>,
+) -> eyre::Result<(Vec<F>, Vec<F>)>
+where
+    Func: Fn(&[SharedOrPublic<F>]) -> F + std::marker::Sync,
+{
+    let mut previous_claim = *claim;
+    let mut r: Vec<F> = Vec::new();
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    for _round in 0..num_rounds {
+        // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
+        // for points {0, ..., |g(x)|}
+        let mut eval_points = vec![F::zero(); combined_degree];
+
+        let mle_half = polys[0].len() / 2;
+
+        let accum: Vec<Vec<F>> = (0..mle_half)
+            .into_par_iter()
+            .map(|poly_term_i| {
+                let mut accum = vec![F::zero(); combined_degree];
+                // TODO(moodlezoup): Optimize
+                let evals: Vec<_> = polys
+                    .iter()
+                    .map(|poly| {
+                        poly.sumcheck_evals(poly_term_i, combined_degree, BindingOrder::HighToLow)
+                    })
+                    .collect();
+                for j in 0..combined_degree {
+                    let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
+                    accum[j] += comb_func(&evals_j);
+                }
+
+                accum
+            })
+            .collect();
+
+        eval_points
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(poly_i, eval_point)| {
+                *eval_point = accum
+                    .par_iter()
+                    .take(mle_half)
+                    .map(|mle| mle[poly_i])
+                    .sum::<F>();
+            });
+
+        eval_points.insert(1, previous_claim - eval_points[0]);
+        let univariate_poly = UniPoly::from_evals(&eval_points);
+
+        // append the prover's message to the transcript
+        // compressed_poly.append_to_transcript(transcript);
+        // let r_j = transcript.challenge_scalar();
+        let (r_j, next_claim) = io_ctx.network.receive_request()?;
+        r.push(r_j);
+
+        // bound all tables to the verifier's challenge
+        polys
+            .par_iter_mut()
+            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+        previous_claim = next_claim;
+    }
+
+    let final_evals = polys
+        .iter()
+        .map(|poly| poly.final_sumcheck_claim())
+        .collect();
+
+    Ok((r, final_evals))
 }

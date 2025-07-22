@@ -34,9 +34,8 @@ use mpc_net::{
 use std::path::PathBuf;
 
 use clap::Subcommand;
-use tracing_subscriber::{
-    fmt::Layer as ForestLayer, prelude::*, util::SubscriberInitExt, EnvFilter, Registry,
-};
+use tracing_forest::ForestLayer;
+use tracing_subscriber::{prelude::*, util::SubscriberInitExt, EnvFilter, Registry};
 
 type Instructions = co_jolt::jolt::vm::rv32i_vm::RV32I<F>;
 type Subtables = co_jolt::jolt::vm::rv32i_vm::RV32ISubtables<F>;

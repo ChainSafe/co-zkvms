@@ -1,11 +1,13 @@
+use std::ops::Index;
+
 use crate::poly::rep3_poly::Rep3DensePolynomial;
+use crate::utils::element::SharedOrPublic;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use eyre::Context;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use jolt_core::{field::JoltField, poly::compact_polynomial::CompactPolynomial};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
@@ -81,18 +83,24 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Ok(MultilinearPolynomial::from(a))
     }
 
-    pub fn bind(&mut self, r: F, order: BindingOrder) {
+    #[inline]
+    pub fn sumcheck_evals(
+        &self,
+        index: usize,
+        degree: usize,
+        order: BindingOrder,
+    ) -> Vec<SharedOrPublic<F>> {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
-                poly.bind(r, order);
-                if let Some(trivial_share) = trivial_share {
-                    trivial_share.bind(r, order);
-                }
-            }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.bind(r, order),
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+                .sumcheck_evals(index, degree, order)
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly
+                .sumcheck_evals(index, degree, order)
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
         }
     }
 
@@ -107,6 +115,53 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.get_num_vars(),
+        }
+    }
+}
+
+impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {
+    fn is_bound(&self) -> bool {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.is_bound(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.is_bound(),
+        }
+    }
+
+    fn bind(&mut self, r: F, order: BindingOrder) {
+        match self {
+            Rep3MultilinearPolynomial::Public {
+                poly,
+                trivial_share,
+            } => {
+                poly.bind(r, order);
+                if let Some(trivial_share) = trivial_share {
+                    trivial_share.bind(r, order);
+                }
+            }
+            Rep3MultilinearPolynomial::Shared(poly) => poly.bind(r, order),
+        }
+    }
+
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        match self {
+            Rep3MultilinearPolynomial::Public {
+                poly,
+                trivial_share,
+            } => {
+                poly.bind_parallel(r, order);
+                if let Some(trivial_share) = trivial_share {
+                    trivial_share.bind_parallel(r, order);
+                }
+            }
+            Rep3MultilinearPolynomial::Shared(poly) => poly.bind_parallel(r, order),
+        }
+    }
+
+    /// Warning: when poly is shared, returns the additive share.
+    fn final_sumcheck_claim(&self) -> F {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim(),
         }
     }
 }

@@ -2,7 +2,9 @@ use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::cfg_iter;
 use jolt_core::{
-    poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+    poly::multilinear_polynomial::{
+        BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    },
     utils,
 };
 use mpc_core::protocols::rep3;
@@ -123,13 +125,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .collect()
     }
 
-    #[inline]
-    pub fn bind(&mut self, r: F, order: BindingOrder) {
-        match order {
-            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
-            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
-        }
-    }
 
     pub fn split_evals(
         &self,
@@ -140,16 +135,40 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
-        a.bound_poly_var_top(r);
-        b.bound_poly_var_top(r);
+        rayon::join(
+            || a.bound_poly_var_top(r),
+            || b.bound_poly_var_top(r),
+        );
 
         *self = Self::from_poly_shares(a, b);
     }
 
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
-        a.bound_poly_var_bot(r);
-        b.bound_poly_var_bot(r);
+        rayon::join(
+            || a.bound_poly_var_bot(r),
+            || b.bound_poly_var_bot(r),
+        );
+
+        *self = Self::from_poly_shares(a, b);
+    }
+
+    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
+        let (mut a, mut b) = self.copy_poly_shares();
+        rayon::join(
+            || a.bound_poly_var_bot_01_optimized(r),
+            || b.bound_poly_var_bot_01_optimized(r),
+        );
+
+        *self = Self::from_poly_shares(a, b);
+    }
+
+    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F) {
+        let (mut a, mut b) = self.copy_poly_shares();
+        rayon::join(
+            || a.bound_poly_var_top_zero_optimized(r),
+            || b.bound_poly_var_top_zero_optimized(r),
+        );
 
         *self = Self::from_poly_shares(a, b);
     }
@@ -238,7 +257,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn is_bound(&self) -> bool {
-        self.len() != self.evals.len()
+        unimplemented!()
     }
 
     pub fn evals_ref(&self) -> &[Rep3PrimeFieldShare<F>] {
@@ -250,6 +269,33 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             num_vars: 0,
             evals: vec![Rep3PrimeFieldShare::zero()],
         }
+    }
+}
+
+impl<F: JoltField> PolynomialBinding<F> for Rep3DensePolynomial<F> {
+    fn is_bound(&self) -> bool {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn bind(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
+        }
+    }
+
+    #[inline]
+    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+        match order {
+            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
+        }
+    }
+
+    /// Warning: returns the additive share.
+    fn final_sumcheck_claim(&self) -> F {
+        self.evals[0].into_additive()
     }
 }
 
