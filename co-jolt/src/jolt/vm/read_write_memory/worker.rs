@@ -208,7 +208,7 @@ where
         )?;
 
         opening_accumulator.append(
-            &[polynomials.v_final.as_shared()],
+            &[&polynomials.v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
             &[sumcheck_openings[2]],

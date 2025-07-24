@@ -132,7 +132,7 @@ where
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         opening_accumulator.append(
-            &primary_sumcheck_polys.try_into_shared(),
+            &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,
             &primary_sumcheck_openings,

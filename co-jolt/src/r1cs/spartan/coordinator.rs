@@ -44,7 +44,7 @@ where
         let mut claim = F::zero();
         let mut polys = Vec::new();
 
-        for round in 0..num_rounds_x {
+        for _round in 0..num_rounds_x {
             coordinate_eq_sumcheck_round(
                 &mut polys,
                 &mut outer_sumcheck_r,
@@ -57,7 +57,6 @@ where
         let outer_sumcheck_proof = SumcheckInstanceProof::new(polys);
         let outer_sumcheck_claims =
             additive::combine_field_element_vec(network.receive_responses()?);
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         transcript.append_scalars(&outer_sumcheck_claims);
 

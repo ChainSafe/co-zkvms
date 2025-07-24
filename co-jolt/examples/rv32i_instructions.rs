@@ -86,7 +86,9 @@ fn main() -> Result<()> {
         init_tracing();
     }
 
-    let program = host::Program::new("fibonacci-guest");
+    let mut program = host::Program::new("fibonacci-guest");
+    program.build(co_jolt::host::DEFAULT_TARGET_DIR);
+
     let inputs = postcard::to_stdvec(&9u32).unwrap();
 
     if config.is_coordinator {

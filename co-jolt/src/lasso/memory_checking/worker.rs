@@ -9,7 +9,7 @@ use jolt_core::{
         ExogenousOpenings, Initializable, MemoryCheckingProver, MultisetHashes,
         StructuredPolynomialData,
     },
-    poly::dense_mlpoly::DensePolynomial,
+    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::rep3::{
@@ -178,16 +178,16 @@ where
             .read_write_values()
             .into_iter()
             .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
-            .try_into_shared();
+            .collect::<Vec<_>>();
 
         let (read_write_evals, eq_read_write) =
-            Rep3DensePolynomial::batch_evaluate(&read_write_polys, r_read_write);
+            Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, r_read_write);
 
         opening_accumulator.append(
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
-            &read_write_evals,
+            &read_write_evals.iter().map(|x| x.into_additive(io_ctx.id)).collect::<Vec<_>>(),
             io_ctx,
         )?;
 

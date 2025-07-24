@@ -1,16 +1,16 @@
-pub mod instruction_utils;
 pub mod element;
+pub mod instruction_utils;
 pub mod transcript;
 
 pub use jolt_core::{
     field::JoltField,
+    poly::dense_mlpoly::DensePolynomial,
     utils::{
-        compute_dotproduct, gaussian_elimination, gen_random_point, index_to_field_bitvector,
-        is_power_of_two, math, mul_0_1_optimized, mul_0_optimized, split_bits, thread,
-        errors,
+        compute_dotproduct, errors, gaussian_elimination, gen_random_point,
+        index_to_field_bitvector, is_power_of_two, math, mul_0_1_optimized, mul_0_optimized,
+        split_bits, thread,
     },
 };
-use jolt_core::utils::transcript::Transcript;
 
 use eyre::{Context, Result};
 use itertools::Itertools;
@@ -21,7 +21,7 @@ use mpc_core::protocols::rep3::{
     PartyID,
 };
 
-use crate::poly::{dense_mlpoly::DensePolynomial, Rep3DensePolynomial};
+use crate::poly::Rep3DensePolynomial;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -161,7 +161,6 @@ where
     .collect::<eyre::Result<Vec<_>>>()
     .context("while trying to fork_chunks_flat_map")
 }
-
 
 #[inline]
 pub fn split_rep3_poly_flagged<F: JoltField>(
