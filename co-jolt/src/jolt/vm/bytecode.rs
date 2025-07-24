@@ -153,7 +153,7 @@ impl BytecodeRowExt for BytecodeRow {
             rs1: instruction.rs1.unwrap_or(0) as u8,
             rs2: instruction.rs2.unwrap_or(0) as u8,
             imm: instruction.imm.unwrap_or(0) as i64, // imm is always cast to its 32-bit repr, signed or unsigned
-            virtual_sequence_remaining: None,
+            virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
     }
 }

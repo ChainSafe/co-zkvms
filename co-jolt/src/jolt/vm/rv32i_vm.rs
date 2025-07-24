@@ -7,6 +7,7 @@ use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use strum_macros::{AsRefStr, EnumCount, EnumIter};
+use strum::IntoEnumIterator;
 
 // use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{

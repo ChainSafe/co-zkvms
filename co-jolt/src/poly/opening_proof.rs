@@ -7,6 +7,7 @@ pub use jolt_core::poly::opening_proof::*;
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::transcript::{AppendToTranscript, KeccakTranscript};
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::{
     additive,
@@ -16,6 +17,7 @@ use mpc_core::protocols::{
     },
 };
 
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::{
     field::JoltField, poly::Rep3DensePolynomial,
     subprotocols::commitment::DistributedCommitmentScheme, utils::transcript::Transcript,
@@ -29,7 +31,7 @@ use rayon::prelude::*;
 pub struct Rep3ProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
-    pub polynomial: Rep3DensePolynomial<F>,
+    pub polynomial: Rep3MultilinearPolynomial<F>,
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
@@ -42,7 +44,7 @@ pub struct Rep3ProverOpening<F: JoltField> {
 
 impl<F: JoltField> Rep3ProverOpening<F> {
     fn new(
-        polynomial: Rep3DensePolynomial<F>,
+        polynomial: Rep3MultilinearPolynomial<F>,
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
         claim: Rep3PrimeFieldShare<F>,
@@ -74,10 +76,10 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
     pub fn append<Network: Rep3NetworkWorker>(
         &mut self,
-        polynomials: &[&Rep3DensePolynomial<F>],
+        polynomials: &[&Rep3MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
-        claims: &[F],
+        claims: &[AdditiveShare<F>],
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
         assert_eq!(polynomials.len(), claims.len());
@@ -91,7 +93,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
-        let batched_poly = Rep3DensePolynomial::linear_combination(polynomials, &rho_powers);
+        let batched_poly =
+            Rep3MultilinearPolynomial::linear_combination(polynomials, &rho_powers, io_ctx.id);
 
         let batched_claim_rep3 =
             rep3::arithmetic::promote_to_trivial_share(io_ctx.id, batched_claim);
@@ -99,53 +102,6 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             Rep3ProverOpening::new(batched_poly, eq_poly, opening_point, batched_claim_rep3);
         self.openings.push(opening);
 
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_public")]
-    pub fn append_public<Network: Rep3NetworkWorker>(
-        &mut self,
-        opening: &ProverOpening<F>,
-        io_ctx: &mut IoContext<Network>,
-    ) -> eyre::Result<()> {
-        let ProverOpening {
-            polynomial,
-            eq_poly,
-            opening_point,
-            claim,
-            ..
-        } = opening;
-
-        let eq_poly: DensePolynomial<F> = eq_poly.clone().try_into().unwrap();
-
-        let opening_for = |party_id: PartyID| -> Rep3ProverOpening<F> {
-            let polynomial = Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-                polynomial.coeffs_as_field_elements(),
-                party_id,
-            ));
-            let claim = rep3::arithmetic::promote_to_trivial_share(party_id, *claim);
-
-            Rep3ProverOpening::new(polynomial, eq_poly.clone(), opening_point.clone(), claim)
-        };
-
-        self.openings.push(opening_for(io_ctx.id));
-
-        io_ctx
-            .network
-            .send(io_ctx.id.next_id(), opening_for(io_ctx.id.next_id()))?;
-        io_ctx
-            .network
-            .send(io_ctx.id.prev_id(), opening_for(io_ctx.id.prev_id()))?;
-
-        Ok(())
-    }
-
-    pub fn receive_public_opening<Network: Rep3NetworkWorker>(
-        &mut self,
-        io_ctx: &mut IoContext<Network>,
-    ) -> eyre::Result<()> {
-        let opening = io_ctx.network.receive_request()?;
-        self.openings.push(opening);
         Ok(())
     }
 
@@ -167,6 +123,56 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .sum();
         network.broadcast_request((rho, batched_claim))?;
         Ok(claims)
+    }
+
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_public")]
+    pub fn append_public<Network: Rep3NetworkWorker>(
+        &mut self,
+        opening: &ProverOpening<F>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        let ProverOpening {
+            polynomial,
+            eq_poly,
+            opening_point,
+            claim,
+            ..
+        } = opening;
+
+        let eq_poly: DensePolynomial<F> = eq_poly.clone().try_into().unwrap();
+
+        let opening_for = |party_id: PartyID| -> Rep3ProverOpening<F> {
+            // TODO: should we promote to shared? would reduce communication between parties but computation overhead during reduce_and_prove?
+            let polynomial = Rep3MultilinearPolynomial::public(polynomial.clone());
+            let claim = rep3::arithmetic::promote_to_trivial_share(party_id, *claim);
+
+            Rep3ProverOpening::new(
+                polynomial.clone(),
+                eq_poly.clone(),
+                opening_point.clone(),
+                claim,
+            )
+        };
+
+        self.openings.push(opening_for(io_ctx.id));
+
+        io_ctx
+            .network
+            .send(io_ctx.id.next_id(), opening_for(io_ctx.id.next_id()))?;
+        io_ctx
+            .network
+            .send(io_ctx.id.prev_id(), opening_for(io_ctx.id.prev_id()))?;
+
+        Ok(())
+    }
+
+    pub fn receive_public_opening<Network: Rep3NetworkWorker>(
+        &mut self,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        let opening = io_ctx.network.receive_request()?;
+        self.openings.push(opening);
+        Ok(())
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -209,8 +215,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
         let sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
-        let sumcheck_claims =
-            additive::combine_field_element_vec(network.receive_responses()?);
+        let sumcheck_claims = additive::combine_field_element_vec(network.receive_responses()?);
 
         transcript.append_scalars(&sumcheck_claims);
 
@@ -266,10 +271,18 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        let joint_poly = Rep3DensePolynomial::linear_combination(
+        let joint_poly = Rep3MultilinearPolynomial::linear_combination(
             &unbound_polys.iter().collect::<Vec<_>>(),
             &gamma_powers,
+            io_ctx.id,
         );
+
+        let joint_poly = match joint_poly {
+            Rep3MultilinearPolynomial::Shared(poly) => poly,
+            Rep3MultilinearPolynomial::Public { .. } => {
+                panic!("Joint polynomial is expected to be shared")
+            }
+        };
 
         // Reduced opening proof
         PCS::prove_rep3(&joint_poly, pcs_setup, &r_sumcheck, &mut io_ctx.network)?;
@@ -319,7 +332,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
-            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, e);
+            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, e, io_ctx.id);
             io_ctx.network.send_response(uni_poly.as_vec())?;
 
             // append the prover's message to the transcript
@@ -340,7 +353,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let claims: Vec<_> = self
             .openings
             .iter()
-            .map(|opening| opening.polynomial[0].into_additive())
+            .map(|opening| opening.polynomial.get_coeff(0).into_additive(io_ctx.id))
             .collect();
 
         Ok((r, claims))
@@ -348,39 +361,47 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
     /// Computes the univariate (quadratic) polynomial that serves as the
     /// prover's message in each round of the sumcheck in `prove_batch_opening_reduction`.
-    #[tracing::instrument(skip_all, name = "Rep3ProverOpeningAccumulator::compute_quadratic", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3ProverOpeningAccumulator::compute_quadratic",
+        level = "trace"
+    )]
     fn compute_quadratic(
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
         previous_round_claim: F,
+        party_id: PartyID,
     ) -> UniPoly<F> {
         let evals: Vec<(F, F)> = self
             .openings
-            .iter()
-            .zip(coeffs.iter())
+            .par_iter()
+            .zip(coeffs.par_iter())
             .map(|(opening, coeff)| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
                     let eval_0 = (0..mle_half)
                         .map(|i| {
-                            rep3::arithmetic::mul_public(
-                                opening.polynomial[i],
-                                opening.eq_poly.get_bound_coeff(i) * coeff,
-                            )
-                            .into_additive()
+                            opening
+                                .polynomial
+                                .get_coeff(i)
+                                .mul_public(opening.eq_poly.get_bound_coeff(i) * coeff)
+                                .into_additive(party_id)
                         })
                         .sum();
                     let eval_2 = (0..mle_half)
                         .map(|i| {
-                            let poly_bound_point = opening.polynomial[i + mle_half]
-                                + opening.polynomial[i + mle_half]
-                                - opening.polynomial[i];
+                            let poly_bound_point = opening
+                                .polynomial
+                                .get_coeff(i + mle_half)
+                                .add(&opening.polynomial.get_coeff(i + mle_half), party_id)
+                                .sub(&opening.polynomial.get_coeff(i), party_id);
                             let eq_bound_point = opening.eq_poly.get_bound_coeff(i + mle_half)
                                 + opening.eq_poly.get_bound_coeff(i + mle_half)
                                 - opening.eq_poly.get_bound_coeff(i);
-                            rep3::arithmetic::mul_public(poly_bound_point, eq_bound_point * coeff)
-                                .into_additive()
+                            poly_bound_point
+                                .mul_public(eq_bound_point * coeff)
+                                .into_additive(party_id)
                         })
                         .sum();
                     (eval_0, eval_2)

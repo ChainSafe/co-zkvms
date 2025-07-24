@@ -48,7 +48,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
 
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &Preprocessing,
-        ops: &mut [JoltTraceStep<F, Instructions>],
+        trace: &mut [JoltTraceStep<F, Instructions>],
         M: usize,
         network: IoContext<Network>,
     ) -> eyre::Result<Self>

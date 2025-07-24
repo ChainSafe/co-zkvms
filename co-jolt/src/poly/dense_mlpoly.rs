@@ -12,11 +12,12 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::Rng;
 use std::ops::Index;
 
-use crate::{
+use jolt_core::{
     field::JoltField,
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, Rep3MultilinearPolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
+use crate::poly::Rep3MultilinearPolynomial;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -239,6 +240,14 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .collect();
 
         Rep3DensePolynomial::new(lc_coeffs)
+    }
+
+    pub fn dot_product_with_public(&self, other: &[F]) -> Rep3PrimeFieldShare<F> {
+        self.evals
+            .par_iter()
+            .zip_eq(other.par_iter())
+            .map(|(a_i, b_i)| rep3::arithmetic::mul_public(*a_i, *b_i))
+            .sum::<Rep3PrimeFieldShare<F>>()
     }
 
     pub fn get_num_vars(&self) -> usize {

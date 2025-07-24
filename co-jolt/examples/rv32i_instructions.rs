@@ -86,23 +86,13 @@ fn main() -> Result<()> {
         init_tracing();
     }
 
-    let mut program = host::Program::new("fibonacci-guest");
+    let program = host::Program::new("fibonacci-guest");
     let inputs = postcard::to_stdvec(&9u32).unwrap();
-    let (program_io, instruction_trace) = program.trace::<F>(&inputs);
 
     if config.is_coordinator {
-        print_used_instructions(&instruction_trace);
-    }
-
-    let trace = instruction_trace
-        .into_iter()
-        .map(|op| JoltTraceStep::<F, Instructions>::from_instruction_lookup(op))
-        .collect_vec();
-
-    if config.is_coordinator {
-        run_coordinator(args, config, trace, program_io, 1, 1)?;
+        run_coordinator(args, config, program, inputs, 1, 1)?;
     } else {
-        run_party(args, config, trace, program_io, 1, 1)?;
+        run_party(args, config, program, inputs, 1, 1)?;
     }
 
     Ok(())
@@ -111,11 +101,14 @@ fn main() -> Result<()> {
 pub fn run_party(
     args: Args,
     config: NetworkConfig,
-    trace: Vec<JoltTraceStep<F, Instructions>>,
-    program_io: JoltDevice,
+    mut program: host::Program,
+    inputs: Vec<u8>,
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
+    let (bytecode, memory_init) = program.decode();
+    let (program_io, trace) = program.trace::<F>(&inputs);
+
     let my_id = config.my_id;
 
     if args.trace_parties && my_id == 0 {
@@ -136,7 +129,14 @@ pub fn run_party(
     )
     .unwrap();
 
-    let preprocessing = RV32IJoltVM::prover_preprocess(trace.len());
+    let preprocessing = RV32IJoltVM::prover_preprocess(
+        bytecode,
+        program_io.memory_layout,
+        memory_init,
+        1 << trace.len().next_power_of_two(),
+        1 << trace.len().next_power_of_two(),
+        1 << trace.len().next_power_of_two(),
+    );
 
     let mut prover =
         JoltRep3Prover::<F, C, M, Instructions, Subtables, PST13<E>, KeccakTranscript, _>::init(
@@ -156,11 +156,18 @@ pub fn run_party(
 pub fn run_coordinator(
     args: Args,
     config: NetworkConfig,
-    trace: Vec<JoltTraceStep<F, Instructions>>,
-    program_io: JoltDevice,
+    mut program: host::Program,
+    inputs: Vec<u8>,
     log_num_workers_per_party: usize,
     log_num_pub_workers: usize,
 ) -> Result<()> {
+    let (bytecode, memory_init) = program.decode();
+    let (program_io, trace) = program.trace::<F>(&inputs);
+
+    if config.is_coordinator {
+        print_used_instructions(&trace);
+    }
+
     let num_inputs = trace.len();
     if args.solve_witness {
         tracing::info!("Witness solving enabled");
@@ -169,7 +176,14 @@ pub fn run_coordinator(
     }
 
     let preprocessing: JoltProverPreprocessing<C, F, PST13<E>, KeccakTranscript> =
-        RV32IJoltVM::prover_preprocess(1 << num_inputs.next_power_of_two());
+        RV32IJoltVM::prover_preprocess(
+            bytecode,
+            program_io.memory_layout.clone(),
+            memory_init,
+            1 << num_inputs.next_power_of_two(),
+            1 << num_inputs.next_power_of_two(),
+            1 << num_inputs.next_power_of_two(),
+        );
 
     let mut network = Rep3QuicNetCoordinator::new(
         config.clone(),
@@ -266,10 +280,12 @@ pub fn run_coordinator(
     Ok(())
 }
 
-fn print_used_instructions<F: JoltField>(instruction_trace: &[Option<RV32I<F>>]) {
+fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
+    instruction_trace: &[JoltTraceStep<F, Instructions>],
+) {
     let opcodes_used = instruction_trace
         .par_iter()
-        .filter_map(|op| match op {
+        .filter_map(|step| match &step.instruction_lookup {
             Some(op) => Some(op.name()),
             None => None,
         })

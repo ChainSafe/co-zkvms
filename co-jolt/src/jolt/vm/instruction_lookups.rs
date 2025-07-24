@@ -19,7 +19,7 @@ use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::utils::{errors::ProofVerifyError, math::Math, transcript::{AppendToTranscript, Transcript}};
-use crate::{
+use jolt_core::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,

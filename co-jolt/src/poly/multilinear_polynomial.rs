@@ -1,17 +1,21 @@
-use std::ops::Index;
-
-use crate::poly::rep3_poly::Rep3DensePolynomial;
+use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::PolyDegree;
 use crate::utils::element::SharedOrPublic;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use jolt_core::{field::JoltField, poly::compact_polynomial::CompactPolynomial};
+use jolt_core::{
+    field::{JoltField, OptimizedMul},
+    poly::compact_polynomial::{CompactPolynomial, SmallScalar},
+};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::iter::IntoParallelIterator;
+
+use rayon::prelude::*;
 
 // pub type MultilinearPolynomial<F> = DensePolynomial<F>;
 
@@ -54,6 +58,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    pub fn from_shared_evals(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        Self::shared(Rep3DensePolynomial::new(evals))
+    }
+
     pub fn as_public(&self) -> &MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly,
@@ -84,24 +92,17 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Ok(MultilinearPolynomial::from(a))
     }
 
-    #[inline]
-    pub fn sumcheck_evals(
-        &self,
-        index: usize,
-        degree: usize,
-        order: BindingOrder,
-    ) -> Vec<SharedOrPublic<F>> {
+    pub fn dot_product_with_public(&self, other: &[F]) -> SharedOrPublic<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
-                .sumcheck_evals(index, degree, order)
-                .into_iter()
-                .map(|x| x.into())
-                .collect(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly
-                .sumcheck_evals(index, degree, order)
-                .into_iter()
-                .map(|x| x.into())
-                .collect(),
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.dot_product(other).into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.dot_product_with_public(other).into(),
+        }
+    }
+
+    pub fn get_coeff(&self, index: usize) -> SharedOrPublic<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_coeff(index).into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly[index].into(),
         }
     }
 
@@ -134,6 +135,125 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .iter()
             .map(|poly| Self::public(poly.clone()))
             .collect()
+    }
+
+    /// Multiplies the polynomial's coefficient at `index` by a field element.
+    pub fn scale_coeff(
+        &self,
+        index: usize,
+        scaling_factor: F,
+        scaling_factor_r2_adjusted: F,
+    ) -> SharedOrPublic<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => SharedOrPublic::Public(
+                poly.scale_coeff(index, scaling_factor, scaling_factor_r2_adjusted),
+            ),
+            Rep3MultilinearPolynomial::Shared(poly) => {
+                SharedOrPublic::Shared(rep3::arithmetic::mul_public(poly[index], scaling_factor))
+            }
+        }
+    }
+
+    pub fn linear_combination(
+        polynomials: &[&Self],
+        coefficients: &[F],
+        party_id: PartyID,
+    ) -> Self {
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        let max_length = polynomials.iter().map(|poly| poly.len()).max().unwrap();
+        let num_chunks = rayon::current_num_threads()
+            .next_power_of_two()
+            .min(max_length);
+        let chunk_size = (max_length / num_chunks).max(1);
+
+        // If any of the polynomials is shared, the resulting polynomial will be shared
+        let result_is_shared = polynomials
+            .iter()
+            .any(|poly| matches!(poly, Rep3MultilinearPolynomial::Shared(_)));
+
+        let lc_coeffs: Vec<SharedOrPublic<F>> = (0..num_chunks)
+            .into_par_iter()
+            .flat_map_iter(|chunk_index| {
+                let index = chunk_index * chunk_size;
+                let mut chunk = vec![SharedOrPublic::Public(F::zero()); chunk_size];
+
+                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
+                    let poly_len = poly.len();
+                    if index >= poly_len {
+                        continue;
+                    }
+
+                    match poly {
+                        Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                            MultilinearPolynomial::LargeScalars(poly) => {
+                                debug_assert!(!poly.is_bound());
+                                let poly_evals = &poly.evals_ref()[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(
+                                        poly_eval.mul_01_optimized(*coeff),
+                                        party_id,
+                                    );
+                                }
+                            }
+                            MultilinearPolynomial::U8Scalars(poly) => {
+                                let poly_evals = &poly.coeffs[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                            MultilinearPolynomial::U16Scalars(poly) => {
+                                let poly_evals = &poly.coeffs[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                            MultilinearPolynomial::U32Scalars(poly) => {
+                                let poly_evals = &poly.coeffs[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                            MultilinearPolynomial::U64Scalars(poly) => {
+                                let poly_evals = &poly.coeffs[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                            MultilinearPolynomial::I64Scalars(poly) => {
+                                let poly_evals = &poly.coeffs[index..];
+                                for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                        },
+                        Rep3MultilinearPolynomial::Shared(poly) => {
+                            let poly_evals = &poly.evals_ref()[index..];
+                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
+                                rlc.add_shared_assign(
+                                    rep3::arithmetic::mul_public(*poly_eval, *coeff),
+                                    party_id,
+                                );
+                            }
+                        }
+                    }
+                }
+                chunk
+            })
+            .collect();
+
+        if result_is_shared {
+            Rep3MultilinearPolynomial::from_shared_evals(
+                lc_coeffs.into_par_iter().map(|x| x.as_shared()).collect(),
+            )
+        } else {
+            Rep3MultilinearPolynomial::public(MultilinearPolynomial::from(
+                lc_coeffs
+                    .into_par_iter()
+                    .map(|x| x.as_public())
+                    .collect::<Vec<F>>(),
+            ))
+        }
     }
 }
 
@@ -181,6 +301,67 @@ impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim(),
         }
+    }
+}
+
+impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for Rep3MultilinearPolynomial<F> {
+    fn evaluate(&self, r: &[F]) -> SharedOrPublic<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.evaluate(r).into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.evaluate(r).into(),
+        }
+    }
+
+    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+
+        let evals: Vec<_> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                Rep3MultilinearPolynomial::Public {
+                    poly: MultilinearPolynomial::LargeScalars(poly),
+                    ..
+                } => SharedOrPublic::Public(poly.evaluate_at_chi_low_optimized(&eq)),
+                Rep3MultilinearPolynomial::Public { poly, .. } => {
+                    SharedOrPublic::Public(poly.dot_product(&eq))
+                }
+                Rep3MultilinearPolynomial::Shared(poly) => {
+                    SharedOrPublic::Additive(poly.evaluate_at_chi(&eq))
+                }
+            })
+            .collect();
+        (evals, eq)
+    }
+
+    #[inline]
+    fn sumcheck_evals(
+        &self,
+        index: usize,
+        degree: usize,
+        order: BindingOrder,
+    ) -> Vec<SharedOrPublic<F>> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+                .sumcheck_evals(index, degree, order)
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly
+                .sumcheck_evals(index, degree, order)
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
+        }
+    }
+}
+
+impl<F: JoltField> PolyDegree for Rep3MultilinearPolynomial<F> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn get_num_vars(&self) -> usize {
+        self.get_num_vars()
     }
 }
 

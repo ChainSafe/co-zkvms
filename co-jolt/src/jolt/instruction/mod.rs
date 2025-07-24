@@ -254,11 +254,11 @@ macro_rules! instruction_set {
         impl<F: JoltField> Rep3JoltInstructionSet<F> for $enum_name<F> {}
 
         // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-        // impl<F: JoltField> Default for $enum_name<F> {
-        //     fn default() -> Self {
-        //         $enum_name::iter().collect::<Vec<_>>()[0]
-        //     }
-        // }
+        impl<F: JoltField> Default for $enum_name<F> {
+            fn default() -> Self {
+                $enum_name::iter().collect::<Vec<_>>()[0].clone()
+            }
+        }
     };
 }
 
@@ -284,29 +284,29 @@ pub mod sub;
 pub mod sw;
 pub mod xor;
 
-instruction_set!(
-  TestLookups,
-  Range256: range_check::RangeLookup<256, F>,
-  Range320: range_check::RangeLookup<320, F>
-);
+// instruction_set!(
+//   TestLookups,
+//   Range256: range_check::RangeLookup<256, F>,
+//   Range320: range_check::RangeLookup<320, F>
+// );
 
-impl<F: JoltField> TryFrom<&ELFInstruction> for TestLookups<F> {
-    type Error = &'static str;
+// impl<F: JoltField> TryFrom<&ELFInstruction> for TestLookups<F> {
+//     type Error = &'static str;
 
-    fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
-        unimplemented!()
-    }
-}
+//     fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
+//         unimplemented!()
+//     }
+// }
 
-instruction_set!(
-  TestInstructions,
-  XOR: xor::XORInstruction<F>
-);
+// instruction_set!(
+//   TestInstructions,
+//   XOR: xor::XORInstruction<F>
+// );
 
-impl<F: JoltField> TryFrom<&ELFInstruction> for TestInstructions<F> {
-    type Error = &'static str;
+// impl<F: JoltField> TryFrom<&ELFInstruction> for TestInstructions<F> {
+//     type Error = &'static str;
 
-    fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
-        unimplemented!()
-    }
-}
+//     fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
+//         unimplemented!()
+//     }
+// }

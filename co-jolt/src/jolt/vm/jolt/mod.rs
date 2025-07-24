@@ -5,21 +5,19 @@ pub mod worker;
 use std::{collections::BTreeMap, iter, marker::PhantomData};
 
 use crate::{
-    lasso::memory_checking::StructuredPolynomialData,
-    poly::{
+    jolt::vm::bytecode::BytecodeRowExt, lasso::memory_checking::StructuredPolynomialData, poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
             ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
         },
-    },
-    utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
+    }, utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript}
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{MemoryLayout, MemoryOp, NUM_CIRCUIT_FLAGS},
 };
-use jolt_tracer::JoltDevice;
+use jolt_tracer::{ELFInstruction, JoltDevice};
 use serde::{Deserialize, Serialize};
 use snarks_core::math::Math;
 use strum::EnumCount;
@@ -52,25 +50,10 @@ pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
-    _field: PhantomData<F>,
+    pub(crate) _field: PhantomData<F>,
 }
 
 impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, InstructionSet> {
-    pub fn from_instruction_lookup(instruction_lookup: Option<InstructionSet>) -> Self {
-        Self {
-            instruction_lookup,
-            bytecode_row: BytecodeRow::no_op(0),
-            memory_ops: [
-                MemoryOp::noop_read(),
-                MemoryOp::noop_read(),
-                MemoryOp::noop_write(),
-                MemoryOp::noop_read(),
-            ],
-            circuit_flags: [false; NUM_CIRCUIT_FLAGS],
-            _field: PhantomData,
-        }
-    }
-
     fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,
@@ -153,11 +136,11 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn verifier_preprocess(
-        // bytecode: Vec<ELFInstruction>,
-        // memory_layout: MemoryLayout,
-        // memory_init: Vec<(u64, u8)>,
-        // max_bytecode_size: usize,
-        // max_memory_size: usize,
+        bytecode: Vec<ELFInstruction>,
+        memory_layout: MemoryLayout,
+        memory_init: Vec<(u64, u8)>,
+        max_bytecode_size: usize,
+        max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         // icicle::icicle_init();
@@ -172,33 +155,33 @@ where
             ProofTranscript,
         >::preprocess();
 
-        // let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
+        let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
-        // let bytecode_rows: Vec<BytecodeRow> = bytecode
-        //     .into_iter()
-        //     .flat_map(|instruction| match instruction.opcode {
-        //         // tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
-        //         // tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
-        //         _ => vec![instruction],
-        //     })
-        //     .map(|instruction| BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction))
-        //     .collect();
-        // let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .into_iter()
+            .flat_map(|instruction| match instruction.opcode {
+                // tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
+                // tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
+                _ => vec![instruction],
+            })
+            .map(|instruction| BytecodeRow::from_instruction_ext::<F, Self::InstructionSet>(&instruction))
+            .collect();
+        let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
         let max_poly_len: usize = [
-            // (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
+            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
-            // max_memory_size.next_power_of_two(),
+            max_memory_size.next_power_of_two(),
             M,
         ]
         .into_iter()
@@ -209,40 +192,30 @@ where
 
         JoltVerifierPreprocessing {
             generators,
-            memory_layout: Default::default(),
+            memory_layout,
             instruction_lookups: instruction_lookups_preprocessing,
-            bytecode: BytecodePreprocessing::<F> {
-                code_size: 0,
-                v_init_final: iter::repeat_with(|| {
-                    MultilinearPolynomial::<F>::from(vec![F::ZERO; 1 << 1])
-                })
-                .take(6)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
-                virtual_address_map: BTreeMap::new(),
-            },
-            read_write_memory: Default::default(),
+            bytecode: bytecode_preprocessing,
+            read_write_memory: read_write_memory_preprocessing,
         }
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn prover_preprocess(
-        // bytecode: Vec<ELFInstruction>,
-        // memory_layout: MemoryLayout,
-        // memory_init: Vec<(u64, u8)>,
-        // max_bytecode_size: usize,
-        // max_memory_size: usize,
+        bytecode: Vec<ELFInstruction>,
+        memory_layout: MemoryLayout,
+        memory_init: Vec<(u64, u8)>,
+        max_bytecode_size: usize,
+        max_memory_size: usize,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
         let shared = Self::verifier_preprocess(
-            // bytecode,
-            // memory_layout,
-            // memory_init,
-            // max_bytecode_size,
-            // max_memory_size,
+            bytecode,
+            memory_layout,
+            memory_init,
+            max_bytecode_size,
+            max_memory_size,
             max_trace_length,
         );
         JoltProverPreprocessing {

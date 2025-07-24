@@ -1,12 +1,3 @@
-use crate::{
-    field::JoltField,
-    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
-    utils::{
-        errors::ProofVerifyError,
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly_commit::multilinear_pc::{
@@ -15,6 +6,15 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
+use jolt_core::{
+    field::JoltField,
+    poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        transcript::{AppendToTranscript, Transcript},
+    },
+};
 use jolt_core::{
     poly::multilinear_polynomial::MultilinearPolynomial, utils::transcript::KeccakTranscript,
 };
@@ -511,14 +511,15 @@ mod tests {
 
         assert_eq!(combined, agg_commitment);
 
-        let r = iter::repeat_with(|| F::rand(&mut rng)).take(3).collect_vec();
+        let r = iter::repeat_with(|| F::rand(&mut rng))
+            .take(3)
+            .collect_vec();
 
         let pf = PST13::prove(&setup, &agg_poly, &r, &mut ProofTranscript::new(b"test"));
         let opening = agg_poly.evaluate(&r);
         let mut transcript = ProofTranscript::new(b"test");
         PST13::<E>::verify(&pf, &setup, &mut transcript, &r, &opening, &agg_commitment).unwrap();
     }
-
 
     // #[test]
     // fn test_open_plain() {

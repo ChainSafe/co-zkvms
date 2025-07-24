@@ -4,6 +4,7 @@ use core::str::FromStr;
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
+    marker::PhantomData,
     path::PathBuf,
     process::Command,
 };
@@ -20,7 +21,11 @@ use jolt_common::{
 };
 pub use jolt_tracer::{self as tracer, ELFInstruction};
 
-use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
+use crate::jolt::vm::{
+    bytecode::{BytecodeRow, BytecodeRowExt},
+    rv32i_vm::RV32I,
+    JoltTraceStep,
+};
 
 // use self::analyze::ProgramSummary;
 use jolt_core::{
@@ -164,7 +169,10 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: JoltField>(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<Option<RV32I<F>>>) {
+    pub fn trace<F: JoltField>(
+        &mut self,
+        inputs: &[u8],
+    ) -> (JoltDevice, Vec<JoltTraceStep<F, RV32I<F>>>) {
         self.build(DEFAULT_TARGET_DIR);
 
         let elf = self.elf.as_ref().unwrap();
@@ -180,7 +188,7 @@ impl Program {
         };
         let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
 
-        let instructions = raw_trace
+        let trace = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
                 // tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
@@ -197,10 +205,22 @@ impl Program {
                 // tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
-            .map(|row| RV32I::try_from(&row.instruction).ok())
+            .map(|row| {
+                let instruction_lookup = RV32I::try_from(&row.instruction).ok();
+
+                JoltTraceStep {
+                    instruction_lookup,
+                    bytecode_row: BytecodeRow::from_instruction_ext::<F, RV32I<F>>(
+                        &row.instruction,
+                    ),
+                    memory_ops: (&row).into(),
+                    circuit_flags: row.instruction.to_circuit_flags(),
+                    _field: PhantomData,
+                }
+            })
             .collect();
 
-        (io_device, instructions)
+        (io_device, trace)
     }
 
     // pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

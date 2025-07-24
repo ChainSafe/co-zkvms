@@ -2,22 +2,22 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::element::SharedOrPublic;
-use itertools::multizip;
-use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-use jolt_core::subprotocols::sumcheck::Bindable;
-use jolt_core::utils::thread::drop_in_background_thread;
+use jolt_core::poly::multilinear_polynomial::{
+    BindingOrder, PolynomialBinding, PolynomialEvaluation,
+};
+use jolt_core::poly::{
+    dense_mlpoly::DensePolynomial,
+    unipoly::{CompressedUniPoly, UniPoly},
+};
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
-use mpc_net::mpc_star::MpcStarNetWorker;
 use rayon::prelude::*;
-use tracing::trace_span;
 
-use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
+use crate::poly::{PolyDegree, Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use jolt_core::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
 pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -32,7 +32,11 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3BatchedCubicSumcheck::prove_sumcheck",
+        level = "trace"
+    )]
     fn coordinate_prove_sumcheck(
         &self,
         num_rounds: usize,
@@ -83,7 +87,11 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     ) -> UniPoly<F>;
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
-    #[tracing::instrument(skip_all, name = "Rep3BatchedCubicSumcheck::prove_sumcheck_worker", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3BatchedCubicSumcheck::prove_sumcheck_worker",
+        level = "trace"
+    )]
     fn prove_sumcheck(
         &mut self,
         claim: &F,
@@ -157,20 +165,26 @@ where
 }
 
 #[tracing::instrument(skip_all, name = "sumcheck::prove_arbitrary_worker")]
-pub fn prove_arbitrary_worker<F: JoltField, Func, Network: Rep3NetworkWorker>(
-    claim: &F,
+pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
+    claim: &AdditiveShare<F>,
     num_rounds: usize,
-    polys: &mut Vec<Rep3MultilinearPolynomial<F>>,
+    polys: &mut Vec<Poly>,
     comb_func: Func,
     combined_degree: usize,
     io_ctx: &mut IoContext<Network>,
 ) -> eyre::Result<(Vec<F>, Vec<F>)>
 where
-    Func: Fn(&[SharedOrPublic<F>]) -> F + std::marker::Sync,
+    F: JoltField,
+    Poly: PolynomialBinding<F>
+        + PolynomialEvaluation<F, SharedOrPublic<F>>
+        + PolyDegree
+        + Send
+        + Sync,
+    Func: Fn(&[SharedOrPublic<F>]) -> AdditiveShare<F> + std::marker::Sync,
+    Network: Rep3NetworkWorker,
 {
     let mut previous_claim = *claim;
     let mut r: Vec<F> = Vec::new();
-    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _round in 0..num_rounds {
         // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)

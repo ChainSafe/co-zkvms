@@ -1,27 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::{
-    field::JoltField,
-    poly::{
-        dense_interleaved_poly::Rep3DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial, opening_proof::Rep3ProverOpeningAccumulator, unipoly::UniPoly,
-    },
-    subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
-    utils::{
-        math::Math,
-        transcript::{AppendToTranscript, Transcript},
-    },
-};
 use ark_serialize::*;
 use eyre::Context;
 use jolt_core::{
+    field::JoltField,
+    poly::dense_mlpoly::DensePolynomial,
+    utils::{math::Math, transcript::Transcript},
+};
+use jolt_core::{
     poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
-    subprotocols::{
-        grand_product::{
-            BatchedGrandProduct, BatchedGrandProductLayerProof, BatchedGrandProductProof,
-        },
-        sumcheck::BatchedCubicSumcheck,
-    },
+    subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
     utils::thread::drop_in_background_thread,
 };
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
@@ -29,15 +17,19 @@ use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
-        network::{IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker},
+        network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker},
     },
 };
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+
 use rayon::prelude::*;
 
-use super::sumcheck::{self};
-use crate::poly::Rep3DensePolynomial;
-
+use crate::{
+    poly::{
+        dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
+        opening_proof::Rep3ProverOpeningAccumulator,
+    },
+    subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
+};
 
 pub trait Rep3BatchedGrandProduct<F, PCS, ProofTranscript, Network: Rep3NetworkCoordinator>:
     Sized
@@ -71,8 +63,7 @@ where
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        let outputs =
-            additive::combine_field_element_vec::<F>(network.receive_responses()?);
+        let outputs = additive::combine_field_element_vec::<F>(network.receive_responses()?);
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());

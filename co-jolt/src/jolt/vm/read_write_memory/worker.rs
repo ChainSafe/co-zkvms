@@ -182,7 +182,7 @@ where
             &program_io.memory_layout,
         )] = program_io.panic;
 
-        let mut sumcheck_polys = vec![
+        let mut sumcheck_polys: Vec<Rep3MultilinearPolynomial<F>> = vec![
             eq.into(),
             MultilinearPolynomial::from(io_witness_range).into(),
             polynomials.v_final.clone().into(),
@@ -192,13 +192,13 @@ where
         // eq * io_witness_range * (v_final - v_io)
         let output_check_fn = |vals: &[SharedOrPublic<F>]| -> F {
             rep3::arithmetic::mul_public(
-                *vals[2].as_shared() - *vals[3].as_shared(),
-                *vals[0].as_public() * *vals[1].as_public(),
+                *vals[2].as_shared_ref() - *vals[3].as_shared_ref(),
+                *vals[0].as_public_ref() * *vals[1].as_public_ref(),
             )
             .into_additive()
         };
 
-        let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker::<F, _, Network>(
+        let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker(
             &F::zero(),
             num_rounds,
             &mut sumcheck_polys,
