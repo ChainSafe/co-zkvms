@@ -1,11 +1,15 @@
+use std::marker::PhantomData;
+
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
+use crate::r1cs::inputs::Rep3R1CSPolynomials;
 use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
+use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupStuff, InstructionLookupsPreprocessing,
@@ -17,6 +21,8 @@ use jolt_core::jolt::vm::timestamp_range_check::{
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
 use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::r1cs::builder::CombinedUniformBuilder;
+use jolt_core::r1cs::inputs::ConstraintInput;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::network::{
@@ -33,6 +39,7 @@ use crate::jolt::vm::JoltTraceStep;
 pub struct JoltWitnessMeta {
     pub trace_length: usize,
     pub read_write_memory_size: usize,
+    pub memory_layout: MemoryLayout,
 }
 
 pub type Rep3JoltPolynomials<F: JoltField> = JoltStuff<Rep3MultilinearPolynomial<F>>;
@@ -81,7 +88,8 @@ where
             instruction_lookups,
             read_write_memory,
             timestamp_range_check,
-            ..
+            r1cs,
+            bytecode,
         } = polynomials;
 
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_secret_shares(
@@ -102,17 +110,21 @@ where
             rng,
         );
 
+        let r1cs = Rep3R1CSPolynomials::generate_secret_shares(&NoPreprocessing, r1cs, rng);
+
         let jolt_polys_shares = itertools::multizip((
             instruction_lookups,
             read_write_memory,
             timestamp_range_check,
+            r1cs,
         ))
         .into_iter()
         .map(
-            |(instruction_lookups, read_write_memory, timestamp_range_check)| Self {
+            |(instruction_lookups, read_write_memory, timestamp_range_check, r1cs)| Self {
                 instruction_lookups,
                 read_write_memory,
                 timestamp_range_check,
+                r1cs,
                 ..Default::default()
             },
         )
@@ -242,6 +254,11 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F>;
 
     fn get_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F>;
+
+    fn compute_aux<const C: usize, I: ConstraintInput>(
+        &mut self,
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+    );
 }
 
 impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
@@ -346,6 +363,19 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
             },
             ..Default::default()
         }
+    }
+
+    fn compute_aux<const C: usize, I: ConstraintInput>(
+        &mut self,
+        constraint_builder: &CombinedUniformBuilder<C, F, I>,
+    ) {
+        // use crate::r1cs::spartan::worker::compute_aux_poly;
+        // let flattened_vars = I::flatten::<C>();
+        // for (aux_index, aux_compute) in constraint_builder.uniform_builder.aux_computations.iter() {
+        //     *flattened_vars[*aux_index].get_ref_mut(self) =
+        //         aux_compute.compute_aux_poly::<C, I>(self, constraint_builder.uniform_repeat);
+        // }
+        todo!()
     }
 }
 

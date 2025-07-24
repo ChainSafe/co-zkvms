@@ -1,4 +1,5 @@
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_core::r1cs::builder::AuxComputation;
 use jolt_core::r1cs::spartan::UniformSpartanProof;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
@@ -49,15 +50,17 @@ use jolt_core::r1cs::inputs::ConstraintInput;
 
 use rayon::prelude::*;
 
-pub struct Rep3UniformSpartanProver<F, PCS, ProofTranscript, I, Network>
-where
-    F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
-    ProofTranscript: Transcript,
-    I: ConstraintInput,
-    Network: Rep3NetworkWorker,
-{
+#[derive(Debug, Default)]
+pub struct Rep3UniformSpartanProver<F, PCS, ProofTranscript, I, Network> {
     _marker: PhantomData<(F, PCS, ProofTranscript, I, Network)>,
+}
+
+impl<F, PCS, ProofTranscript, I, Network> Rep3UniformSpartanProver<F, PCS, ProofTranscript, I, Network> {
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<F, PCS, ProofTranscript, I, Network>
@@ -246,13 +249,16 @@ where
 
         // Shift sumcheck evaluations: evaluate z on ry_var
         let (shift_sumcheck_witness_evals, chis2) =
-        Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
+            Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
         opening_accumulator.append(
             &flattened_polys,
             DensePolynomial::new(chis2),
             shift_sumcheck_r.to_vec(),
-            &shift_sumcheck_witness_evals.iter().map(|x| x.into_additive(party_id)).collect::<Vec<_>>(),
+            &shift_sumcheck_witness_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
             io_ctx,
         );
 
@@ -299,3 +305,59 @@ pub fn compute_spartan_Az_Bz_Cz<const C: usize, F: JoltField, I: ConstraintInput
         party_id,
     )
 }
+
+// pub fn compute_aux_poly<const C: usize, I: ConstraintInput, F: JoltField>(
+//     aux_compute: &AuxComputation<F>,
+//     jolt_polynomials: &Rep3JoltPolynomials<F>,
+//     poly_len: usize,
+//     party_id: PartyID,
+// ) -> MultilinearPolynomial<F> {
+//     let flattened_polys: Vec<&Rep3MultilinearPolynomial<F>> = I::flatten::<C>()
+//         .iter()
+//         .map(|var| var.get_ref(jolt_polynomials))
+//         .collect();
+
+//     let mut aux_poly: Vec<i64> = vec![0; poly_len];
+//     let num_threads = rayon::current_num_threads();
+//     let chunk_size = poly_len.div_ceil(num_threads);
+//     let contains_negative_values = AtomicBool::new(false);
+
+//     aux_poly
+//         .par_chunks_mut(chunk_size)
+//         .enumerate()
+//         .for_each(|(chunk_index, chunk)| {
+//             chunk.iter_mut().enumerate().for_each(|(offset, result)| {
+//                 let global_index = chunk_index * chunk_size + offset;
+//                 let compute_inputs: Vec<_> = aux_compute
+//                     .symbolic_inputs
+//                     .iter()
+//                     .map(|lc| {
+//                         let mut input = SharedOrPublic::<F>::Public(F::zero());
+//                         for term in lc.terms().iter() {
+//                             match term.0 {
+//                                 Variable::Input(index) | Variable::Auxiliary(index) => {
+//                                     input.add_assign(flattened_polys[index]
+//                                         .get_coeff(global_index)
+//                                         .mul_public(F::from_i64(term.1)), party_id)
+//                                 }
+//                                 Variable::Constant => input.add_assign(F::from_i64(term.1), party_id),
+//                             }
+//                         }
+//                         input
+//                     })
+//                     .collect();
+//                 let aux_value = (self.compute)(&compute_inputs);
+//                 if aux_value.is_negative() {
+//                     contains_negative_values.store(true, Ordering::Relaxed);
+//                 }
+//                 *result = aux_value as i64;
+//             });
+//         });
+
+//     if contains_negative_values.into_inner() {
+//         MultilinearPolynomial::from(aux_poly)
+//     } else {
+//         let aux_poly: Vec<_> = aux_poly.into_iter().map(|x| x as u64).collect();
+//         MultilinearPolynomial::from(aux_poly)
+//     }
+// }

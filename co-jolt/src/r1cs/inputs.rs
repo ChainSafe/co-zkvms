@@ -4,13 +4,14 @@
     clippy::too_many_arguments
 )]
 
-use jolt_core::impl_r1cs_input_lc_conversions;
 use jolt_core::jolt::vm::{JoltCommitments, JoltStuff};
 use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing, StructuredPolynomialData};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::VerifierOpeningAccumulator;
-use jolt_core::r1cs::inputs::{AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff};
+use jolt_core::r1cs::inputs::{
+    AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
+};
 use jolt_core::utils::transcript::Transcript;
 
 use jolt_core::r1cs::key::UniformSpartanKey;
@@ -18,11 +19,14 @@ use jolt_core::r1cs::spartan::{SpartanError, UniformSpartanProof};
 use mpc_core::protocols::rep3::network::IoContext;
 
 use crate::field::JoltField;
+use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::jolt::vm::JoltTraceStep;
-use crate::poly::Rep3MultilinearPolynomial;
+use crate::poly::{
+    generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
+};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use jolt_common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
@@ -33,25 +37,67 @@ use strum_macros::EnumIter;
 
 pub type Rep3R1CSPolynomials<F: JoltField> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
 
-pub struct R1CSPreprocessing<F: JoltField, const C: usize, I: ConstraintInput>(PhantomData<(F, I)>);
-
-impl<F, const C: usize, I> Rep3Polynomials<F, R1CSPreprocessing<F, C, I>> for Rep3R1CSPolynomials<F>
+impl<F> Rep3Polynomials<F, NoPreprocessing> for Rep3R1CSPolynomials<F>
 where
     F: JoltField,
-    I: ConstraintInput,
 {
     type PublicPolynomials = R1CSPolynomials<F>;
 
     fn generate_secret_shares<R: rand::Rng>(
-        _preprocessing: &R1CSPreprocessing<F, C, I>,
+        _preprocessing: &NoPreprocessing,
         polynomials: Self::PublicPolynomials,
         rng: &mut R,
     ) -> Vec<Self> {
-        todo!()
+        let mut chunks_x_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_x, rng);
+        let mut chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
+        let AuxVariableStuff {
+            left_lookup_operand,
+            right_lookup_operand,
+            product,
+            relevant_y_chunks,
+            write_lookup_output_to_rd,
+            write_pc_to_rd,
+            next_pc_jump,
+            should_branch,
+            next_pc,
+        } = polynomials.aux;
+
+        let mut relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
+        let mut next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
+        let mut should_branch_shares = generate_poly_shares_rep3(&should_branch, rng);
+        let mut next_pc_shares = generate_poly_shares_rep3(&next_pc, rng);
+        (0..3)
+            .map(|i| Rep3R1CSPolynomials {
+                chunks_x: std::mem::take(&mut chunks_x_shares[i]),
+                chunks_y: std::mem::take(&mut chunks_y_shares[i]),
+                circuit_flags: Rep3MultilinearPolynomial::public_vec(
+                    polynomials.circuit_flags.to_vec(),
+                )
+                .try_into()
+                .unwrap(),
+                aux: AuxVariableStuff {
+                    left_lookup_operand: Rep3MultilinearPolynomial::public(
+                        left_lookup_operand.clone(),
+                    ),
+                    right_lookup_operand: Rep3MultilinearPolynomial::public(
+                        right_lookup_operand.clone(),
+                    ),
+                    product: Rep3MultilinearPolynomial::public(product.clone()),
+                    relevant_y_chunks: std::mem::take(&mut relevant_y_chunks_shares[i]),
+                    write_lookup_output_to_rd: Rep3MultilinearPolynomial::public(
+                        write_lookup_output_to_rd.clone(),
+                    ),
+                    write_pc_to_rd: Rep3MultilinearPolynomial::public(write_pc_to_rd.clone()),
+                    next_pc_jump: std::mem::take(&mut next_pc_jump_shares[i]),
+                    should_branch: std::mem::take(&mut should_branch_shares[i]),
+                    next_pc: std::mem::take(&mut next_pc_shares[i]),
+                },
+            })
+            .collect()
     }
 
     fn generate_witness_rep3<Instructions, Network>(
-        preprocessing: &R1CSPreprocessing<F, C, I>,
+        _preprocessing: &NoPreprocessing,
         trace: &mut [JoltTraceStep<F, Instructions>],
         M: usize,
         network: IoContext<Network>,
@@ -64,7 +110,7 @@ where
     }
 
     fn combine_polynomials(
-        preprocessing: &R1CSPreprocessing<F, C, I>,
+        _preprocessing: &NoPreprocessing,
         polynomials_shares: Vec<Self>,
     ) -> eyre::Result<Self::PublicPolynomials> {
         todo!()
@@ -72,7 +118,8 @@ where
 }
 
 pub trait R1CSPolynomialsExt<F: JoltField> {
-    fn new<const C: usize, const M: usize, InstructionSet: JoltInstructionSet<F>>(
+    #[tracing::instrument(skip_all, name = "R1CSPolynomials::generate_witness")]
+    fn generate_witness<const C: usize, const M: usize, InstructionSet: JoltInstructionSet<F>>(
         trace: &[JoltTraceStep<F, InstructionSet>],
     ) -> R1CSPolynomials<F> {
         let log_M = log2(M) as usize;
@@ -121,7 +168,6 @@ pub trait R1CSPolynomialsExt<F: JoltField> {
 
 impl<F: JoltField> R1CSPolynomialsExt<F> for R1CSPolynomials<F> {}
 
-
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, PartialEq, EnumIter)]
 pub enum JoltR1CSInputs<F: JoltField> {
@@ -152,8 +198,7 @@ pub enum JoltR1CSInputs<F: JoltField> {
     Aux(AuxVariable),
 }
 
-
-// impl_r1cs_input_lc_conversions!(JoltR1CSInputs<F>, 4);
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs<F>, 4);
 
 impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
     fn flatten<const C: usize>() -> Vec<Self> {
@@ -163,7 +208,9 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
                 Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
-                Self::InstructionFlags(_) => RV32I::<F>::iter().map(Self::InstructionFlags).collect(),
+                Self::InstructionFlags(_) => {
+                    RV32I::<F>::iter().map(Self::InstructionFlags).collect()
+                }
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
@@ -203,7 +250,8 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
             JoltR1CSInputs::ChunksY(i) => &jolt.r1cs.chunks_y[*i],
             JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
             JoltR1CSInputs::InstructionFlags(i) => {
-                &jolt.instruction_lookups.instruction_flags[<RV32I::<F> as JoltInstructionSet<F>>::enum_index(i)]
+                &jolt.instruction_lookups.instruction_flags
+                    [<RV32I<F> as JoltInstructionSet<F>>::enum_index(i)]
             }
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,

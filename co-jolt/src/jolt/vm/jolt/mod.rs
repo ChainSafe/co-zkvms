@@ -5,12 +5,15 @@ pub mod worker;
 use std::{collections::BTreeMap, iter, marker::PhantomData};
 
 use crate::{
-    jolt::vm::bytecode::BytecodeRowExt, lasso::memory_checking::StructuredPolynomialData, poly::{
+    jolt::vm::bytecode::BytecodeRowExt,
+    lasso::memory_checking::StructuredPolynomialData,
+    poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
             ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
         },
-    }, utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript}
+    },
+    utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::{
@@ -28,16 +31,18 @@ use crate::jolt::{
     subtable::JoltSubtableSet,
     vm::{instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32I},
 };
+use crate::r1cs::inputs::R1CSPolynomialsExt;
 use jolt_core::{
     field::JoltField,
-    jolt::vm::{
-        instruction_lookups::InstructionLookupsPreprocessing,
-        read_write_memory::ReadWriteMemoryPolynomials,
-        timestamp_range_check::TimestampValidityProof, JoltProverPreprocessing, JoltStuff,
-        JoltVerifierPreprocessing,
-    },
+    jolt::{instruction::VirtualInstructionSequence, vm::{
+        bytecode::BytecodeProof, instruction_lookups::InstructionLookupsPreprocessing, read_write_memory::ReadWriteMemoryPolynomials, timestamp_range_check::TimestampValidityProof, JoltProverPreprocessing, JoltStuff, JoltVerifierPreprocessing
+    }},
     poly::multilinear_polynomial::MultilinearPolynomial,
-    r1cs::inputs::ConstraintInput,
+    r1cs::{
+        constraints::R1CSConstraints,
+        inputs::{ConstraintInput, R1CSPolynomials},
+        spartan::{self, UniformSpartanProof},
+    },
 };
 use jolt_core::{
     jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
@@ -95,14 +100,14 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> Into<JoltTraceStepNati
 pub struct JoltProof<
     const C: usize,
     const M: usize,
-    // I,
+    I,
     F,
     PCS,
     InstructionSet,
     Subtables,
     ProofTranscript,
 > where
-    // I: ConstraintInput,
+    I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     InstructionSet: JoltInstructionSet<F>,
@@ -114,7 +119,7 @@ pub struct JoltProof<
     // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
-    // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
+    pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     // pub opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
 }
@@ -132,7 +137,7 @@ where
 {
     type InstructionSet: JoltInstructionSet<F>;
     type Subtables: JoltSubtableSet<F>;
-    // type Constraints: R1CSConstraints<C, F>;
+    type Constraints: R1CSConstraints<C, F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn verifier_preprocess(
@@ -157,24 +162,28 @@ where
 
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
+        use jolt_core::jolt::instruction;
+        use jolt_tracer as tracer;
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .into_iter()
             .flat_map(|instruction| match instruction.opcode {
-                // tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::REM => REMInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::SH => SHInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::SB => SBInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::LB => LBInstruction::<32>::virtual_sequence(instruction),
-                // tracer::RV32IM::LH => LHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::MULH => instruction::mulh::MULHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::MULHSU => instruction::mulhsu::MULHSUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::DIV => instruction::div::DIVInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::DIVU => instruction::divu::DIVUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::REM => instruction::rem::REMInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::REMU => instruction::remu::REMUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SH => instruction::sh::SHInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::SB => instruction::sb::SBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LBU => instruction::lbu::LBUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LHU => instruction::lhu::LHUInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LB => instruction::lb::LBInstruction::<32>::virtual_sequence(instruction),
+                tracer::RV32IM::LH => instruction::lh::LHInstruction::<32>::virtual_sequence(instruction),
                 _ => vec![instruction],
             })
-            .map(|instruction| BytecodeRow::from_instruction_ext::<F, Self::InstructionSet>(&instruction))
+            .map(|instruction| {
+                BytecodeRow::from_instruction_ext::<F, Self::InstructionSet>(&instruction)
+            })
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
@@ -241,7 +250,9 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        let trace: Vec<JoltTraceStepNative> = trace.into_iter().map(|step| step.into()).collect();
+        let r1cs = R1CSPolynomials::generate_witness::<C, M, Self::InstructionSet>(&trace);
+
+        let mut trace: Vec<JoltTraceStepNative> = trace.into_iter().map(|step| step.into()).collect();
 
         let read_write_memory = ReadWriteMemoryPolynomials::generate_witness(
             program_io,
@@ -250,24 +261,31 @@ where
         );
         let timestamp_range_check =
             TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(&read_write_memory);
+
+        let bytecode = BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
+            &preprocessing.bytecode,
+            &mut trace,
+        );
+
         JoltPolynomials {
             instruction_lookups,
             read_write_memory,
             timestamp_range_check,
-            ..Default::default()
+            r1cs,
+            bytecode,
         }
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
-        // program_io: JoltDevice,
+        program_io: JoltDevice,
         mut trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<
             C,
             M,
-            // <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             PCS,
             Self::InstructionSet,
@@ -342,34 +360,30 @@ where
         //     },
         // );
 
-        // let r1cs_builder = Self::Constraints::construct_constraints(
-        //     padded_trace_length,
-        //     program_io.memory_layout.input_start,
-        // );
-        // let spartan_key = spartan::UniformSpartanProof::<
-        //     C,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        //     F,
-        //     ProofTranscript,
-        // >::setup(&r1cs_builder, padded_trace_length);
+        let r1cs_builder = Self::Constraints::construct_constraints(
+            padded_trace_length,
+            program_io.memory_layout.input_start,
+        );
+        let spartan_key = spartan::UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >::setup(&r1cs_builder, padded_trace_length);
 
-        // let r1cs_polynomials = R1CSPolynomials::new::<
-        //     C,
-        //     M,
-        //     Self::InstructionSet,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        // >(&trace);
+        let r1cs_polynomials =
+            R1CSPolynomials::generate_witness::<C, M, Self::InstructionSet>(&trace);
 
         let mut jolt_polynomials = JoltPolynomials {
             // bytecode: bytecode_polynomials,
             // read_write_memory: memory_polynomials,
             // timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
-            // r1cs: r1cs_polynomials,
+            r1cs: r1cs_polynomials,
             ..Default::default()
         };
 
-        // r1cs_builder.compute_aux(&mut jolt_polynomials);
+        r1cs_builder.compute_aux(&mut jolt_polynomials);
 
         let jolt_commitments =
             jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing.shared);
@@ -414,19 +428,19 @@ where
         //     &mut transcript,
         // );
 
-        // let spartan_proof = UniformSpartanProof::<
-        //     C,
-        //     <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
-        //     F,
-        //     ProofTranscript,
-        // >::prove::<PCS>(
-        //     &r1cs_builder,
-        //     &spartan_key,
-        //     &jolt_polynomials,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )
-        // .expect("r1cs proof failed");
+        let spartan_proof = UniformSpartanProof::<
+            C,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            F,
+            ProofTranscript,
+        >::prove::<PCS>(
+            &r1cs_builder,
+            &spartan_key,
+            &jolt_polynomials,
+            &mut opening_accumulator,
+            &mut transcript,
+        )
+        .expect("r1cs proof failed");
 
         // Batch-prove all openings
         let opening_proof = opening_accumulator
@@ -439,7 +453,7 @@ where
             // bytecode: bytecode_proof,
             // read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
-            // r1cs: spartan_proof,
+            r1cs: spartan_proof,
             opening_proof,
             // opening_accumulator,
         };
@@ -460,7 +474,7 @@ where
         proof: JoltProof<
             C,
             M,
-            // <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             PCS,
             Self::InstructionSet,

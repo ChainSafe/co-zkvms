@@ -6,7 +6,7 @@ use co_jolt::{
         instruction::JoltInstructionSet,
         vm::{
             coordinator::JoltRep3,
-            rv32i_vm::{RV32IJoltVM, RV32I},
+            rv32i_vm::{RV32IJoltRep3Prover, RV32IJoltVM, RV32I},
             witness::{Rep3JoltPolynomials, Rep3Polynomials},
             worker::JoltRep3Prover,
             Jolt, JoltTraceStep,
@@ -141,7 +141,7 @@ pub fn run_party(
     );
 
     let mut prover =
-        JoltRep3Prover::<F, C, M, Instructions, Subtables, PST13<E>, KeccakTranscript, _>::init(
+        RV32IJoltRep3Prover::<F, PST13<E>, KeccakTranscript, _>::init(
             None,
             preprocessing,
             network,
@@ -194,20 +194,25 @@ pub fn run_coordinator(
     )
     .unwrap();
 
-    let meta = RV32IJoltVM::init_rep3(
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
-        Some((trace.clone(), program_io)),
+        Some((trace.clone(), program_io.clone())),
         &mut network,
     )?;
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
 
-    let (proof, commitments) = RV32IJoltVM::prove_rep3(meta, &preprocessing.shared, &mut network)?;
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(
+        meta,
+        &spartan_key,
+        &preprocessing.shared,
+        &mut network,
+    )?;
 
     if args.debug {
         let (proof_check, commitments_check) =
-            RV32IJoltVM::prove(trace.clone(), preprocessing.clone());
+            RV32IJoltVM::prove(program_io, trace.clone(), preprocessing.clone());
 
         for (i, (commitment, commitment_check)) in commitments
             .instruction_lookups

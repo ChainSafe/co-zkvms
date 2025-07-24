@@ -7,12 +7,14 @@ use crate::{
             ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
         },
     },
+    r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     subprotocols::commitment::DistributedCommitmentScheme,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
 use jolt_core::{
     jolt::vm::JoltVerifierPreprocessing,
+    r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
     utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
 use jolt_tracer::JoltDevice;
@@ -52,14 +54,26 @@ where
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         witness: Option<(Vec<JoltTraceStep<F, Self::InstructionSet>>, JoltDevice)>,
         network: &mut Network,
-    ) -> eyre::Result<JoltWitnessMeta> {
-        let meta = match witness {
+    ) -> eyre::Result<(
+        UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
+        JoltWitnessMeta,
+    )> {
+        let (spartan_key, meta) = match witness {
             Some((mut trace, program_io)) => {
                 let trace_length = trace.len();
+                let padded_trace_length = trace_length.next_power_of_two();
                 JoltTraceStep::pad(&mut trace);
                 let mut rng = test_rng();
-                let polynomials = Self::generate_witness(&preprocessing, trace, &program_io);
+                let mut polynomials = Self::generate_witness(&preprocessing, trace, &program_io);
+                let r1cs_builder = Self::Constraints::construct_constraints(
+                    padded_trace_length,
+                    program_io.memory_layout.input_start,
+                );
+                let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
+                r1cs_builder.compute_aux(&mut polynomials);
+                println!("computed aux");
                 let read_write_memory_size = polynomials.read_write_memory.v_final.len();
+                let memory_layout = program_io.memory_layout;
 
                 let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
                     &preprocessing,
@@ -75,27 +89,40 @@ where
                     .collect();
 
                 network.send_requests(witness_shares)?;
-                JoltWitnessMeta {
-                    trace_length,
-                    read_write_memory_size,
-                }
+                (
+                    spartan_key,
+                    JoltWitnessMeta {
+                        trace_length,
+                        read_write_memory_size,
+                        memory_layout,
+                    },
+                )
             }
-            None => network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?,
+            None => {
+                let meta = network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?;
+                let r1cs_builder = Self::Constraints::construct_constraints(
+                    meta.trace_length.next_power_of_two(),
+                    meta.memory_layout.input_start,
+                );
+                let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
+                (spartan_key, meta)
+            }
         };
 
-        Ok(meta)
+        Ok((spartan_key, meta))
     }
 
     #[tracing::instrument(skip_all, name = "Rep3Jolt::prove")]
     fn prove_rep3<Network: Rep3NetworkCoordinator>(
         meta: JoltWitnessMeta,
+        spartan_key: &UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,
     ) -> eyre::Result<(
         JoltProof<
             C,
             M,
-            // <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
+            <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
             PCS,
             Self::InstructionSet,
@@ -129,8 +156,6 @@ where
         //     trace_length,
         // );
 
-        // r1cs_builder.compute_aux(&mut jolt_polynomials);
-
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
         // transcript.append_scalar(&spartan_key.vk_digest);
@@ -151,12 +176,20 @@ where
             &mut transcript,
         )?;
 
+        let r1cs = UniformSpartanProof::prove_rep3::<PCS>(
+            &spartan_key,
+            &mut transcript,
+            network,
+        )
+        .expect("r1cs proof failed");
+
         let opening_proof =
             Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
 
         let jolt_proof = JoltProof {
             trace_length: 0,
             instruction_lookups,
+            r1cs,
             opening_proof,
         };
 

@@ -1,2 +1,2 @@
-mod coordinator;
-mod worker;
+pub mod coordinator;
+pub mod worker;

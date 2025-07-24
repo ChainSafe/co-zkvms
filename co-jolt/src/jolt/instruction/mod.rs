@@ -283,6 +283,12 @@ pub mod srl;
 pub mod sub;
 pub mod sw;
 pub mod xor;
+// pub mod mul;
+// pub mod mulhu;
+// pub mod mulu;
+// pub mod virtual_assert_halfword_alignment;
+// pub mod virtual_move;
+// pub mod virtual_movsign;
 
 // instruction_set!(
 //   TestLookups,

@@ -2,6 +2,7 @@ use crate::{
     jolt::vm::{
         jolt::witness::JoltWitnessMeta,
         read_write_memory::witness::{Rep3ProgramIO, Rep3ProgramIOInput},
+        rv32i_vm::RV32ISubtables,
     },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
@@ -10,6 +11,7 @@ use crate::{
             ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
         },
     },
+    r1cs::spartan::worker::Rep3UniformSpartanProver,
     subprotocols::commitment::DistributedCommitmentScheme,
     utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
@@ -33,13 +35,16 @@ use crate::jolt::{
         Jolt, JoltCommitments, JoltPolynomials, JoltProof, JoltTraceStep,
     },
 };
-use jolt_core::utils::transcript::AppendToTranscript;
 use jolt_core::{
     field::JoltField,
     jolt::vm::{JoltProverPreprocessing, JoltStuff, ProverDebugInfo},
     poly::multilinear_polynomial::MultilinearPolynomial,
-    r1cs::inputs::ConstraintInput,
+    r1cs::{
+        builder::CombinedUniformBuilder, constraints::JoltRV32IMConstraints,
+        inputs::ConstraintInput, key::UniformSpartanKey,
+    },
 };
+use jolt_core::{r1cs::constraints::R1CSConstraints, utils::transcript::AppendToTranscript};
 
 pub struct JoltRep3Prover<
     F,
@@ -47,28 +52,45 @@ pub struct JoltRep3Prover<
     const M: usize,
     Instructions,
     Subtables,
+    Constraints,
     PCS,
     ProofTranscript,
     Network,
 > where
     F: JoltField,
     PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    Constraints: R1CSConstraints<C, F>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
     pub io_ctx: IoContext<Network>,
     pub preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     pub polynomials: Rep3JoltPolynomials<F>,
+    pub r1cs_builder: CombinedUniformBuilder<C, F, Constraints::Inputs>,
+    pub spartan_key: UniformSpartanKey<C, <Constraints as R1CSConstraints<C, F>>::Inputs, F>,
+    pub program_io: Rep3ProgramIO<F>,
     pub trace_length: usize,
     _instruction_lookups: Rep3InstructionLookupsProver<C, M, F, Instructions, Subtables, Network>,
+    _spartan_prover:
+        Rep3UniformSpartanProver<F, PCS, ProofTranscript, Constraints::Inputs, Network>,
 }
 
-impl<F, const C: usize, const M: usize, Instructions, Subtables, PCS, ProofTranscript, Network>
-    JoltRep3Prover<F, C, M, Instructions, Subtables, PCS, ProofTranscript, Network>
+impl<
+        F,
+        const C: usize,
+        const M: usize,
+        Instructions,
+        Subtables,
+        Constraints,
+        PCS,
+        ProofTranscript,
+        Network,
+    > JoltRep3Prover<F, C, M, Instructions, Subtables, Constraints, PCS, ProofTranscript, Network>
 where
     F: JoltField,
     Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
+    Constraints: R1CSConstraints<C, F>,
     PCS: DistributedCommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
@@ -85,9 +107,12 @@ where
     {
         let mut io_ctx = IoContext::init(network).context("failed to initialize io context")?;
 
-        let (polynomials, program_io, trace_length) = match witness {
+        let generate_witness = witness.is_some();
+
+        let (mut polynomials, program_io, trace_length) = match witness {
             Some((mut trace, program_io)) => {
                 JoltTraceStep::pad(&mut trace);
+                let memory_layout = program_io.memory_layout;
 
                 let polynomials = Rep3JoltPolynomials::generate_witness_rep3(
                     &preprocessing.shared,
@@ -103,11 +128,13 @@ where
                 )?;
 
                 let trace_length = trace.len();
+                let padded_trace_length = trace_length.next_power_of_two();
 
                 if io_ctx.id == PartyID::ID0 {
                     let meta = JoltWitnessMeta {
                         trace_length,
                         read_write_memory_size: polynomials.read_write_memory.v_final.len(),
+                        memory_layout,
                     };
 
                     io_ctx.network.send_response(meta)?;
@@ -118,12 +145,26 @@ where
             None => io_ctx.network.receive_request()?,
         };
 
+        let r1cs_builder = Constraints::construct_constraints(
+            trace_length.next_power_of_two(),
+            program_io.memory_layout.input_start,
+        );
+        let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
+
+        if generate_witness {
+            polynomials.compute_aux::<C, Constraints::Inputs>(&r1cs_builder);
+        }
+
         Ok(Self {
             io_ctx,
             polynomials,
+            program_io,
             preprocessing,
             trace_length,
+            r1cs_builder,
+            spartan_key,
             _instruction_lookups: Rep3InstructionLookupsProver::new(),
+            _spartan_prover: Rep3UniformSpartanProver::new(),
         })
     }
 
@@ -168,6 +209,14 @@ where
             polynomials,
             &mut opening_accumulator,
             &preprocessing.shared.generators,
+            &mut self.io_ctx,
+        )?;
+
+        Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
+            &self.r1cs_builder,
+            &self.spartan_key,
+            polynomials,
+            &mut opening_accumulator,
             &mut self.io_ctx,
         )?;
 
