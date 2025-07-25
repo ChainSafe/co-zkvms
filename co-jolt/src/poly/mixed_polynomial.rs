@@ -16,7 +16,7 @@ use rayon::iter::IntoParallelIterator;
 use snarks_core::math::Math;
 
 pub struct MixedPolynomial<F: JoltField> {
-    evals: Vec<SharedOrPublic<F>>,
+    pub evals: Vec<SharedOrPublic<F>>,
     num_vars: usize,
     len: usize,
     party_id: PartyID,

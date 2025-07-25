@@ -238,7 +238,7 @@ where
         polys
             .par_iter_mut()
             .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-        previous_claim = next_claim;
+        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.id);
     }
 
     let final_evals = polys

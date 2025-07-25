@@ -54,14 +54,13 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
 
-        // println!("uniform_constraints: {:?}", uniform_constraints);
-
         let num_chunks = rayon::current_num_threads().next_power_of_two() * 16;
         let chunk_size = num_steps.div_ceil(num_chunks);
 
         // let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {
         let unbound_coeffs_shards_iter = (0..num_chunks).into_iter().map(|chunk_index| {
-            let mut coeffs: Vec<SparseCoefficient<SharedOrPublic<F>>> = Vec::with_capacity(chunk_size * padded_num_constraints * 3);
+            let mut coeffs: Vec<SparseCoefficient<SharedOrPublic<F>>> =
+                Vec::with_capacity(chunk_size * padded_num_constraints * 3);
             for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
                 // Uniform constraints
                 for (constraint_index, constraint) in uniform_constraints.iter().enumerate() {
@@ -76,16 +75,24 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     // Az
                     let mut az_coeff = SharedOrPublic::zero_public();
                     if !constraint.a.terms().is_empty() {
-                        az_coeff = constraint.a.evaluate_row_rep3_mixed(flattened_polynomials, step_index, party_id);
-                        if !az_coeff.is_zero_or_shared() {
+                        az_coeff = constraint.a.evaluate_row_rep3_mixed(
+                            flattened_polynomials,
+                            step_index,
+                            party_id,
+                        );
+                        if az_coeff.shared_or_not_zero() {
                             coeffs.push((global_index, az_coeff).into());
                         }
                     }
                     // Bz
                     let mut bz_coeff = SharedOrPublic::zero_public();
                     if !constraint.b.terms().is_empty() {
-                        bz_coeff = constraint.b.evaluate_row_rep3_mixed(flattened_polynomials, step_index, party_id);
-                        if !bz_coeff.is_zero_or_shared() {
+                        bz_coeff = constraint.b.evaluate_row_rep3_mixed(
+                            flattened_polynomials,
+                            step_index,
+                            party_id,
+                        );
+                        if bz_coeff.shared_or_not_zero() {
                             coeffs.push((global_index + 1, bz_coeff).into());
                         }
                     }
@@ -93,12 +100,18 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     // Cz = Az ⊙ Bz
 
                     match (az_coeff, bz_coeff) {
-                        (SharedOrPublic::Public(x), SharedOrPublic::Public(y)) if x.is_zero() && y.is_zero() => {
+                        (SharedOrPublic::Public(x), SharedOrPublic::Public(y))
+                            if x.is_zero() && y.is_zero() =>
+                        {
                             continue;
                         }
                         (SharedOrPublic::Shared(_), SharedOrPublic::Shared(_)) => {
                             // If both Az and Bz are shared, then Cz is also shared, to avoid communication we can compute Cz via evaluation
-                            let cz_coeff = constraint.c.evaluate_row_rep3_mixed(flattened_polynomials, step_index, party_id);
+                            let cz_coeff = constraint.c.evaluate_row_rep3_mixed(
+                                flattened_polynomials,
+                                step_index,
+                                party_id,
+                            );
                             coeffs.push((global_index + 2, cz_coeff.into()).into());
                         }
                         // otherwise we can compute Cz via multiplication Az ⊙ Bz
@@ -140,21 +153,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     );
                     let az_coeff = eq_a_eval.sub(&eq_b_eval, party_id);
                     coeffs.push((global_index, az_coeff).into());
-                    if !az_coeff.is_zero_or_shared() {
-
-                        // If Az != 0, then the condition must be false (i.e. Bz = 0)
-                        #[cfg(test)]
-                        {
-                            let bz_coeff = eval_offset_lc(
-                                &constraint.cond,
-                                flattened_polynomials,
-                                step_index,
-                                next_step_index,
-                            );
-                            assert_eq!(bz_coeff, 0, "Cross-step constraint {constraint_index} violated at step {step_index}");
-                        }
-                    }
-                     // If Az != 0 and not shared, then the condition must be false (i.e. Bz = 0)
+                    // If Az != 0 and not shared, then the condition must be false (i.e. Bz = 0)
                     if matches!(az_coeff, SharedOrPublic::Public(f) if !f.is_zero()) {
                         continue;
                     }
@@ -305,7 +304,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
                     if matches!((az_infty, bz_infty), (SharedOrPublic::Public(x), SharedOrPublic::Public(y)) if x.is_zero() && y.is_zero()) {
                         continue;
-
                     }
 
                     shard_eval_point_infty.add_assign(
@@ -317,13 +315,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             })
             .sum_for(party_id);
 
-        let quadratic_eval_at_infty_opened =
-            additive::open(quadratic_eval_at_infty.as_additive(), io_ctx)?;
-        // println!("quadratic_eval_at_infty: {:?}", quadratic_eval_at_infty_opened);
-        tracing::info!(
-            "quadratic_eval_at_infty: {:?}",
-            quadratic_eval_at_infty_opened
-        );
 
         let r_i = process_eq_sumcheck_round_worker(
             (F::zero(), quadratic_eval_at_infty.as_additive()),
@@ -540,15 +531,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         let az_eval_infty = az.1.sub(&az.0, party_id);
                         let bz_eval_infty = bz.1.sub(&bz.0, party_id);
 
-                        // inner_sums.0 += E_in_eval.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
-                        // inner_sums.1 +=
-                        //     E_in_eval.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
-                        // if matches!(az.0, SharedOrPublic::Additive(x)) {
-                        //     println!("az.0 is additive in eq_poly.E_in_current_len() != 1");
-                        // }
-                        // if matches!(bz.0, SharedOrPublic::Additive(x)) {
-                        //     println!("bz.0 is additive in eq_poly.E_in_current_len() != 1");
-                        // }
                         eval_point_0 +=
                             az.0.mul_mul_public(&bz.0, E_in_eval)
                                 .into_additive(party_id)

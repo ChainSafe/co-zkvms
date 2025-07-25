@@ -238,15 +238,15 @@ impl<F: JoltField> SharedOrPublic<F> {
     pub fn mul_mul_public(&self, other: &Self, public: F) -> Self {
         match (self, other) {
             (SharedOrPublic::Shared(x), SharedOrPublic::Shared(y)) => {
-                SharedOrPublic::Public(rep3::arithmetic::mul_mul_public(*x, *y, public))
+                SharedOrPublic::Additive(rep3::arithmetic::mul_mul_public(*x, *y, public))
             }
-            _ => self.mul(other).mul(&public.into()),
+            _ => self.mul(&other.mul(&public.into())),
         }
     }
 
-    pub fn is_zero_or_shared(&self) -> bool {
+    pub fn shared_or_not_zero(&self) -> bool {
         match self {
-            SharedOrPublic::Public(x) => x.is_zero(),
+            SharedOrPublic::Public(x) => !x.is_zero(),
             SharedOrPublic::Shared(_) => true,
             SharedOrPublic::Additive(_) => true,
         }

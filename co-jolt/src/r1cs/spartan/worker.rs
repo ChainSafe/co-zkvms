@@ -1,8 +1,10 @@
+use ark_ff::BigInteger;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::r1cs::builder::AuxComputation;
 use jolt_core::r1cs::spartan::UniformSpartanProof;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
+use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::network::IoContext;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
@@ -98,9 +100,11 @@ where
 
         let mut az_bz_cz_poly =
             compute_spartan_Az_Bz_Cz(constraint_builder, &flattened_polys, party_id);
-        let (outer_sumcheck_r, outer_sumcheck_claims) =
+
+        let (outer_sumcheck_r, _outer_sumcheck_claims) =
             prove_spartan_cubic_sumcheck(num_rounds_x, &mut eq_tau, &mut az_bz_cz_poly, io_ctx)?;
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+
         drop_in_background_thread((az_bz_cz_poly, eq_tau));
         drop(_guard);
         drop(span);
@@ -163,6 +167,7 @@ where
             bind_z.into_iter().chain(bind_shift_z.into_iter()).collect(),
             party_id,
         );
+    
         assert_eq!(poly_z.len(), poly_ABC.len());
 
         let num_rounds_inner_sumcheck = poly_ABC.len().log_2();

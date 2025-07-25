@@ -30,7 +30,7 @@ impl<F: JoltField> LinearCombinationExt<F> for LC {
                 Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
                     flattened_polynomials[var_index]
                         .get_coeff(row)
-                        .mul(&F::from_i64(term.1).into())
+                        .mul_public(F::from_i64(term.1))
                 }
                 Variable::Constant => F::from_i64(term.1).into(),
             })

@@ -41,7 +41,6 @@ pub fn coordinate_eq_sumcheck_round<
 
     // Compress and add to transcript
     let compressed_poly = cubic_poly.compress();
-    tracing::info!("compressed_poly: {:?}", compressed_poly);
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
@@ -81,7 +80,7 @@ pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker
     io_ctx.network.send_response(cubic_poly.as_vec())?;
 
     // Receive challenge and next claim
-    let (r_i, next_claim) = io_ctx.network.receive_request()?;
+    let (next_claim, r_i) = io_ctx.network.receive_request()?;
     r.push(r_i);
     *claim = additive::promote_to_trivial_share(next_claim, io_ctx.network.get_id());
 

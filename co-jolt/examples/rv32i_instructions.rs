@@ -124,16 +124,16 @@ pub fn run_party(
     //     return Ok(());
     // }
 
+    if args.debug {
+        return Ok(());
+    }
+
     let network = Rep3QuicMpcNetWorker::new_with_coordinator(
         config.clone(),
         log_num_workers_per_party,
         log_num_pub_workers,
     )
     .unwrap();
-
-    if args.debug {
-        return Ok(());
-    }
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
@@ -189,13 +189,6 @@ pub fn run_coordinator(
             1 << num_inputs.next_power_of_two(),
             1 << num_inputs.next_power_of_two(),
         );
-
-    let mut network = Rep3QuicNetCoordinator::new(
-        config.clone(),
-        log_num_workers_per_party,
-        log_num_pub_workers,
-    )
-    .unwrap();
 
     if args.debug {
         let (proof_check, commitments_check) =
@@ -266,6 +259,13 @@ pub fn run_coordinator(
             .context("while verifying Lasso proof")?;
         return Ok(());
     }
+
+    let mut network = Rep3QuicNetCoordinator::new(
+        config.clone(),
+        log_num_workers_per_party,
+        log_num_pub_workers,
+    )
+    .unwrap();
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
