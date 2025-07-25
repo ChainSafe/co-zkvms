@@ -128,7 +128,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()
@@ -137,7 +140,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

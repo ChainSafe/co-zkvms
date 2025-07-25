@@ -114,7 +114,6 @@ where
         drop(_guard);
         drop(span);
 
-
         let claimed_witness_evals =
             Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 

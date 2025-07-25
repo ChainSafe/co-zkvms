@@ -11,8 +11,8 @@ use mpc_core::protocols::rep3::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SBInstruction<F: JoltField>(pub Rep3Operand<F>);
@@ -97,12 +97,16 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SBInstruction<F> {
         unimplemented!()
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match &self.0 {
             Rep3Operand::Binary(x) => rep3::conversion::b2a_selector(
                 &rep3::binary::and_with_public(x, &0xff_u64.into()),
                 io_ctx,
-            ).context("while computing SBInstruction output"),
+            )
+            .context("while computing SBInstruction output"),
             _ => panic!("SBInstruction::output called with non-binary operands"),
         }
     }

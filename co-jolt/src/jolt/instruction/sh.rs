@@ -4,13 +4,15 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SHInstruction<F: JoltField>(pub Rep3Operand<F>);
@@ -34,11 +36,7 @@ impl<F: JoltField> JoltInstruction<F> for SHInstruction<F> {
         1
     }
 
-    fn subtables(
-        &self,
-        C: usize,
-        M: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         // This assertion ensures that we only need two TruncateOverflowSubtables
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
@@ -104,17 +102,15 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SHInstruction<F> {
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match &self.0 {
-            Rep3Operand::Binary(x) => {
-                rep3::conversion::b2a_selector(
-                    &rep3::binary::and_with_public(x, &0xffff_u64.into()),
-                    io_ctx,
-                ).context("while computing SHInstruction output")
-            }
+            Rep3Operand::Binary(x) => rep3::conversion::b2a_selector(
+                &rep3::binary::and_with_public(x, &0xffff_u64.into()),
+                io_ctx,
+            )
+            .context("while computing SHInstruction output"),
             _ => panic!("SHInstruction::output called with non-binary operands"),
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

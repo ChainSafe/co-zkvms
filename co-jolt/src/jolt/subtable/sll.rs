@@ -1,5 +1,5 @@
-use jolt_core::field::JoltField;
 use ark_std::log2;
+use jolt_core::field::JoltField;
 use std::cmp::min;
 use std::marker::PhantomData;
 

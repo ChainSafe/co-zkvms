@@ -110,10 +110,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()

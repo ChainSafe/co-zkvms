@@ -16,7 +16,6 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use jolt_core::utils::transcript::Transcript;
 use itertools::Itertools;
 use jolt_core::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
@@ -28,6 +27,7 @@ use jolt_core::subprotocols::grand_product::{
 use jolt_core::subprotocols::grand_product_quarks::QuarkGrandProductBase;
 use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
+use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};

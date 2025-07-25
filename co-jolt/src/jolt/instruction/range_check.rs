@@ -135,10 +135,7 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
         Ok(result)
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match &self.0 {
             Rep3Operand::Arithmetic(value) => Ok(value.clone()),
             _ => unreachable!(),

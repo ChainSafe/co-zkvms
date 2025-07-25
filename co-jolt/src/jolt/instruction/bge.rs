@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 use super::{
@@ -33,12 +35,13 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction<F> {
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
-        F::one() - <SLTInstruction<F> as JoltInstruction<F>>::combine_lookups(
-            &SLTInstruction(self.0.clone(), self.1.clone()),
-            vals,
-            C,
-            M,
-        )
+        F::one()
+            - <SLTInstruction<F> as JoltInstruction<F>>::combine_lookups(
+                &SLTInstruction(self.0.clone(), self.1.clone()),
+                vals,
+                C,
+                M,
+            )
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -109,7 +112,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
             io_ctx.network.get_id(),
         );
 
-        Ok(res)    }
+        Ok(res)
+    }
 
     fn to_indices_rep3(
         &self,

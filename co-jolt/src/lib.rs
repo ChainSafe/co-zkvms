@@ -5,8 +5,8 @@ pub mod host;
 pub mod jolt;
 pub mod lasso;
 pub mod poly;
+pub mod r1cs;
 pub mod subprotocols;
 pub mod utils;
-pub mod r1cs;
 
 use jolt_core::field;

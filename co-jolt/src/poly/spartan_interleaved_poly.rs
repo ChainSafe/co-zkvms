@@ -43,9 +43,7 @@ pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {
     dense_len: usize,
 }
 
-impl<F: JoltField>
-    Rep3SpartanInterleavedPolynomial<F>
-{
+impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
     /// Computes the matrix-vector products Az, Bz, and Cz as a single interleaved sparse vector
     pub fn new(
         uniform_constraints: &[Constraint],
@@ -243,7 +241,8 @@ impl<F: JoltField>
     /// evaluation at infinity, since the eval at zero is always zero.
     #[tracing::instrument(
         skip_all,
-        name = "SpartanInterleavedPolynomial::first_sumcheck_round", level = "trace"
+        name = "SpartanInterleavedPolynomial::first_sumcheck_round",
+        level = "trace"
     )]
     pub fn first_sumcheck_round<Network: Rep3NetworkWorker>(
         &mut self,
@@ -303,16 +302,10 @@ impl<F: JoltField>
                     }
                     let az_infty = az1.sub(&az0, party_id);
                     let bz_infty = bz1.sub(&bz0, party_id);
-                    // if !az_infty.is_zero() && !bz_infty.is_zero() {
-                    //     current_shard_inner_sums += E_in_evals.mul_i128(
-                    //         az_infty.checked_mul(bz_infty).unwrap_or_else(|| {
-                    //             panic!("az_infty * bz_infty overflow");
-                    //         }),
-                    //     );
-                    // }
-                    
+
                     if matches!((az_infty, bz_infty), (SharedOrPublic::Public(x), SharedOrPublic::Public(y)) if x.is_zero() && y.is_zero()) {
                         continue;
+
                     }
 
                     shard_eval_point_infty.add_assign(
@@ -324,9 +317,13 @@ impl<F: JoltField>
             })
             .sum_for(party_id);
 
-            let quadratic_eval_at_infty_opened = additive::open(quadratic_eval_at_infty.as_additive(), io_ctx)?;
-            println!("quadratic_eval_at_infty: {:?}", quadratic_eval_at_infty_opened);
-        // tracing::info!("quadratic_eval_at_infty: {:?}", quadratic_eval_at_infty_opened);
+        let quadratic_eval_at_infty_opened =
+            additive::open(quadratic_eval_at_infty.as_additive(), io_ctx)?;
+        // println!("quadratic_eval_at_infty: {:?}", quadratic_eval_at_infty_opened);
+        tracing::info!(
+            "quadratic_eval_at_infty: {:?}",
+            quadratic_eval_at_infty_opened
+        );
 
         let r_i = process_eq_sumcheck_round_worker(
             (F::zero(), quadratic_eval_at_infty.as_additive()),
@@ -360,7 +357,6 @@ impl<F: JoltField>
         }
         debug_assert_eq!(remainder.len(), 0);
 
-
         self.unbound_coeffs_shards
             .par_iter()
             .zip_eq(output_slices.into_par_iter())
@@ -369,9 +365,12 @@ impl<F: JoltField>
                 for block in unbound_coeffs_in_shard.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
-                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
-                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
+                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
+                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
+                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
 
                     for coeff in block {
                         match coeff.index % 6 {
@@ -385,7 +384,10 @@ impl<F: JoltField>
                         }
                     }
                     if az_coeff != (None, None) {
-                        let (low, high) = (az_coeff.0.unwrap_or(SharedOrPublic::zero_public()), az_coeff.1.unwrap_or(SharedOrPublic::zero_public()));
+                        let (low, high) = (
+                            az_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
+                            az_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                        );
                         output_slice_for_shard[output_index] = (
                             3 * block_index,
                             low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
@@ -394,7 +396,10 @@ impl<F: JoltField>
                         output_index += 1;
                     }
                     if bz_coeff != (None, None) {
-                        let (low, high) = (bz_coeff.0.unwrap_or(SharedOrPublic::zero_public()), bz_coeff.1.unwrap_or(SharedOrPublic::zero_public()));
+                        let (low, high) = (
+                            bz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
+                            bz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                        );
                         output_slice_for_shard[output_index] = (
                             3 * block_index + 1,
                             low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
@@ -403,7 +408,10 @@ impl<F: JoltField>
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
-                        let (low, high) = (cz_coeff.0.unwrap_or(SharedOrPublic::zero_public()), cz_coeff.1.unwrap_or(SharedOrPublic::zero_public()));
+                        let (low, high) = (
+                            cz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
+                            cz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                        );
                         output_slice_for_shard[output_index] = (
                             3 * block_index + 2,
                             low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
@@ -414,7 +422,6 @@ impl<F: JoltField>
                 }
                 debug_assert_eq!(output_index, output_slice_for_shard.len())
             });
-
 
         // Drop the unbound coeffs shards now that we've bound them
         self.unbound_coeffs_shards.clear();
@@ -428,7 +435,8 @@ impl<F: JoltField>
     /// All subsequent rounds of the first Spartan sumcheck.
     #[tracing::instrument(
         skip_all,
-        name = "SpartanInterleavedPolynomial::subsequent_sumcheck_round", level = "trace"
+        name = "SpartanInterleavedPolynomial::subsequent_sumcheck_round",
+        level = "trace"
     )]
     pub fn subsequent_sumcheck_round<Network: Rep3NetworkWorker>(
         &mut self,
@@ -477,8 +485,11 @@ impl<F: JoltField>
                             let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
-                                az.0.mul_mul_public(&bz.0, eq_evals).into_additive(party_id) - cz0.mul_public(eq_evals).into_additive(party_id),
-                                az_eval_infty.mul_mul_public(&bz_eval_infty, eq_evals).into_additive(party_id),
+                                az.0.mul_mul_public(&bz.0, eq_evals).into_additive(party_id)
+                                    - cz0.mul_public(eq_evals).into_additive(party_id),
+                                az_eval_infty
+                                    .mul_mul_public(&bz_eval_infty, eq_evals)
+                                    .into_additive(party_id),
                             )
                         })
                 })
@@ -505,7 +516,8 @@ impl<F: JoltField>
                         let x_in = block_index & x_bitmask;
                         let x_out = block_index >> num_x_in_bits;
 
-                        let E_in_eval = eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out];
+                        let E_in_eval =
+                            eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out];
 
                         // if x_out != prev_x_out {
                         //     let E_out_eval = eq_poly.E_out_current()[prev_x_out];
@@ -531,14 +543,19 @@ impl<F: JoltField>
                         // inner_sums.0 += E_in_eval.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
                         // inner_sums.1 +=
                         //     E_in_eval.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
-                        // if matches!(az.0, SharedOrPublic::Additive(x)) { 
+                        // if matches!(az.0, SharedOrPublic::Additive(x)) {
                         //     println!("az.0 is additive in eq_poly.E_in_current_len() != 1");
                         // }
-                        // if matches!(bz.0, SharedOrPublic::Additive(x)) { 
+                        // if matches!(bz.0, SharedOrPublic::Additive(x)) {
                         //     println!("bz.0 is additive in eq_poly.E_in_current_len() != 1");
                         // }
-                        eval_point_0 += az.0.mul_mul_public(&bz.0, E_in_eval).into_additive(party_id) - cz0.mul_public(E_in_eval).into_additive(party_id);
-                        eval_point_infty += az_eval_infty.mul_mul_public(&bz_eval_infty, E_in_eval).into_additive(party_id);
+                        eval_point_0 +=
+                            az.0.mul_mul_public(&bz.0, E_in_eval)
+                                .into_additive(party_id)
+                                - cz0.mul_public(E_in_eval).into_additive(party_id);
+                        eval_point_infty += az_eval_infty
+                            .mul_mul_public(&bz_eval_infty, E_in_eval)
+                            .into_additive(party_id);
                     }
 
                     (eval_point_0, eval_point_infty)
@@ -565,7 +582,8 @@ impl<F: JoltField>
             self.binding_scratch_space.set_len(total_output_len);
         }
 
-        let mut output_slices: Vec<&mut [SparseCoefficient<SharedOrPublic<F>>]> = Vec::with_capacity(chunks.len());
+        let mut output_slices: Vec<&mut [SparseCoefficient<SharedOrPublic<F>>]> =
+            Vec::with_capacity(chunks.len());
         let mut remainder = self.binding_scratch_space.as_mut_slice();
         for slice_len in output_sizes {
             let (first, second) = remainder.split_at_mut(slice_len);
@@ -582,9 +600,12 @@ impl<F: JoltField>
                 for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
-                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
-                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) = (None, None);
+                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
+                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
+                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
+                        (None, None);
 
                     for coeff in block {
                         match coeff.index % 6 {
@@ -603,8 +624,11 @@ impl<F: JoltField>
                             az_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
                         );
                         //  low + r_i * (high - low)
-                        output_slice[output_index] =
-                            (3 * block_index, low.add(&high.sub(&low, party_id).mul_public(r_i), party_id)).into();
+                        output_slice[output_index] = (
+                            3 * block_index,
+                            low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if bz_coeff != (None, None) {
@@ -612,8 +636,11 @@ impl<F: JoltField>
                             bz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
                             bz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 1, low.add(&high.sub(&low, party_id).mul_public(r_i), party_id)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 1,
+                            low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
@@ -621,8 +648,11 @@ impl<F: JoltField>
                             cz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
                             cz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 2, low.add(&high.sub(&low, party_id).mul_public(r_i), party_id)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 2,
+                            low.add(&high.sub(&low, party_id).mul_public(r_i), party_id),
+                        )
+                            .into();
                         output_index += 1;
                     }
                 }

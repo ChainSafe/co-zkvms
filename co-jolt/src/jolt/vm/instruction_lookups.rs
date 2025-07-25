@@ -1,15 +1,15 @@
+use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use crate::poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator};
 use jolt_core::subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct};
 use jolt_core::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 // use crate::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_core::utils::mul_0_1_optimized;
 use itertools::{interleave, Itertools};
+use jolt_core::utils::mul_0_1_optimized;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -17,27 +17,29 @@ use tracing::trace_span;
 
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::utils::{errors::ProofVerifyError, math::Math, transcript::{AppendToTranscript, Transcript}};
-use jolt_core::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        unipoly::{CompressedUniPoly, UniPoly},
-    },
-};
 use crate::lasso::{
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     memory_checking::{MultisetHashes, StructuredPolynomialData, VerifierComputedOpening},
 };
-use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::field::JoltField;
 pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,
     InstructionLookupsPreprocessing,
 };
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;
+use jolt_core::poly::{
+    dense_mlpoly::DensePolynomial,
+    eq_poly::EqPolynomial,
+    identity_poly::IdentityPolynomial,
+    unipoly::{CompressedUniPoly, UniPoly},
+};
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+use jolt_core::utils::{
+    errors::ProofVerifyError,
+    math::Math,
+    transcript::{AppendToTranscript, Transcript},
+};
 
 use crate::jolt::vm::{JoltCommitments, JoltPolynomials, JoltTraceStep};
 

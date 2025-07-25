@@ -1,8 +1,8 @@
 use crate::utils::instruction_utils::slice_values_rep3;
+use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use jolt_core::field::JoltField;
 
 use mpc_core::protocols::rep3::{
     self,
@@ -10,14 +10,15 @@ use mpc_core::protocols::rep3::{
     Rep3PrimeFieldShare,
 };
 
-
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{
     jolt::{
         instruction::SubtableIndices,
         subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     },
-    utils::instruction_utils::{chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands},
+    utils::instruction_utils::{
+        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
+    },
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -125,7 +126,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()
@@ -134,7 +138,6 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

@@ -10,12 +10,15 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::{jolt::instruction::{Rep3JoltInstruction, Rep3Operand}, utils::instruction_utils::concatenate_lookups_rep3};
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, rep3_chunk_and_concatenate_operands,
 };
+use crate::{
+    jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
+    utils::instruction_utils::concatenate_lookups_rep3,
+};
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ANDInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
@@ -82,7 +85,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
     }
-    
+
     fn to_indices_rep3(
         &self,
         C: usize,
@@ -96,7 +99,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 // Ok(rep3::arithmetic::promote_to_trivial_share(

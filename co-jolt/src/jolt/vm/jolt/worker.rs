@@ -211,7 +211,6 @@ where
             &mut self.io_ctx,
         )?;
 
-
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
             &self.r1cs_builder,
             &self.spartan_key,

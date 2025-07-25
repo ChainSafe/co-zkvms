@@ -10,10 +10,11 @@ use mpc_core::protocols::rep3::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups, concatenate_lookups_rep3
+    assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
+    concatenate_lookups_rep3,
 };
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SLLInstruction<const WORD_SIZE: usize, F: JoltField>(
@@ -122,10 +123,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         }
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 unimplemented!()
@@ -134,7 +132,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

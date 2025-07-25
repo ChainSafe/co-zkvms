@@ -12,8 +12,8 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{
     sign_extend::SignExtendSubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct LBInstruction<F: JoltField>(pub Rep3Operand<F>);
@@ -109,7 +109,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for LBInstruction<F> {
 
         let mut result = byte;
         for i in 1..C {
-            result += rep3::arithmetic::mul_public(sign_extension, F::from_u64(1 << (8 * i)).unwrap());
+            result +=
+                rep3::arithmetic::mul_public(sign_extension, F::from_u64(1 << (8 * i)).unwrap());
         }
         Ok(result)
     }
@@ -122,10 +123,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for LBInstruction<F> {
         unimplemented!()
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         unimplemented!()
     }
 }

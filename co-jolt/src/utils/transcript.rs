@@ -20,12 +20,11 @@ impl TranscriptExt for KeccakTranscript {
         transcript.n_rounds = n_rounds;
         transcript
     }
-    
 
     fn state(&self) -> Self::State {
         (self.state, self.n_rounds)
     }
-    
+
     fn update_state(&mut self, state: Self::State) {
         let (state, n_rounds) = state;
         self.state = state;

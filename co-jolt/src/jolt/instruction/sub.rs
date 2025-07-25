@@ -1,11 +1,11 @@
-use jolt_core::field::JoltField;
 use ark_std::log2;
+use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::subtable::{
@@ -39,11 +39,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SUBInstruction
         1
     }
 
-    fn subtables(
-        &self,
-        C: usize,
-        M: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
             (
@@ -61,12 +57,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SUBInstruction
         assert_valid_parameters(WORD_SIZE, C, log_M);
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
-                add_and_chunk_operands(
-                    *x as u128,
-                    (1u128 << WORD_SIZE) - *y as u128,
-                    C,
-                    log_M,
-                )
+                add_and_chunk_operands(*x as u128, (1u128 << WORD_SIZE) - *y as u128, C, log_M)
             }
             _ => panic!("SUBInstruction::to_indices called with non-public operands"),
         }
@@ -132,7 +123,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

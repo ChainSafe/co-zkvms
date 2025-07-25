@@ -38,7 +38,6 @@ pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-
 // pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
 //     BytecodeStuff<PCS::Commitment>;
 
@@ -104,4 +103,3 @@ impl BytecodeRowExt for BytecodeRow {
         }
     }
 }
-

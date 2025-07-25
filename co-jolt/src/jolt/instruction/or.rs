@@ -11,11 +11,11 @@ use mpc_core::protocols::rep3::{
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::instruction::{Rep3JoltInstruction, Rep3Operand};
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     rep3_chunk_and_concatenate_operands,
 };
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
@@ -96,10 +96,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(
-        &self,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 // rep3::conversion::b2a_selector(&(x.clone() | y.clone()), io_ctx).unwrap()

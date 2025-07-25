@@ -1,6 +1,6 @@
-use jolt_core::field::JoltField;
 use ark_std::log2;
 use eyre::Context;
+use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

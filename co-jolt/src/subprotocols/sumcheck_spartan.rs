@@ -4,7 +4,10 @@
 use crate::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use itertools::multizip;
-use jolt_core::poly::{multilinear_polynomial::{BindingOrder, PolynomialBinding}, dense_mlpoly::DensePolynomial};
+use jolt_core::poly::{
+    dense_mlpoly::DensePolynomial,
+    multilinear_polynomial::{BindingOrder, PolynomialBinding},
+};
 use jolt_core::subprotocols::sumcheck::Bindable;
 use jolt_core::utils::thread::drop_in_background_thread;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
@@ -21,14 +24,20 @@ use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 
 #[inline]
-pub fn coordinate_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript, Network: Rep3NetworkCoordinator>(
+pub fn coordinate_eq_sumcheck_round<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+>(
     polys: &mut Vec<CompressedUniPoly<F>>,
     r: &mut Vec<F>,
     claim: &mut F,
     transcript: &mut ProofTranscript,
     network: &mut Network,
 ) -> eyre::Result<()> {
-    let cubic_poly = UniPoly::from_coeff(additive::combine_field_element_vec(network.receive_responses()?));
+    let cubic_poly = UniPoly::from_coeff(additive::combine_field_element_vec(
+        network.receive_responses()?,
+    ));
 
     // Compress and add to transcript
     let compressed_poly = cubic_poly.compress();
@@ -46,7 +55,6 @@ pub fn coordinate_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript, N
     // Send next claim and challenge to workers
     network.broadcast_request((*claim, r_i))
 }
-
 
 #[inline]
 pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker>(
@@ -71,7 +79,7 @@ pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker
 
     // Send cubic poly to coordinator
     io_ctx.network.send_response(cubic_poly.as_vec())?;
-    
+
     // Receive challenge and next claim
     let (r_i, next_claim) = io_ctx.network.receive_request()?;
     r.push(r_i);

@@ -175,12 +175,8 @@ where
             &mut transcript,
         )?;
 
-        let r1cs = UniformSpartanProof::prove_rep3::<PCS>(
-            &spartan_key,
-            &mut transcript,
-            network,
-        )
-        .expect("r1cs proof failed");
+        let r1cs = UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
+            .expect("r1cs proof failed");
 
         let opening_proof =
             Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;

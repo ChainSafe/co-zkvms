@@ -187,7 +187,10 @@ where
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
-            &read_write_evals.iter().map(|x| x.into_additive(io_ctx.id)).collect::<Vec<_>>(),
+            &read_write_evals
+                .iter()
+                .map(|x| x.into_additive(io_ctx.id))
+                .collect::<Vec<_>>(),
             io_ctx,
         )?;
 

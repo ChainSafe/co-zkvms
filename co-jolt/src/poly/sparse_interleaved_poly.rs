@@ -49,7 +49,8 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
     ) -> Self {
         let batch_size = coeffs.len();
         assert!((dense_len / batch_size).is_power_of_two());
-        let one: Rep3PrimeFieldShare<F> = rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
+        let one: Rep3PrimeFieldShare<F> =
+            rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
         if (dense_len / batch_size) <= 2 {
             // Coalesce
             let mut coalesced = vec![one; dense_len];
@@ -100,7 +101,6 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
             coalesced
         }
     }
-
 
     /// Uninterleaves a `SparseInterleavedPolynomial` into two vectors
     /// containing the left and right coefficients.
@@ -155,9 +155,10 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                         }
                         if coeff.index % 2 == 0 {
                             // Left node; try to find corresponding right node
-                            let right = segment.get(j + 1).cloned().unwrap_or(
-                                (coeff.index + 1, one_share).into(),
-                            );
+                            let right = segment
+                                .get(j + 1)
+                                .cloned()
+                                .unwrap_or((coeff.index + 1, one_share).into());
                             if right.index == coeff.index + 1 {
                                 // Corresponding right node was found; multiply them together
                                 let val = rep3::arithmetic::mul(right.value, coeff.value, io_ctx)?;
@@ -227,12 +228,14 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
                         }
 
                         let neighbors = [
-                            segment.get(j + 1).cloned().unwrap_or(
-                                (current.index + 1, self.one).into(),
-                            ),
-                            segment.get(j + 2).cloned().unwrap_or(
-                                (current.index + 2, self.one).into(),
-                            ),
+                            segment
+                                .get(j + 1)
+                                .cloned()
+                                .unwrap_or((current.index + 1, self.one).into()),
+                            segment
+                                .get(j + 2)
+                                .cloned()
+                                .unwrap_or((current.index + 2, self.one).into()),
                         ];
                         let find_neighbor = |query_index: usize| {
                             neighbors

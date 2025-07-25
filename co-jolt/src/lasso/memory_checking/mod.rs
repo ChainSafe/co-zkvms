@@ -158,8 +158,7 @@ where
         // let init_final_evals: Vec<F> =
         //     Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
-        let init_final_evals =
-            additive::combine_field_element_vec(network.receive_responses()?);
+        let init_final_evals = additive::combine_field_element_vec(network.receive_responses()?);
 
         for (opening, eval) in openings
             .init_final_values_mut()

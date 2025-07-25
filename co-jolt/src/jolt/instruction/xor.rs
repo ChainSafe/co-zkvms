@@ -1,7 +1,7 @@
 use ark_std::log2;
 use eyre::Context;
-use jolt_core::jolt::instruction::SubtableIndices;
 use jolt_core::field::JoltField;
+use jolt_core::jolt::instruction::SubtableIndices;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::rngs::StdRng;
@@ -108,7 +108,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         }
     }
 
-    fn output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
             (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
                 rep3::conversion::b2a_selector(&(x.clone() ^ y.clone()), io_ctx)

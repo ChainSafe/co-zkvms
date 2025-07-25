@@ -12,12 +12,12 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::Rng;
 use std::ops::Index;
 
+use crate::poly::Rep3MultilinearPolynomial;
 use jolt_core::{
     field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
-use crate::poly::Rep3MultilinearPolynomial;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

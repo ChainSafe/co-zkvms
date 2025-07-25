@@ -10,10 +10,10 @@ use crate::jolt::instruction::Rep3JoltInstruction;
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use jolt_core::field::JoltField;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
 };
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ADDInstruction<const WORD_SIZE: usize, F: JoltField>(
