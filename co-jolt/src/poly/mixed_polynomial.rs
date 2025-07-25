@@ -52,7 +52,7 @@ impl<F: JoltField> MixedPolynomial<F> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
 
-        let mut evals = vec![F::zero().into(); degree];
+        let mut evals = vec![SharedOrPublic::zero_public(); degree];
         match order {
             BindingOrder::HighToLow => {
                 evals[0] = self.evals[index];
@@ -135,13 +135,48 @@ impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for MixedPolynomia
     fn evaluate(&self, r: &[F]) -> SharedOrPublic<F> {
         todo!()
     }
-    
+
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
         todo!()
     }
-    
-    fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<SharedOrPublic<F>> {
-        todo!()
+
+    fn sumcheck_evals(
+        &self,
+        index: usize,
+        degree: usize,
+        order: BindingOrder,
+    ) -> Vec<SharedOrPublic<F>> {
+        debug_assert!(degree > 0);
+        debug_assert!(index < self.len() / 2);
+
+        let mut evals = vec![SharedOrPublic::zero_public(); degree];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self.evals[index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.evals[index + self.len() / 2];
+                let m = eval.sub(&evals[0], self.party_id);
+                for i in 1..degree {
+                    eval.add_assign(&m, self.party_id);
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self.evals[2 * index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self.evals[2 * index + 1];
+                let m = eval.sub(&evals[0], self.party_id);
+                for i in 1..degree {
+                    eval.add_assign(&m, self.party_id);
+                    evals[i] = eval;
+                }
+            }
+        };
+        evals
     }
 }
 

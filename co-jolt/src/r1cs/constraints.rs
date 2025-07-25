@@ -106,11 +106,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         //     );
         // cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::<F>::InstructionFlags(SUBInstruction::default().into()),
-            packed_query.clone(),
-            x - y + (0xffffffffi64 + 1),
-        );
+        // cs.constrain_eq_conditional(
+        //     JoltR1CSInputs::<F>::InstructionFlags(SUBInstruction::default().into()),
+        //     packed_query.clone(),
+        //     x - y + (0xffffffffi64 + 1),
+        // );
         // let is_mul = JoltR1CSInputs::InstructionFlags(MULInstruction::default().into())
         //     + JoltR1CSInputs::InstructionFlags(MULUInstruction::default().into())
         //     + JoltR1CSInputs::InstructionFlags(MULHUInstruction::default().into());
@@ -143,16 +143,16 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             R1CSBuilder::<C, F, JoltR1CSInputs<F>>::pack_be(x_chunks.clone(), OPERAND_SIZE);
         let y_concat =
             R1CSBuilder::<C, F, JoltR1CSInputs<F>>::pack_be(y_chunks.clone(), OPERAND_SIZE);
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-            x_concat,
-            x,
-        );
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-            y_concat,
-            y,
-        );
+        // cs.constrain_eq_conditional(
+        //     JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+        //     x_concat,
+        //     x,
+        // );
+        // cs.constrain_eq_conditional(
+        //     JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+        //     y_concat,
+        //     y,
+        // );
 
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
         let is_shift = JoltR1CSInputs::<F>::InstructionFlags(SLLInstruction::default().into())
@@ -178,11 +178,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltR1CSInputs::<F>::Bytecode_RD,
             JoltR1CSInputs::<F>::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         );
-        cs.constrain_eq_conditional(
-            rd_nonzero_and_lookup_to_rd,
-            JoltR1CSInputs::<F>::RD_Write,
-            JoltR1CSInputs::<F>::LookupOutput,
-        );
+        // cs.constrain_eq_conditional(
+        //     rd_nonzero_and_lookup_to_rd,
+        //     JoltR1CSInputs::<F>::RD_Write,
+        //     JoltR1CSInputs::<F>::LookupOutput,
+        // );
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_jmp = cs.allocate_prod(
             JoltR1CSInputs::<F>::Aux(AuxVariable::WritePCtoRD),
@@ -244,5 +244,6 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
 
         vec![pc_constraint, virtual_sequence_constraint]
+        // vec![]
     }
 }

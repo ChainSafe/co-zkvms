@@ -23,6 +23,7 @@ where
     I: ConstraintInput,
     Network: Rep3NetworkCoordinator,
 {
+    #[tracing::instrument(skip_all, name = "Rep3UniformSpartan::prove")]
     fn prove_rep3<PCS>(
         key: &UniformSpartanKey<C, I, F>,
         transcript: &mut ProofTranscript,
@@ -34,6 +35,8 @@ where
         let num_rounds_x = key.num_rows_bits();
 
         /* Sumcheck 1: Outer sumcheck */
+        let span = tracing::info_span!("outer_sumcheck");
+        let _guard = span.enter();
 
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
@@ -67,6 +70,8 @@ where
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
         );
+        drop(_guard);
+        drop(span);
 
         /* Sumcheck 2: Inner sumcheck
             RLC of claims Az, Bz, Cz
@@ -76,6 +81,9 @@ where
             - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
             - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
         */
+
+        let span = tracing::info_span!("inner_sumcheck");
+        let _guard = span.enter();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = claim_Az
@@ -89,16 +97,23 @@ where
         let (inner_sumcheck_proof, _) =
             sumcheck::coordinate_prove_arbitrary(num_rounds_inner_sumcheck, transcript, network)?;
 
+        drop(_guard);
+        drop(span);
+
         /*  Sumcheck 3: Shift sumcheck
             sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
         */
-
+        let span = tracing::info_span!("shift_sumcheck");
+        let _guard = span.enter();
         let num_rounds_shift_sumcheck = key.num_steps.log_2();
 
         let shift_sumcheck_claim = network.receive_responses::<F>()?.into_iter().sum();
 
         let (shift_sumcheck_proof, _) =
             sumcheck::coordinate_prove_arbitrary(num_rounds_shift_sumcheck, transcript, network)?;
+        drop(_guard);
+        drop(span);
+
 
         let claimed_witness_evals =
             Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
@@ -111,6 +126,7 @@ where
             outer_sumcheck_claims[1],
             outer_sumcheck_claims[2],
         );
+
         Ok(UniformSpartanProof {
             _inputs: PhantomData,
             outer_sumcheck_proof,

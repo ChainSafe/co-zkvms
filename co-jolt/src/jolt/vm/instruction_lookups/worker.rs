@@ -88,7 +88,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove")]
+    #[tracing::instrument(skip_all, name = "Rep3InstructionLookups::prove")]
     pub fn prove<PCS, ProofTranscript>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         polynomials: &mut Rep3JoltPolynomials<F>,

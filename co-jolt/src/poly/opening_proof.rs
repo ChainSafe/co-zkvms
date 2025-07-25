@@ -105,6 +105,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3ProverOpeningAccumulator::receive_claims")]
     pub fn receive_claims<ProofTranscript: Transcript, Network: Rep3NetworkCoordinator>(
         transcript: &mut ProofTranscript,
         network: &mut Network,

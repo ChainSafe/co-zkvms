@@ -1,3 +1,4 @@
+use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::vm::worker::JoltRep3Prover;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -14,10 +15,11 @@ use strum_macros::{AsRefStr, EnumCount, EnumIter};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, Rep3JoltInstruction, Rep3JoltInstructionSet, Rep3Operand, SubtableIndices,
+    mul::MULInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
+    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
+    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
+    JoltInstruction, JoltInstructionSet, Rep3JoltInstruction, Rep3JoltInstructionSet, Rep3Operand,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -57,7 +59,9 @@ crate::instruction_set!(
   SLTU: SLTUInstruction<F>,
   SLL: SLLInstruction<WORD_SIZE, F>,
   SRA: SRAInstruction<WORD_SIZE, F>,
-  SRL: SRLInstruction<WORD_SIZE, F>
+  SRL: SRLInstruction<WORD_SIZE, F>,
+  MUL: MULInstruction<WORD_SIZE, F>,
+  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE, F>
 );
 
 crate::subtable_enum!(

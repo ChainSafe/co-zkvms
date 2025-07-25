@@ -90,6 +90,13 @@ pub fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) 
     *share1 + *share2 + *share3
 }
 
+pub fn open<F: PrimeField, Network: Rep3Network>(
+    a: F,
+    io_ctx: &mut IoContext<Network>,
+) -> eyre::Result<F> {
+    Ok(open_vec(vec![a], io_ctx)?[0])
+}
+
 pub fn open_vec<F: PrimeField, Network: Rep3Network>(
     a: Vec<F>,
     io_ctx: &mut IoContext<Network>,

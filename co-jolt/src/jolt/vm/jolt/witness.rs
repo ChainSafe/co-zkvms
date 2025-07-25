@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
@@ -110,22 +111,28 @@ where
             rng,
         );
 
+        let bytecode =
+            Rep3BytecodePolynomials::generate_secret_shares(&preprocessing.bytecode, bytecode, rng);
+
         let r1cs = Rep3R1CSPolynomials::generate_secret_shares(&NoPreprocessing, r1cs, rng);
 
         let jolt_polys_shares = itertools::multizip((
             instruction_lookups,
             read_write_memory,
             timestamp_range_check,
+            bytecode,
             r1cs,
         ))
         .into_iter()
         .map(
-            |(instruction_lookups, read_write_memory, timestamp_range_check, r1cs)| Self {
-                instruction_lookups,
-                read_write_memory,
-                timestamp_range_check,
-                r1cs,
-                ..Default::default()
+            |(instruction_lookups, read_write_memory, timestamp_range_check, bytecode, r1cs)| {
+                Self {
+                    instruction_lookups,
+                    read_write_memory,
+                    timestamp_range_check,
+                    bytecode,
+                    r1cs,
+                }
             },
         )
         .collect_vec();

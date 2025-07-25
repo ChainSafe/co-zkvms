@@ -131,6 +131,10 @@ pub fn run_party(
     )
     .unwrap();
 
+    if args.debug {
+        return Ok(());
+    }
+
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
         program_io.memory_layout,
@@ -140,12 +144,11 @@ pub fn run_party(
         1 << trace.len().next_power_of_two(),
     );
 
-    let mut prover =
-        RV32IJoltRep3Prover::<F, PST13<E>, KeccakTranscript, _>::init(
-            None,
-            preprocessing,
-            network,
-        )?;
+    let mut prover = RV32IJoltRep3Prover::<F, PST13<E>, KeccakTranscript, _>::init(
+        None,
+        preprocessing,
+        network,
+    )?;
 
     prover.prove()?;
 
@@ -194,6 +197,76 @@ pub fn run_coordinator(
     )
     .unwrap();
 
+    if args.debug {
+        let (proof_check, commitments_check) =
+            RV32IJoltVM::prove(program_io, trace.clone(), preprocessing.clone());
+
+        // for (i, (commitment, commitment_check)) in commitments
+        //     .instruction_lookups
+        //     .dim
+        //     .iter()
+        //     .zip(commitments_check.instruction_lookups.dim.iter())
+        //     .enumerate()
+        // {
+        //     assert_eq!(commitment, commitment_check, "at index {}", i);
+        // }
+
+        // for (i, (commitment, commitment_check)) in commitments
+        //     .instruction_lookups
+        //     .read_cts
+        //     .iter()
+        //     .zip(commitments_check.instruction_lookups.read_cts.iter())
+        //     .enumerate()
+        // {
+        //     assert_eq!(commitment, commitment_check, "at index {}", i);
+        // }
+
+        // for (i, (commitment, commitment_check)) in commitments
+        //     .instruction_lookups
+        //     .E_polys
+        //     .iter()
+        //     .zip(commitments_check.instruction_lookups.E_polys.iter())
+        //     .enumerate()
+        // {
+        //     assert_eq!(commitment, commitment_check, "at index {}", i);
+        // }
+
+        // for (i, (commitment, commitment_check)) in commitments
+        //     .instruction_lookups
+        //     .instruction_flags
+        //     .iter()
+        //     .zip(
+        //         commitments_check
+        //             .instruction_lookups
+        //             .instruction_flags
+        //             .iter(),
+        //     )
+        //     .enumerate()
+        // {
+        //     assert_eq!(commitment, commitment_check, "at index {}", i);
+        // }
+
+        // for (i, (commitment, commitment_check)) in commitments
+        //     .instruction_lookups
+        //     .final_cts
+        //     .iter()
+        //     .zip(commitments_check.instruction_lookups.final_cts.iter())
+        //     .enumerate()
+        // {
+        //     assert_eq!(commitment, commitment_check, "at index {}", i);
+        // }
+
+        // assert_eq!(
+        //     commitments.instruction_lookups.lookup_outputs,
+        //     commitments_check.instruction_lookups.lookup_outputs,
+        //     "lookup_outputs"
+        // );
+
+        RV32IJoltVM::verify(preprocessing.shared.clone(), proof_check, commitments_check)
+            .context("while verifying Lasso proof")?;
+        return Ok(());
+    }
+
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
         Some((trace.clone(), program_io.clone())),
@@ -203,81 +276,8 @@ pub fn run_coordinator(
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
 
-    let (proof, commitments) = RV32IJoltVM::prove_rep3(
-        meta,
-        &spartan_key,
-        &preprocessing.shared,
-        &mut network,
-    )?;
-
-    if args.debug {
-        let (proof_check, commitments_check) =
-            RV32IJoltVM::prove(program_io, trace.clone(), preprocessing.clone());
-
-        for (i, (commitment, commitment_check)) in commitments
-            .instruction_lookups
-            .dim
-            .iter()
-            .zip(commitments_check.instruction_lookups.dim.iter())
-            .enumerate()
-        {
-            assert_eq!(commitment, commitment_check, "at index {}", i);
-        }
-
-        for (i, (commitment, commitment_check)) in commitments
-            .instruction_lookups
-            .read_cts
-            .iter()
-            .zip(commitments_check.instruction_lookups.read_cts.iter())
-            .enumerate()
-        {
-            assert_eq!(commitment, commitment_check, "at index {}", i);
-        }
-
-        for (i, (commitment, commitment_check)) in commitments
-            .instruction_lookups
-            .E_polys
-            .iter()
-            .zip(commitments_check.instruction_lookups.E_polys.iter())
-            .enumerate()
-        {
-            assert_eq!(commitment, commitment_check, "at index {}", i);
-        }
-
-        for (i, (commitment, commitment_check)) in commitments
-            .instruction_lookups
-            .instruction_flags
-            .iter()
-            .zip(
-                commitments_check
-                    .instruction_lookups
-                    .instruction_flags
-                    .iter(),
-            )
-            .enumerate()
-        {
-            assert_eq!(commitment, commitment_check, "at index {}", i);
-        }
-
-        for (i, (commitment, commitment_check)) in commitments
-            .instruction_lookups
-            .final_cts
-            .iter()
-            .zip(commitments_check.instruction_lookups.final_cts.iter())
-            .enumerate()
-        {
-            assert_eq!(commitment, commitment_check, "at index {}", i);
-        }
-
-        assert_eq!(
-            commitments.instruction_lookups.lookup_outputs,
-            commitments_check.instruction_lookups.lookup_outputs,
-            "lookup_outputs"
-        );
-
-        RV32IJoltVM::verify(preprocessing.shared.clone(), proof_check, commitments_check)
-            .context("while verifying Lasso proof")?;
-    }
+    let (proof, commitments) =
+        RV32IJoltVM::prove_rep3(meta, &spartan_key, &preprocessing.shared, &mut network)?;
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments)
         .context("while verifying Lasso (rep3) proof")?;

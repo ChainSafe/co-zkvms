@@ -32,6 +32,7 @@ pub fn coordinate_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript, N
 
     // Compress and add to transcript
     let compressed_poly = cubic_poly.compress();
+    tracing::info!("compressed_poly: {:?}", compressed_poly);
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge

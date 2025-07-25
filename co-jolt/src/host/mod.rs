@@ -10,6 +10,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use jolt_tracer::{RVTraceRow, RV32IM};
 use rayon::prelude::*;
 
 use jolt_common::{
@@ -30,15 +31,13 @@ use crate::jolt::vm::{
 // use self::analyze::ProgramSummary;
 use jolt_core::{
     field::JoltField,
-    jolt::{
-        instruction::{
-            div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
-            lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction,
-            mulhsu::MULHSUInstruction, rem::REMInstruction, remu::REMUInstruction,
-            sb::SBInstruction, sh::SHInstruction, VirtualInstructionSequence,
-        },
-    },
     host::toolchain::{install_no_std_toolchain, install_toolchain},
+    jolt::instruction::{
+        div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
+        lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction, mulhsu::MULHSUInstruction,
+        rem::REMInstruction, remu::REMUInstruction, sb::SBInstruction, sh::SHInstruction,
+        VirtualInstructionSequence,
+    },
 };
 
 // pub mod analyze;
@@ -196,25 +195,50 @@ impl Program {
         };
         let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
 
+        // Self::print_used_instructions(&raw_trace);
+
         let trace = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                tracer::RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
+                RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
                 _ => vec![row],
             })
             .map(|row| {
-                let instruction_lookup = RV32I::try_from(&row.instruction).ok();
+                let instruction_lookup = RV32I::try_from(&row)
+                    .map_err(|_| match row.instruction.opcode {
+                        RV32IM::MULH
+                        | RV32IM::MULHSU
+                        | RV32IM::DIV
+                        | RV32IM::DIVU
+                        | RV32IM::REM
+                        | RV32IM::REMU
+                        | RV32IM::SH
+                        | RV32IM::SB
+                        | RV32IM::LBU
+                        | RV32IM::LHU
+                        | RV32IM::LB
+                        | RV32IM::LH
+                        | RV32IM::LW
+                        | RV32IM::SW => {}
+                        _ => {
+                            tracing::warn!(
+                                "Failed to map opcode {:?} to RV32I",
+                                row.instruction.opcode
+                            );
+                        }
+                    })
+                    .ok();
 
                 JoltTraceStep {
                     instruction_lookup,
@@ -257,6 +281,18 @@ impl Program {
     //         processed_trace,
     //     }
     // }
+
+    fn print_used_instructions(instruction_trace: &[RVTraceRow]) {
+        let opcodes_used = instruction_trace
+            .par_iter()
+            .map(|step| step.instruction.opcode.as_ref())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .unique()
+            .sorted()
+            .collect::<Vec<_>>();
+        println!("opcodes_used: {:?}", opcodes_used);
+    }
 
     fn save_linker(&self) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();

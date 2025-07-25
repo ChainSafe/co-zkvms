@@ -71,7 +71,6 @@ where
                 );
                 let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
                 r1cs_builder.compute_aux(&mut polynomials);
-                println!("computed aux");
                 let read_write_memory_size = polynomials.read_write_memory.v_final.len();
                 let memory_layout = program_io.memory_layout;
 
@@ -187,7 +186,7 @@ where
             Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
 
         let jolt_proof = JoltProof {
-            trace_length: 0,
+            trace_length,
             instruction_lookups,
             r1cs,
             opening_proof,

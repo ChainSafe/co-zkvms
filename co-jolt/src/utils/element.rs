@@ -120,7 +120,12 @@ impl<F: JoltField> SharedOrPublic<F> {
             (SharedOrPublic::Public(x), SharedOrPublic::Additive(y)) => {
                 SharedOrPublic::Additive(additive::add_public(*y, *x, party_id))
             }
-            _ => panic!("Addition of rep3 and additive shares are not allowed"),
+            (SharedOrPublic::Additive(x), SharedOrPublic::Shared(y)) => {
+                SharedOrPublic::Additive(*x + y.into_additive())
+            }
+            (SharedOrPublic::Shared(x), SharedOrPublic::Additive(y)) => {
+                SharedOrPublic::Additive(x.into_additive() + *y)
+            }
         }
     }
 
@@ -147,8 +152,12 @@ impl<F: JoltField> SharedOrPublic<F> {
     pub fn add_shared(&self, other: Rep3PrimeFieldShare<F>, party_id: PartyID) -> Self {
         match self {
             SharedOrPublic::Shared(x) => SharedOrPublic::Shared(*x + other),
-            SharedOrPublic::Public(x) => SharedOrPublic::Shared(rep3::arithmetic::add_public(other, *x, party_id)),
-            SharedOrPublic::Additive(_) => panic!("Addition of rep3 and additive shares are not allowed"),
+            SharedOrPublic::Public(x) => {
+                SharedOrPublic::Shared(rep3::arithmetic::add_public(other, *x, party_id))
+            }
+            SharedOrPublic::Additive(_) => {
+                panic!("Addition of rep3 and additive shares are not allowed")
+            }
         }
     }
 
@@ -177,7 +186,12 @@ impl<F: JoltField> SharedOrPublic<F> {
             (SharedOrPublic::Public(x), SharedOrPublic::Additive(y)) => {
                 SharedOrPublic::Additive(additive::sub_public_by_shared(*x, *y, party_id))
             }
-            _ => panic!("Subtraction of rep3 and additive shares are not allowed"),
+            (SharedOrPublic::Additive(x), SharedOrPublic::Shared(y)) => {
+                SharedOrPublic::Additive(*x - y.into_additive())
+            }
+            (SharedOrPublic::Shared(x), SharedOrPublic::Additive(y)) => {
+                SharedOrPublic::Additive(x.into_additive() - *y)
+            }
         }
     }
 
@@ -210,6 +224,7 @@ impl<F: JoltField> SharedOrPublic<F> {
                 SharedOrPublic::Shared(rep3::arithmetic::mul_public(*y, *x))
             }
             (SharedOrPublic::Shared(x), SharedOrPublic::Shared(y)) => {
+                tracing::warn!("mul_shared");
                 SharedOrPublic::Additive(x * y)
             }
             _ => panic!("Multiplication of additive shares are not allowed"),

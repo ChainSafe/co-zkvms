@@ -144,7 +144,6 @@ where
             }
             None => io_ctx.network.receive_request()?,
         };
-
         let r1cs_builder = Constraints::construct_constraints(
             trace_length.next_power_of_two(),
             program_io.memory_layout.input_start,
@@ -211,6 +210,7 @@ where
             &preprocessing.shared.generators,
             &mut self.io_ctx,
         )?;
+
 
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
             &self.r1cs_builder,

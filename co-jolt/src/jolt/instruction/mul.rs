@@ -1,21 +1,28 @@
 use ark_std::log2;
-use mpc_core::protocols::rep3::{network::{IoContext, Rep3Network}, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare, Rep3PrimeFieldShare,
+};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::{jolt::instruction::Rep3JoltInstruction, utils::instruction_utils::concatenate_lookups_rep3};
+use crate::{
+    jolt::instruction::Rep3JoltInstruction,
+    jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
+    utils::instruction_utils::concatenate_lookups_rep3,
+};
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
 use jolt_core::{
     field::JoltField,
-    jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     utils::instruction_utils::{
         assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
     },
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,
@@ -60,17 +67,17 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MULInstruction
         }
     }
 
-    fn lookup_entry(&self) -> u64 {
+    fn lookup_entry(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
                 if WORD_SIZE == 32 {
                     let x = *x as i32;
                     let y = *y as i32;
-                    x.wrapping_mul(y) as u32 as u64
+                    (x.wrapping_mul(y) as u32 as u64).into()
                 } else if WORD_SIZE == 64 {
                     let x = *x as i64;
                     let y = *y as i64;
-                    x.wrapping_mul(y) as u64
+                    (x.wrapping_mul(y) as u64).into()
                 } else {
                     panic!("MUL is only implemented for 32-bit or 64-bit word sizes")
                 }
@@ -111,33 +118,39 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
     fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), self.1.clone())
     }
-    
+
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
         (&mut self.0, Some(&mut self.1))
     }
-    
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(vals.len() == C / 2);
-        concatenate_lookups_rep3(vals, C / 2, log2(M) as usize, io_ctx)
+        Ok(concatenate_lookups_rep3(vals, C / 2, log2(M) as usize))
     }
-    
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
+
+    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         todo!()
     }
-    
+
     fn output<N: mpc_core::protocols::rep3::network::Rep3Network>(
         &self,
         io_ctx: &mut mpc_core::protocols::rep3::network::IoContext<N>,
     ) -> eyre::Result<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> {
-        todo!()
+        match (&self.0, &self.1) {
+            (Rep3Operand::Arithmetic(x), Rep3Operand::Arithmetic(y)) => {
+                rep3::arithmetic::mul(*x, *y, io_ctx).map_err(|e| eyre::eyre!(e))
+            }
+            _ => Err(eyre::eyre!(
+                "MULInstruction::output called with shared operands"
+            )),
+        }
     }
-    
 }
 
 #[cfg(test)]

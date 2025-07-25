@@ -312,6 +312,7 @@ impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for Rep3Multilinea
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::batch_evaluate")]
     fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
 

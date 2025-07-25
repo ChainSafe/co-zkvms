@@ -100,3 +100,4 @@ mpc-net = { path = "./mpc-net" }
 [profile.guest]
 inherits = "release"
 debug = false
+
