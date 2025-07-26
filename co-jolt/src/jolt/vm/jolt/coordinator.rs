@@ -2,13 +2,12 @@ use crate::{
     jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::JoltWitnessMeta},
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
         opening_proof::{
             ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
         },
     },
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
-    subprotocols::commitment::DistributedCommitmentScheme,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
@@ -45,7 +44,7 @@ pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
     Jolt<F, PCS, C, M, ProofTranscript>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Self::InstructionSet: Rep3JoltInstructionSet<F>,
 {
@@ -186,6 +185,7 @@ where
             instruction_lookups,
             r1cs,
             opening_proof,
+            // opening_accumulator: ProverOpeningAccumulator::new(),
         };
 
         Ok((jolt_proof, jolt_commitments))
@@ -198,7 +198,7 @@ const M: usize = crate::jolt::vm::rv32i_vm::M;
 impl<F, PCS, ProofTranscript> JoltRep3<F, PCS, C, M, ProofTranscript> for RV32IJoltVM
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
 {
 }

@@ -10,8 +10,8 @@ use jolt_core::utils::transcript::Transcript;
 
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use crate::subprotocols::sumcheck;
 use crate::subprotocols::sumcheck_spartan::coordinate_eq_sumcheck_round;
 use jolt_core::r1cs::inputs::ConstraintInput;
@@ -30,7 +30,7 @@ where
         network: &mut Network,
     ) -> eyre::Result<UniformSpartanProof<C, I, F, ProofTranscript>>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
         let num_rounds_x = key.num_rows_bits();
 

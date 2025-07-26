@@ -15,9 +15,8 @@ use mpc_core::protocols::{
 
 use crate::{
     poly::opening_proof::Rep3ProverOpeningAccumulator,
-    subprotocols::{
-        commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProduct,
-    },
+    poly::commitment::Rep3CommitmentScheme,
+    subprotocols::grand_product::Rep3BatchedGrandProduct,
     utils::{math::Math, transcript::Transcript},
 };
 pub use jolt_core::lasso::memory_checking::MemoryCheckingProof;
@@ -28,7 +27,7 @@ pub trait Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>:
 where
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
     Self::Openings: Initializable<F, Self::Preprocessing>,

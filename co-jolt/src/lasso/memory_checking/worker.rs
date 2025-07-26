@@ -19,13 +19,8 @@ use mpc_core::protocols::rep3::{
 use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
-    poly::{
-        opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial,
-        Rep3MultilinearPolynomial, Rep3PolysConversion,
-    },
-    subprotocols::{
-        commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedGrandProductWorker,
-    },
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion},
+    subprotocols::grand_product::Rep3BatchedGrandProductWorker,
     utils,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -37,7 +32,7 @@ pub trait MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
     ProofTranscript: Transcript,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     Network: Rep3NetworkWorker,
 {
     type ReadWriteGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>

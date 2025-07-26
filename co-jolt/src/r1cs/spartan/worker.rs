@@ -43,7 +43,7 @@ use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
 use crate::utils::element::SharedOrPublicIter;
@@ -71,7 +71,7 @@ impl<F, PCS, ProofTranscript, I, Network>
     Rep3UniformSpartanProver<F, PCS, ProofTranscript, I, Network>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     I: ConstraintInput,
     Network: Rep3NetworkWorker,

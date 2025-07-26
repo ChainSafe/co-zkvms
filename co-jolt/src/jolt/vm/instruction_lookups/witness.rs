@@ -1,10 +1,10 @@
 use crate::{
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
+        commitment::Rep3CommitmentScheme,
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3DensePolynomial, Rep3MultilinearPolynomial,
     },
-    subprotocols::commitment::DistributedCommitmentScheme,
     utils::{
         self,
         transcript::{KeccakTranscript, Transcript},
@@ -24,6 +24,7 @@ use jolt_core::{
 };
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
+    poly::commitment::commitment_scheme::CommitmentScheme,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
 use mpc_core::protocols::{
@@ -43,16 +44,13 @@ use super::InstructionLookupsProof;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{
-    jolt::{
-        instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-        subtable::JoltSubtableSet,
-        vm::{
-            instruction_lookups::InstructionLookupsPreprocessing, witness::Rep3Polynomials,
-            JoltTraceStep,
-        },
+use crate::jolt::{
+    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    subtable::JoltSubtableSet,
+    vm::{
+        instruction_lookups::InstructionLookupsPreprocessing, witness::Rep3Polynomials,
+        JoltTraceStep,
     },
-    poly::commitment::commitment_scheme::CommitmentScheme,
 };
 
 pub type Rep3InstructionLookupPolynomials<F: JoltField> =

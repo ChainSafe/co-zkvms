@@ -15,7 +15,7 @@ use co_jolt::{
     poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     utils::transcript::{KeccakTranscript, Transcript},
 };
-use co_jolt::{lasso::memory_checking::StructuredPolynomialData, subprotocols::commitment::PST13};
+use co_jolt::{lasso::memory_checking::StructuredPolynomialData, poly::commitment::pst13::PST13};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,

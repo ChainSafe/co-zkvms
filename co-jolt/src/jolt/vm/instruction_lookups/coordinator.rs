@@ -1,8 +1,8 @@
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
-    poly::opening_proof::Rep3ProverOpeningAccumulator,
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
     subprotocols::{
-        commitment::DistributedCommitmentScheme, grand_product::Rep3BatchedDenseGrandProduct,
+        grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
 };
@@ -38,7 +38,7 @@ impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subt
     InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     Instructions: JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
@@ -139,7 +139,7 @@ impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subt
     for InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Instructions: JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,

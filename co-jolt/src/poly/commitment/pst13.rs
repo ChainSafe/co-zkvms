@@ -24,45 +24,14 @@ use rand::RngCore;
 use snarks_core::poly::commitment::{aggregate_comm, aggregate_comm_with_powers, aggregate_eval};
 use std::{borrow::Borrow, marker::PhantomData};
 
+pub use jolt_core::poly::commitment::commitment_scheme;
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::poly::Rep3DensePolynomial;
-
-pub trait DistributedCommitmentScheme<F: JoltField, ProofTranscript: Transcript = KeccakTranscript>:
-    CommitmentScheme<ProofTranscript, Field = F>
-{
-    fn distributed_batch_open<Network>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Self::Proof>
-    where
-        Network: MpcStarNetCoordinator;
-
-    fn distributed_batch_open_worker<Network>(
-        polys: &[&Rep3DensePolynomial<F>],
-        ck: &Self::Setup,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()>
-    where
-        Network: MpcStarNetWorker;
-
-    fn recieve_prove<Network>(network: &mut Network) -> eyre::Result<Self::Proof>
-    where
-        Network: Rep3NetworkCoordinator;
-
-    fn prove_rep3<Network>(
-        poly: &Rep3DensePolynomial<F>,
-        ck: &Self::Setup,
-        opening_point: &[F],
-        network: &mut Network,
-    ) -> eyre::Result<()>
-    where
-        Network: Rep3NetworkWorker;
-
-    fn combine_commitment_shares(commitments: &[&Self::Commitment]) -> Self::Commitment;
-}
+use super::Rep3CommitmentScheme;
+use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use crate::utils::element::MaybeShared;
 
 #[derive(Clone)]
 pub struct PST13<E: Pairing> {
@@ -135,64 +104,50 @@ where
     }
 }
 
-impl<E: Pairing, ProofTranscript: Transcript>
-    DistributedCommitmentScheme<E::ScalarField, ProofTranscript> for PST13<E>
+impl<E: Pairing, ProofTranscript: Transcript> Rep3CommitmentScheme<E::ScalarField, ProofTranscript>
+    for PST13<E>
 where
     E::ScalarField: JoltField,
 {
-    fn distributed_batch_open<Network: MpcStarNetCoordinator>(
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<Proof<E>>
-    where
-        Network: MpcStarNetCoordinator,
-    {
-        let eta: E::ScalarField = transcript.challenge_scalar();
-        network.broadcast_request(eta)?;
+    fn combine_commitment_shares(
+        commitments: &[&MaybeShared<PST13Commitment<E>>],
+    ) -> PST13Commitment<E> {
+        let public = commitments
+            .iter()
+            .find(|c| matches!(c, MaybeShared::Public(Some(_))));
+        let (g_product, nv) = match public {
+            Some(MaybeShared::Public(Some(commitment))) => (commitment.g_product, commitment.nv),
+            None => {
+                let mut g_product = E::G1::zero();
+                let mut nv = None;
+                for commitment in commitments {
+                    match commitment {
+                        MaybeShared::Shared(commitment) => {
+                            g_product += commitment.g_product;
+                            match nv {
+                                Some(nv) => {
+                                    assert_eq!(nv, commitment.nv);
+                                }
+                                None => {
+                                    nv = Some(commitment.nv);
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                (g_product.into_affine(), nv.unwrap())
+            }
+            _ => unreachable!(),
+        };
 
-        let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
-            network.receive_responses()?.try_into().unwrap();
-
-        let proofs = itertools::multizip((pf0, pf1, pf2))
-            .map(|(a, b, c)| (a + b + c).into_affine())
-            .collect::<Vec<_>>();
-
-        Ok(Proof { proofs })
-    }
-
-    fn distributed_batch_open_worker<Network: MpcStarNetWorker>(
-        polys: &[&Rep3DensePolynomial<E::ScalarField>],
-        setup: &Self::Setup,
-        opening_point: &[E::ScalarField],
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let polys_a = polys.iter().map(|p| p.copy_share_a()).collect::<Vec<_>>();
-        let eta: E::ScalarField = network.receive_request()?;
-
-        let agg_poly = aggregate_poly(eta, &polys_a.iter().collect::<Vec<_>>());
-
-        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        let (pf, _) = open(
-            &setup.ck(agg_poly.get_num_vars()),
-            &agg_poly,
-            &opening_point_rev,
-        );
-
-        network.send_response(pf.proofs)
-    }
-
-    fn combine_commitment_shares(commitments: &[&PST13Commitment<E>]) -> PST13Commitment<E> {
-        let mut g_product = E::G1::zero();
-        for commitment in commitments {
-            g_product += commitment.g_product;
-        }
         PST13Commitment {
-            nv: commitments[0].nv,
-            g_product: g_product.into_affine(),
+            nv,
+            g_product: g_product,
         }
     }
 
-    fn recieve_prove<Network>(network: &mut Network) -> eyre::Result<Proof<E>>
+    fn coordinate_prove<Network>(network: &mut Network) -> eyre::Result<Proof<E>>
     where
         Network: Rep3NetworkCoordinator,
     {
@@ -222,6 +177,54 @@ where
             &opening_point_rev,
         );
         network.send_response(pf.proofs)
+    }
+
+    fn commit_rep3(
+        poly: &Rep3MultilinearPolynomial<E::ScalarField>,
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> MaybeShared<Self::Commitment> {
+        match poly {
+            Rep3MultilinearPolynomial::Public { poly, .. } => {
+                if commit_to_public {
+                    let commitment =
+                        <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
+                    MaybeShared::Public(Some(commitment))
+                } else {
+                    MaybeShared::Public(None)
+                }
+            }
+            Rep3MultilinearPolynomial::Shared(poly) => {
+                let poly_a = MultilinearPolynomial::LargeScalars(poly.copy_share_a());
+                let commitment =
+                    <Self as CommitmentScheme<ProofTranscript>>::commit(&poly_a, setup);
+                MaybeShared::Shared(commitment)
+            }
+        }
+    }
+
+    fn batch_commit_rep3<U>(
+        polys: &[U],
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> Vec<MaybeShared<Self::Commitment>>
+    where
+        U: Borrow<Rep3MultilinearPolynomial<E::ScalarField>> + Sync,
+    {
+        let commitments = polys
+            .par_iter()
+            .map(|poly| {
+                let commitment =
+                    <Self as Rep3CommitmentScheme<E::ScalarField, ProofTranscript>>::commit_rep3(
+                        poly.borrow(),
+                        setup,
+                        commit_to_public,
+                    );
+                commitment
+            })
+            .collect::<Vec<_>>();
+
+        commitments
     }
 }
 

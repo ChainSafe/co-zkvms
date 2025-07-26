@@ -6,13 +6,12 @@ use crate::{
     },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
+        commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
         opening_proof::{
             ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
         },
     },
     r1cs::spartan::worker::Rep3UniformSpartanProver,
-    subprotocols::commitment::DistributedCommitmentScheme,
     utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -58,7 +57,7 @@ pub struct JoltRep3Prover<
     Network,
 > where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     Constraints: R1CSConstraints<C, F>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
@@ -91,7 +90,7 @@ where
     Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,
     Constraints: R1CSConstraints<C, F>,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
@@ -102,7 +101,7 @@ where
         network: Network,
     ) -> eyre::Result<Self>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
         let mut io_ctx = IoContext::init(network).context("failed to initialize io context")?;
@@ -170,7 +169,7 @@ where
     #[tracing::instrument(skip_all, name = "JoltRep3Prover::prove")]
     pub fn prove(&mut self) -> eyre::Result<()>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
         let preprocessing = &self.preprocessing;

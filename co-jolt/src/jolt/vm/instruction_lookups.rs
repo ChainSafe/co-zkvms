@@ -21,13 +21,13 @@ use crate::lasso::{
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     memory_checking::{MultisetHashes, StructuredPolynomialData, VerifierComputedOpening},
 };
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::field::JoltField;
 pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,
     InstructionLookupsPreprocessing,
 };
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
@@ -657,12 +657,14 @@ where
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
+        println!("primary sumcheck openings: {:?}", primary_sumcheck_openings);
         opening_accumulator.append(
             &primary_sumcheck_commitments,
             r_primary_sumcheck.clone(),
             &primary_sumcheck_openings,
             transcript,
         );
+        println!("primary sumcheck openings appended");
 
         Self::verify_memory_checking(
             preprocessing,

@@ -5,9 +5,10 @@ pub mod multilinear_polynomial;
 pub mod opening_proof;
 pub mod sparse_interleaved_poly;
 pub mod spartan_interleaved_poly;
+pub mod commitment;
 
 pub use dense_mlpoly::*;
-pub use jolt_core::poly::{commitment, eq_poly, identity_poly, unipoly};
+pub use jolt_core::poly::{eq_poly, identity_poly, unipoly};
 pub use multilinear_polynomial::*;
 
 pub trait PolyDegree {

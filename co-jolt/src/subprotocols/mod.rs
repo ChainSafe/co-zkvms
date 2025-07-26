@@ -1,4 +1,3 @@
-pub mod commitment;
 pub mod grand_product;
 pub mod sparse_grand_product;
 pub mod sumcheck;

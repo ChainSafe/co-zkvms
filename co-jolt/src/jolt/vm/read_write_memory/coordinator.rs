@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use crate::jolt::vm::jolt::witness::JoltWitnessMeta;
 use crate::lasso::memory_checking::{MemoryCheckingProver, Rep3MemoryCheckingProver};
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
@@ -18,6 +17,7 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 
+use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
@@ -28,7 +28,6 @@ use jolt_core::jolt::vm::{
     timestamp_range_check::TimestampValidityProof,
     JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep,
 };
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
     poly::{
@@ -44,7 +43,7 @@ pub trait Rep3ReadWriteMemoryCoordinator<F, PCS, ProofTranscript, Network>:
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
@@ -62,7 +61,7 @@ impl<F, PCS, ProofTranscript, Network>
     for ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: TranscriptExt,
     Network: Rep3NetworkCoordinator,
 {
@@ -101,7 +100,7 @@ fn coordinate_prove_outputs<F, PCS, ProofTranscript, Network>(
 ) -> eyre::Result<OutputSumcheckProof<F, PCS, ProofTranscript>>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
@@ -125,7 +124,7 @@ impl<F, PCS, ProofTranscript, Network> Rep3MemoryCheckingProver<F, PCS, ProofTra
     for ReadWriteMemoryProof<F, PCS, ProofTranscript>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {

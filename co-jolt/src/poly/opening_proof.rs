@@ -17,10 +17,10 @@ use mpc_core::protocols::{
     },
 };
 
-use crate::poly::Rep3MultilinearPolynomial;
 use crate::{
-    field::JoltField, poly::Rep3DensePolynomial,
-    subprotocols::commitment::DistributedCommitmentScheme, utils::transcript::Transcript,
+    field::JoltField,
+    poly::{commitment::Rep3CommitmentScheme, Rep3DensePolynomial, Rep3MultilinearPolynomial},
+    utils::transcript::Transcript,
 };
 
 #[cfg(feature = "parallel")]
@@ -186,7 +186,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     where
         Network: Rep3NetworkCoordinator,
         ProofTranscript: Transcript,
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
         // Generate coefficients for random linear combination
         let rho: F = transcript.challenge_scalar();
@@ -224,7 +224,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         network.broadcast_request(gamma)?;
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::recieve_prove(network)?;
+        let joint_opening_proof = PCS::coordinate_prove(network)?;
 
         Ok(ReducedOpeningProof {
             sumcheck_proof,
@@ -244,7 +244,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     where
         Network: Rep3NetworkWorker,
         ProofTranscript: Transcript,
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
         // Generate coefficients for random linear combination
         let rho: F = io_ctx.network.receive_request()?;

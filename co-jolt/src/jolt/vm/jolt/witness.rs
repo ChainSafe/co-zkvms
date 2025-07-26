@@ -4,10 +4,10 @@ use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
 use crate::r1cs::inputs::Rep3R1CSPolynomials;
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
+use crate::utils::element::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
@@ -74,7 +74,7 @@ impl<F: JoltField, const C: usize, PCS, ProofTranscript>
     Rep3Polynomials<F, JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>>
     for Rep3JoltPolynomials<F>
 where
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
 {
     type PublicPolynomials = JoltPolynomials<F>;
@@ -199,7 +199,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         Network: Rep3NetworkWorker;
 
@@ -209,51 +209,55 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         network: &mut Network,
     ) -> eyre::Result<JoltCommitments<PCS, ProofTranscript>>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         Network: Rep3NetworkCoordinator,
     {
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let instruction_commitments = &mut commitments.instruction_lookups;
-
-        let [share1, share2, share3] = network
+        let mut commitments_shares: Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>> = network
             .receive_responses()?
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
-        // lookup flag polys commitment are not secret shared
-        let lookup_flag_polys_commitments: Vec<PCS::Commitment> =
-            network.receive_response(PartyID::ID0, 0)?;
-
-        let trace_commitments = multizip((
-            read_write_values_except_flags(&share1),
-            read_write_values_except_flags(&share2),
-            read_write_values_except_flags(&share3),
+        multizip((
+            commitments_shares[0].read_write_values(),
+            commitments_shares[1].read_write_values(),
+            commitments_shares[2].read_write_values(),
         ))
-        .map(|(trace1, trace2, trace3)| PCS::combine_commitment_shares(&[trace1, trace2, trace3]))
+        .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
+        .zip(commitments.read_write_values_mut())
+        .for_each(|(commitment, dest)| *dest = commitment);
+
+        commitments.instruction_lookups.final_cts = multizip((
+            &commitments_shares[0].instruction_lookups.final_cts,
+            &commitments_shares[1].instruction_lookups.final_cts,
+            &commitments_shares[2].instruction_lookups.final_cts,
+        ))
+        .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
         .collect_vec();
 
-        instruction_commitments
-            .dim
-            .iter_mut()
-            .chain(instruction_commitments.read_cts.iter_mut())
-            .chain(instruction_commitments.E_polys.iter_mut())
-            .chain([&mut instruction_commitments.lookup_outputs])
-            .chain(instruction_commitments.instruction_flags.iter_mut())
-            .zip(
-                trace_commitments
-                    .into_iter()
-                    .chain(lookup_flag_polys_commitments),
-            )
-            .for_each(|(dest, src)| *dest = src);
+        commitments.bytecode.t_final = std::mem::take(
+            commitments_shares[0]
+                .bytecode
+                .t_final
+                .try_into_public_mut()
+                .expect("party 0 must compute commitment to public t_final"),
+        );
 
-        instruction_commitments.final_cts =
-            multizip((share1.final_cts, share2.final_cts, share3.final_cts))
-                .map(|(final1, final2, final3)| {
-                    PCS::combine_commitment_shares(&[&final1, &final2, &final3])
-                })
-                .collect_vec();
+        commitments.read_write_memory.v_final = PCS::combine_commitment_shares(&[
+            &commitments_shares[0].read_write_memory.v_final,
+            &commitments_shares[1].read_write_memory.v_final,
+            &commitments_shares[2].read_write_memory.v_final,
+        ]);
+
+        commitments.read_write_memory.t_final = std::mem::take(
+            commitments_shares[0]
+                .read_write_memory
+                .t_final
+                .try_into_public_mut()
+                .expect("party 0 must compute commitment to public t_final"),
+        );
 
         Ok(commitments)
     }
@@ -268,6 +272,11 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     );
 }
 
+type JoltMaybeSharedCommitments<
+    PCS: CommitmentScheme<ProofTranscript>,
+    ProofTranscript: Transcript,
+> = JoltStuff<MaybeShared<PCS::Commitment>>;
+
 impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::commit")]
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
@@ -276,47 +285,34 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         Network: Rep3NetworkWorker,
     {
-        let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+        let mut commitments =
+            JoltMaybeSharedCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let trace_polys = read_write_values_except_flags(&self.instruction_lookups)
-            .map(|poly| MultilinearPolynomial::LargeScalars(poly.as_shared().copy_share_a()))
-            .collect_vec();
+        let trace_polys = self.read_write_values();
 
-        let trace_polys_ref = trace_polys.iter().collect::<Vec<_>>();
+        let trace_commitments = PCS::batch_commit_rep3(
+            &trace_polys,
+            &preprocessing.generators,
+            io_ctx.id == PartyID::ID0,
+        );
 
-        let trace_commitments = PCS::batch_commit(&trace_polys_ref, &preprocessing.generators);
-
-        read_write_values_except_flags_mut(&mut commitments.instruction_lookups)
+        commitments
+            .read_write_values_mut()
+            .into_iter()
             .zip(trace_commitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
 
-        commitments.instruction_lookups.final_cts = PCS::batch_commit(
-            &self
-                .instruction_lookups
-                .final_cts
-                .iter()
-                .map(|poly| MultilinearPolynomial::LargeScalars(poly.as_shared().copy_share_a()))
-                .collect_vec(),
+        commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
+            &self.instruction_lookups.final_cts,
             &preprocessing.generators,
+            false, // no public polys in final_cts
         );
 
-        io_ctx
-            .network
-            .send_response(commitments.instruction_lookups)?;
-
-        if io_ctx.id == PartyID::ID0 {
-            let lookup_flag_polys_commitment = PCS::batch_commit(
-                &self.instruction_lookups.instruction_flags.try_into_public(),
-                &preprocessing.generators,
-            );
-            io_ctx.network.send_response(lookup_flag_polys_commitment)?;
-        }
-
-        Ok(())
+        io_ctx.network.send_response(commitments)
     }
 
     fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F> {

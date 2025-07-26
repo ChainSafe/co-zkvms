@@ -1,12 +1,11 @@
 use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::Rep3ProverOpeningAccumulator, unipoly::CompressedUniPoly,
-        Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        unipoly::CompressedUniPoly, Rep3DensePolynomial, Rep3MultilinearPolynomial,
+        Rep3PolysConversion,
     },
     subprotocols::{
-        commitment::DistributedCommitmentScheme,
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
@@ -23,6 +22,7 @@ use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::{CompactPolynomial, SmallScalar},
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -97,7 +97,7 @@ where
         io_ctx: &mut IoContext<Network>,
     ) -> Result<()>
     where
-        PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+        PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
         let trace_length = polynomials.instruction_lookups.dim[0].len();
@@ -438,7 +438,7 @@ impl<
     for Rep3InstructionLookupsProver<C, M, F, InstructionSet, Subtables, Network>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     InstructionSet: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
     Subtables: JoltSubtableSet<F>,

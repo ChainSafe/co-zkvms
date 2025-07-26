@@ -5,7 +5,7 @@ use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
-use crate::subprotocols::commitment::DistributedCommitmentScheme;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
@@ -61,7 +61,7 @@ pub struct Rep3ReadWriteMemoryProver<F: JoltField, PCS, ProofTranscript, Network
 impl<F, PCS, ProofTranscript, Network> Rep3ReadWriteMemoryProver<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: TranscriptExt,
     Network: Rep3NetworkWorker,
 {
@@ -224,7 +224,7 @@ impl<F, PCS, ProofTranscript, Network>
     for Rep3ReadWriteMemoryProver<F, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    PCS: DistributedCommitmentScheme<F, ProofTranscript>,
+    PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
