@@ -124,7 +124,6 @@ where
         io_ctx.network.send_response(outputs.clone())?;
         let (mut r, mut claim): (Vec<F>, F) = io_ctx.network.receive_request()?;
         claim = additive::promote_to_trivial_share(claim, io_ctx.network.get_id());
-
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
         }

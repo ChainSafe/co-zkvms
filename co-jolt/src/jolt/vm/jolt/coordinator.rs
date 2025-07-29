@@ -1,5 +1,10 @@
+use std::marker::PhantomData;
+
 use crate::{
-    jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::JoltWitnessMeta},
+    jolt::vm::{
+        read_write_memory::{coordinator::Rep3ReadWriteMemoryCoordinator, witness::Rep3ProgramIO},
+        witness::JoltWitnessMeta,
+    },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
@@ -8,11 +13,13 @@ use crate::{
         },
     },
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
+    utils::transcript::TranscriptExt,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
 use jolt_core::{
-    jolt::vm::JoltVerifierPreprocessing,
+    jolt::subtable::JoltSubtableSet,
+    jolt::vm::{read_write_memory::ReadWriteMemoryProof, JoltVerifierPreprocessing},
     r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
     utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
@@ -24,7 +31,6 @@ use strum::EnumCount;
 use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomialsExt};
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    subtable::JoltSubtableSet,
     vm::{
         instruction_lookups::InstructionLookupsProof,
         rv32i_vm::{RV32IJoltVM, RV32I},
@@ -45,7 +51,7 @@ pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
 where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
-    ProofTranscript: Transcript,
+    ProofTranscript: TranscriptExt,
     Self::InstructionSet: Rep3JoltInstructionSet<F>,
 {
     #[tracing::instrument(skip_all, name = "Rep3Jolt::init")]
@@ -78,8 +84,11 @@ where
                     polynomials,
                     &mut rng,
                 );
-                let program_io_shares =
-                    Rep3ProgramIO::<F>::generate_secret_shares(program_io, &mut rng);
+                let program_io_shares = Rep3ProgramIO::<F>::generate_secret_shares(
+                    program_io,
+                    read_write_memory_size,
+                    &mut rng,
+                );
                 let witness_shares: Vec<_> = polynomials_shares
                     .into_iter()
                     .zip(program_io_shares)
@@ -174,6 +183,14 @@ where
             &mut transcript,
         )?;
 
+        let memory_proof = ReadWriteMemoryProof::prove_rep3(
+            &preprocessing.generators,
+            meta,
+            &preprocessing.read_write_memory,
+            &mut transcript,
+            network,
+        )?;
+
         let r1cs = UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
             .expect("r1cs proof failed");
 
@@ -182,10 +199,11 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
+            read_write_memory: memory_proof,
             instruction_lookups,
             r1cs,
             opening_proof,
-            // opening_accumulator: ProverOpeningAccumulator::new(),
+            _marker: PhantomData,
         };
 
         Ok((jolt_proof, jolt_commitments))
@@ -199,6 +217,6 @@ impl<F, PCS, ProofTranscript> JoltRep3<F, PCS, C, M, ProofTranscript> for RV32IJ
 where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
-    ProofTranscript: Transcript,
+    ProofTranscript: TranscriptExt,
 {
 }

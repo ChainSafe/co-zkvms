@@ -5,6 +5,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use jolt_core::jolt::subtable::{
+    eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+    ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
+};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -12,14 +16,8 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::{
-    jolt::subtable::{
-        eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
-        lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
-    },
-    utils::instruction_utils::{
-        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
-    },
+use crate::utils::instruction_utils::{
+    chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -36,8 +34,8 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
-        let gt_msb = vals_by_subtable[0];
-        let eq_msb = vals_by_subtable[1];
+        let left_msb = vals_by_subtable[0];
+        let right_msb = vals_by_subtable[1];
         let ltu = vals_by_subtable[2];
         let eq = vals_by_subtable[3];
         let lt_abs = vals_by_subtable[4];
@@ -48,13 +46,17 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
 
-        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
-            ltu_sum += *ltu_i * eq_prod;
-            eq_prod *= eq_i;
+        for i in 0..C - 2 {
+            ltu_sum += ltu[i] * eq_prod;
+            eq_prod *= eq[i];
         }
+        // Do not need to update `eq_prod` for the last iteration
+        ltu_sum += ltu[C - 2] * eq_prod;
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
-        gt_msb[0] + eq_msb[0] * ltu_sum
+        left_msb[0] * (F::one() - right_msb[0])
+            + (left_msb[0] * right_msb[0] + (F::one() - left_msb[0]) * (F::one() - right_msb[0]))
+                * ltu_sum
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -63,10 +65,10 @@ impl<F: JoltField> JoltInstruction<F> for SLTInstruction<F> {
 
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C - 1)),
             (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
             (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
@@ -115,8 +117,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = slice_values_rep3(self, vals, C, M);
 
-        let gt_msb = vals_by_subtable[0];
-        let eq_msb = vals_by_subtable[1];
+        let left_msb = vals_by_subtable[0];
+        let right_msb = vals_by_subtable[1];
         let ltu = vals_by_subtable[2];
         let eq = vals_by_subtable[3];
         let lt_abs = vals_by_subtable[4];
@@ -127,16 +129,30 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
 
-        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
-            ltu_sum += *ltu_i * eq_prod;
-            eq_prod = rep3::arithmetic::mul(eq_prod, *eq_i, io_ctx)?;
+        for i in 0..C - 2 {
+            ltu_sum += ltu[i] * eq_prod;
+            eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
         }
+
+        ltu_sum += ltu[C - 2] * eq_prod;
 
         let ltu_sum = rep3::arithmetic::reshare_additive(ltu_sum, io_ctx)?;
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
-        rep3::arithmetic::add_mul(gt_msb[0], eq_msb[0], ltu_sum, io_ctx)
-            .context("while combining SLTInstruction")
+
+        let mul_terms_lhs = [
+            left_msb[0],
+            left_msb[0],
+            rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0], io_ctx.id),
+        ];
+
+        let right_msb_inv =
+            rep3::arithmetic::sub_public_by_shared(F::one(), right_msb[0], io_ctx.id);
+        let mul_terms_rhs = [right_msb_inv, right_msb[0], right_msb_inv];
+
+        let res = rep3::arithmetic::mul_vec(&mul_terms_lhs, &mul_terms_rhs, io_ctx)?;
+
+        Ok(res[0] + rep3::arithmetic::mul(res[1] + res[2], ltu_sum, io_ctx)?)
     }
 
     fn to_indices_rep3(

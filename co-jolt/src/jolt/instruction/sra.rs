@@ -11,7 +11,7 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
+use jolt_core::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -39,6 +39,9 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction
     }
 
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
+        // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
+        // which only happens at runtime).
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),

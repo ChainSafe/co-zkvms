@@ -19,7 +19,10 @@ use mpc_core::protocols::rep3::{
 use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion},
+    poly::{
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion,
+    },
     subprotocols::grand_product::Rep3BatchedGrandProductWorker,
     utils,
 };
@@ -189,19 +192,20 @@ where
             io_ctx,
         )?;
 
-        let init_final_polys = polynomials.init_final_values().try_into_shared();
+        let init_final_polys = polynomials.init_final_values();
         let (init_final_evals, eq_init_final) =
-            Rep3DensePolynomial::batch_evaluate(&init_final_polys, r_init_final);
+            Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
-        io_ctx.network.send_response(init_final_evals)?;
-
-        // opening_accumulator.append(
-        //     &polynomials.init_final_values(),
-        //     DensePolynomial::new(eq_init_final),
-        //     r_init_final.to_vec(),
-        //     &init_final_evals,
-        //     io_ctx,
-        // )?;
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &init_final_evals
+                .iter()
+                .map(|x| x.into_additive(io_ctx.id))
+                .collect::<Vec<_>>(),
+            io_ctx,
+        )?;
 
         Ok(())
     }

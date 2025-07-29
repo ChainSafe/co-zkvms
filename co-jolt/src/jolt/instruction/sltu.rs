@@ -4,6 +4,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -12,10 +13,7 @@ use mpc_core::protocols::rep3::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{
-    jolt::{
-        instruction::SubtableIndices,
-        subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
-    },
+    jolt::instruction::SubtableIndices,
     utils::instruction_utils::{
         chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
     },
@@ -40,11 +38,12 @@ impl<F: JoltField> JoltInstruction<F> for SLTUInstruction<F> {
         let mut sum = F::zero();
         let mut eq_prod = F::one();
 
-        for i in 0..C {
+        for i in 0..C - 1 {
             sum += ltu[i] * eq_prod;
             eq_prod *= eq[i];
         }
-        sum
+        // Do not need to update `eq_prod` for the last iteration
+        sum + ltu[C - 1] * eq_prod
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -54,7 +53,7 @@ impl<F: JoltField> JoltInstruction<F> for SLTUInstruction<F> {
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C - 1)),
         ]
     }
 
@@ -106,11 +105,11 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         let mut sum = ltu[0].into_additive();
         let mut eq_prod = eq[0];
 
-        for i in 1..C {
+        for i in 1..C - 1 {
             sum += ltu[i] * eq_prod;
             eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
         }
-        Ok(rep3::arithmetic::reshare_additive(sum, io_ctx)?)
+        rep3::arithmetic::reshare_additive(sum + ltu[C - 1] * eq_prod, io_ctx)
     }
 
     fn to_indices_rep3(

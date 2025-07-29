@@ -7,13 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::jolt::instruction::Rep3JoltInstruction;
-use crate::jolt::subtable::{
-    identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
-};
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
 };
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ADDInstruction<const WORD_SIZE: usize, F: JoltField>(
@@ -30,9 +28,9 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
     }
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        assert!(vals.len() == C);
+        assert!(vals.len() == C / 2);
         // The output is the TruncateOverflow(most significant chunk) || identity of other chunks
-        concatenate_lookups(vals, C, log2(M) as usize)
+        concatenate_lookups(vals, C / 2, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -41,16 +39,10 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
 
     fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-        vec![
-            (
-                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
-                SubtableIndices::from(0..msb_chunk_index + 1),
-            ),
-            (
-                Box::new(IdentitySubtable::new()),
-                SubtableIndices::from(msb_chunk_index + 1..C),
-            ),
-        ]
+        vec![(
+            Box::new(IdentitySubtable::new()),
+            SubtableIndices::from(msb_chunk_index + 1..C),
+        )]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -102,8 +94,8 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
         M: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        assert!(vals.len() == C);
-        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize))
+        assert!(vals.len() == C / 2);
+        Ok(concatenate_lookups_rep3(vals, C / 2, log2(M) as usize))
     }
 
     fn to_indices_rep3(

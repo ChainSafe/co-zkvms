@@ -10,7 +10,6 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, rep3_chunk_and_concatenate_operands,
 };
@@ -19,6 +18,7 @@ use crate::{
     utils::instruction_utils::concatenate_lookups_rep3,
 };
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ANDInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);

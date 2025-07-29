@@ -171,7 +171,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         &mut self,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        let opening = io_ctx.network.receive_request()?;
+        let opening = io_ctx.network.recv(PartyID::ID0)?;
         self.openings.push(opening);
         Ok(())
     }

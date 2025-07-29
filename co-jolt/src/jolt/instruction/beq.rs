@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
+
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -12,10 +14,7 @@ use mpc_core::protocols::rep3::{
 };
 
 use crate::{
-    jolt::{
-        instruction::SubtableIndices,
-        subtable::{eq::EqSubtable, LassoSubtable},
-    },
+    jolt::instruction::SubtableIndices,
     utils::instruction_utils::{
         chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
     },

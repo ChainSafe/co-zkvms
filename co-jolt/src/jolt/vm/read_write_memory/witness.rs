@@ -5,8 +5,10 @@ use crate::poly::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::{
-    ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing, ReadWriteMemoryStuff,
+    memory_address_to_witness_index, ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing,
+    ReadWriteMemoryStuff,
 };
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
     field::JoltField, jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials,
 };
@@ -20,9 +22,7 @@ pub type Rep3ReadWriteMemoryPolynomials<F: JoltField> =
 
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3ProgramIO<F: JoltField> {
-    pub input_words: Vec<Rep3PrimeFieldShare<F>>,
-    pub output_words: Vec<Rep3PrimeFieldShare<F>>,
-    pub panic: Rep3PrimeFieldShare<F>, // 0 if not panicked, 1 if panicked
+    pub v_io: Rep3MultilinearPolynomial<F>,
     pub memory_layout: MemoryLayout,
 }
 
@@ -43,13 +43,13 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         let mut v_write_rd_shares = generate_poly_shares_rep3(&polynomials.v_write_rd, rng);
         let mut v_write_ram_shares = generate_poly_shares_rep3(&polynomials.v_write_ram, rng);
         let mut v_final_shares = generate_poly_shares_rep3(&polynomials.v_final, rng);
-        let mut v_init_shares = if let Some(v_init) = polynomials.v_init {
+        let mut v_init_shares: Vec<_> = if let Some(v_init) = polynomials.v_init {
             generate_poly_shares_rep3(&v_init, rng)
                 .into_iter()
                 .map(Some)
                 .collect()
         } else {
-            vec![None; 3]
+            panic!("v_init is not set");
         };
 
         (0..3)
@@ -122,42 +122,61 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         todo!()
     }
 
-    pub fn generate_secret_shares<R: rand::Rng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
-        let mut input_words = vec![Vec::with_capacity(program_io.inputs.len() / 4); 3];
-        // Convert input bytes into words
+    pub fn generate_secret_shares<R: rand::Rng>(
+        program_io: JoltDevice,
+        memory_size: usize,
+        rng: &mut R,
+    ) -> Vec<Self> {
+        let mut v_io: Vec<u32> = vec![0; memory_size];
+        let mut input_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        );
+        // Convert input bytes into words and populate `v_io`
         for chunk in program_io.inputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            rep3::arithmetic::generate_shares_rep3(F::from_u32(word), rng)
-                .into_iter()
-                .enumerate()
-                .for_each(|(i, share)| input_words[i].push(share));
+            v_io[input_index] = word;
+            input_index += 1;
         }
-
-        let mut output_words = vec![Vec::with_capacity(program_io.outputs.len() / 4); 3];
+        let mut output_index = memory_address_to_witness_index(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        );
+        tracing::info!("output_index: {:?}", output_index);
+        // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
             let word = u32::from_le_bytes(word);
-            rep3::arithmetic::generate_shares_rep3(F::from_u32(word), rng)
-                .into_iter()
-                .enumerate()
-                .for_each(|(i, share)| output_words[i].push(share));
+            v_io[output_index] = word;
+            output_index += 1;
         }
 
-        let mut panic =
-            rep3::arithmetic::generate_shares_rep3(F::from_u8(program_io.panic as u8), rng);
+        // Copy panic bit
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.panic,
+            &program_io.memory_layout,
+        )] = program_io.panic as u32;
+        if !program_io.panic {
+            // Set termination bit
+            v_io[memory_address_to_witness_index(
+                program_io.memory_layout.termination,
+                &program_io.memory_layout,
+            )] = 1;
+        }
+
+        let v_io = MultilinearPolynomial::<F>::from(v_io);
+        let mut v_io_shares = generate_poly_shares_rep3(&v_io, rng);
 
         (0..3)
             .map(|i| Self {
-                input_words: std::mem::take(&mut input_words[i]),
-                output_words: std::mem::take(&mut output_words[i]),
-                panic: std::mem::take(&mut panic[i]),
+                v_io: std::mem::take(&mut v_io_shares[i]),
                 memory_layout: program_io.memory_layout.clone(),
             })
             .collect()

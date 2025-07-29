@@ -9,11 +9,12 @@ use mpc_core::protocols::rep3::{
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
+use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::chunk_operand_usize;
 use crate::{
-    jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
+   
     utils::instruction_utils::concatenate_lookups_rep3,
 };
 use jolt_core::{field::JoltField, utils::instruction_utils::concatenate_lookups};

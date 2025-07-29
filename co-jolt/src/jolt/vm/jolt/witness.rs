@@ -12,6 +12,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::field::JoltField;
+use jolt_core::join_conditional;
 use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupStuff, InstructionLookupsPreprocessing,
 };
@@ -292,6 +293,8 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let mut commitments =
             JoltMaybeSharedCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
+        let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
+        let _guard = span.enter();
         let trace_polys = self.read_write_values();
 
         let trace_commitments = PCS::batch_commit_rep3(
@@ -305,12 +308,44 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
             .into_iter()
             .zip(trace_commitments.into_iter())
             .for_each(|(dest, src)| *dest = src);
+        drop(_guard);
+        drop(span);
 
+        let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
+        let _guard = span.enter();
+        commitments.bytecode.t_final =
+            PCS::commit_rep3(&self.bytecode.t_final, &preprocessing.generators, io_ctx.id == PartyID::ID0);
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "commit::read_write_memory");
+        let _guard = span.enter();
+        (
+            commitments.read_write_memory.v_final,
+            commitments.read_write_memory.t_final,
+        ) = rayon::join(
+            || {
+                PCS::commit_rep3(
+                    &self.read_write_memory.v_final,
+                    &preprocessing.generators,
+                    io_ctx.id == PartyID::ID0,
+                )
+            },
+            || {
+                PCS::commit_rep3(
+                    &self.read_write_memory.t_final,
+                    &preprocessing.generators,
+                    io_ctx.id == PartyID::ID0,
+                )
+            },
+        );
         commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
             false, // no public polys in final_cts
         );
+        drop(_guard);
+        drop(span);
 
         io_ctx.network.send_response(commitments)
     }
@@ -352,7 +387,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let t_read_rs2 = std::mem::take(&mut self.read_write_memory.t_read_rs2)
             .try_into()
             .unwrap();
-        let t_final = std::mem::take(&mut self.read_write_memory.t_read_ram)
+        let t_read_ram = std::mem::take(&mut self.read_write_memory.t_read_ram)
             .try_into()
             .unwrap();
 
@@ -361,7 +396,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 t_read_rd,
                 t_read_rs1,
                 t_read_rs2,
-                t_final,
+                t_read_ram,
                 ..Default::default()
             },
             ..Default::default()

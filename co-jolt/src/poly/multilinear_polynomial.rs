@@ -19,7 +19,7 @@ use rayon::prelude::*;
 
 // pub type MultilinearPolynomial<F> = DensePolynomial<F>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Rep3MultilinearPolynomial<F: JoltField> {
     Public {
         poly: MultilinearPolynomial<F>,

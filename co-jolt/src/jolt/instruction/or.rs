@@ -10,7 +10,7 @@ use mpc_core::protocols::rep3::{
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::instruction::{Rep3JoltInstruction, Rep3Operand};
-use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
+use jolt_core::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     rep3_chunk_and_concatenate_operands,

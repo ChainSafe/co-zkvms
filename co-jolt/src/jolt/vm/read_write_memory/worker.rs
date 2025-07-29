@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
-use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
@@ -22,6 +22,7 @@ use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
 use jolt_core::utils::thread::unsafe_allocate_zero_vec;
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
@@ -127,9 +128,6 @@ where
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
         let memory_size = polynomials.v_final.len();
-        if io_ctx.id == PartyID::ID0 {
-            io_ctx.network.send_response(memory_size)?;
-        }
         let num_rounds = memory_size.log_2();
         let r_eq: Vec<F> = io_ctx.network.receive_request()?;
         let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
@@ -151,51 +149,23 @@ where
             })
             .collect();
 
-        let mut v_io = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
-        let mut input_index = memory_address_to_witness_index(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        );
-        // Convert input bytes into words and populate `v_io`
-        for (i, word) in program_io.input_words.iter().enumerate() {
-            v_io[input_index] = *word;
-            input_index += 1;
-        }
-        let mut output_index = memory_address_to_witness_index(
-            program_io.memory_layout.output_start,
-            &program_io.memory_layout,
-        );
-        // Convert output bytes into words and populate `v_io`
-        for (i, word) in program_io.output_words.iter().enumerate() {
-            v_io[output_index] = *word;
-            output_index += 1;
-        }
-
-        // Copy panic bit
-        v_io[memory_address_to_witness_index(
-            program_io.memory_layout.panic,
-            &program_io.memory_layout,
-        )] = program_io.panic;
-
-        v_io[memory_address_to_witness_index(
-            program_io.memory_layout.termination,
-            &program_io.memory_layout,
-        )] = program_io.panic;
+        let v_io = program_io.v_io.clone();
 
         let mut sumcheck_polys: Vec<Rep3MultilinearPolynomial<F>> = vec![
             eq.into(),
             MultilinearPolynomial::from(io_witness_range).into(),
-            polynomials.v_final.clone().into(),
-            Rep3MultilinearPolynomial::from(v_io).into(),
+            polynomials.v_final.clone(),
+            Rep3MultilinearPolynomial::from(v_io),
         ];
 
-        // eq * io_witness_range * (v_final - v_io)
-        let output_check_fn = |vals: &[SharedOrPublic<F>]| -> F {
-            rep3::arithmetic::mul_public(
-                *vals[2].as_shared_ref() - *vals[3].as_shared_ref(),
-                *vals[0].as_public_ref() * *vals[1].as_public_ref(),
-            )
-            .into_additive()
+        // (v_final - v_io) * eq * io_witness_range
+        let party_id = io_ctx.id;
+        let output_check_fn = |vals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
+            vals[2]
+                .sub(&vals[3], party_id)
+                .mul_public(vals[0].as_public())
+                .mul_public(vals[1].as_public())
+                .into_additive(party_id)
         };
 
         let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker(
@@ -243,7 +213,7 @@ where
         jolt_polynomials: &Rep3JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-        io_ctx: &mut mpc_core::protocols::rep3::network::IoContext<Network>,
+        io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<(
         (Vec<Rep3PrimeFieldShare<F>>, usize),
         (Vec<Rep3PrimeFieldShare<F>>, usize),
@@ -355,13 +325,13 @@ where
             );
         }
 
-        let v_init = polynomials.v_init.as_ref().unwrap();
+        let v_init = polynomials.v_init.as_ref().unwrap().as_shared();
         let init_fingerprints: Vec<Rep3PrimeFieldShare<F>> = (0..memory_size)
             .into_par_iter()
             .map(|i| {
                 rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_init.as_shared()[i], gamma),
-                    (i as u64).field_mul(gamma_squared) + F::from_u32(i as u32) - *tau,
+                    rep3::arithmetic::mul_public(v_init[i], gamma),
+                    F::from_u32(i as u32) - *tau,
                     party_id,
                 )
             })
@@ -369,7 +339,7 @@ where
 
         let v_final = &polynomials.v_final;
         let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
-        let final_fingerprints = (0..memory_size)
+        let final_fingerprints: Vec<_> = (0..memory_size)
             .into_par_iter()
             .map(|i| {
                 rep3::arithmetic::add_public(
@@ -387,6 +357,6 @@ where
     }
 
     fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize {
-        polynomials.v_final.len()
+        polynomials.a_ram.len()
     }
 }

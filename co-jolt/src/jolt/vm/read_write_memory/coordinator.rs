@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::jolt::vm::jolt::witness::JoltWitnessMeta;
 use crate::lasso::memory_checking::{MemoryCheckingProver, Rep3MemoryCheckingProver};
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
+use crate::subprotocols::grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProduct};
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
 use jolt_core::field::JoltField;
@@ -115,7 +115,7 @@ where
     Ok(OutputSumcheckProof {
         num_rounds,
         sumcheck_proof,
-        opening: sumcheck_openings[2],
+        opening: sumcheck_openings[0],
         _pcs: PhantomData,
     })
 }

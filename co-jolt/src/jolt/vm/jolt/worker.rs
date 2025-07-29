@@ -1,8 +1,10 @@
 use crate::{
     jolt::vm::{
         jolt::witness::JoltWitnessMeta,
-        read_write_memory::witness::{Rep3ProgramIO, Rep3ProgramIOInput},
-        rv32i_vm::RV32ISubtables,
+        read_write_memory::{
+            witness::{Rep3ProgramIO, Rep3ProgramIOInput},
+            worker::Rep3ReadWriteMemoryProver,
+        },
     },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
@@ -12,7 +14,10 @@ use crate::{
         },
     },
     r1cs::spartan::worker::Rep3UniformSpartanProver,
-    utils::{thread::drop_in_background_thread, transcript::Transcript},
+    utils::{
+        thread::drop_in_background_thread,
+        transcript::{Transcript, TranscriptExt},
+    },
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
@@ -26,7 +31,6 @@ use strum::EnumCount;
 
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    subtable::JoltSubtableSet,
     vm::{
         instruction_lookups::{worker::Rep3InstructionLookupsProver, InstructionLookupsProof},
         rv32i_vm::{RV32IJoltVM, RV32I},
@@ -36,6 +40,8 @@ use crate::jolt::{
 };
 use jolt_core::{
     field::JoltField,
+    jolt::subtable::JoltSubtableSet,
+    jolt::vm::rv32i_vm::RV32ISubtables,
     jolt::vm::{JoltProverPreprocessing, JoltStuff, ProverDebugInfo},
     poly::multilinear_polynomial::MultilinearPolynomial,
     r1cs::{
@@ -170,7 +176,7 @@ where
     pub fn prove(&mut self) -> eyre::Result<()>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
-        ProofTranscript: Transcript,
+        ProofTranscript: TranscriptExt,
     {
         let preprocessing = &self.preprocessing;
         let polynomials = &mut self.polynomials;
@@ -207,6 +213,15 @@ where
             polynomials,
             &mut opening_accumulator,
             &preprocessing.shared.generators,
+            &mut self.io_ctx,
+        )?;
+
+        Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
+            &preprocessing.shared.generators,
+            &preprocessing.shared.read_write_memory,
+            polynomials,
+            &self.program_io,
+            &mut opening_accumulator,
             &mut self.io_ctx,
         )?;
 

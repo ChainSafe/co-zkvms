@@ -53,55 +53,6 @@ where
         let uni_params = MultilinearPC::setup(num_vars, rng);
         PST13Setup { uni_params }
     }
-
-    fn batch_prove<U, ProofTranscript: Transcript>(
-        setup: &PST13Setup<E>,
-        polynomials: &[U],
-        opening_point: &[E::ScalarField],
-        _openings: &[E::ScalarField],
-        transcript: &mut ProofTranscript,
-    ) -> Proof<E>
-    where
-        U: Borrow<DensePolynomial<E::ScalarField>> + Sync,
-    {
-        let eta: E::ScalarField = transcript.challenge_scalar();
-        let batch_poly = aggregate_poly(eta, polynomials);
-        Self::prove(
-            setup,
-            &MultilinearPolynomial::LargeScalars(batch_poly),
-            opening_point,
-            transcript,
-        )
-    }
-
-    fn batch_verify<ProofTranscript: Transcript>(
-        batch_proof: &Proof<E>,
-        setup: &PST13Setup<E>,
-        opening_point: &[E::ScalarField],
-        openings: &[E::ScalarField],
-        commitments: &[&PST13Commitment<E>],
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), ProofVerifyError> {
-        let eta = transcript.challenge_scalar();
-
-        let batch_comm = aggregate_comm(
-            eta,
-            &commitments.iter().map(|&c| c.into()).collect::<Vec<_>>(),
-        );
-
-        let batch_eval = aggregate_eval(eta, openings);
-
-        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-
-        MultilinearPC::check(
-            &setup.vk(opening_point.len()),
-            &batch_comm,
-            &opening_point_rev,
-            batch_eval,
-            &batch_proof,
-        )
-        .ok_or(ProofVerifyError::InternalError)
-    }
 }
 
 impl<E: Pairing, ProofTranscript: Transcript> Rep3CommitmentScheme<E::ScalarField, ProofTranscript>
@@ -171,11 +122,7 @@ where
         Network: Rep3NetworkWorker,
     {
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        let (pf, _) = open(
-            &setup.ck(poly.get_num_vars()),
-            &poly.copy_share_a(),
-            &opening_point_rev,
-        );
+        let (pf, _) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
         network.send_response(pf.proofs)
     }
 
@@ -249,12 +196,12 @@ impl<E: Pairing> Default for PST13Setup<E> {
 }
 
 impl<E: Pairing> PST13Setup<E> {
-    pub fn ck(&self, num_vars: usize) -> CommitterKey<E> {
-        MultilinearPC::trim(&self.uni_params, num_vars).0
+    pub fn ck(&self) -> CommitterKey<E> {
+        MultilinearPC::trim(&self.uni_params, self.uni_params.num_vars).0
     }
 
-    pub fn vk(&self, num_vars: usize) -> VerifierKey<E> {
-        MultilinearPC::trim(&self.uni_params, num_vars).1
+    pub fn vk(&self) -> VerifierKey<E> {
+        MultilinearPC::trim(&self.uni_params, self.uni_params.num_vars).1
     }
 }
 
@@ -277,11 +224,9 @@ where
         let nv = poly.get_num_vars();
         let poly = DensePolynomial::new(poly.coeffs_as_field_elements());
         let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
-        let g_product = <E::G1 as VariableBaseMSM>::msm_bigint(
-            &setup.ck(nv).powers_of_g[0],
-            scalars.as_slice(),
-        )
-        .into_affine();
+        let g_product =
+            <E::G1 as VariableBaseMSM>::msm_bigint(&setup.ck().powers_of_g[0], scalars.as_slice())
+                .into_affine();
         PST13Commitment { nv, g_product }
     }
 
@@ -302,13 +247,15 @@ where
         commitments: &[&Self::Commitment],
         coeffs: &[Self::Field],
     ) -> Self::Commitment {
-        let comm = aggregate_comm_with_powers::<E>(
-            coeffs,
-            &commitments.iter().map(|&c| c.into()).collect::<Vec<_>>(),
-        );
+        let g_product: E::G1Affine = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.g_product * coeff)
+            .sum::<E::G1>()
+            .into_affine();
         PST13Commitment {
             nv: commitments[0].nv,
-            g_product: comm.g_product,
+            g_product,
         }
     }
 
@@ -323,7 +270,7 @@ where
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         match poly {
             MultilinearPolynomial::LargeScalars(poly) => {
-                open(&setup.ck(opening_point.len()), poly, &opening_point_rev).0
+                open(&setup.ck(), poly, &opening_point_rev).0
             }
             _ => todo!(),
         }
@@ -341,7 +288,7 @@ where
 
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         MultilinearPC::check(
-            &setup.vk(opening_point.len()),
+            &setup.vk(),
             &commitment.into(),
             &opening_point_rev,
             *opening,

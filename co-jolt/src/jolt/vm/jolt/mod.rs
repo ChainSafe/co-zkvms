@@ -29,7 +29,6 @@ use strum::EnumCount;
 use super::bytecode::BytecodeRow;
 use crate::jolt::{
     instruction::JoltInstructionSet,
-    subtable::JoltSubtableSet,
     vm::{instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32I},
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
@@ -43,10 +42,11 @@ use jolt_core::{
             sb::SBInstruction, sh::SHInstruction, VirtualInstructionSequence,
         },
         vm::{
-            bytecode::BytecodeProof, instruction_lookups::InstructionLookupsPreprocessing,
-            read_write_memory::ReadWriteMemoryPolynomials,
-            timestamp_range_check::TimestampValidityProof, JoltProverPreprocessing, JoltStuff,
-            JoltVerifierPreprocessing,
+            bytecode::BytecodeProof,
+            instruction_lookups::InstructionLookupsPreprocessing,
+            read_write_memory::{ReadWriteMemoryPolynomials, ReadWriteMemoryProof},
+            timestamp_range_check::TimestampValidityProof,
+            JoltProverPreprocessing, JoltStuff, JoltVerifierPreprocessing,
         },
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
@@ -58,6 +58,7 @@ use jolt_core::{
 };
 use jolt_core::{
     jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
+    jolt::subtable::JoltSubtableSet,
     utils::transcript::AppendToTranscript,
 };
 
@@ -128,12 +129,13 @@ pub struct JoltProof<
 {
     pub trace_length: usize,
     // pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
-    // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
     pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     // pub opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
+    _marker: PhantomData<I>,
 }
 
 pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
@@ -207,6 +209,7 @@ where
         .into_iter()
         .max()
         .unwrap();
+    
         tracing::info!("max_poly_len: {:?}", max_poly_len);
         let generators = PCS::setup(max_poly_len);
 
@@ -315,10 +318,10 @@ where
         let padded_log2 = padded_trace_length.log_2();
         let srs_log2 = srs_size.log_2();
 
-        // println!(
-        //     "Trace length: {trace_length} (2^{})",
-        //     trace_length.next_power_of_two().log_2()
-        // );
+        println!(
+            "Trace length: {trace_length} (2^{})",
+            trace_length.next_power_of_two().log_2()
+        );
 
         if padded_trace_length > srs_size {
             panic!(
@@ -433,16 +436,16 @@ where
             &mut transcript,
         );
 
-        // let memory_proof = ReadWriteMemoryProof::prove(
-        //     &preprocessing.shared.generators,
-        //     &preprocessing.shared.read_write_memory,
-        //     &jolt_polynomials,
-        //     &program_io,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // );
+        let memory_proof = ReadWriteMemoryProof::prove(
+            &preprocessing.shared.generators,
+            &preprocessing.shared.read_write_memory,
+            &jolt_polynomials,
+            &program_io,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
-        let spartan_proof = UniformSpartanProof::<
+        let r1cs_proof = UniformSpartanProof::<
             C,
             <Self::Constraints as R1CSConstraints<C, F>>::Inputs,
             F,
@@ -465,11 +468,11 @@ where
         let jolt_proof = JoltProof {
             trace_length,
             // bytecode: bytecode_proof,
-            // read_write_memory: memory_proof,
+            read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
-            r1cs: spartan_proof,
+            r1cs: r1cs_proof,
             opening_proof,
-            // opening_accumulator,
+            _marker: PhantomData,
         };
 
         // #[cfg(test)]
@@ -484,7 +487,7 @@ where
 
     #[tracing::instrument(skip_all)]
     fn verify(
-        preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        mut preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         proof: JoltProof<
             C,
             M,
@@ -496,7 +499,7 @@ where
             ProofTranscript,
         >,
         commitments: JoltCommitments<PCS, ProofTranscript>,
-        // program_io: JoltDevice,
+        program_io: JoltDevice,
         // _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> eyre::Result<()> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -556,16 +559,18 @@ where
         )
         .map_err(|e| eyre::eyre!(e))
         .context("failed to verify instruction lookups")?;
-        // Self::verify_memory(
-        //     &mut preprocessing.read_write_memory,
-        //     &preprocessing.generators,
-        //     &preprocessing.memory_layout,
-        //     proof.read_write_memory,
-        //     &commitments,
-        //     program_io,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
+
+        Self::verify_memory(
+            &mut preprocessing.read_write_memory,
+            &preprocessing.generators,
+            &preprocessing.memory_layout,
+            proof.read_write_memory,
+            &commitments,
+            program_io,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
+
         Self::verify_r1cs(
             r1cs_proof,
             &commitments,
@@ -636,36 +641,36 @@ where
     // }
 
     // #[allow(clippy::too_many_arguments)]
-    // #[tracing::instrument(skip_all)]
-    // fn verify_memory<'a>(
-    //     preprocessing: &mut ReadWriteMemoryPreprocessing,
-    //     generators: &PCS::Setup,
-    //     memory_layout: &MemoryLayout,
-    //     proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
-    //     commitment: &'a JoltCommitments<PCS, ProofTranscript>,
-    //     program_io: JoltDevice,
-    //     opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-    //     transcript: &mut ProofTranscript,
-    // ) -> Result<(), ProofVerifyError> {
-    //     assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
-    //     assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
-    //     // pair the memory layout with the program io from the proof
-    //     preprocessing.program_io = Some(JoltDevice {
-    //         inputs: program_io.inputs,
-    //         outputs: program_io.outputs,
-    //         panic: program_io.panic,
-    //         memory_layout: memory_layout.clone(),
-    //     });
+    #[tracing::instrument(skip_all)]
+    fn verify_memory<'a>(
+        preprocessing: &mut ReadWriteMemoryPreprocessing,
+        generators: &PCS::Setup,
+        memory_layout: &MemoryLayout,
+        proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+        commitment: &'a JoltCommitments<PCS, ProofTranscript>,
+        program_io: JoltDevice,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
+        assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
+        // pair the memory layout with the program io from the proof
+        preprocessing.program_io = Some(JoltDevice {
+            inputs: program_io.inputs,
+            outputs: program_io.outputs,
+            panic: program_io.panic,
+            memory_layout: memory_layout.clone(),
+        });
 
-    //     ReadWriteMemoryProof::verify(
-    //         proof,
-    //         generators,
-    //         preprocessing,
-    //         commitment,
-    //         opening_accumulator,
-    //         transcript,
-    //     )
-    // }
+        ReadWriteMemoryProof::verify(
+            proof,
+            generators,
+            preprocessing,
+            commitment,
+            opening_accumulator,
+            transcript,
+        )
+    }
 
     #[tracing::instrument(skip_all)]
     fn verify_r1cs<'a>(

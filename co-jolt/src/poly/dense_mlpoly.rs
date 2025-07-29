@@ -22,7 +22,7 @@ use jolt_core::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[derive(Debug, Clone, Default, CanonicalDeserialize, CanonicalSerialize)]
+#[derive(Debug, Clone, Default, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 pub struct Rep3DensePolynomial<F: JoltField> {
     // pub party_id: usize,
     pub num_vars: usize,

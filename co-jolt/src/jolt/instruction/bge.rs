@@ -3,6 +3,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{
+    eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+    ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
+};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -12,14 +16,8 @@ use mpc_core::protocols::rep3::{
 use super::{
     slt::SLTInstruction, JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices,
 };
-use crate::{
-    jolt::subtable::{
-        eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
-        lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
-    },
-    utils::instruction_utils::{
-        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
-    },
+use crate::utils::instruction_utils::{
+    chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -50,10 +48,10 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction<F> {
 
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C - 1)),
             (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
             (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]

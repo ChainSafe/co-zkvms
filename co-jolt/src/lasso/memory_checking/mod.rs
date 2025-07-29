@@ -154,10 +154,8 @@ where
             *opening = *eval;
         }
 
-        // let init_final_evals: Vec<F> =
-        //     Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
-
-        let init_final_evals = additive::combine_field_element_vec(network.receive_responses()?);
+        let init_final_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
         for (opening, eval) in openings
             .init_final_values_mut()
@@ -174,7 +172,7 @@ where
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
     ) -> Self::Rep3ReadWriteGrandProduct {
-        Self::Rep3ReadWriteGrandProduct::construct((num_lookups).log_2() + 1)
+        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2())
     }
 
     fn init_final_grand_product_rep3(

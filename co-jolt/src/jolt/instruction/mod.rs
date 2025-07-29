@@ -16,8 +16,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{AsRefStr, EnumCount, EnumIter};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
-
-use super::subtable::LassoSubtable;
+use jolt_core::jolt::subtable::LassoSubtable;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -262,7 +261,7 @@ macro_rules! instruction_set {
     };
 }
 
-pub mod range_check;
+// pub mod range_check;
 
 pub mod add;
 pub mod and;
@@ -270,19 +269,15 @@ pub mod beq;
 pub mod bge;
 pub mod bgeu;
 pub mod bne;
-pub mod lb;
-pub mod lh;
 pub mod mul;
 pub mod or;
-pub mod sb;
-pub mod sh;
 pub mod sll;
 pub mod slt;
 pub mod sltu;
 pub mod sra;
 pub mod srl;
 pub mod sub;
-pub mod sw;
+// pub mod sw;
 pub mod xor;
 // pub mod mulhu;
 // pub mod mulu;

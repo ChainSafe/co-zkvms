@@ -19,6 +19,7 @@ use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
     field::JoltField,
+    jolt::subtable::JoltSubtableSet,
     jolt::vm::instruction_lookups::InstructionLookupStuff,
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
@@ -49,7 +50,6 @@ use tracing::trace_span;
 use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    subtable::JoltSubtableSet,
     vm::{
         instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials, JoltPolynomials,
     },
@@ -139,13 +139,6 @@ where
             io_ctx,
         )?;
 
-        // if io_ctx.id == PartyID::ID0 {
-        //     io_ctx.network.send_response(flag_evals)?;
-        // }
-        // io_ctx.network.send_response((E_evals, outputs_eval))?;
-
-        // self.prove_openings(&polynomials, &r_primary_sumcheck)?;
-
         <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
             pcs_setup,
             preprocessing,
@@ -196,6 +189,7 @@ where
                 lookup_outputs_poly,
                 previous_claim,
                 io_ctx,
+                _round,
             )?;
 
             io_ctx.network.send_response(univariate_poly.as_vec())?;
@@ -253,6 +247,7 @@ where
         lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         previous_claim: F,
         io_ctx: &mut IoContext<Network>,
+        round: usize,
     ) -> eyre::Result<UniPoly<F>> {
         let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
@@ -306,16 +301,32 @@ where
 
                         let instruction_collation_eval =
                             instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
+                        #[cfg(feature = "debug")]
+                        {
+                            let instruction_collation_eval_open =
+                                rep3::arithmetic::open_vec::<F, _>(
+                                    &[instruction_collation_eval],
+                                    io_ctx,
+                                )
+                                .unwrap()[0];
+                            let subtable_terms_open =
+                                rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
+                                    .unwrap();
+                            let instruction_collation_eval_check =
+                                instruction.combine_lookups(&subtable_terms_open, C, M);
+                            assert_eq!(
+                                instruction_collation_eval_check,
+                                instruction_collation_eval_open,
+                                "instruction {:?} combine_lookups_rep3 != combine_lookups",
+                                Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
+                            );
+                        }
+
                         inner_sum[j] +=
                             rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
                     }
                 }
 
-                // let evaluations: Vec<F> = (0..degree)
-                //     .map(|eval_index| {
-                //         eq_evals[eval_index] * (inner_sum[eval_index] - output_evals[eval_index])
-                //     })
-                //     .collect();
                 let evaluations: Vec<_> = (0..degree)
                     .map(|eval_index| {
                         rep3::arithmetic::mul_public(
@@ -343,74 +354,6 @@ where
 
         evaluations.insert(1, previous_claim - evaluations[0]);
         Ok(UniPoly::from_evals(&evaluations))
-    }
-
-    // #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
-    // fn prove_openings(
-    //     &mut self,
-    //     polynomials: &Rep3InstructionLookupPolynomials<F>,
-    //     opening_point: &[F],
-    // ) -> eyre::Result<()> {
-    //     // let e_polys_a = polynomials
-    //     //     .e_polys
-    //     //     .iter()
-    //     //     .map(|poly| poly.copy_share_a())
-    //     //     .collect::<Vec<_>>();
-    //     // let lookup_output_a = polynomials.lookup_outputs.copy_share_a();
-    //     let lookup_flag_polys = polynomials
-    //         .instruction_flag_polys
-    //         .iter()
-    //         .map(|p| {
-    //             Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-    //                 p.evals(),
-    //                 self.io_ctx.network.party_id(),
-    //             ))
-    //         })
-    //         .collect::<Vec<_>>();
-    //     let primary_sumcheck_polys = chain![
-    //         polynomials.E_polys.iter(),
-    //         lookup_flag_polys.iter(),
-    //         iter::once(&polynomials.lookup_outputs),
-    //     ]
-    //     .collect::<Vec<_>>();
-
-    //     PCS::distributed_batch_open_worker(
-    //         &primary_sumcheck_polys,
-    //         &self.ck,
-    //         opening_point,
-    //         &mut self.io_ctx.network,
-    //     )
-    // }
-
-    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
-    /// can be computed by summing over the instructions that use that memory: if a given execution step
-    /// accesses the memory, it must be executing exactly one of those instructions.
-    #[tracing::instrument(skip_all, name = "Rep3LassoProver::memory_flag_polys")]
-    fn memory_flag_polys(
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        flag_bitvectors: &[Vec<u64>],
-    ) -> Vec<DensePolynomial<F>> {
-        let m = flag_bitvectors[0].len();
-
-        (0..preprocessing.num_memories)
-            .into_par_iter()
-            .map(|memory_index| {
-                let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..InstructionSet::COUNT {
-                    if preprocessing.instruction_to_memory_indices[instruction_index]
-                        .contains(&memory_index)
-                    {
-                        memory_flag_bitvector
-                            .iter_mut()
-                            .zip(&flag_bitvectors[instruction_index])
-                            .for_each(|(memory_flag, instruction_flag)| {
-                                *memory_flag += instruction_flag
-                            });
-                    }
-                }
-                DensePolynomial::from_u64(&memory_flag_bitvector)
-            })
-            .collect()
     }
 
     /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression

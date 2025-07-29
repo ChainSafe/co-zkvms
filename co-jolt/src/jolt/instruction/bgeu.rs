@@ -3,6 +3,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -13,7 +14,6 @@ use super::{
     sltu::SLTUInstruction, JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices,
 };
 use crate::{
-    jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::{
         chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
     },
@@ -47,7 +47,7 @@ impl<F: JoltField> JoltInstruction<F> for BGEUInstruction<F> {
     fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
-            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C - 1)),
         ]
     }
 

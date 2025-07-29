@@ -15,6 +15,7 @@ use jolt_core::{
     poly::unipoly::{CompressedUniPoly, UniPoly},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::math::Math,
+    jolt::subtable::JoltSubtableSet,
 };
 use mpc_core::protocols::rep3::{self, network::Rep3NetworkCoordinator, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
@@ -27,7 +28,7 @@ use super::{
     PrimarySumcheckOpenings,
 };
 use crate::{
-    jolt::{instruction::JoltInstructionSet, subtable::JoltSubtableSet},
+    jolt::instruction::JoltInstructionSet,
     poly::eq_poly::EqPolynomial,
 };
 
@@ -147,4 +148,16 @@ where
 {
     type Rep3ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
+
+    fn read_write_grand_product_rep3(
+        _preprocessing: &Self::Preprocessing,
+        num_lookups: usize,
+    ) -> Rep3ToggledBatchedGrandProduct<F> {
+        <Rep3ToggledBatchedGrandProduct<F> as Rep3BatchedGrandProduct<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::construct(num_lookups.log_2() + 1)
+    }
 }

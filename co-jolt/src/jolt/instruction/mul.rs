@@ -1,4 +1,5 @@
 use ark_std::log2;
+use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -9,9 +10,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    jolt::instruction::Rep3JoltInstruction,
-    jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
-    utils::instruction_utils::concatenate_lookups_rep3,
+    jolt::instruction::Rep3JoltInstruction, utils::instruction_utils::concatenate_lookups_rep3,
 };
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};

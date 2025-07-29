@@ -1,9 +1,8 @@
 use crate::{
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
-        commitment::Rep3CommitmentScheme,
-        combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
-        Rep3DensePolynomial, Rep3MultilinearPolynomial,
+        combine_poly_shares_rep3, commitment::Rep3CommitmentScheme, generate_poly_shares_rep3,
+        generate_poly_shares_rep3_vec, Rep3DensePolynomial, Rep3MultilinearPolynomial,
     },
     utils::{
         self,
@@ -23,7 +22,7 @@ use jolt_core::{
     utils::math::Math,
 };
 use jolt_core::{
-    jolt::vm::instruction_lookups::InstructionLookupStuff,
+    jolt::subtable::JoltSubtableSet, jolt::vm::instruction_lookups::InstructionLookupStuff,
     poly::commitment::commitment_scheme::CommitmentScheme,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
@@ -46,7 +45,6 @@ use rayon::prelude::*;
 
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    subtable::JoltSubtableSet,
     vm::{
         instruction_lookups::InstructionLookupsPreprocessing, witness::Rep3Polynomials,
         JoltTraceStep,

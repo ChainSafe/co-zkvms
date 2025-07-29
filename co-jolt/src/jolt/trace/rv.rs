@@ -3,18 +3,13 @@ use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::lb::LBInstruction;
-use crate::jolt::instruction::lh::LHInstruction;
 use crate::jolt::instruction::or::ORInstruction;
-use crate::jolt::instruction::sb::SBInstruction;
-use crate::jolt::instruction::sh::SHInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
 use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
-use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction};
@@ -103,15 +98,15 @@ impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
             RV32IM::SLT  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
             RV32IM::SLTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
 
-            RV32IM::ADDI  => Ok(ADDInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::SLLI  => Ok(SLLInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::SRLI  => Ok(SRLInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::SRAI  => Ok(SRAInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::SLTI  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::SLTIU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
+            RV32IM::ADDI  => Ok(ADDInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::SLLI  => Ok(SLLInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::SRLI  => Ok(SRLInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::SRAI  => Ok(SRAInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::SLTI  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::SLTIU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
 
             RV32IM::BEQ  => Ok(BEQInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
             RV32IM::BNE  => Ok(BNEInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
@@ -120,9 +115,9 @@ impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
             RV32IM::BGE  => Ok(BGEInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
             RV32IM::BGEU => Ok(BGEUInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
 
-            RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address.into(), row.imm_u64().into()).into()),
-            RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap().into(), row.imm_u64().into()).into()),
-            RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address.into(), row.imm_u64().into()).into()),
+            RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address.into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address.into(), (row.imm_u32() as u64).into()).into()),
             RV32IM::LUI => Ok(ADVICEInstruction((row.imm_u32() as u64).into()).into()),
 
             RV32IM::MUL => Ok(MULInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),

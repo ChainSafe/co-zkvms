@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 use tracing::trace_span;
 
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
-use crate::jolt::subtable::JoltSubtableSet;
+use jolt_core::jolt::subtable::JoltSubtableSet;
 use crate::lasso::{
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     memory_checking::{MultisetHashes, StructuredPolynomialData, VerifierComputedOpening},
@@ -278,7 +278,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Instruction lookups check"
+        b"Jolt instruction lookups"
     }
 }
 
@@ -657,14 +657,12 @@ where
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
-        println!("primary sumcheck openings: {:?}", primary_sumcheck_openings);
         opening_accumulator.append(
             &primary_sumcheck_commitments,
             r_primary_sumcheck.clone(),
             &primary_sumcheck_openings,
             transcript,
         );
-        println!("primary sumcheck openings appended");
 
         Self::verify_memory_checking(
             preprocessing,
@@ -1143,19 +1141,14 @@ where
     fn materialize_subtables() -> Vec<Vec<u32>> {
         let mut subtables = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {
-            subtables.push(
-                subtable
-                    .materialize(M)
-                    .into_iter()
-                    .map(|x| x.to_u64().unwrap().try_into().unwrap())
-                    .collect(),
-            );
+            subtables.push(subtable.materialize(M));
+
         }
         subtables
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Instruction lookups check"
+        b"Jolt instruction lookups"
     }
 }
 
