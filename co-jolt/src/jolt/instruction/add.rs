@@ -21,10 +21,7 @@ pub struct ADDInstruction<const WORD_SIZE: usize, F: JoltField>(
 
 impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction<WORD_SIZE, F> {
     fn operands(&self) -> (u64, u64) {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
-            _ => panic!("ADDInstruction::operands called with non-public operands"),
-        }
+        (self.0.as_public(), self.1.as_public())
     }
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
@@ -47,12 +44,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        match (&self.0, &self.1) {
-            (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
-                add_and_chunk_operands(*x as u128, *y as u128, C, log_M)
-            }
-            _ => panic!("ADDInstruction::to_indices called with non-public operands"),
-        }
+        add_and_chunk_operands(self.0.as_public() as u128, self.1.as_public() as u128, C, log_M)
     }
 
     fn lookup_entry(&self) -> F {

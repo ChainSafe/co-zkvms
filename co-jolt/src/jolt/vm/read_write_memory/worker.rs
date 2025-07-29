@@ -66,6 +66,7 @@ where
     ProofTranscript: TranscriptExt,
     Network: Rep3NetworkWorker,
 {
+    #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove")]
     pub fn prove(
         pcs_setup: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
@@ -354,9 +355,5 @@ where
             (read_write_leaves, 2 * MEMORY_OPS_PER_INSTRUCTION),
             ([init_fingerprints, final_fingerprints].concat(), 2),
         ))
-    }
-
-    fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize {
-        polynomials.a_ram.len()
     }
 }

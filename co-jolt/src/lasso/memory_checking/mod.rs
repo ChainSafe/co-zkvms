@@ -42,6 +42,7 @@ where
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove_memory_checking")]
     fn coordinate_memory_checking(
         preprocessing: &Self::Preprocessing,
+        num_lookups: usize,
         memory_size: usize,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -49,7 +50,7 @@ where
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
         let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
-            Self::prove_grand_products_rep3(preprocessing, memory_size, network, transcript)
+            Self::prove_grand_products_rep3(preprocessing, num_lookups, memory_size, network, transcript)
                 .context("while proving grand products")?;
 
         let (openings, exogenous_openings) =
@@ -66,6 +67,7 @@ where
 
     fn prove_grand_products_rep3(
         preprocessing: &Self::Preprocessing,
+        num_lookups: usize,
         memory_size: usize,
         network: &mut Network,
         transcript: &mut ProofTranscript,
@@ -79,8 +81,6 @@ where
         let tau: F = transcript.challenge_scalar();
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
-
-        let num_lookups = network.receive_responses()?[0];
 
         let (read_write_hashes_shares, init_final_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
             network

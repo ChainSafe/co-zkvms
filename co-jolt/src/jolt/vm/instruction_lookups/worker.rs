@@ -519,8 +519,4 @@ where
             ),
         ))
     }
-
-    fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize {
-        polynomials.dim[0].len()
-    }
 }

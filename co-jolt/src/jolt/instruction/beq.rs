@@ -84,10 +84,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        vals.iter()
-            .skip(1)
-            .try_fold(vals[0], |acc, x| rep3::arithmetic::mul(acc, *x, io_ctx))
-            .context("while combining BEQInstruction")
+        rep3::arithmetic::product(vals, io_ctx)
     }
 
     fn to_indices_rep3(

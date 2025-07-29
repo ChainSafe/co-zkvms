@@ -8,14 +8,6 @@ use jolt_core::{
 };
 use rand::Rng;
 
-// #[derive(Default, CanonicalSerialize, CanonicalDeserialize)]
-// pub struct Rep3BytecodePolynomials<F: JoltField> {
-//     pub a_read_write: MultilinearPolynomial<F>,
-//     pub v_read_write: [Rep3DensePolynomial<F>; 6],
-//     pub t_read: MultilinearPolynomial<F>,
-//     pub t_final: MultilinearPolynomial<F>,
-// }
-
 pub type Rep3BytecodePolynomials<F: JoltField> = BytecodeStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3BytecodePolynomials<F> {

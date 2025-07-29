@@ -52,7 +52,7 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     }
     fn random(&self, rng: &mut StdRng) -> Self;
 
-    fn slice_values<'a>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
+    fn slice_values<'a, T>(&self, vals: &'a [T], C: usize, M: usize) -> Vec<&'a [T]> {
         let mut offset = 0;
         let mut slices = vec![];
         for (_, indices) in self.subtables(C, M) {
@@ -204,6 +204,29 @@ pub enum Rep3Operand<F: JoltField> {
     Public(u64),
 }
 
+impl<F: JoltField> Rep3Operand<F> {
+    pub fn as_public(&self) -> u64 {
+        match self {
+            Rep3Operand::Public(x) => *x,
+            _ => panic!("Not a public operand"),
+        }
+    }
+
+    pub fn as_arithmetic_share(&self) -> Rep3PrimeFieldShare<F> {
+        match self {
+            Rep3Operand::Arithmetic(x) => *x,
+            _ => panic!("Not an arithmetic operand"),
+        }
+    }
+
+    pub fn as_binary_share(&self) -> Rep3BigUintShare<F> {
+        match self {
+            Rep3Operand::Binary(x) => x.clone(),
+            _ => panic!("Not a binary operand"),
+        }
+    }
+}
+
 impl<F: JoltField> Default for Rep3Operand<F> {
     fn default() -> Self {
         Rep3Operand::Public(0)
@@ -278,13 +301,19 @@ pub mod sra;
 pub mod srl;
 pub mod sub;
 // pub mod sw;
-pub mod xor;
-// pub mod mulhu;
-// pub mod mulu;
+pub mod mulhu;
+pub mod mulu;
 pub mod virtual_advice;
-// pub mod virtual_assert_halfword_alignment;
-// pub mod virtual_move;
-// pub mod virtual_movsign;
+pub mod virtual_assert_halfword_alignment;
+pub mod virtual_assert_lte;
+pub mod virtual_assert_valid_div0;
+pub mod virtual_assert_valid_signed_remainder;
+pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_move;
+pub mod virtual_movsign;
+pub mod virtual_pow2;
+pub mod virtual_right_shift_padding;
+pub mod xor;
 
 // instruction_set!(
 //   TestLookups,

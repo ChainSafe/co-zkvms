@@ -45,22 +45,6 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
         .collect()
 }
 
-pub fn slice_values_rep3<'a, F: JoltField, I: JoltInstruction<F>>(
-    op: &I,
-    vals: &'a [Rep3PrimeFieldShare<F>],
-    C: usize,
-    M: usize,
-) -> Vec<&'a [Rep3PrimeFieldShare<F>]> {
-    let mut offset = 0;
-    let mut slices = vec![];
-    for (_, indices) in op.subtables(C, M) {
-        slices.push(&vals[offset..offset + indices.len()]);
-        offset += indices.len();
-    }
-    assert_eq!(offset, vals.len());
-    slices
-}
-
 #[cfg(test)]
 mod test {
     use super::*;

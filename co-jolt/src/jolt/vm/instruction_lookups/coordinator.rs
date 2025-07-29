@@ -8,32 +8,23 @@ use crate::{
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::chain;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use jolt_core::{
     field::JoltField,
+    jolt::subtable::JoltSubtableSet,
     poly::unipoly::{CompressedUniPoly, UniPoly},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::math::Math,
-    jolt::subtable::JoltSubtableSet,
 };
-use mpc_core::protocols::rep3::{self, network::Rep3NetworkCoordinator, PartyID};
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
-use mpc_net::mpc_star::MpcStarNetCoordinator;
+use mpc_core::protocols::additive;
+use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use std::marker::PhantomData;
 
 use super::{
-    witness::Rep3InstructionLookupPolynomials, InstructionLookupPolynomials,
     InstructionLookupsPreprocessing, InstructionLookupsProof, PrimarySumcheck,
     PrimarySumcheckOpenings,
 };
-use crate::{
-    jolt::instruction::JoltInstructionSet,
-    poly::eq_poly::EqPolynomial,
-};
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use crate::jolt::instruction::JoltInstructionSet;
 
 impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subtables>
     InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>
@@ -46,7 +37,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
     pub fn prove_rep3<Network: Rep3NetworkCoordinator>(
-        trace_length: usize,
+        num_ops: usize,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         network: &mut Network,
         transcript: &mut ProofTranscript,
@@ -54,10 +45,10 @@ where
     {
         transcript.append_message(Self::protocol_name());
 
-        let r_eq = transcript.challenge_vector::<F>(trace_length.log_2());
+        let r_eq = transcript.challenge_vector::<F>(num_ops.log_2());
         network.broadcast_request(r_eq)?;
 
-        let num_rounds = trace_length.log_2();
+        let num_rounds = num_ops.log_2();
 
         let primary_sumcheck_proof =
             Self::prove_primary_sumcheck_rep3(num_rounds, transcript, network)
@@ -93,7 +84,7 @@ where
         };
 
         let memory_checking_proof =
-            Self::coordinate_memory_checking(preprocessing, M, transcript, network)
+            Self::coordinate_memory_checking(preprocessing, num_ops, M, transcript, network)
                 .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {

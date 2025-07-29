@@ -1,4 +1,3 @@
-use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::vm::worker::JoltRep3Prover;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::JoltR1CSInputs;
@@ -7,29 +6,29 @@ use jolt_core::field::JoltField;
 use jolt_core::utils::transcript::Transcript;
 use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
-use std::any::TypeId;
 use strum::IntoEnumIterator;
 use strum_macros::{AsRefStr, EnumCount, EnumIter};
 
-// use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction, or::ORInstruction,
-    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction,
-    JoltInstruction, JoltInstructionSet, Rep3JoltInstruction, Rep3JoltInstructionSet, Rep3Operand,
-    SubtableIndices,
+    bgeu::BGEUInstruction, bne::BNEInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+    mulu::MULUInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
+    virtual_advice::ADVICEInstruction,
+    virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
+    virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+    virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+    virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
+    virtual_pow2::POW2Instruction, virtual_right_shift_padding::RightShiftPaddingInstruction,
+    xor::XORInstruction, JoltInstruction, JoltInstructionSet, Rep3JoltInstruction,
+    Rep3JoltInstructionSet, Rep3Operand, SubtableIndices,
 };
-use jolt_core::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
-    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
-    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
-    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
-};
-use jolt_core::jolt::vm::rv32i_vm::RV32ISubtables;
 use crate::jolt::vm::{Jolt, JoltProof};
 use crate::r1cs::constraints::JoltRV32IMConstraints;
+use jolt_core::jolt::subtable::LassoSubtable;
+use jolt_core::jolt::vm::rv32i_vm::RV32ISubtables;
 use paste::paste;
 
 use mpc_core::protocols::rep3::{
@@ -55,8 +54,19 @@ crate::instruction_set!(
   SLL: SLLInstruction<WORD_SIZE, F>,
   SRA: SRAInstruction<WORD_SIZE, F>,
   SRL: SRLInstruction<WORD_SIZE, F>,
+  MOVSIGN: MOVSIGNInstruction<WORD_SIZE, F>,
   MUL: MULInstruction<WORD_SIZE, F>,
-  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE, F>
+  MULU: MULUInstruction<WORD_SIZE, F>,
+  MULHU: MULHUInstruction<WORD_SIZE, F>,
+  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE, F>,
+  VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE, F>,
+  VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction<WORD_SIZE, F>,
+  VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE, F>,
+  VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction<WORD_SIZE, F>,
+  VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE, F>,
+  VIRTUAL_ASSERT_HALFWORD_ALIGNMENT: AssertHalfwordAlignmentInstruction<WORD_SIZE, F>,
+  VIRTUAL_POW2: POW2Instruction<WORD_SIZE, F>,
+  VIRTUAL_SRA_PADDING: RightShiftPaddingInstruction<WORD_SIZE, F>
 );
 
 // ==================== JOLT ====================

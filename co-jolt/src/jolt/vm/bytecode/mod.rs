@@ -1,53 +1,14 @@
+pub mod coordinator;
 pub mod witness;
+pub mod worker;
 
 use crate::jolt::instruction::JoltInstructionSet;
-use jolt_core::utils::transcript::Transcript;
-// use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-// use crate::poly::eq_poly::EqPolynomial;
-// use jolt_core::field::JoltField;
-// use jolt_core::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
-use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use jolt_common::rv_trace::ELFInstruction;
-use jolt_core::lasso::memory_checking::Initializable;
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-
 use jolt_core::field::JoltField;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use rand::rngs::StdRng;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-// use std::{collections::HashMap, marker::PhantomData};
-use crate::lasso::memory_checking::{
-    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, StructuredPolynomialData,
-    VerifierComputedOpening,
-};
 
 pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 
-// use crate::{
-//     poly::{
-//         dense_mlpoly::DensePolynomial,
-//         identity_poly::IdentityPolynomial,
-//         structured_poly::{StructuredCommitment, StructuredOpeningProof},
-//     },
-//     utils::errors::ProofVerifyError,
-// };
-
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-// pub type BytecodeCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
-//     BytecodeStuff<PCS::Commitment>;
-
-// pub type BytecodeProof<F, C> = MemoryCheckingProof<
-//     F,
-//     C,
-//     BytecodePolynomials<F, C>,
-//     BytecodeReadWriteOpenings<F>,
-//     BytecodeInitFinalOpenings<F>,
-// >;
 
 pub trait BytecodeRowExt {
     fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64

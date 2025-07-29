@@ -48,8 +48,8 @@ where
     Network: Rep3NetworkCoordinator,
 {
     fn prove_rep3(
-        pcs_setup: &PCS::Setup,
-        meta: JoltWitnessMeta,
+        num_ops: usize,
+        memory_size: usize,
         preprocessing: &ReadWriteMemoryPreprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -66,16 +66,19 @@ where
     Network: Rep3NetworkCoordinator,
 {
     fn prove_rep3(
-        pcs_setup: &PCS::Setup,
-        meta: JoltWitnessMeta,
+        num_ops: usize,
+        memory_size: usize,
         preprocessing: &ReadWriteMemoryPreprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReadWriteMemoryProof<F, PCS, ProofTranscript>> {
-        let memory_size = meta.read_write_memory_size;
-
-        let memory_checking_proof =
-            Self::coordinate_memory_checking(preprocessing, memory_size, transcript, network)?;
+        let memory_checking_proof = Self::coordinate_memory_checking(
+            preprocessing,
+            num_ops,
+            memory_size,
+            transcript,
+            network,
+        )?;
 
         let output_proof = coordinate_prove_outputs(memory_size, transcript, network)?;
 

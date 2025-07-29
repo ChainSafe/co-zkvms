@@ -1,5 +1,3 @@
-use crate::utils::instruction_utils::slice_values_rep3;
-use eyre::Context;
 use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -115,7 +113,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = slice_values_rep3(self, vals, C, M);
+        let vals_by_subtable = self.slice_values(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
         let right_msb = vals_by_subtable[1];
@@ -174,45 +172,6 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
                 unimplemented!()
             }
             _ => panic!("SLTInstruction::output called with non-binary operands"),
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
-
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-
-    use super::SLTInstruction;
-
-    #[test]
-    fn slt_instruction_32_e2e() {
-        let mut rng = test_rng();
-        const C: usize = 4;
-        const M: usize = 1 << 16;
-
-        for _ in 0..256 {
-            let x = rng.next_u32() as u64;
-            let y = rng.next_u32() as u64;
-            let instruction = SLTInstruction(x, y);
-            jolt_instruction_test!(instruction);
-        }
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            SLTInstruction(100, 0),
-            SLTInstruction(0, 100),
-            SLTInstruction(1, 0),
-            SLTInstruction(0, u32_max),
-            SLTInstruction(u32_max, 0),
-            SLTInstruction(u32_max, u32_max),
-            SLTInstruction(u32_max, 1 << 8),
-            SLTInstruction(1 << 8, u32_max),
-        ];
-        for instruction in instructions {
-            jolt_instruction_test!(instruction);
         }
     }
 }

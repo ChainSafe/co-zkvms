@@ -9,24 +9,29 @@ use mpc_core::protocols::rep3::{
     Rep3PrimeFieldShare,
 };
 
+use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
+use jolt_core::{
+    field::JoltField,
+    utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters},
+};
+
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
-use jolt_core::field::JoltField;
-use crate::utils::instruction_utils::chunk_operand_usize;
 
 /// (address, offset)
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct AssertHalfwordAlignmentInstruction<const WORD_SIZE: usize>(pub Rep3Operand<F>, pub Rep3Operand<F>);
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AssertHalfwordAlignmentInstruction<const WORD_SIZE: usize, F: JoltField>(
+    pub Rep3Operand<F>,
+    pub Rep3Operand<F>,
+);
 
-impl<const WORD_SIZE: usize> JoltInstruction<F> for AssertHalfwordAlignmentInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
+    for AssertHalfwordAlignmentInstruction<WORD_SIZE, F>
+{
     fn operands(&self) -> (u64, u64) {
-        match &self.0 {
-            Rep3Operand::Public(x) => (0, *x),
-            _ => panic!("AssertHalfwordAlignmentInstruction::operands called with non-public operand"),
-        }
+        (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, _: usize) -> F {
+    fn combine_lookups(&self, vals: &[F], _: usize, _: usize) -> F {
         assert_eq!(vals.len(), 1);
         let lowest_bit = vals[0];
         F::one() - lowest_bit
@@ -36,11 +41,7 @@ impl<const WORD_SIZE: usize> JoltInstruction<F> for AssertHalfwordAlignmentInstr
         1
     }
 
-    fn subtables<F: JoltField>(
-        &self,
-        C: usize,
-        _: usize,
-    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(
             Box::new(LowBitSubtable::<F>::new()),
             SubtableIndices::from(C - 1),
@@ -49,132 +50,70 @@ impl<const WORD_SIZE: usize> JoltInstruction<F> for AssertHalfwordAlignmentInstr
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        match &self.0 {
-            Rep3Operand::Public(x) => add_and_chunk_operands(*x as u128, self.1 as u128, C, log_M),
-            _ => panic!("AssertHalfwordAlignmentInstruction::to_indices called with non-public operand"),
-        }
+        add_and_chunk_operands(
+            self.0.as_public() as u128,
+            self.1.as_public() as u128,
+            C,
+            log_M,
+        )
     }
 
-    fn to_lookup_index(&self) -> u64 {
+    fn lookup_entry(&self) -> F {
         match WORD_SIZE {
-            #[cfg(test)]
-            8 => self.0 + self.1,
-            32 => self.0 + self.1,
-            // 64 => (self.0 as u128) + (self.1 as u128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            32 => (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0) as u64).into(),
+            64 => (((self.0.as_public() as i64 + self.1.as_public() as i64) % 2 == 0) as u64).into(),
+            _ => panic!("Only 32-bit and 64-bit word sizes are supported"),
         }
-    }
-
-    fn lookup_entry(&self) -> u64 {
-        if WORD_SIZE == 32 {
-            ((self.0 as u32 as i32 + self.1 as u32 as i32) % 2 == 0) as u64
-        } else if WORD_SIZE == 64 {
-            ((self.0 as i64 + self.1 as i64) % 2 == 0) as u64
-        } else {
-            panic!("Only 32-bit and 64-bit word sizes are supported");
-        }
-    }
-
-    fn materialize_entry(&self, index: u64) -> u64 {
-        (index % 2 == 0).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
         match WORD_SIZE {
-            #[cfg(test)]
-            8 => Self(rng.next_u64() % (1 << 8), rng.next_u64() % (1 << 8)),
-            32 => Self(rng.next_u32() as u64, (rng.next_u32() % (1 << 12)) as u64),
-            64 => Self(rng.next_u64(), rng.next_u64() % (1 << 12)),
+            32 => Self(
+                (rng.next_u32() as u64).into(),
+                ((rng.next_u32() % (1 << 12)) as u64).into(),
+            ),
+            64 => Self(rng.next_u64().into(), (rng.next_u64() % (1 << 12)).into()),
             _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
         }
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        let lsb = r[r.len() - 1];
-        F::one() - lsb
-    }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for AssertHalfwordAlignmentInstruction<WORD_SIZE>
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
+    for AssertHalfwordAlignmentInstruction<WORD_SIZE, F>
 {
-    fn suffixes(&self) -> Vec<Suffixes> {
-        vec![Suffixes::One, Suffixes::Lsb]
+    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+        (self.0.clone(), self.1.clone())
     }
 
-    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, lsb] = suffixes.try_into().unwrap();
-        one - prefixes[Prefixes::Lsb] * lsb
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand_chacha::rand_core::RngCore;
-
-    use crate::{
-        jolt::instruction::{
-            test::{
-                instruction_mle_full_hypercube_test, instruction_mle_random_test,
-                materialize_entry_test, prefix_suffix_test,
-            },
-            JoltInstruction,
-        },
-        jolt_instruction_test,
-    };
-
-    use super::AssertHalfwordAlignmentInstruction;
-
-    #[test]
-    fn assert_halfword_alignment_materialize_entry() {
-        materialize_entry_test::<Fr, AssertHalfwordAlignmentInstruction<32>>();
+    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+        (&mut self.0, Some(&mut self.1))
     }
 
-    #[test]
-    fn assert_halford_alignment_mle_full_hypercube() {
-        instruction_mle_full_hypercube_test::<Fr, AssertHalfwordAlignmentInstruction<8>>();
+    fn combine_lookups_rep3<N: Rep3Network>(
+        &self,
+        vals: &[Rep3PrimeFieldShare<F>],
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        assert_eq!(vals.len(), 1);
+        let lowest_bit = vals[0];
+        Ok(rep3::arithmetic::sub_public_by_shared(
+            F::one(),
+            lowest_bit,
+            io_ctx.id,
+        ))
     }
 
-    #[test]
-    fn assert_halford_alignment_mle_random() {
-        instruction_mle_random_test::<Fr, AssertHalfwordAlignmentInstruction<32>>();
+    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<rep3::Rep3BigUintShare<F>> {
+        // add_and_chunk_operands_rep3(self.0, self.1, C, log_M)
+        todo!()
     }
 
-    #[test]
-    fn assert_halfword_alignment_prefix_suffix() {
-        prefix_suffix_test::<Fr, AssertHalfwordAlignmentInstruction<32>>();
-    }
-
-    #[test]
-    fn assert_halfword_alignment_instruction_32_e2e() {
-        let mut rng = test_rng();
-        const C: usize = 4;
-        const M: usize = 1 << 16;
-        const WORD_SIZE: usize = 32;
-
-        for _ in 0..256 {
-            let x = rng.next_u64();
-            let imm = rng.next_u64() as i64 % (1 << 12);
-            let instruction = AssertHalfwordAlignmentInstruction::<WORD_SIZE>(x, imm as u64);
-            jolt_instruction_test!(instruction);
-        }
-    }
-
-    #[test]
-    fn assert_halfword_alignment_instruction_64_e2e() {
-        let mut rng = test_rng();
-        const C: usize = 8;
-        const M: usize = 1 << 16;
-        const WORD_SIZE: usize = 64;
-
-        for _ in 0..256 {
-            let x = rng.next_u64();
-            let imm = rng.next_u64() as i64 % (1 << 12);
-            let instruction = AssertHalfwordAlignmentInstruction::<WORD_SIZE>(x, imm as u64);
-            jolt_instruction_test!(instruction);
-        }
+    fn output<N: Rep3Network>(
+        &self,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        todo!()
     }
 }

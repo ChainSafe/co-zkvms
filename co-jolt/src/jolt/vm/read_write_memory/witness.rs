@@ -146,7 +146,6 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
-        tracing::info!("output_index: {:?}", output_index);
         // Convert output bytes into words and populate `v_io`
         for chunk in program_io.outputs.chunks(4) {
             let mut word = [0u8; 4];

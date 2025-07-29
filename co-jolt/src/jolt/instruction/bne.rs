@@ -83,14 +83,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let prod = vals
-            .iter()
-            .skip(1)
-            .try_fold(vals[0], |acc, x| rep3::arithmetic::mul(acc, *x, io_ctx))
-            .context("while combining BNEInstruction")?;
         Ok(rep3::arithmetic::sub_public_by_shared(
             F::one(),
-            prod,
+            rep3::arithmetic::product(vals, io_ctx)?,
             io_ctx.network.get_id(),
         ))
     }

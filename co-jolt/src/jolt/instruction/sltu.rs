@@ -1,4 +1,3 @@
-use crate::utils::instruction_utils::slice_values_rep3;
 use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -98,7 +97,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = slice_values_rep3(self, vals, C, M);
+        let vals_by_subtable = self.slice_values(vals, C, M);
         let ltu = vals_by_subtable[0];
         let eq = vals_by_subtable[1];
 

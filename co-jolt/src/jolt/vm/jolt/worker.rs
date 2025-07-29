@@ -1,12 +1,13 @@
 use crate::{
     jolt::vm::{
+        bytecode::worker::Rep3BytecodeProver,
         jolt::witness::JoltWitnessMeta,
         read_write_memory::{
             witness::{Rep3ProgramIO, Rep3ProgramIOInput},
             worker::Rep3ReadWriteMemoryProver,
         },
     },
-    lasso::memory_checking::StructuredPolynomialData,
+    lasso::memory_checking::{worker::MemoryCheckingProverRep3Worker, StructuredPolynomialData},
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
         opening_proof::{
@@ -134,10 +135,13 @@ where
 
                 let trace_length = trace.len();
                 let padded_trace_length = trace_length.next_power_of_two();
+                assert_eq!(polynomials.instruction_lookups.dim[0].len(), padded_trace_length);
+                assert_eq!(polynomials.read_write_memory.a_ram.len(), padded_trace_length);
+                assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
 
                 if io_ctx.id == PartyID::ID0 {
                     let meta = JoltWitnessMeta {
-                        trace_length,
+                        padded_trace_length,
                         read_write_memory_size: polynomials.read_write_memory.v_final.len(),
                         memory_layout,
                     };
@@ -204,6 +208,19 @@ where
             .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, &mut self.io_ctx)?;
 
         let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
+
+        let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
+        let _guard = span.enter();
+        Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
+            &preprocessing.shared.generators,
+            &preprocessing.shared.bytecode,
+            &polynomials.bytecode,
+            &polynomials,
+            &mut opening_accumulator,
+            &mut self.io_ctx,
+        )?;
+        drop(_guard);
+        drop(span);
 
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
             PCS,

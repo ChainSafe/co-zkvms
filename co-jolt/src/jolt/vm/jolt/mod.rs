@@ -49,6 +49,7 @@ use jolt_core::{
             JoltProverPreprocessing, JoltStuff, JoltVerifierPreprocessing,
         },
     },
+    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
     poly::multilinear_polynomial::MultilinearPolynomial,
     r1cs::{
         constraints::R1CSConstraints,
@@ -57,8 +58,8 @@ use jolt_core::{
     },
 };
 use jolt_core::{
-    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
     jolt::subtable::JoltSubtableSet,
+    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
     utils::transcript::AppendToTranscript,
 };
 
@@ -128,7 +129,7 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    // pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
+    pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
@@ -209,7 +210,7 @@ where
         .into_iter()
         .max()
         .unwrap();
-    
+
         tracing::info!("max_poly_len: {:?}", max_poly_len);
         let generators = PCS::setup(max_poly_len);
 
@@ -337,12 +338,12 @@ where
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        // Self::fiat_shamir_preamble(
-        //     &mut transcript,
-        //     &program_io,
-        //     &program_io.memory_layout,
-        //     trace_length,
-        // );
+        Self::fiat_shamir_preamble(
+            &mut transcript,
+            &program_io,
+            &program_io.memory_layout,
+            trace_length,
+        );
 
         let instruction_polynomials =
             InstructionLookupsProof::<
@@ -405,28 +406,28 @@ where
         let jolt_commitments =
             jolt_polynomials.commit::<C, PCS, ProofTranscript>(&preprocessing.shared);
 
-        // transcript.append_scalar(&spartan_key.vk_digest);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
-        // jolt_commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // jolt_commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+        jolt_commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        jolt_commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
 
         let mut opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript> =
             ProverOpeningAccumulator::new();
 
-        // let bytecode_proof = BytecodeProof::prove_memory_checking(
-        //     &preprocessing.shared.generators,
-        //     &preprocessing.shared.bytecode,
-        //     &jolt_polynomials.bytecode,
-        //     &jolt_polynomials,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // );
+        let bytecode_proof = BytecodeProof::prove_memory_checking(
+            &preprocessing.shared.generators,
+            &preprocessing.shared.bytecode,
+            &jolt_polynomials.bytecode,
+            &jolt_polynomials,
+            &mut opening_accumulator,
+            &mut transcript,
+        );
 
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.shared.generators,
@@ -467,7 +468,7 @@ where
 
         let jolt_proof = JoltProof {
             trace_length,
-            // bytecode: bytecode_proof,
+            bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_proof,
             r1cs: r1cs_proof,
@@ -508,12 +509,12 @@ where
 
         // opening_accumulator.compare_to(proof.opening_accumulator, &preprocessing.generators);
 
-        // Self::fiat_shamir_preamble(
-        //     &mut transcript,
-        //     &program_io,
-        //     &preprocessing.memory_layout,
-        //     proof.trace_length,
-        // );
+        Self::fiat_shamir_preamble(
+            &mut transcript,
+            &program_io,
+            &preprocessing.memory_layout,
+            proof.trace_length,
+        );
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
@@ -524,7 +525,7 @@ where
             &r1cs_builder,
             padded_trace_length,
         );
-        // transcript.append_scalar(&spartan_key.vk_digest);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,
@@ -532,23 +533,23 @@ where
             _marker: PhantomData,
         };
 
-        // commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        // Self::verify_bytecode(
-        //     &preprocessing.bytecode,
-        //     &preprocessing.generators,
-        //     proof.bytecode,
-        //     &commitments,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
+        Self::verify_bytecode(
+            &preprocessing.bytecode,
+            &preprocessing.generators,
+            proof.bytecode,
+            &commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
@@ -620,25 +621,25 @@ where
         )
     }
 
-    // #[tracing::instrument(skip_all)]
-    // fn verify_bytecode<'a>(
-    //     preprocessing: &BytecodePreprocessing<F>,
-    //     generators: &PCS::Setup,
-    //     proof: BytecodeProof<F, PCS, ProofTranscript>,
-    //     commitments: &'a JoltCommitments<PCS, ProofTranscript>,
-    //     opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
-    //     transcript: &mut ProofTranscript,
-    // ) -> Result<(), ProofVerifyError> {
-    //     BytecodeProof::verify_memory_checking(
-    //         preprocessing,
-    //         generators,
-    //         proof,
-    //         &commitments.bytecode,
-    //         commitments,
-    //         opening_accumulator,
-    //         transcript,
-    //     )
-    // }
+    #[tracing::instrument(skip_all)]
+    fn verify_bytecode<'a>(
+        preprocessing: &BytecodePreprocessing<F>,
+        generators: &PCS::Setup,
+        proof: BytecodeProof<F, PCS, ProofTranscript>,
+        commitments: &'a JoltCommitments<PCS, ProofTranscript>,
+        opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), ProofVerifyError> {
+        BytecodeProof::verify_memory_checking(
+            preprocessing,
+            generators,
+            proof,
+            &commitments.bytecode,
+            commitments,
+            opening_accumulator,
+            transcript,
+        )
+    }
 
     // #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all)]

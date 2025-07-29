@@ -39,38 +39,15 @@ where
     Network: Rep3NetworkWorker,
 {
     type ReadWriteGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
-        // + Send
         + 'static;
     type InitFinalGrandProduct: Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network>
-        // + Send
         + 'static;
 
-    // type Rep3ExogenousPolynomials: ?Sized;
     type Rep3Polynomials: StructuredPolynomialData<Rep3MultilinearPolynomial<F>> + ?Sized;
     type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
-    // type Commitments: StructuredPolynomialData<PCS::Commitment>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync;
 
     type Preprocessing;
-
-    // type MemoryCheckingProof: MemoryCheckingProver<
-    //     F,
-    //     PCS,
-    //     ProofTranscript,
-    //     Preprocessing = Self::Preprocessing,
-    // >;
-    // type ReadWriteOpenings: Rep3StructuredOpeningProof<
-    //     F,
-    //     PCS,
-    //     Self::Polynomials,
-    //     Rep3Polynomials = Self::Rep3Polynomials,
-    // >;
-    // type InitFinalOpenings: Rep3StructuredOpeningProof<
-    //     F,
-    //     PCS,
-    //     Self::Polynomials,
-    //     Rep3Polynomials = Self::Rep3Polynomials,
-    // >;
 
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_memory_checking")]
     fn prove_memory_checking(
@@ -119,9 +96,6 @@ where
         pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
         let (gamma, tau) = io_ctx.network.receive_request()?;
-        io_ctx
-            .network
-            .send_response(Self::num_lookups(polynomials))?;
 
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,
@@ -191,11 +165,13 @@ where
                 .collect::<Vec<_>>(),
             io_ctx,
         )?;
+        tracing::info!("read_write_evals appended");
 
         let init_final_polys = polynomials.init_final_values();
         let (init_final_evals, eq_init_final) =
             Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
+        tracing::info!("init_final_evals appending");
         opening_accumulator.append(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
@@ -206,6 +182,7 @@ where
                 .collect::<Vec<_>>(),
             io_ctx,
         )?;
+        tracing::info!("init_final_evals appended");
 
         Ok(())
     }
@@ -272,6 +249,4 @@ where
         let claims = batched_circuit.claimed_outputs();
         Ok((batched_circuit, claims))
     }
-
-    fn num_lookups(polynomials: &Self::Rep3Polynomials) -> usize;
 }

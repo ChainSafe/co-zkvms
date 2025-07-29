@@ -39,12 +39,12 @@ use crate::jolt::vm::JoltTraceStep;
 
 #[derive(Debug, Clone, Copy, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltWitnessMeta {
-    pub trace_length: usize,
+    pub padded_trace_length: usize,
     pub read_write_memory_size: usize,
     pub memory_layout: MemoryLayout,
 }
 
-pub type Rep3JoltPolynomials<F: JoltField> = JoltStuff<Rep3MultilinearPolynomial<F>>;
+pub type Rep3JoltPolynomials<F> = JoltStuff<Rep3MultilinearPolynomial<F>>;
 
 pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     type PublicPolynomials;
@@ -313,8 +313,11 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 
         let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
         let _guard = span.enter();
-        commitments.bytecode.t_final =
-            PCS::commit_rep3(&self.bytecode.t_final, &preprocessing.generators, io_ctx.id == PartyID::ID0);
+        commitments.bytecode.t_final = PCS::commit_rep3(
+            &self.bytecode.t_final,
+            &preprocessing.generators,
+            io_ctx.id == PartyID::ID0,
+        );
         drop(_guard);
         drop(span);
 

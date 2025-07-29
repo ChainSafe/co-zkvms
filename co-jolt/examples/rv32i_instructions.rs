@@ -224,7 +224,7 @@ pub fn run_coordinator(
     network.reset_stats();
 
     let (proof, commitments) =
-        RV32IJoltVM::prove_rep3(meta, &spartan_key, &preprocessing.shared, &mut network)?;
+        RV32IJoltVM::prove_rep3(meta, &program_io, &spartan_key, &preprocessing.shared, &mut network)?;
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
