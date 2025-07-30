@@ -1199,6 +1199,9 @@ dependencies = [
  "eyre",
  "fixedbitset 0.5.7",
  "futures",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
  "itertools 0.12.1",
  "jolt-core",
  "mimalloc",
@@ -2605,6 +2608,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "icicle-bn254"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-hash",
+ "icicle-runtime",
+]
+
+[[package]]
+name = "icicle-core"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
+dependencies = [
+ "hex",
+ "icicle-runtime",
+ "once_cell",
+ "rand 0.8.5",
+ "rayon",
+]
+
+[[package]]
+name = "icicle-hash"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-runtime",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "icicle-runtime"
+version = "3.2.0"
+source = "git+https://github.com/ingonyama-zk/icicle-jolt.git?rev=2441eba#2441eba2e1bb8a8b2336a2ffb5e47653198eebf9"
+dependencies = [
+ "cmake",
+ "once_cell",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2945,6 +2991,9 @@ dependencies = [
  "eyre",
  "fixedbitset 0.5.7",
  "getrandom 0.2.16",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
  "indicatif",
  "itertools 0.10.5",
  "lazy_static",

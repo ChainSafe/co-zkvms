@@ -24,7 +24,7 @@ use color_eyre::{
     Result,
 };
 use itertools::Itertools;
-use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing};
+use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing, msm::icicle_init};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
     self,
@@ -49,8 +49,8 @@ const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-// type CommitmentScheme = PST13<E>;
-type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+type CommitmentScheme = PST13<E>;
+// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -132,6 +132,7 @@ pub fn run_party(
     if args.debug {
         return Ok(());
     }
+    icicle_init();
 
     let network = Rep3QuicMpcNetWorker::new_with_coordinator(
         config.clone(),

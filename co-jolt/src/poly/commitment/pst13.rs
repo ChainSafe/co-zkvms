@@ -1,4 +1,4 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly_commit::multilinear_pc::{
     data_structures::{Commitment, CommitterKey, Proof, UniversalParams, VerifierKey},
@@ -6,6 +6,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
+use jolt_core::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
     field::JoltField,
@@ -37,6 +38,7 @@ pub struct PST13<E: Pairing> {
 impl<E: Pairing> PST13<E>
 where
     E::ScalarField: JoltField,
+    E::G1: Icicle,
 {
     pub fn new() -> Self {
         Self {
@@ -47,6 +49,15 @@ where
     pub fn setup<R: RngCore>(max_len: usize, rng: &mut R) -> PST13Setup<E> {
         let num_vars = max_len.log_2();
         let uni_params = MultilinearPC::setup(num_vars, rng);
+        // #[cfg(feature = "icicle")]
+        // let gpu_g1 = Some(
+        //     uni_params.powers_of_g[0]
+        //         .par_iter()
+        //         .map(<E::G1 as Icicle>::from_ark_affine)
+        //         .collect::<Vec<_>>(),
+        // );
+        // #[cfg(not(feature = "icicle"))]
+        // let gpu_g1 = None;
         PST13Setup { uni_params }
     }
 }
@@ -55,6 +66,7 @@ impl<E: Pairing, ProofTranscript: Transcript> Rep3CommitmentScheme<E::ScalarFiel
     for PST13<E>
 where
     E::ScalarField: JoltField,
+    E::G1: Icicle,
 {
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<PST13Commitment<E>>],
@@ -154,26 +166,54 @@ where
     where
         U: Borrow<Rep3MultilinearPolynomial<E::ScalarField>> + Sync,
     {
-        let commitments = polys
+        let shared_polys_a = polys
             .par_iter()
-            .map(|poly| {
-                let commitment =
-                    <Self as Rep3CommitmentScheme<E::ScalarField, ProofTranscript>>::commit_rep3(
-                        poly.borrow(),
-                        setup,
-                        commit_to_public,
-                    );
-                commitment
+            .map(|poly| match poly.borrow() {
+                Rep3MultilinearPolynomial::Public { .. } => None,
+                Rep3MultilinearPolynomial::Shared(poly) => {
+                    Some(MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
+                }
             })
             .collect::<Vec<_>>();
 
+        let (polys, mut shared_commitments): (Vec<_>, Vec<MaybeShared<Self::Commitment>>) = polys
+            .par_iter()
+            .enumerate()
+            .map(|(i, poly)| match poly.borrow() {
+                Rep3MultilinearPolynomial::Public { poly, .. } => {
+                    let commitment = if commit_to_public {
+                        MaybeShared::Public(Some(PST13Commitment::default()))
+                    } else {
+                        MaybeShared::Public(None)
+                    };
+                    (poly, commitment)
+                }
+                Rep3MultilinearPolynomial::Shared(_) => (
+                    shared_polys_a[i].as_ref().unwrap(),
+                    MaybeShared::Shared(PST13Commitment::default()),
+                ),
+            })
+            .unzip();
+
+        let commitments = <Self as CommitmentScheme<ProofTranscript>>::batch_commit(&polys, setup);
+
         commitments
+            .into_par_iter()
+            .zip(shared_commitments.par_iter_mut())
+            .for_each(|(c, commitment)| match commitment {
+                MaybeShared::Public(Some(commitment)) => *commitment = c,
+                MaybeShared::Shared(commitment) => *commitment = c,
+                _ => {}
+            });
+
+        shared_commitments
     }
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PST13Setup<E: Pairing> {
     pub uni_params: UniversalParams<E>,
+    // pub gpu_g1: Option<Vec<GpuBaseType<E::G1>>>,
 }
 
 impl<E: Pairing> Default for PST13Setup<E> {
@@ -187,6 +227,7 @@ impl<E: Pairing> Default for PST13Setup<E> {
                 h: E::G2Affine::zero(),
                 h_mask: vec![],
             },
+            // gpu_g1: None,
         }
     }
 }
@@ -204,6 +245,7 @@ impl<E: Pairing> PST13Setup<E> {
 impl<E: Pairing, ProofTranscript: Transcript> CommitmentScheme<ProofTranscript> for PST13<E>
 where
     E::ScalarField: JoltField,
+    E::G1: Icicle,
 {
     type Setup = PST13Setup<E>;
     type Field = E::ScalarField;
@@ -219,24 +261,51 @@ where
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let nv = poly.get_num_vars();
         let poly = DensePolynomial::new(poly.coeffs_as_field_elements());
-        let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
-        let g_product =
-            <E::G1 as VariableBaseMSM>::msm_bigint(&setup.ck().powers_of_g[0], scalars.as_slice())
-                .into_affine();
+        // let scalars: Vec<_> = poly.evals_ref().iter().map(|x| x.into_bigint()).collect();
+        let g_product = <E::G1 as VariableBaseMSM>::msm_field_elements(
+            &setup.ck().powers_of_g[0][..poly.len()],
+            None, // setup.gpu_g1.as_ref().map(|g| &g[..poly.len()]),
+            poly.evals_ref(),
+            None,
+            use_icicle(),
+        )
+        .unwrap()
+        .into_affine();
         PST13Commitment { nv, g_product }
     }
 
-    fn batch_commit<U>(evals: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(polys: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        let mut commitments = Vec::new();
-        for evals in evals {
-            let commitment =
-                <Self as CommitmentScheme<ProofTranscript>>::commit(evals.borrow(), setup);
-            commitments.push(commitment);
+        let powers_of_g = &setup.ck().powers_of_g[0];
+        let nv = polys[0].borrow().get_num_vars();
+
+        // batch commit requires all batches to have the same length
+        assert!(polys
+            .par_iter()
+            .all(|s| s.borrow().len() == polys[0].borrow().len()));
+
+        if let Some(invalid) = polys
+            .iter()
+            .find(|coeffs| (*coeffs).borrow().len() > powers_of_g.len())
+        {
+            panic!("Key length error");
         }
+
+        let msm_size = polys[0].borrow().len();
+        let commitments = <E::G1 as VariableBaseMSM>::batch_msm(
+            &powers_of_g[..msm_size],
+            None, // setup.gpu_g1.as_ref().map(|g| &g[..msm_size]),
+            polys,
+        );
         commitments
+            .into_iter()
+            .map(|c| PST13Commitment {
+                nv,
+                g_product: c.into_affine(),
+            })
+            .collect()
     }
 
     fn combine_commitments(
@@ -363,6 +432,7 @@ fn open<E: Pairing>(
 ) -> (Proof<E>, E::ScalarField)
 where
     E::ScalarField: JoltField,
+    E::G1: Icicle,
 {
     let nv = polynomial.get_num_vars();
     assert_eq!(nv, ck.nv, "Invalid size of polynomial");
@@ -386,10 +456,17 @@ where
             r[k - 1][b] = r[k][b << 1] * &(E::ScalarField::one() - &point_at_k)
                 + &(r[k][(b << 1) + 1] * &point_at_k);
         }
-        let scalars: Vec<_> = (0..(1 << k)).map(|x| q[k][x >> 1].into_bigint()).collect();
+        let scalars: Vec<_> = (0..(1 << k)).map(|x| q[k][x >> 1]).collect();
 
-        let pi_g =
-            <E::G1 as VariableBaseMSM>::msm_bigint(&ck.powers_of_g[i], &scalars).into_affine(); // no need to move outside and partition
+        let pi_g = <E::G1 as VariableBaseMSM>::msm_field_elements(
+            &ck.powers_of_g[i],
+            None,
+            &scalars,
+            None,
+            use_icicle(),
+        )
+        .unwrap()
+        .into_affine(); // no need to move outside and partition
         proofs.push(pi_g);
     }
 

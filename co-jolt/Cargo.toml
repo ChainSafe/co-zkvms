@@ -64,7 +64,6 @@ snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
 
 
-
 [build-dependencies]
 jolt-common = { path = "../../jolt/common", package = "common" }
 
@@ -86,5 +85,25 @@ parallel = [
     "ark-poly-commit/parallel",
     "rayon",
 ]
+icicle = [
+    "default",
+    "dep:icicle-runtime",
+    "dep:icicle-core",
+    "dep:icicle-bn254",
+    "jolt-core/icicle",
+]
 public-eq = []
-# mpi = ["mpc-net/mpi"]
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    # "cuda_backend",
+], rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    # "cuda_backend",
+], rev = "2441eba", optional = true }
