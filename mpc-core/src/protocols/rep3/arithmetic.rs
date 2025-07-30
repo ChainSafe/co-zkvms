@@ -73,7 +73,7 @@ pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
     let product_except_last = shares
         .iter()
         .skip(1)
-        .take(num_multiplications - 1)
+        .take(num_multiplications - 2)
         .try_fold(shares[0] * public_extra.unwrap_or(F::one()), |acc, x| {
             mul(acc, *x, io_ctx)
         })

@@ -114,9 +114,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
@@ -127,7 +126,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         let (eq, eq_abs) = (vals_by_subtable[3], vals_by_subtable[5]);
         #[cfg(feature = "public-eq")]
         let (eq_abs, eq) = {
-            let eq = rep3::arithmetic::open_vec(
+            let mut eq = rep3::arithmetic::open_vec(
                 &[vals_by_subtable[3], &[vals_by_subtable[5][0]]].concat(),
                 io_ctx,
             )?;
@@ -161,17 +160,13 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
             ltu_sum += rep3::arithmetic::mul_public(ltu[C - 2], eq_prod).into_additive();
         }
 
-
-        // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
-
         let not_left_msb = rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0], io_ctx.id);
         let not_right_msb =
             rep3::arithmetic::sub_public_by_shared(F::one(), right_msb[0], io_ctx.id);
 
-        let left_msb_toggled = rep3::arithmetic::mul_public(left_msb[0], eq_flag_eval);
-
         let res = rep3::arithmetic::reshare_additive_many(
             &[
+                left_msb[0] * not_right_msb,
                 left_msb[0] * right_msb[0],
                 not_left_msb * not_right_msb,
                 ltu_sum,
@@ -179,13 +174,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
             io_ctx,
         )?;
 
-        let ltu_sum_toggled = rep3::arithmetic::mul_public(res[2], eq_flag_eval);
-
-        Ok(
-            left_msb_toggled * not_right_msb // x_s * (1 - y_s) * eq_eval * flag_eval
-            + res[0] * ltu_sum_toggled // x_s * y_s * LTU(x_{<s}, y_{<s}) * eq_eval * flag_eval
-            + res[1] * ltu_sum_toggled, // (1 - x_s) * (1 - y_s) * LTU(x_{<s}, y_{<s}) * eq_eval * flag_eval
-        )
+        // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
+        Ok(res[0] + rep3::arithmetic::mul(res[1] + res[2], res[3], io_ctx)?)
     }
 
     fn to_indices_rep3(

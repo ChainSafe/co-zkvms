@@ -108,11 +108,9 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
                     MaybeShared::Public(None)
                 }
             }
-            Rep3MultilinearPolynomial::Shared(poly) => {
-                MaybeShared::Shared(MockCommitment {
-                    poly: poly.clone().into(),
-                })
-            }
+            Rep3MultilinearPolynomial::Shared(poly) => MaybeShared::Shared(MockCommitment {
+                poly: poly.clone().into(),
+            }),
         }
     }
 

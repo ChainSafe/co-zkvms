@@ -1,5 +1,4 @@
 use eyre::Context;
-use mpc_core::protocols::additive::{self, AdditiveShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -82,13 +81,21 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        Ok(additive::sub_public_by_shared(
-            eq_flag_eval,
-            rep3::arithmetic::mul_public(rep3::arithmetic::product(vals, io_ctx)?, eq_flag_eval)
-                .into_additive(),
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        #[cfg(feature = "public-eq")]
+        {
+            let opened = rep3::arithmetic::open_vec(vals, io_ctx)?;
+            return Ok(rep3::arithmetic::promote_to_trivial_share(
+                io_ctx.id,
+                F::one() - opened.iter().product::<F>(),
+            ));
+        }
+
+        #[cfg(not(feature = "public-eq"))]
+        Ok(rep3::arithmetic::sub_public_by_shared(
+            F::one(),
+            rep3::arithmetic::product(vals, io_ctx)?,
             io_ctx.network.get_id(),
         ))
     }

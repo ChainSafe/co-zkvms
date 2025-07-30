@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 mkdir -p data
-cargo build --example rv32i_instructions --release
+cargo build --example rv32i_instructions --release --features public-eq
 
 cd ../mpc-net
 cargo build --bin gen_cert --release

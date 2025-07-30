@@ -3,18 +3,19 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::{additive::AdditiveShare, rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
-}};
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
+};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::instruction::{Rep3JoltInstruction, Rep3Operand};
+use jolt_core::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     rep3_chunk_and_concatenate_operands,
 };
 use jolt_core::field::JoltField;
-use jolt_core::jolt::subtable::{or::OrSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
@@ -77,14 +78,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        Ok(rep3::arithmetic::mul_public(
-            concatenate_lookups_rep3(vals, C, log2(M) as usize / 2),
-            eq_flag_eval,
-        )
-        .into_additive())
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
     }
 
     fn to_indices_rep3(

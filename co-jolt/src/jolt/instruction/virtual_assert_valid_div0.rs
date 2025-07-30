@@ -115,24 +115,19 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
         #[cfg(not(feature = "public-eq"))]
         {
             let [divisor_is_zero, is_valid_div_by_zero] =
-                rep3::arithmetic::product_many_into_additive(
-                    &vals_by_subtable[..2],
-                    io_ctx,
-                    Some(eq_flag_eval),
-                )?
-                .try_into()
-                .unwrap();
+                rep3::arithmetic::product_many(&vals_by_subtable[..2], io_ctx)?
+                    .try_into()
+                    .unwrap();
 
-            return Ok(additive::sub_public_by_shared(
-                eq_flag_eval,
+            return Ok(rep3::arithmetic::sub_public_by_shared(
+                F::one(),
                 divisor_is_zero + is_valid_div_by_zero,
                 io_ctx.id,
             ));
@@ -140,17 +135,17 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
         #[cfg(feature = "public-eq")]
         {
-            let (divisor_is_zero_vals, is_valid_div_by_zero_vals) = rep3::arithmetic::open_vec(
-                &[vals_by_subtable[0], vals_by_subtable[1]].concat(),
-                io_ctx,
-            )?
-            .split_at(vals_by_subtable[0].len());
+            let opened = rep3::arithmetic::open_vec(&vals_by_subtable[..2].concat(), io_ctx)?;
+
+            let (divisor_is_zero_vals, is_valid_div_by_zero_vals) =
+                opened.split_at(vals_by_subtable[0].len());
+
             let divisor_is_zero: F = divisor_is_zero_vals.iter().product();
             let is_valid_div_by_zero: F = is_valid_div_by_zero_vals.iter().product();
 
-            return Ok(additive::promote_to_trivial_share(
-                (F::one() - divisor_is_zero + is_valid_div_by_zero) * eq_flag_eval,
+            return Ok(rep3::arithmetic::promote_to_trivial_share(
                 io_ctx.id,
+                F::one() - divisor_is_zero + is_valid_div_by_zero,
             ));
         }
     }

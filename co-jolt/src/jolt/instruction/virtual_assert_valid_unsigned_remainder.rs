@@ -104,9 +104,8 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
         let ltu = vals_by_subtable[0];
         #[cfg(not(feature = "public-eq"))]
@@ -115,19 +114,15 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         let eq = rep3::arithmetic::open_vec(&vals_by_subtable[1], io_ctx)?;
 
         #[cfg(not(feature = "public-eq"))]
-        let divisor_is_zero = rep3::arithmetic::product_into_additive(
-            vals_by_subtable[2],
-            io_ctx,
-            Some(eq_flag_eval),
-        )?;
+        let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[2], io_ctx)?;
         #[cfg(feature = "public-eq")]
         let divisor_is_zero = {
             let divisor_is_zero_vals = rep3::arithmetic::open_vec(&vals_by_subtable[2], io_ctx)?;
-            divisor_is_zero_vals.iter().product() * eq_flag_eval
+            rep3::arithmetic::promote_to_trivial_share(io_ctx.id, divisor_is_zero_vals.iter().product::<F>())
         };
 
         let mut sum = ltu[0].into_additive();
-        let mut eq_prod = eq[0] * eq_flag_eval;
+        let mut eq_prod = eq[0];
 
         for i in 1..C - 1 {
             #[cfg(not(feature = "public-eq"))]
@@ -138,7 +133,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             #[cfg(feature = "public-eq")]
             {
                 sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
-                eq_prod *= *eq;
+                eq_prod *= eq[i];
             }
         }
         #[cfg(not(feature = "public-eq"))]
@@ -146,7 +141,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         #[cfg(feature = "public-eq")]
         let ltu_sum_eq_prod = rep3::arithmetic::mul_public(ltu[C - 1], eq_prod).into_additive();
 
-        Ok(sum + ltu_sum_eq_prod + divisor_is_zero)
+        Ok(rep3::arithmetic::reshare_additive(sum + ltu_sum_eq_prod, io_ctx)? + divisor_is_zero)
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

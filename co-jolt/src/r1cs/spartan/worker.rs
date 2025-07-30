@@ -38,12 +38,12 @@ use jolt_core::{
 };
 
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
 use crate::utils::element::SharedOrPublicIter;
@@ -167,7 +167,7 @@ where
             bind_z.into_iter().chain(bind_shift_z.into_iter()).collect(),
             party_id,
         );
-    
+
         assert_eq!(poly_z.len(), poly_ABC.len());
 
         let num_rounds_inner_sumcheck = poly_ABC.len().log_2();

@@ -14,8 +14,8 @@ use mpc_core::protocols::{
 };
 
 use crate::{
-    poly::opening_proof::Rep3ProverOpeningAccumulator,
     poly::commitment::Rep3CommitmentScheme,
+    poly::opening_proof::Rep3ProverOpeningAccumulator,
     subprotocols::grand_product::Rep3BatchedGrandProduct,
     utils::{math::Math, transcript::Transcript},
 };
@@ -50,8 +50,14 @@ where
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
         let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
-            Self::prove_grand_products_rep3(preprocessing, num_lookups, memory_size, network, transcript)
-                .context("while proving grand products")?;
+            Self::prove_grand_products_rep3(
+                preprocessing,
+                num_lookups,
+                memory_size,
+                network,
+                transcript,
+            )
+            .context("while proving grand products")?;
 
         let (openings, exogenous_openings) =
             Self::receive_openings(preprocessing, transcript, network)?;

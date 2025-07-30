@@ -2,7 +2,6 @@ use ark_std::log2;
 use eyre::Context;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::instruction::SubtableIndices;
-use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::rngs::StdRng;
@@ -91,14 +90,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        Ok(rep3::arithmetic::mul_public(
-            concatenate_lookups_rep3(vals, C, log2(M) as usize / 2),
-            eq_flag_eval,
-        )
-        .into_additive())
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
     }
 
     fn to_indices_rep3(

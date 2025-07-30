@@ -8,14 +8,8 @@ use jolt_core::{
     jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
+use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-    },
-};
 
 use crate::utils::instruction_utils::concatenate_lookups_rep3;
 
@@ -63,9 +57,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVEInstructio
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
-    for MOVEInstruction<WORD_SIZE, F>
-{
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MOVEInstruction<WORD_SIZE, F> {
     fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), Rep3Operand::default())
     }
@@ -79,14 +71,9 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        Ok(rep3::arithmetic::mul_public(
-            concatenate_lookups_rep3(vals, C, log2(M) as usize),
-            eq_flag_eval,
-        )
-        .into_additive())
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize))
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

@@ -12,14 +12,11 @@ use jolt_core::{
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-    },
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
 };
+use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
@@ -166,9 +163,8 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
@@ -180,7 +176,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         let (eq, eq_abs) = (vals_by_subtable[3], vals_by_subtable[5]);
         #[cfg(feature = "public-eq")]
         let (eq_abs, eq) = {
-            let eq = rep3::arithmetic::open_vec(
+            let mut eq = rep3::arithmetic::open_vec(
                 &[vals_by_subtable[3], &[vals_by_subtable[5][0]]].concat(),
                 io_ctx,
             )?;
@@ -195,7 +191,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         // Accumulator for LTU(x_{<s}, y_{<s}) * eq_eval * flag_eval
         let mut ltu_sum = lt_abs[0].into_additive();
         // Accumulator for EQ(x_{<s}, y_{<s}) * eq_eval * flag_eval
-        let mut eq_prod = eq_abs[0] * eq_flag_eval;
+        let mut eq_prod = eq_abs[0];
 
         for (ltu, eq) in ltu.iter().zip(eq) {
             #[cfg(not(feature = "public-eq"))]
@@ -206,20 +202,18 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             #[cfg(feature = "public-eq")]
             {
                 ltu_sum += rep3::arithmetic::mul_public(*ltu, eq_prod).into_additive();
-                eq_prod *= *eq;
+                eq_prod *= eq;
             }
         }
 
-        let remainder_is_zero_toggled = remainder_is_zero * eq_flag_eval;
-        let divisor_is_zero_toggled = divisor_is_zero * eq_flag_eval;
         let not_left_msb = rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0], io_ctx.id);
         let not_left_msb_minus_right_msb =
             rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0] - right_msb[0], io_ctx.id);
 
         #[cfg(not(feature = "public-eq"))]
-        let not_eq_prod = rep3::arithmetic::sub_public_by_shared(eq_flag_eval, eq_prod, io_ctx.id);
+        let not_eq_prod = rep3::arithmetic::sub_public_by_shared(F::one(), eq_prod, io_ctx.id);
         #[cfg(feature = "public-eq")]
-        let not_eq_prod = eq_flag_eval - eq_prod;
+        let not_eq_prod = F::one() - eq_prod;
 
         let res = rep3::arithmetic::reshare_additive_many(
             &[
@@ -230,12 +224,35 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             io_ctx,
         )?;
 
-        // (x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})) * flag_eval * eq_eval
+        #[cfg(not(feature = "public-eq"))]
+        let res = rep3::arithmetic::reshare_additive_many(
+            &[
+                res[0] * not_left_msb_minus_right_msb,
+                res[1] * not_eq_prod,
+                res[2] * remainder_is_zero,
+            ],
+            io_ctx,
+        )?;
+
+        #[cfg(feature = "public-eq")]
+        let res = {
+            let mut t = rep3::arithmetic::reshare_additive_many(
+                &[
+                    res[0] * not_left_msb_minus_right_msb,
+                    res[2] * remainder_is_zero,
+                ],
+                io_ctx,
+            )?;
+            t.insert(1, res[1] * not_eq_prod);
+            t
+        };
+
+        // (x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s}))
         Ok(
-            not_left_msb_minus_right_msb * res[0] // (1 - x_s - y_s) * LTU(x_{<s}, y_{<s}) * flag_eval * eq_eval
-                + res[1] * not_eq_prod // x_s * y_s * (1 - EQ(x_{<s}, y_{<s})) * flag_eval * eq_eval
-            + remainder_is_zero_toggled * res[2] // (1 - x_s) * y_s * EQ(x, 0) * flag_eval * eq_eval
-            + divisor_is_zero_toggled.into_additive(), // EQ(y, 0) * flag_eval * eq_eval
+            res[0] // (1 - x_s - y_s) * LTU(x_{<s}, y_{<s})
+                + res[1] // x_s * y_s * (1 - EQ(x_{<s}, y_{<s}))
+            + res[2] // (1 - x_s) * y_s * EQ(x, 0)
+            + divisor_is_zero, // EQ(y, 0)
         )
     }
 

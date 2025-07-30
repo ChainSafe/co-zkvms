@@ -1,8 +1,6 @@
-use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use ark_std::Zero;
 
 use jolt_core::utils::math::Math;
 use jolt_core::field::JoltField;
@@ -63,10 +61,9 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for POW2Instru
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        Ok(AdditiveShare::zero())
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(Rep3PrimeFieldShare::zero_share())
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

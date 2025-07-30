@@ -5,16 +5,14 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
-        self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
-    },
+use mpc_core::protocols::rep3::{
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 use jolt_core::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
+use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SRAInstruction<const WORD_SIZE: usize, F: JoltField>(
@@ -113,16 +111,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(C <= 10);
         assert_eq!(vals.len(), C + 1);
-        Ok(rep3::arithmetic::mul_public(
-            Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()),
-            eq_flag_eval,
-        )
-        .into_additive())
+        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()))
     }
 
     fn to_indices_rep3(

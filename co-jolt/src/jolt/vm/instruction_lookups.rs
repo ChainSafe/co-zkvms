@@ -16,12 +16,12 @@ use std::marker::PhantomData;
 use tracing::trace_span;
 
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
-use jolt_core::jolt::subtable::JoltSubtableSet;
 use crate::lasso::{
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     memory_checking::{MultisetHashes, StructuredPolynomialData, VerifierComputedOpening},
 };
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::JoltSubtableSet;
 pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,
     InstructionLookupsPreprocessing,
@@ -1142,7 +1142,6 @@ where
         let mut subtables = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {
             subtables.push(subtable.materialize(M));
-
         }
         subtables
     }

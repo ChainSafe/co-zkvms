@@ -98,21 +98,20 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
         let ltu = vals_by_subtable[0];
         #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];
         #[cfg(feature = "public-eq")]
-        let eq = rep3::arithmetic::open_vec(
-            &[vals_by_subtable[1], &[vals_by_subtable[3][0]]].concat(),
-            io_ctx,
-        )?;
+        let eq = rep3::arithmetic::open_vec(&vals_by_subtable[1], io_ctx)?;
 
+        #[cfg(not(feature = "public-eq"))]
         let mut sum = ltu[0].into_additive();
-        let mut eq_prod = eq[0] * eq_flag_eval;
+        #[cfg(feature = "public-eq")]
+        let mut sum = ltu[0];
+        let mut eq_prod = eq[0];
 
         for i in 1..C - 1 {
             #[cfg(not(feature = "public-eq"))]
@@ -122,15 +121,16 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
             }
             #[cfg(feature = "public-eq")]
             {
-                sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
+                sum += rep3::arithmetic::mul_public(ltu[i], eq_prod);
                 eq_prod *= eq[i];
             }
         }
 
         #[cfg(not(feature = "public-eq"))]
-        return Ok(sum + ltu[C - 1] * eq_prod);
+        return rep3::arithmetic::reshare_additive(sum + ltu[C - 1] * eq_prod, io_ctx);
+
         #[cfg(feature = "public-eq")]
-        Ok(sum + (ltu[C - 1] * eq_prod).into_additive())
+        Ok(sum + (ltu[C - 1] * eq_prod))
     }
 
     fn to_indices_rep3(

@@ -315,7 +315,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             })
             .sum_for(party_id);
 
-
         let r_i = process_eq_sumcheck_round_worker(
             (F::zero(), quadratic_eval_at_infty.as_additive()),
             eq_poly,

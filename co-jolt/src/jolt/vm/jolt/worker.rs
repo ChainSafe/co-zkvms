@@ -135,8 +135,14 @@ where
 
                 let trace_length = trace.len();
                 let padded_trace_length = trace_length.next_power_of_two();
-                assert_eq!(polynomials.instruction_lookups.dim[0].len(), padded_trace_length);
-                assert_eq!(polynomials.read_write_memory.a_ram.len(), padded_trace_length);
+                assert_eq!(
+                    polynomials.instruction_lookups.dim[0].len(),
+                    padded_trace_length
+                );
+                assert_eq!(
+                    polynomials.read_write_memory.a_ram.len(),
+                    padded_trace_length
+                );
                 assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
 
                 if io_ctx.id == PartyID::ID0 {

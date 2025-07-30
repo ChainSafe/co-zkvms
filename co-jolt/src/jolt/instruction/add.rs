@@ -1,7 +1,6 @@
 use ark_std::log2;
-use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -45,12 +44,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        add_and_chunk_operands(
-            self.0.as_public() as u128,
-            self.1.as_public() as u128,
-            C,
-            log_M,
-        )
+        add_and_chunk_operands(self.0.as_public() as u128, self.1.as_public() as u128, C, log_M)
     }
 
     fn lookup_entry(&self) -> F {
@@ -90,14 +84,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(vals.len() == C / 2);
-        Ok(rep3::arithmetic::mul_public(
-            concatenate_lookups_rep3(vals, C / 2, log2(M) as usize),
-            eq_flag_eval,
-        ).into_additive())
+        Ok(concatenate_lookups_rep3(vals, C / 2, log2(M) as usize))
     }
 
     fn to_indices_rep3(

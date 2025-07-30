@@ -185,7 +185,7 @@ impl Program {
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
-        
+
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let memory_config = common::rv_trace::MemoryConfig {
@@ -197,7 +197,6 @@ impl Program {
         let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
 
         // Self::print_used_instructions(&raw_trace);
-
 
         let trace = raw_trace
             .into_par_iter()

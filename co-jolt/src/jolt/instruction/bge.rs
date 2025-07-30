@@ -1,4 +1,3 @@
-use mpc_core::protocols::additive::{self, AdditiveShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -97,17 +96,15 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<AdditiveShare<F>> {
-        let res = additive::sub_public_by_shared(
-            eq_flag_eval,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        let res = rep3::arithmetic::sub_public_by_shared(
+            F::one(),
             <SLTInstruction<F> as Rep3JoltInstruction<F>>::combine_lookups_rep3(
                 &SLTInstruction(self.0.clone(), self.1.clone()),
                 vals,
                 C,
                 M,
-                eq_flag_eval,
                 io_ctx,
             )?,
             io_ctx.network.get_id(),

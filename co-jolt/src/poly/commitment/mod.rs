@@ -11,8 +11,8 @@ use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWork
 use std::borrow::Borrow;
 
 pub use jolt_core::poly::commitment::commitment_scheme;
-pub mod pst13;
 pub mod mock;
+pub mod pst13;
 
 pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = KeccakTranscript>:
     CommitmentScheme<ProofTranscript, Field = F>

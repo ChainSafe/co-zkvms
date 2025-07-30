@@ -14,7 +14,6 @@ use crate::{
         transcript::{KeccakTranscript, Transcript},
     },
 };
-use ark_std::Zero;
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
@@ -273,7 +272,7 @@ where
                 // Subtable evals are lazily computed in the for-loop below
                 let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
 
-                let mut inner_sum = vec![AdditiveShare::zero(); degree];
+                let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); degree];
                 for instruction in InstructionSet::iter() {
                     let instruction_index =
                         <InstructionSet as Rep3JoltInstructionSet<F>>::enum_index(&instruction);
@@ -298,25 +297,21 @@ where
                             })
                             .collect();
 
-                        let instruction_collation_eval = instruction.combine_lookups_rep3(
-                            &subtable_terms,
-                            C,
-                            M,
-                            flag_eval,
-                            eq_evals[j],
-                            io_ctx,
-                        )?;
-                        // #[cfg(feature = "debug")]
+                        let instruction_collation_eval =
+                            instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
+                        #[cfg(test)]
                         {
                             let instruction_collation_eval_open =
-                                additive::open::<F, _>(instruction_collation_eval, io_ctx).unwrap();
+                                rep3::arithmetic::open_vec::<F, _>(
+                                    &[instruction_collation_eval],
+                                    io_ctx,
+                                )
+                                .unwrap()[0];
                             let subtable_terms_open =
                                 rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
                                     .unwrap();
                             let instruction_collation_eval_check =
-                                instruction.combine_lookups(&subtable_terms_open, C, M)
-                                    * flag_eval
-                                    * eq_evals[j];
+                                instruction.combine_lookups(&subtable_terms_open, C, M);
                             assert_eq!(
                                 instruction_collation_eval_check,
                                 instruction_collation_eval_open,
@@ -325,18 +320,18 @@ where
                             );
                         }
 
-                        inner_sum[j] += instruction_collation_eval;
+                        inner_sum[j] +=
+                            rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
                     }
                 }
 
                 let evaluations: Vec<_> = (0..degree)
                     .map(|eval_index| {
-                        inner_sum[eval_index]
-                            - rep3::arithmetic::mul_public(
-                                output_evals[eval_index],
-                                eq_evals[eval_index],
-                            )
-                            .into_additive()
+                        rep3::arithmetic::mul_public(
+                            inner_sum[eval_index] - output_evals[eval_index],
+                            eq_evals[eval_index],
+                        )
+                        .into_additive()
                     })
                     .collect();
                 Ok(evaluations)
