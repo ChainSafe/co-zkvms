@@ -57,6 +57,31 @@ pub fn product<F: PrimeField, N: Rep3Network>(
         .context("while computing product")
 }
 
+pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
+    shares: &[Rep3PrimeFieldShare<F>],
+    io_ctx: &mut IoContext<N>,
+    public_extra: Option<F>,
+) -> eyre::Result<AdditiveShare<F>> {
+    let num_multiplications = shares.len();
+
+    if num_multiplications == 1 {
+        return Ok((shares[0] * public_extra.unwrap_or(F::one())).into_additive());
+    } else if num_multiplications == 2 {
+        return Ok(shares[0] * (shares[1] * public_extra.unwrap_or(F::one())));
+    }
+
+    let product_except_last = shares
+        .iter()
+        .skip(1)
+        .take(num_multiplications - 1)
+        .try_fold(shares[0] * public_extra.unwrap_or(F::one()), |acc, x| {
+            mul(acc, *x, io_ctx)
+        })
+        .context("while computing product")?;
+
+    Ok(product_except_last * *shares.last().unwrap())
+}
+
 pub fn product_many<F: PrimeField, N: Rep3Network>(
     shares: &[&[Rep3PrimeFieldShare<F>]],
     io_ctx: &mut IoContext<N>,
@@ -68,6 +93,39 @@ pub fn product_many<F: PrimeField, N: Rep3Network>(
             mul_vec(&acc, *x, io_ctx)
         })
         .context("while computing product")
+}
+
+pub fn product_many_into_additive<F: PrimeField, N: Rep3Network>(
+    shares: &[&[Rep3PrimeFieldShare<F>]],
+    io_ctx: &mut IoContext<N>,
+    public_extra: Option<F>,
+) -> eyre::Result<Vec<AdditiveShare<F>>> {
+    let num_multiplications = shares[0].len();
+    if num_multiplications == 1 {
+        return Ok(shares
+            .iter()
+            .map(|x| (x[0] * public_extra.unwrap_or(F::one())).into_additive())
+            .collect());
+    } else if num_multiplications == 2 {
+        return Ok(shares
+            .iter()
+            .map(|x| x[0] * (x[1] * public_extra.unwrap_or(F::one())))
+            .collect());
+    }
+
+    let products_except_last = shares
+        .iter()
+        .skip(1)
+        .take(num_multiplications - 2)
+        .try_fold(shares.iter().map(|x| x[0] * public_extra.unwrap_or(F::one())).collect_vec(), |acc, x| {
+            mul_vec(&acc, *x, io_ctx)
+        })
+        .context("while computing product")?;
+    Ok(products_except_last
+        .into_iter()
+        .zip(shares.into_iter().map(|x| x.last().unwrap()))
+        .map(|(a, &b)| a * b)
+        .collect())
 }
 
 pub fn reshare_additive<F: PrimeField, N: Rep3Network>(

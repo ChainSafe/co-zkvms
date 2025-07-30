@@ -5,10 +5,9 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
-};
+use mpc_core::protocols::{additive::AdditiveShare, rep3::{
+    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
+}};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
@@ -105,11 +104,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<AdditiveShare<F>> {
         assert!(C <= 10);
         assert!(vals.len() == C);
-        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied())) // TODO: make sum over &Rep3PrimeFieldShare<F>
+        Ok(rep3::arithmetic::mul_public(
+            Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()),
+            eq_flag_eval,
+        )
+        .into_additive())
     }
 
     fn to_indices_rep3(

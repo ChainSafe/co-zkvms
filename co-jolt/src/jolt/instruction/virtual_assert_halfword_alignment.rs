@@ -3,11 +3,11 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{
+use mpc_core::protocols::{additive::{self, AdditiveShare}, rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
-};
+}};
 
 use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
 use jolt_core::{
@@ -94,12 +94,13 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<AdditiveShare<F>> {
         assert_eq!(vals.len(), 1);
-        let lowest_bit = vals[0];
-        Ok(rep3::arithmetic::sub_public_by_shared(
-            F::one(),
+        let lowest_bit = rep3::arithmetic::mul_public(vals[0], eq_flag_eval).into_additive();
+        Ok(additive::sub_public_by_shared(
+            eq_flag_eval,
             lowest_bit,
             io_ctx.id,
         ))

@@ -7,10 +7,13 @@ use jolt_core::jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
     ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
 };
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    additive::AdditiveShare,
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
+    },
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
@@ -111,16 +114,25 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<AdditiveShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
         let right_msb = vals_by_subtable[1];
         let ltu = vals_by_subtable[2];
-        let eq = vals_by_subtable[3];
         let lt_abs = vals_by_subtable[4];
-        let eq_abs = vals_by_subtable[5];
+        #[cfg(not(feature = "public-eq"))]
+        let (eq, eq_abs) = (vals_by_subtable[3], vals_by_subtable[5]);
+        #[cfg(feature = "public-eq")]
+        let (eq_abs, eq) = {
+            let eq = rep3::arithmetic::open_vec(
+                &[vals_by_subtable[3], &[vals_by_subtable[5][0]]].concat(),
+                io_ctx,
+            )?;
+            (vec![eq.pop().unwrap()], eq)
+        };
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0].into_additive();
@@ -128,29 +140,52 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         let mut eq_prod = eq_abs[0];
 
         for i in 0..C - 2 {
-            ltu_sum += ltu[i] * eq_prod;
-            eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            #[cfg(not(feature = "public-eq"))]
+            {
+                ltu_sum += ltu[i] * eq_prod;
+                eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            }
+            #[cfg(feature = "public-eq")]
+            {
+                ltu_sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
+                eq_prod *= eq[i];
+            }
         }
 
-        ltu_sum += ltu[C - 2] * eq_prod;
+        #[cfg(not(feature = "public-eq"))]
+        {
+            ltu_sum += ltu[C - 2] * eq_prod;
+        }
+        #[cfg(feature = "public-eq")]
+        {
+            ltu_sum += rep3::arithmetic::mul_public(ltu[C - 2], eq_prod).into_additive();
+        }
 
-        let ltu_sum = rep3::arithmetic::reshare_additive(ltu_sum, io_ctx)?;
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
 
-        let mul_terms_lhs = [
-            left_msb[0],
-            left_msb[0],
-            rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0], io_ctx.id),
-        ];
-
-        let right_msb_inv =
+        let not_left_msb = rep3::arithmetic::sub_public_by_shared(F::one(), left_msb[0], io_ctx.id);
+        let not_right_msb =
             rep3::arithmetic::sub_public_by_shared(F::one(), right_msb[0], io_ctx.id);
-        let mul_terms_rhs = [right_msb_inv, right_msb[0], right_msb_inv];
 
-        let res = rep3::arithmetic::mul_vec(&mul_terms_lhs, &mul_terms_rhs, io_ctx)?;
+        let left_msb_toggled = rep3::arithmetic::mul_public(left_msb[0], eq_flag_eval);
 
-        Ok(res[0] + rep3::arithmetic::mul(res[1] + res[2], ltu_sum, io_ctx)?)
+        let res = rep3::arithmetic::reshare_additive_many(
+            &[
+                left_msb[0] * right_msb[0],
+                not_left_msb * not_right_msb,
+                ltu_sum,
+            ],
+            io_ctx,
+        )?;
+
+        let ltu_sum_toggled = rep3::arithmetic::mul_public(res[2], eq_flag_eval);
+
+        Ok(
+            left_msb_toggled * not_right_msb // x_s * (1 - y_s) * eq_eval * flag_eval
+            + res[0] * ltu_sum_toggled // x_s * y_s * LTU(x_{<s}, y_{<s}) * eq_eval * flag_eval
+            + res[1] * ltu_sum_toggled, // (1 - x_s) * (1 - y_s) * LTU(x_{<s}, y_{<s}) * eq_eval * flag_eval
+        )
     }
 
     fn to_indices_rep3(

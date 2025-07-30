@@ -1,6 +1,7 @@
 use ark_std::log2;
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3, multiply_and_chunk_operands
+    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
+    multiply_and_chunk_operands,
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
@@ -95,9 +97,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(concatenate_lookups_rep3(vals, vals.len(), log2(M) as usize))
+    ) -> eyre::Result<AdditiveShare<F>> {
+        Ok(rep3::arithmetic::mul_public(
+            concatenate_lookups_rep3(vals, vals.len(), log2(M) as usize),
+            eq_flag_eval,
+        )
+        .into_additive())
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

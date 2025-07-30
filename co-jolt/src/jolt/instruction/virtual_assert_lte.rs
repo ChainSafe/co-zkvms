@@ -1,3 +1,4 @@
+use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -94,22 +95,40 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<AdditiveShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
         let ltu = vals_by_subtable[0];
+        #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];
+        #[cfg(feature = "public-eq")]
+        let eq = rep3::arithmetic::open_vec(
+            &vals_by_subtable[1],
+            io_ctx,
+        )?;
 
         // Accumulator for LTU(x, y)
         let mut ltu_sum = ltu[0].into_additive();
         // Accumulator for EQ(x, y)
-        let mut eq_prod = eq[0];
+        let mut eq_prod = eq[0] * eq_flag_eval;
 
         for i in 1..C {
-            ltu_sum += ltu[i] * eq_prod;
-            eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            #[cfg(not(feature = "public-eq"))]
+            {
+                ltu_sum += ltu[i] * eq_prod;
+                eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            }
+            #[cfg(feature = "public-eq")]
+            {
+                ltu_sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
+                eq_prod *= eq[i];
+            }
         }
-        rep3::arithmetic::reshare_additive(ltu_sum + eq_prod.into_additive(), io_ctx)
+        #[cfg(not(feature = "public-eq"))]
+        return Ok(ltu_sum + eq_prod.into_additive());
+        #[cfg(feature = "public-eq")]
+        Ok(additive::add_public(ltu_sum, eq_prod, io_ctx.id))
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

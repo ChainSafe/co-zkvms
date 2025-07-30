@@ -1,4 +1,5 @@
 use eyre::Context;
+use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -82,9 +83,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        rep3::arithmetic::product(vals, io_ctx)
+    ) -> eyre::Result<AdditiveShare<F>> {
+        Ok(rep3::arithmetic::product_into_additive(&vals, io_ctx, Some(eq_flag_eval))?)
     }
 
     fn to_indices_rep3(

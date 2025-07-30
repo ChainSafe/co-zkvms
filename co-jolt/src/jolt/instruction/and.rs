@@ -3,11 +3,11 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{
+use mpc_core::protocols::{additive::AdditiveShare, rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
-};
+}};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::utils::instruction_utils::{
@@ -81,9 +81,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
+    ) -> eyre::Result<AdditiveShare<F>> {
+        Ok(rep3::arithmetic::mul_public(
+            concatenate_lookups_rep3(vals, C, log2(M) as usize / 2),
+            eq_flag_eval,
+        )
+        .into_additive())
     }
 
     fn to_indices_rep3(

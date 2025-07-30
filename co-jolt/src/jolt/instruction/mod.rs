@@ -2,12 +2,15 @@ use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
 use jolt_core::field::JoltField;
 use jolt_tracer::ELFInstruction;
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare,
-};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    additive::AdditiveShare,
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3BigUintShare,
+    },
+};
 use paste::paste;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
@@ -76,8 +79,9 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F, // eq_flag_eval * eq_eval
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
+    ) -> eyre::Result<AdditiveShare<F>>;
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 

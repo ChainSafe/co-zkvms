@@ -2,6 +2,7 @@ use ark_std::log2;
 use eyre::Context;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::instruction::SubtableIndices;
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::rngs::StdRng;
@@ -9,11 +10,11 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     rep3_chunk_and_concatenate_operands,
 };
+use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct XORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
@@ -90,9 +91,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
+    ) -> eyre::Result<AdditiveShare<F>> {
+        Ok(rep3::arithmetic::mul_public(
+            concatenate_lookups_rep3(vals, C, log2(M) as usize / 2),
+            eq_flag_eval,
+        )
+        .into_additive())
     }
 
     fn to_indices_rep3(

@@ -86,4 +86,5 @@ parallel = [
     "ark-poly-commit/parallel",
     "rayon",
 ]
+public-eq = []
 # mpi = ["mpc-net/mpi"]

@@ -1,3 +1,4 @@
+use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -93,40 +94,59 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
-    #[tracing::instrument(skip_all, name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3",
+        level = "trace"
+    )]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
+        eq_flag_eval: F,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+    ) -> eyre::Result<AdditiveShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
         let ltu = vals_by_subtable[0];
+        #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];
-        let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[2], io_ctx)?;
+        #[cfg(feature = "public-eq")]
+        let eq = rep3::arithmetic::open_vec(&vals_by_subtable[1], io_ctx)?;
 
-        // let mut sum = F::zero();
-        // let mut eq_prod = F::one();
-
-        // for i in 0..C - 1 {
-        //     sum += ltu[i] * eq_prod;
-        //     eq_prod *= eq[i];
-        // }
-        // // LTU(x, y) + EQ(y, 0)
-        // sum + ltu[C - 1] * eq_prod + divisor_is_zero
+        #[cfg(not(feature = "public-eq"))]
+        let divisor_is_zero = rep3::arithmetic::product_into_additive(
+            vals_by_subtable[2],
+            io_ctx,
+            Some(eq_flag_eval),
+        )?;
+        #[cfg(feature = "public-eq")]
+        let divisor_is_zero = {
+            let divisor_is_zero_vals = rep3::arithmetic::open_vec(&vals_by_subtable[2], io_ctx)?;
+            divisor_is_zero_vals.iter().product() * eq_flag_eval
+        };
 
         let mut sum = ltu[0].into_additive();
-        let mut eq_prod = eq[0];
+        let mut eq_prod = eq[0] * eq_flag_eval;
 
         for i in 1..C - 1 {
-            sum += ltu[i] * eq_prod;
-            eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            #[cfg(not(feature = "public-eq"))]
+            {
+                sum += ltu[i] * eq_prod;
+                eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
+            }
+            #[cfg(feature = "public-eq")]
+            {
+                sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
+                eq_prod *= *eq;
+            }
         }
-        Ok(
-            rep3::arithmetic::reshare_additive(sum + ltu[C - 1] * eq_prod, io_ctx)?
-                + divisor_is_zero,
-        )
+        #[cfg(not(feature = "public-eq"))]
+        let ltu_sum_eq_prod = ltu[C - 1] * eq_prod;
+        #[cfg(feature = "public-eq")]
+        let ltu_sum_eq_prod = rep3::arithmetic::mul_public(ltu[C - 1], eq_prod).into_additive();
+
+        Ok(sum + ltu_sum_eq_prod + divisor_is_zero)
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

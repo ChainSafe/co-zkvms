@@ -14,8 +14,14 @@ use jolt_core::{
         interleave_bits,
     },
 };
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    additive::AdditiveShare,
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+    },
+};
 
 use crate::utils::instruction_utils::concatenate_lookups_rep3;
 
@@ -113,16 +119,17 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        eq_flag_eval: F,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<AdditiveShare<F>> {
         assert!(M == 1 << 16);
         let val = vals[0];
         let repeat = WORD_SIZE / 16;
-        Ok(concatenate_lookups_rep3(
-            &vec![val; repeat],
-            repeat,
-            log2(M) as usize,
-        ))
+        Ok(rep3::arithmetic::mul_public(
+            concatenate_lookups_rep3(&vec![val; repeat], repeat, log2(M) as usize),
+            eq_flag_eval,
+        )
+        .into_additive())
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
