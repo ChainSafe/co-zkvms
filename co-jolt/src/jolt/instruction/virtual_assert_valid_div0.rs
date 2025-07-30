@@ -17,7 +17,8 @@ use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands, rep3_chunk_and_concatenate_operands,
+    assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
+    rep3_chunk_and_concatenate_operands,
 };
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -100,6 +101,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "AssertValidDiv0Instruction::combine_lookups_rep3",
+        level = "trace"
+    )]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -109,8 +115,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
-        let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[0], io_ctx)?;
-        let is_valid_div_by_zero = rep3::arithmetic::product(vals_by_subtable[1], io_ctx)?;
+        let [divisor_is_zero, is_valid_div_by_zero] =
+            rep3::arithmetic::product_many(&vals_by_subtable[..2], io_ctx)?
+                .try_into()
+                .unwrap();
 
         Ok(rep3::arithmetic::sub_public_by_shared(
             F::one(),

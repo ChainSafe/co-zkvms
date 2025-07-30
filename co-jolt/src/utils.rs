@@ -76,11 +76,7 @@ where
             .into_iter()
             .map(|val| ctx.fork().map(|ctx| (val, ctx)))
             .collect::<Result<Vec<_>>>()?;
-        #[cfg(feature = "parallel")]
-        let iter = iter_forked.into_par_iter();
-        #[cfg(not(feature = "parallel"))]
-        let iter = iter_forked.into_iter();
-        Ok::<_, eyre::Report>(iter)
+        Ok::<_, eyre::Report>(iter_forked.into_par_iter())
     })?;
 
     iter.map(|(val, mut ctx)| map_fn(val, &mut ctx))
@@ -144,11 +140,7 @@ where
             .into_iter()
             .map(|chunk| ctx.fork().map(|ctx| (chunk.collect_vec(), ctx)))
             .collect::<Result<Vec<_>>>()?;
-        #[cfg(feature = "parallel")]
-        let iter = iter_forked.into_par_iter();
-        #[cfg(not(feature = "parallel"))]
-        let iter = iter_forked.into_iter();
-        Ok::<_, eyre::Report>(iter)
+        Ok::<_, eyre::Report>(iter_forked.into_par_iter())
     })?;
 
     iter.map(|(chunk, mut ctx)| {

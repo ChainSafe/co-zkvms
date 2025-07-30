@@ -125,6 +125,8 @@ where
             }
         };
 
+        tracing::info!("padded_trace_length: {}", meta.padded_trace_length);
+
         Ok((spartan_key, meta))
     }
 

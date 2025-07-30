@@ -88,6 +88,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
+    #[tracing::instrument(skip_all, name = "ASSERTLTEInstruction::combine_lookups_rep3", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -104,7 +105,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         // Accumulator for EQ(x, y)
         let mut eq_prod = eq[0];
 
-        for i in 1..C - 1 {
+        for i in 1..C {
             ltu_sum += ltu[i] * eq_prod;
             eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
         }

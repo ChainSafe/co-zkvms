@@ -11,12 +11,14 @@ members = [
     "snarks-core",
     "co-jolt/examples/fibonacci",
     "co-jolt/examples/fibonacci/guest",
+    "co-jolt/examples/sha3-ex",
+    "co-jolt/examples/sha3-ex/guest",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["timo <timofey@chainsafe.io>"]
 description = "Co-Spartan implementation for Noir circuits"
 license = "MIT"
 

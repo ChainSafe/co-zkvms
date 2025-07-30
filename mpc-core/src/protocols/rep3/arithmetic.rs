@@ -1,6 +1,7 @@
 use ark_ff::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
+use itertools::Itertools;
 use rand::Rng;
 use rand::RngCore;
 
@@ -53,6 +54,19 @@ pub fn product<F: PrimeField, N: Rep3Network>(
         .iter()
         .skip(1)
         .try_fold(shares[0], |acc, x| mul(acc, *x, io_ctx))
+        .context("while computing product")
+}
+
+pub fn product_many<F: PrimeField, N: Rep3Network>(
+    shares: &[&[Rep3PrimeFieldShare<F>]],
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    shares
+        .iter()
+        .skip(1)
+        .try_fold(shares.iter().map(|x| x[0]).collect_vec(), |acc, x| {
+            mul_vec(&acc, *x, io_ctx)
+        })
         .context("while computing product")
 }
 

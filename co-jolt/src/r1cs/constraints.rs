@@ -12,17 +12,12 @@ use jolt_core::{
 };
 
 use crate::{
-    jolt::instruction::{
-        add::ADDInstruction,
-        sll::SLLInstruction,
-        sra::SRAInstruction,
-        srl::SRLInstruction,
-        sub::SUBInstruction,
+    jolt::{instruction::{
+        add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction, virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction
         // mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction,
         // virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
         // virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
-    },
-    jolt::vm::rv32i_vm::RV32I,
+    }, vm::rv32i_vm::RV32I},
     r1cs::inputs::JoltR1CSInputs,
 };
 
@@ -100,32 +95,32 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
 
         // For the `AssertHalfwordAlignmentInstruction` lookups, we add the `rs1` and `imm` values
         // to obtain the memory address being accessed.
-        // let add_operands = JoltR1CSInputs::InstructionFlags(ADDInstruction::default().into())
-        //     + JoltR1CSInputs::InstructionFlags(
-        //         AssertHalfwordAlignmentInstruction::<32>::default().into(),
-        //     );
-        // cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
+        let add_operands = JoltR1CSInputs::<F>::InstructionFlags(ADDInstruction::default().into())
+            + JoltR1CSInputs::InstructionFlags(
+                AssertHalfwordAlignmentInstruction::<32, F>::default().into(),
+            );
+        cs.constrain_eq_conditional(add_operands, packed_query.clone(), x + y);
         // Converts from unsigned to twos-complement representation
-        // cs.constrain_eq_conditional(
-        //     JoltR1CSInputs::<F>::InstructionFlags(SUBInstruction::default().into()),
-        //     packed_query.clone(),
-        //     x - y + (0xffffffffi64 + 1),
-        // );
-        // let is_mul = JoltR1CSInputs::InstructionFlags(MULInstruction::default().into())
-        //     + JoltR1CSInputs::InstructionFlags(MULUInstruction::default().into())
-        //     + JoltR1CSInputs::InstructionFlags(MULHUInstruction::default().into());
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::<F>::InstructionFlags(SUBInstruction::default().into()),
+            packed_query.clone(),
+            x - y + (0xffffffffi64 + 1),
+        );
+        let is_mul = JoltR1CSInputs::<F>::InstructionFlags(MULInstruction::default().into())
+            + JoltR1CSInputs::<F>::InstructionFlags(MULUInstruction::default().into())
+            + JoltR1CSInputs::<F>::InstructionFlags(MULHUInstruction::default().into());
         let product = cs.allocate_prod(
             JoltR1CSInputs::<F>::Aux(AuxVariable::Product),
             JoltR1CSInputs::<F>::RS1_Read,
             JoltR1CSInputs::<F>::RS2_Read,
         );
-        // cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
-        // cs.constrain_eq_conditional(
-        //     JoltR1CSInputs::InstructionFlags(MOVSIGNInstruction::default().into())
-        //         + JoltR1CSInputs::InstructionFlags(MOVEInstruction::default().into()),
-        //     packed_query.clone(),
-        //     x,
-        // );
+        cs.constrain_eq_conditional(is_mul, packed_query.clone(), product);
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::<F>::InstructionFlags(MOVSIGNInstruction::default().into())
+                + JoltR1CSInputs::<F>::InstructionFlags(MOVEInstruction::default().into()),
+            packed_query.clone(),
+            x,
+        );
 
         cs.constrain_eq_conditional(
             JoltR1CSInputs::<F>::OpFlags(CircuitFlags::Assert),
@@ -143,16 +138,16 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             R1CSBuilder::<C, F, JoltR1CSInputs<F>>::pack_be(x_chunks.clone(), OPERAND_SIZE);
         let y_concat =
             R1CSBuilder::<C, F, JoltR1CSInputs<F>>::pack_be(y_chunks.clone(), OPERAND_SIZE);
-        // cs.constrain_eq_conditional(
-        //     JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-        //     x_concat,
-        //     x,
-        // );
-        // cs.constrain_eq_conditional(
-        //     JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
-        //     y_concat,
-        //     y,
-        // );
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+            x_concat,
+            x,
+        );
+        cs.constrain_eq_conditional(
+            JoltR1CSInputs::<F>::OpFlags(CircuitFlags::ConcatLookupQueryChunks),
+            y_concat,
+            y,
+        );
 
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
         let is_shift = JoltR1CSInputs::<F>::InstructionFlags(SLLInstruction::default().into())
@@ -178,11 +173,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltR1CSInputs::<F>::Bytecode_RD,
             JoltR1CSInputs::<F>::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         );
-        // cs.constrain_eq_conditional(
-        //     rd_nonzero_and_lookup_to_rd,
-        //     JoltR1CSInputs::<F>::RD_Write,
-        //     JoltR1CSInputs::<F>::LookupOutput,
-        // );
+        cs.constrain_eq_conditional(
+            rd_nonzero_and_lookup_to_rd,
+            JoltR1CSInputs::<F>::RD_Write,
+            JoltR1CSInputs::<F>::LookupOutput,
+        );
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_jmp = cs.allocate_prod(
             JoltR1CSInputs::<F>::Aux(AuxVariable::WritePCtoRD),

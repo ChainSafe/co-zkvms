@@ -93,6 +93,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
+    #[tracing::instrument(skip_all, name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],

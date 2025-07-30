@@ -153,6 +153,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
+    #[tracing::instrument(skip_all, name = "AssertValidSignedRemainderInstruction::combine_lookups_rep3", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -168,8 +169,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         let ltu = vals_by_subtable[3];
         let eq_abs = vals_by_subtable[4];
         let lt_abs = vals_by_subtable[5];
-        let remainder_is_zero = rep3::arithmetic::product(vals_by_subtable[6], io_ctx)?;
-        let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[7], io_ctx)?;
+        let [remainder_is_zero, divisor_is_zero] =
+            rep3::arithmetic::product_many(&vals_by_subtable[6..8], io_ctx)?
+                .try_into()
+                .unwrap();
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0].into_additive();

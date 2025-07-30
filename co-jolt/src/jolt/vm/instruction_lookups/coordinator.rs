@@ -35,7 +35,7 @@ where
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
-    #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::prove")]
+    #[tracing::instrument(skip_all, name = "Rep3InstructionLookups::prove")]
     pub fn prove_rep3<Network: Rep3NetworkCoordinator>(
         num_ops: usize,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,

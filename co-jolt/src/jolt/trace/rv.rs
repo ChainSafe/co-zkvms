@@ -3,6 +3,8 @@ use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
+use crate::jolt::instruction::mulhu::MULHUInstruction;
+use crate::jolt::instruction::mulu::MULUInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
@@ -11,6 +13,15 @@ use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction;
+use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
+use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
+use crate::jolt::instruction::virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction;
+use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::instruction::virtual_move::MOVEInstruction;
+use crate::jolt::instruction::virtual_movsign::MOVSIGNInstruction;
+use crate::jolt::instruction::virtual_pow2::POW2Instruction;
+use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -57,23 +68,23 @@ impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
             RV32IM::LUI => Ok(ADVICEInstruction::default().into()),
 
             RV32IM::MUL => Ok(MULInstruction::default().into()),
-            // RV32IM::MULU => Ok(MULUInstruction::default().into()),
-            // RV32IM::MULHU => Ok(MULHUInstruction::default().into()),
+            RV32IM::MULU => Ok(MULUInstruction::default().into()),
+            RV32IM::MULHU => Ok(MULHUInstruction::default().into()),
 
 
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction::default().into()),
-            // RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction::default().into()),
-            // RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
-            // RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>::default().into()),
-            // RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>::default().into()),
-            // RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>::default().into()),
-            // RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>::default().into()),
-            // RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction::default().into()),
+            RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32, F>::default().into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32, F>::default().into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32, F>::default().into()),
+            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32, F>::default().into()),
+            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32, F>::default().into()),
 
 
             _ => Err("No corresponding RV32I instruction")
@@ -121,24 +132,22 @@ impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
             RV32IM::LUI => Ok(ADVICEInstruction((row.imm_u32() as u64).into()).into()),
 
             RV32IM::MUL => Ok(MULInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
-            // RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
 
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.advice_value.unwrap().into()).into()),
-            // RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction(row.register_state.rs1_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>(row.register_state.rs1_val.unwrap(), row.imm_u32() as u64).into()),
-            // RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>(row.register_state.rs1_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>(row.imm_u64()).into()),
-            // RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>(row.register_state.rs1_val.unwrap()).into()),
-            // RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>(row.imm_u64()).into()),
+            RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32, F>(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32, F>(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32, F>(row.imm_u64().into()).into()),
+            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32, F>(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32, F>(row.imm_u64().into()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

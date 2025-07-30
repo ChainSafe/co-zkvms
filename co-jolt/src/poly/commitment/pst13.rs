@@ -6,6 +6,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_iter_mut, test_rng};
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
     field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
@@ -15,13 +16,8 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use jolt_core::{
-    poly::multilinear_polynomial::MultilinearPolynomial, utils::transcript::KeccakTranscript,
-};
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
 use rand::RngCore;
-use snarks_core::poly::commitment::{aggregate_comm, aggregate_comm_with_powers, aggregate_eval};
 use std::{borrow::Borrow, marker::PhantomData};
 
 pub use jolt_core::poly::commitment::commitment_scheme;

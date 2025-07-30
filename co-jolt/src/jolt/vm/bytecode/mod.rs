@@ -8,6 +8,7 @@ use jolt_core::field::JoltField;
 
 pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 
+use jolt_tracer::RV32IM;
 use rayon::prelude::*;
 
 pub trait BytecodeRowExt {
@@ -53,13 +54,25 @@ impl BytecodeRowExt for BytecodeRow {
     where
         InstructionSet: JoltInstructionSet<F>,
     {
+        let imm = match instruction.opcode {
+            RV32IM::LW
+            | RV32IM::SW
+            | RV32IM::BEQ
+            | RV32IM::BNE
+            | RV32IM::BLT
+            | RV32IM::BGE
+            | RV32IM::BLTU
+            | RV32IM::BGEU => instruction.imm.unwrap_or(0),
+            _ => instruction.imm.unwrap_or(0) & u32::MAX as i64,
+        };
+
         Self {
             address: instruction.address as usize,
             bitflags: Self::bitflags_ext::<InstructionSet, F>(instruction),
             rd: instruction.rd.unwrap_or(0) as u8,
             rs1: instruction.rs1.unwrap_or(0) as u8,
             rs2: instruction.rs2.unwrap_or(0) as u8,
-            imm: instruction.imm.unwrap_or(0) as i64, // imm is always cast to its 32-bit repr, signed or unsigned
+            imm,
             virtual_sequence_remaining: instruction.virtual_sequence_remaining,
         }
     }

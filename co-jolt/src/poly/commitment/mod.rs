@@ -12,6 +12,7 @@ use std::borrow::Borrow;
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 pub mod pst13;
+pub mod mock;
 
 pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = KeccakTranscript>:
     CommitmentScheme<ProofTranscript, Field = F>

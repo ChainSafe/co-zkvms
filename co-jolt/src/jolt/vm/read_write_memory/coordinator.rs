@@ -65,6 +65,7 @@ where
     ProofTranscript: TranscriptExt,
     Network: Rep3NetworkCoordinator,
 {
+    #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove")]
     fn prove_rep3(
         num_ops: usize,
         memory_size: usize,

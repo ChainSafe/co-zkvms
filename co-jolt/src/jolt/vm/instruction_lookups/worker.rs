@@ -189,7 +189,6 @@ where
                 lookup_outputs_poly,
                 previous_claim,
                 io_ctx,
-                _round,
             )?;
 
             io_ctx.network.send_response(univariate_poly.as_vec())?;
@@ -238,7 +237,7 @@ where
         Ok((r, flag_evals, memory_evals, outputs_eval))
     }
 
-    #[tracing::instrument(skip_all, level = "trace")]
+    #[tracing::instrument(skip_all)]
     fn primary_sumcheck_prover_message(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
@@ -247,7 +246,6 @@ where
         lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         previous_claim: F,
         io_ctx: &mut IoContext<Network>,
-        round: usize,
     ) -> eyre::Result<UniPoly<F>> {
         let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
@@ -256,7 +254,7 @@ where
         let mut evaluations: Vec<_> = crate::utils::try_fork_chunks(
             0..mle_half,
             io_ctx,
-            8, // TODO: make configurable
+            1, // TODO: make configurable
             |i, io_ctx| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                 let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
@@ -301,7 +299,7 @@ where
 
                         let instruction_collation_eval =
                             instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
-                        #[cfg(feature = "debug")]
+                        // #[cfg(feature = "debug")]
                         {
                             let instruction_collation_eval_open =
                                 rep3::arithmetic::open_vec::<F, _>(

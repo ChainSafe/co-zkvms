@@ -5113,6 +5113,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3-ex"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-sdk",
+ "sha3-guest",
+]
+
+[[package]]
+name = "sha3-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "sha3",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

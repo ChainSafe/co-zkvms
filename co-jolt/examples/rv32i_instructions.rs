@@ -12,7 +12,10 @@ use co_jolt::{
             Jolt, JoltTraceStep,
         },
     },
-    poly::opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+    poly::{
+        commitment::mock::MockCommitScheme,
+        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
+    },
     utils::transcript::{KeccakTranscript, Transcript},
 };
 use co_jolt::{lasso::memory_checking::StructuredPolynomialData, poly::commitment::pst13::PST13};
@@ -45,6 +48,9 @@ const C: usize = co_jolt::jolt::vm::rv32i_vm::C;
 const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
+
+// type CommitmentScheme = PST13<E>;
+type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -83,10 +89,12 @@ fn main() -> Result<()> {
         init_tracing();
     }
 
-    let mut program = host::Program::new("fibonacci-guest");
+    let mut program = host::Program::new("sha3-guest");
+    // let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
+    // let inputs = postcard::to_stdvec(&9u32).unwrap();
+    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs, 1, 1)?;
@@ -141,7 +149,7 @@ pub fn run_party(
         1 << trace.len().next_power_of_two(),
     );
 
-    let mut prover = RV32IJoltRep3Prover::<F, PST13<E>, KeccakTranscript, _>::init(
+    let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
         None,
         preprocessing,
         network,
@@ -179,19 +187,15 @@ pub fn run_coordinator(
 
     // use jolt_core::poly::commitment::mock::MockCommitScheme;
 
-    let preprocessing: JoltProverPreprocessing<
-        C,
-        F,
-        PST13<E>,
-        KeccakTranscript,
-    > = RV32IJoltVM::prover_preprocess(
-        bytecode,
-        program_io.memory_layout.clone(),
-        memory_init,
-        1 << num_inputs.next_power_of_two(),
-        1 << num_inputs.next_power_of_two(),
-        1 << num_inputs.next_power_of_two(),
-    );
+    let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
+        RV32IJoltVM::prover_preprocess(
+            bytecode,
+            program_io.memory_layout.clone(),
+            memory_init,
+            1 << num_inputs.next_power_of_two(),
+            1 << num_inputs.next_power_of_two(),
+            1 << num_inputs.next_power_of_two(),
+        );
 
     if args.debug {
         let (proof_check, commitments_check) =
@@ -223,8 +227,13 @@ pub fn run_coordinator(
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
 
-    let (proof, commitments) =
-        RV32IJoltVM::prove_rep3(meta, &program_io, &spartan_key, &preprocessing.shared, &mut network)?;
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(
+        meta,
+        &program_io,
+        &spartan_key,
+        &preprocessing.shared,
+        &mut network,
+    )?;
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
