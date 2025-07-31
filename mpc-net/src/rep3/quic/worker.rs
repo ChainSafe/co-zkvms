@@ -19,7 +19,7 @@ use quinn::{
     VarInt,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, iter, sync::Arc};
 use std::{
     collections::HashMap,
     io,
@@ -42,6 +42,7 @@ pub struct Rep3QuicMpcNetWorker {
     pub log_num_pub_workers: usize,
     pub log_num_workers_per_party: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
+    pub config: NetworkConfig,
 }
 
 impl Rep3QuicMpcNetWorker {
@@ -67,7 +68,7 @@ impl Rep3QuicMpcNetWorker {
             .enable_all()
             .build()?;
         let (net_handler, chan_next, chan_prev, chan_coordinator) = runtime.block_on(async {
-            let net_handler = MpcNetworkHandlerWorker::establish(config).await?;
+            let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
                 .get_coordinator_byte_channel()
                 .await?
@@ -95,6 +96,7 @@ impl Rep3QuicMpcNetWorker {
             chan_coordinator,
             log_num_pub_workers,
             log_num_workers_per_party,
+            config,
         })
     }
 
@@ -248,7 +250,24 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             chan_coordinator,
             log_num_pub_workers: self.log_num_pub_workers,
             log_num_workers_per_party: self.log_num_workers_per_party,
+            config: self.config.clone(),
         })
+    }
+
+    #[tracing::instrument(skip_all, name = "MpcStarNetWorker::fork_into_worker_subnets")]
+    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
+        let config = self.config.clone();
+        let log_num_workers_per_party = self.log_num_workers_per_party;
+        let log_num_pub_workers = self.log_num_pub_workers;
+        iter::once(self.fork_with_coordinator())
+            .chain((1..num_workers).map(|worker_id| {
+                Self::new_with_coordinator(
+                    config.for_worker(worker_id),
+                    log_num_workers_per_party,
+                    log_num_pub_workers,
+                )
+            }))
+            .collect::<Result<Vec<_>>>()
     }
 }
 
@@ -604,9 +623,10 @@ impl MpcNetworkHandlerWorker {
 impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
     /// Shutdown all connections, and call [`quinn::Endpoint::wait_idle`] on all of them
     async fn shutdown(&self) -> std::io::Result<()> {
-        tracing::debug!(
-            "party {} shutting down, conns = {:?}",
+        tracing::trace!(
+            "party {} worker {} shutting down, conns = {:?}",
             self.my_id,
+            self.worker,
             self.parties_connections.keys()
         );
 
@@ -621,14 +641,13 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
                     std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
                 })?;
 
-                tracing::debug!("party {} closing conn = {id}", self.my_id);
-
                 conn.close(
                     0u32.into(),
                     format!("close from party {}", self.my_id).as_bytes(),
                 );
             }
         }
+
 
         if let Some(conn) = self.coordinator_connection.as_ref() {
             let mut send = conn.open_uni().await?;
@@ -639,6 +658,7 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
             endpoint.wait_idle().await;
             endpoint.close(VarInt::from_u32(0), &[]);
         }
+        tracing::trace!("party {} worker {} shut down", self.my_id, self.worker);
         Ok(())
     }
 }

@@ -1211,6 +1211,7 @@ dependencies = [
  "paste",
  "postcard",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rayon",
  "rustls",
  "serde",
@@ -3351,7 +3352,7 @@ dependencies = [
 [[package]]
 name = "mpc-core"
 version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#3a88eab6f5b70b2d74c1f08c4ca21484d5ace355"
+source = "git+https://github.com/nulltea/co-snarks#de337b674e7dcbfbb6105a69ad6ba26fb0392432"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3408,7 +3409,7 @@ dependencies = [
 [[package]]
 name = "mpc-types"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/co-snarks#3a88eab6f5b70b2d74c1f08c4ca21484d5ace355"
+source = "git+https://github.com/nulltea/co-snarks#de337b674e7dcbfbb6105a69ad6ba26fb0392432"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",

@@ -229,6 +229,35 @@ impl NetworkConfig {
             timeout,
         }
     }
+
+    pub fn for_worker(&self, worker: usize) -> NetworkConfig {
+        let mut config = self.clone();
+        config.worker = worker;
+        config
+            .bind_addr
+            .set_port(config.bind_addr.port() + 10 * worker as u16);
+        config.parties.iter_mut().for_each(|party| {
+            party.worker = worker;
+            party.dns_name.port = party.dns_name.port + 10 * worker as u16;
+        });
+        config
+    }
+
+    pub fn extend_with_workers(&self, num_workers: usize) -> NetworkConfig {
+        let mut config = self.clone();
+        let mut new_workers = vec![];
+        for worker in 1..num_workers {
+            new_workers.extend(config.parties.iter().map(|party| {
+                let mut party = party.clone();
+                party.worker = worker;
+                party.dns_name.port = party.dns_name.port + 10 * worker as u16;
+                party
+            }));
+        }
+        config.parties.extend(new_workers);
+
+        config
+    }
 }
 
 impl TryFrom<NetworkConfigFile> for NetworkConfig {

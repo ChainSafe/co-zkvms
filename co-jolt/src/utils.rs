@@ -14,10 +14,11 @@ pub use jolt_core::{
 
 use eyre::{Context, Result};
 use itertools::Itertools;
+use rand::{Rng, SeedableRng};
 
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContext, Rep3Network},
+    network::{IoContext, Rep3Network, Rep3NetworkWorker},
     PartyID,
 };
 
@@ -33,6 +34,37 @@ pub trait Forkable: Sized + Send {
 impl<N: Rep3Network> Forkable for IoContext<N> {
     fn fork(&mut self) -> Result<Self> {
         self.fork().context("while trying to fork IoContext")
+    }
+}
+
+pub trait ForkIntoWorkerSubnets: Sized + Send {
+    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
+}
+
+impl<N: Rep3NetworkWorker> ForkIntoWorkerSubnets for IoContext<N> {
+    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
+        let rngs = &mut self.rngs;
+        let rng = &mut self.rng;
+        let id = self.id;
+        let a2b_type = self.a2b_type;
+
+        Ok(self
+            .network
+            .fork_into_worker_subnets(num_workers)
+            .context("while trying to fork IoContext")?
+            .into_iter()
+            .map(|network| {
+                let rngs = rngs.fork();
+                let rng = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
+                IoContext {
+                    network,
+                    rngs,
+                    rng,
+                    id,
+                    a2b_type,
+                }
+            })
+            .collect())
     }
 }
 
@@ -130,10 +162,10 @@ where
 {
     let len = i.len();
     let chunk_size = len.div_ceil(max_forks);
-    let forks = len.div_ceil(chunk_size);
     assert!(chunk_size != 0);
+    let forks = len.div_ceil(chunk_size);
 
-    let iter = tracing::trace_span!("setup forked networks", len, forks).in_scope(|| {
+    let iter = tracing::info_span!("setup forked networks", len, forks).in_scope(|| {
         let iter_forked = i
             .into_iter()
             .chunks(chunk_size)
@@ -152,6 +184,30 @@ where
     .flatten()
     .collect::<eyre::Result<Vec<_>>>()
     .context("while trying to fork_chunks_flat_map")
+}
+
+pub fn try_map_chunks_with_worker_subnets<T, N, R, M>(
+    i: Vec<T>,
+    ctx: &mut IoContext<N>,
+    num_workers: usize,
+    map_fn: M,
+) -> eyre::Result<Vec<R>>
+where
+    N: Rep3NetworkWorker,
+    M: Fn(T, &mut IoContext<N>) -> eyre::Result<R> + Sync + Send,
+    T: Sized + Send + Clone,
+    R: Sync + Send,
+{
+    let res = i.into_par_iter()
+        .zip_eq(ctx.fork_into_worker_subnets(num_workers)?)
+        .map(|(val, mut ctx)| {
+            let res = map_fn(val, &mut ctx);
+            drop(ctx);
+            res
+        })
+        .collect::<eyre::Result<Vec<_>>>();
+    println!("try_map_chunks_with_worker_subnets done");
+    res
 }
 
 #[inline]

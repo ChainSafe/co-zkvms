@@ -6,6 +6,9 @@ pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
     ) -> Result<Vec<T>>;
+    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+    ) -> Result<Vec<Vec<T>>>;
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,
@@ -36,6 +39,8 @@ pub trait MpcStarNetCoordinator: Sized {
     fn reset_stats(&mut self);
 
     fn fork(&mut self) -> Result<Self>;
+    fn fork_with_worker_subnets(&mut self, num_workers: usize) -> Result<Self>;
+    fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
 }
 
 pub trait MpcStarNetWorker: Sized {
@@ -54,4 +59,5 @@ pub trait MpcStarNetWorker: Sized {
     fn party_id(&self) -> PartyID;
 
     fn fork_with_coordinator(&mut self) -> Result<Self>;
+    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
 }

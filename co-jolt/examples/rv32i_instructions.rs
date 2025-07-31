@@ -49,8 +49,8 @@ const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-type CommitmentScheme = PST13<E>;
-// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+// type CommitmentScheme = PST13<E>;
+type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -89,12 +89,12 @@ fn main() -> Result<()> {
         init_tracing();
     }
 
-    let mut program = host::Program::new("sha3-guest");
-    // let mut program = host::Program::new("fibonacci-guest");
+    // let mut program = host::Program::new("sha3-guest");
+    let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    // let inputs = postcard::to_stdvec(&9u32).unwrap();
-    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    let inputs = postcard::to_stdvec(&9u32).unwrap();
+    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs, 1, 1)?;

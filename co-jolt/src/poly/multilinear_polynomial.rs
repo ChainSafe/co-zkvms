@@ -58,11 +58,29 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    pub fn as_shared_mut(&mut self) -> &mut Rep3DensePolynomial<F> {
+        match self {
+            Rep3MultilinearPolynomial::Shared(poly) => poly,
+            Rep3MultilinearPolynomial::Public { .. } => {
+                panic!("Not a shared polynomial")
+            }
+        }
+    }
+
     pub fn from_shared_evals(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         Self::shared(Rep3DensePolynomial::new(evals))
     }
 
     pub fn as_public(&self) -> &MultilinearPolynomial<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly,
+            Rep3MultilinearPolynomial::Shared(_) => {
+                panic!("Not a public polynomial")
+            }
+        }
+    }
+
+    pub fn as_public_mut(&mut self) -> &mut MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly,
             Rep3MultilinearPolynomial::Shared(_) => {
@@ -255,6 +273,83 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             ))
         }
     }
+
+    pub fn split_poly(
+        polys: &Rep3MultilinearPolynomial<F>,
+        log_workers: usize,
+    ) -> Vec<Rep3MultilinearPolynomial<F>> {
+        match polys {
+            Rep3MultilinearPolynomial::Shared(poly) => {
+                Rep3DensePolynomial::split_poly(poly, log_workers)
+            }
+            Rep3MultilinearPolynomial::Public { poly, .. } => {
+                split_public_poly(poly, log_workers)
+                    .into_iter()
+                    .map(|poly| Rep3MultilinearPolynomial::public(poly))
+                    .collect()
+            }
+        }
+    }
+
+    pub fn split_poly_vec(
+        polys: &[Rep3MultilinearPolynomial<F>],
+        log_workers: usize,
+    ) -> Vec<Vec<Rep3MultilinearPolynomial<F>>> {
+        let mut chunks = vec![vec![]; 1 << log_workers];
+        for poly in polys {
+            let poly_chunks = Self::split_poly(poly, log_workers);
+            for (chunk, poly_chunk) in chunks.iter_mut().zip(poly_chunks) {
+                chunk.push(poly_chunk);
+            }
+        }
+        chunks
+    }
+}
+
+pub fn split_public_poly<F: JoltField>(
+    poly: &MultilinearPolynomial<F>,
+    log_workers: usize,
+) -> Vec<MultilinearPolynomial<F>> {
+    let nv = poly.get_num_vars() - log_workers;
+    let chunk_size = 1 << nv;
+    let mut res = Vec::new();
+
+    for i in 0..1 << log_workers {
+        match poly {
+            MultilinearPolynomial::LargeScalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.Z[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+            MultilinearPolynomial::U8Scalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+            MultilinearPolynomial::U16Scalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+            MultilinearPolynomial::U32Scalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+            MultilinearPolynomial::U64Scalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+            MultilinearPolynomial::I64Scalars(poly) => res.push(
+                MultilinearPolynomial::from(
+                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                ),
+            ),
+        }
+    }
+
+    res
 }
 
 impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {

@@ -1,30 +1,22 @@
 use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
-        unipoly::CompressedUniPoly, Rep3DensePolynomial, Rep3MultilinearPolynomial,
-        Rep3PolysConversion,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, split_public_poly, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion
     },
     subprotocols::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::{
-        split_rep3_poly_flagged,
-        transcript::{KeccakTranscript, Transcript},
-    },
+    utils::transcript::Transcript,
 };
 use color_eyre::eyre::Result;
-use eyre::Context;
-use itertools::{chain, Itertools};
+use itertools::Itertools;
 use jolt_core::{
     field::JoltField,
     jolt::subtable::JoltSubtableSet,
     jolt::vm::instruction_lookups::InstructionLookupStuff,
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        compact_polynomial::{CompactPolynomial, SmallScalar},
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
@@ -107,17 +99,104 @@ where
         let eq_poly = MultilinearPolynomial::from(eq_evals);
         let num_rounds = trace_length.log_2();
 
-        let (mut r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
-            Self::prove_primary_sumcheck(
-                preprocessing,
-                num_rounds,
-                eq_poly,
-                &mut polynomials.instruction_lookups.E_polys.clone(),
-                &mut polynomials.instruction_lookups.instruction_flags.clone(),
-                &mut polynomials.instruction_lookups.lookup_outputs.clone(),
-                io_ctx,
-            )?;
-        r_primary_sumcheck = r_primary_sumcheck.into_iter().rev().collect();
+        let log_num_workers = 1;
+        let eq_poly_chunks = split_public_poly(&eq_poly, log_num_workers);
+        let flag_poly_chunks = Rep3MultilinearPolynomial::split_poly_vec(
+            &polynomials.instruction_lookups.instruction_flags,
+            log_num_workers,
+        );
+        let memory_poly_chunks = Rep3MultilinearPolynomial::split_poly_vec(
+            &polynomials.instruction_lookups.E_polys,
+            log_num_workers,
+        );
+        let lookup_outputs_poly_chunks = Rep3MultilinearPolynomial::split_poly(
+            &polynomials.instruction_lookups.lookup_outputs,
+            log_num_workers,
+        );
+        let num_flag_polys = polynomials.instruction_lookups.instruction_flags.len();
+        let num_memory_polys = polynomials.instruction_lookups.E_polys.len();
+
+        tracing::info!("num_flag_polys: {}", num_flag_polys);
+        tracing::info!("num_memory_polys: {}", num_memory_polys);
+
+        let worker_polys = itertools::multizip((
+            eq_poly_chunks,
+            flag_poly_chunks,
+            memory_poly_chunks,
+            lookup_outputs_poly_chunks,
+        ))
+        .collect::<Vec<_>>();
+
+        let (r_primary_sumchecks, eq_poly, flag_polys, E_polys, outputs_poly): (
+            Vec<_>,
+            MultilinearPolynomial<F>,
+            Vec<_>,
+            Vec<_>,
+            Rep3MultilinearPolynomial<F>,
+        ) = crate::utils::try_map_chunks_with_worker_subnets(
+            worker_polys,
+            io_ctx,
+            1 << log_num_workers,
+            |(
+                eq_poly_chunk,
+                flag_poly_chunk,
+                memory_poly_chunk,
+                lookup_outputs_poly_chunk,
+            ),
+             io_ctx| {
+                Self::prove_primary_sumcheck(
+                    preprocessing,
+                    num_rounds - log_num_workers,
+                    eq_poly_chunk,
+                    memory_poly_chunk,
+                    flag_poly_chunk,
+                    lookup_outputs_poly_chunk,
+                    io_ctx,
+                )
+            },
+        )?
+        .into_iter()
+        .fold(
+            (
+                vec![],
+                MultilinearPolynomial::default(),
+                vec![Rep3MultilinearPolynomial::default(); num_flag_polys],
+                vec![Rep3MultilinearPolynomial::shared(Default::default()); num_memory_polys],
+                Rep3MultilinearPolynomial::shared(Default::default()),
+            ),
+            |(_, mut eq_poly, mut flag_polys, mut E_polys, mut outputs_poly),
+             (r_primary_sumcheck, eq_eval, flag_evals_chunk, E_evals_chunk, outputs_eval)| {
+                eq_poly.as_dense_poly_mut().Z.push(eq_eval);
+                flag_polys.par_iter_mut().zip(flag_evals_chunk.into_par_iter()).for_each(|(flag_poly, flag_eval)| {
+                    flag_poly.as_public_mut().as_dense_poly_mut().Z.push(flag_eval);
+                });
+                E_polys.par_iter_mut().zip(E_evals_chunk.into_par_iter()).for_each(|(E_poly, E_eval)| {
+                    E_poly.as_shared_mut().evals.push(E_eval);
+                });
+                outputs_poly.as_shared_mut().evals.push(outputs_eval);
+                
+                (
+                    r_primary_sumcheck, // same for each worker
+                    eq_poly,
+                    flag_polys,
+                    E_polys,
+                    outputs_poly,
+                )
+            },
+        );
+
+       let (r_primary_sumchecks, _, flag_evals, E_evals, outputs_eval) = Self::prove_primary_sumcheck(
+            preprocessing,
+            num_rounds,
+            eq_poly,
+            E_polys,
+            flag_polys,
+            outputs_poly,
+            io_ctx,
+        )?;
+
+
+        let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
         let primary_sumcheck_polys = polynomials
             .instruction_lookups
@@ -127,8 +206,12 @@ where
             .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
             .collect::<Vec<_>>();
 
-        let mut primary_sumcheck_openings: Vec<F> = [E_evals, flag_evals].concat();
-        primary_sumcheck_openings.push(outputs_eval);
+        let primary_sumcheck_openings: Vec<F> = E_evals
+            .into_iter()
+            .map(|e| e.into_additive())
+            .chain(flag_evals.into_iter())
+            .chain(iter::once(outputs_eval.into_additive()))
+            .collect();
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         opening_accumulator.append(
@@ -157,15 +240,16 @@ where
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
         mut eq_poly: MultilinearPolynomial<F>,
-        memory_polys: &mut [Rep3MultilinearPolynomial<F>],
-        flag_polys: &mut [Rep3MultilinearPolynomial<F>],
-        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
+        mut memory_polys: Vec<Rep3MultilinearPolynomial<F>>,
+        mut flag_polys: Vec<Rep3MultilinearPolynomial<F>>,
+        mut lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<(
-        Vec<AdditiveShare<F>>,
-        Vec<AdditiveShare<F>>,
-        Vec<AdditiveShare<F>>,
-        AdditiveShare<F>,
+        Vec<F>,
+        F,
+        Vec<F>,
+        Vec<Rep3PrimeFieldShare<F>>,
+        Rep3PrimeFieldShare<F>,
     )> {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
@@ -185,8 +269,8 @@ where
                 preprocessing,
                 &eq_poly,
                 &flag_polys,
-                memory_polys,
-                lookup_outputs_poly,
+                &mut memory_polys,
+                &mut lookup_outputs_poly,
                 previous_claim,
                 io_ctx,
             )?;
@@ -219,6 +303,7 @@ where
 
         // Polys are fully defined so we can just take the first (and only) evaluation
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
+
         let flag_evals = flag_polys
             .iter()
             .map(|poly| {
@@ -230,11 +315,13 @@ where
             .collect();
         let memory_evals = memory_polys
             .iter()
-            .map(|poly| poly.as_shared()[0].into_additive())
+            .map(|poly| poly.as_shared()[0])
             .collect();
-        let outputs_eval = lookup_outputs_poly.as_shared()[0].into_additive();
+        let outputs_eval = lookup_outputs_poly.as_shared()[0];
+        let eq_eval = eq_poly.final_sumcheck_claim();
 
-        Ok((r, flag_evals, memory_evals, outputs_eval))
+
+        Ok((r, eq_eval, flag_evals, memory_evals, outputs_eval))
     }
 
     #[tracing::instrument(skip_all)]
@@ -250,6 +337,8 @@ where
         let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
+
+        tracing::trace!("mle_len: {}", mle_len);
 
         let mut evaluations: Vec<_> = crate::utils::try_fork_chunks(
             0..mle_half,
@@ -338,17 +427,13 @@ where
             },
         )?
         .into_par_iter()
-        .reduce(
-            || vec![F::zero(); degree],
-            |running, new| {
-                debug_assert_eq!(running.len(), new.len());
-                running
-                    .iter()
-                    .zip(new.iter())
-                    .map(|(r, n)| *r + *n)
-                    .collect()
-            },
-        );
+        .reduce_with(|a, b| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| *x + *y)
+                .collect::<Vec<F>>()
+        })
+        .unwrap_or(vec![F::zero(); degree]);
 
         evaluations.insert(1, previous_claim - evaluations[0]);
         Ok(UniPoly::from_evals(&evaluations))

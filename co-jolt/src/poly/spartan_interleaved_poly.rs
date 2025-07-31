@@ -182,52 +182,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         }
     }
 
-    #[cfg(test)]
-    fn uninterleave(&self) -> (DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>) {
-        let mut az = vec![F::zero(); self.dense_len];
-        let mut bz = vec![F::zero(); self.dense_len];
-        let mut cz = vec![F::zero(); self.dense_len];
-
-        if !self.is_bound() {
-            for shard_arc in &self.unbound_coeffs_shards {
-                for coeff in shard_arc {
-                    // Ensure that the index is within bounds for az, bz, cz vectors.
-                    // This check is mostly a safeguard; coeff.index / 3 should be < self.dense_len.
-                    if coeff.index / 3 < self.dense_len {
-                        match coeff.index % 3 {
-                            0 => az[coeff.index / 3] = F::from_i128(coeff.value),
-                            1 => bz[coeff.index / 3] = F::from_i128(coeff.value),
-                            2 => cz[coeff.index / 3] = F::from_i128(coeff.value),
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        // This case should ideally not be reached if dense_len is calculated correctly.
-                        panic!("Coefficient index out of bounds during uninterleave (unbound)");
-                    }
-                }
-            }
-        } else {
-            for coeff in &self.bound_coeffs {
-                // Similar bounds check for the bound case.
-                if coeff.index / 3 < self.dense_len {
-                    match coeff.index % 3 {
-                        0 => az[coeff.index / 3] = coeff.value,
-                        1 => bz[coeff.index / 3] = coeff.value,
-                        2 => cz[coeff.index / 3] = coeff.value,
-                        _ => unreachable!(),
-                    }
-                } else {
-                    panic!("Coefficient index out of bounds during uninterleave (bound)");
-                }
-            }
-        }
-        (
-            DensePolynomial::new(az),
-            DensePolynomial::new(bz),
-            DensePolynomial::new(cz),
-        )
-    }
-
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()
     }

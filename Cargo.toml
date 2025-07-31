@@ -67,6 +67,7 @@ num-bigint = "0.4.3"
 eyre = "0.6.10"
 color-eyre = "0.6.3"
 bytesize = "2.0.1"
+rand_chacha = "0.3.0"
 
 
 # Additional dependencies for co-spartan

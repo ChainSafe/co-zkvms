@@ -166,6 +166,21 @@ where
     where
         U: Borrow<Rep3MultilinearPolynomial<E::ScalarField>> + Sync,
     {
+        tracing::info!(
+            "num public polys: {}",
+            polys
+                .iter()
+                .filter(|&p| matches!(p.borrow(), Rep3MultilinearPolynomial::Public { .. }))
+                .count()
+        );
+        tracing::info!(
+            "num shared polys: {}",
+            polys
+                .iter()
+                .filter(|&p| matches!(p.borrow(), Rep3MultilinearPolynomial::Shared(_)))
+                .count()
+        );
+
         let shared_polys_a = polys
             .par_iter()
             .map(|poly| match poly.borrow() {
@@ -485,7 +500,8 @@ mod tests {
     use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
     use jolt_core::utils::math::Math;
     use mpc_core::protocols::rep3;
-
+    use jolt_core::poly::dense_mlpoly::DensePolynomial;
+    use jolt_core::utils::transcript::KeccakTranscript;
     use crate::poly::Rep3DensePolynomial;
 
     use super::*;

@@ -2,7 +2,8 @@ use crate::{
     channel::{BytesChannel, Channel},
     codecs::BincodeCodec,
     rep3::PartyWorkerID,
-    MpcNetworkHandlerShutdown, MpcNetworkHandlerWrapper, DEFAULT_CONNECT_TIMEOUT,
+    MpcNetworkHandlerShutdown, MpcNetworkHandlerWrapper, MpcNetworkHandlerWrapperMut,
+    DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
@@ -14,7 +15,7 @@ use quinn::{
     rustls::pki_types::CertificateDer, Connection, Endpoint, RecvStream, SendStream, VarInt,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, iter, rc::Rc, sync::Arc};
 use std::{collections::HashMap, io};
 use tokio::io::AsyncReadExt;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
@@ -25,10 +26,11 @@ use crate::{
 
 pub struct Rep3QuicNetCoordinator {
     pub(crate) channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>>,
-    pub(crate) net_handler: Arc<MpcNetworkHandlerWrapper<MpcNetworkCoordinatorHandler>>,
+    pub(crate) net_handler: Arc<MpcNetworkHandlerWrapperMut<MpcNetworkCoordinatorHandler>>,
     pub(crate) log_num_pub_workers: usize,
     pub(crate) log_num_workers_per_party: usize,
     pub(crate) stats_checkpoints: Vec<(u64, u64)>,
+    pub(crate) config: NetworkConfig,
 }
 
 impl Rep3QuicNetCoordinator {
@@ -44,7 +46,7 @@ impl Rep3QuicNetCoordinator {
             .enable_all()
             .build()?;
         let (net_handler, channels) = runtime.block_on(async {
-            let net_handler = MpcNetworkCoordinatorHandler::establish(config)
+            let net_handler = MpcNetworkCoordinatorHandler::establish(config.clone())
                 .await
                 .context("establishing network handler")?;
             let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
@@ -58,14 +60,15 @@ impl Rep3QuicNetCoordinator {
             Ok::<_, Report>((net_handler, channels))
         })?;
 
-        let num_workers = channels.len();
+        let num_parties = channels.len();
 
         Ok(Self {
             channels,
-            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(runtime, net_handler)),
+            net_handler: Arc::new(MpcNetworkHandlerWrapperMut::new(runtime, net_handler)),
             log_num_pub_workers,
             log_num_workers_per_party,
-            stats_checkpoints: vec![(0, 0); num_workers],
+            stats_checkpoints: vec![(0, 0); num_parties],
+            config,
         })
     }
 }
@@ -91,6 +94,40 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
                     })
                     .context("while deserializing response")
+            })
+            .collect::<Result<Vec<_>>>()
+    }
+
+    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+    ) -> Result<Vec<Vec<T>>> {
+        let mut responses_bytes: Vec<Vec<_>> = Vec::with_capacity(2);
+        for (global_worker_id, channel) in self.channels.iter_mut() {
+            let worker_idx = PartyWorkerID::from_global_worker_id(*global_worker_id).worker_idx();
+            let response = channel
+                .blocking_recv()
+                .blocking_recv()
+                .context("while receiving response")??;
+            match responses_bytes.get_mut(worker_idx) {
+                None => {
+                    responses_bytes.insert(worker_idx, vec![response]);
+                }
+                Some(responses) => responses.push(response),
+            }
+        }
+
+        responses_bytes
+            .iter()
+            .map(|data| {
+                data.iter()
+                    .map(|data| {
+                        T::deserialize_uncompressed_unchecked(&data[..])
+                            .map_err(|e| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                            })
+                            .context("while deserializing response")
+                    })
+                    .collect::<Result<Vec<_>>>()
             })
             .collect::<Result<Vec<_>>>()
     }
@@ -177,9 +214,10 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 
     fn reset_stats(&mut self) {
         // hack: wait arbitrary time for all send/recv tasks till now to complete
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        
-        for (i, conn) in &self.net_handler.inner.connections {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let net_handler = self.net_handler.inner.lock().unwrap();
+        for (i, conn) in &net_handler.connections {
             let stats = conn.stats();
             self.stats_checkpoints[*i].0 += stats.udp_tx.bytes;
             self.stats_checkpoints[*i].1 += stats.udp_rx.bytes;
@@ -187,17 +225,14 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn total_bandwidth_used(&self) -> (u64, u64) {
-        let sent_bytes = self
-            .net_handler
-            .inner
+        let net_handler = self.net_handler.inner.lock().unwrap();
+        let sent_bytes = net_handler
             .connections
             .iter()
             .zip(self.stats_checkpoints.iter())
             .map(|((_, conn), (sent, _))| conn.stats().udp_tx.bytes as u64 - sent)
             .sum();
-        let recv_bytes = self
-            .net_handler
-            .inner
+        let recv_bytes = net_handler
             .connections
             .iter()
             .zip(self.stats_checkpoints.iter())
@@ -209,7 +244,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     fn log_connection_stats(&self, label: Option<&str>) {
         // hack: wait arbitrary time for all send/recv tasks till now to complete
         std::thread::sleep(std::time::Duration::from_secs(1));
-        for (i, conn) in &self.net_handler.inner.connections {
+        let net_handler = self.net_handler.inner.lock().unwrap();
+        for (i, conn) in &net_handler.connections {
             let stats = conn.stats();
             tracing::info!(
                 "{}: Connection {} stats: SENT: {} bytes RECV: {} bytes",
@@ -219,6 +255,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 ByteSize(stats.udp_rx.bytes - self.stats_checkpoints[*i].1)
             );
         }
+        drop(net_handler);
         let (sent_bytes, recv_bytes) = self.total_bandwidth_used();
         tracing::info!(
             "{} total: SENT: {} bytes RECV: {} bytes",
@@ -234,6 +271,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         let channels = net_handler.runtime.block_on(async {
             let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
                 .inner
+                .lock()
+                .unwrap()
                 .get_byte_channels()
                 .await
                 .context("getting byte channels")?
@@ -250,7 +289,51 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             log_num_pub_workers: self.log_num_pub_workers,
             log_num_workers_per_party: self.log_num_workers_per_party,
             stats_checkpoints: self.stats_checkpoints.clone(),
+            config: self.config.clone(),
         })
+    }
+
+    fn fork_with_worker_subnets(&mut self, num_workers: usize) -> Result<Self> {
+        let extended_config = self.config.extend_with_workers(num_workers);
+
+        let net_handler = Arc::clone(&self.net_handler);
+
+        let channels = net_handler.runtime.block_on(async {
+            let mut net_handler = net_handler.inner.lock().unwrap();
+            net_handler.extend(extended_config).await?;
+            let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
+                .get_byte_channels()
+                .await
+                .context("getting byte channels")?
+                .into_iter()
+                .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
+                .collect();
+
+            Ok::<_, Report>(channels)
+        })?;
+
+        Ok(Self {
+            channels,
+            net_handler,
+            log_num_pub_workers: self.log_num_pub_workers,
+            log_num_workers_per_party: self.log_num_workers_per_party,
+            stats_checkpoints: self.stats_checkpoints.clone(),
+            config: self.config.clone(),
+        })
+    }
+
+    fn trim_subnets(&mut self, num_workers: usize) -> Result<()> {
+        println!("coordinator trimming subnets");
+        self.net_handler.runtime.block_on(async {
+            self.net_handler
+                .inner
+                .lock()
+                .unwrap()
+                .trim(num_workers)
+                .await
+        })?;
+
+        Ok(())
     }
 }
 
@@ -259,7 +342,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 pub struct MpcNetworkCoordinatorHandler {
     // this is a btreemap because we rely on iteration order
     connections: BTreeMap<usize, Connection>,
-    endpoints: Vec<Endpoint>,
+    server_endpoint: Endpoint,
     my_id: usize,
 }
 
@@ -274,7 +357,6 @@ impl MpcNetworkCoordinatorHandler {
             .context("creating our server config")?;
         let our_socket_addr = config.bind_addr;
 
-        let mut endpoints = Vec::new();
         let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;
 
         let mut connections = BTreeMap::new();
@@ -332,13 +414,93 @@ impl MpcNetworkCoordinatorHandler {
             }
         }
 
-        endpoints.push(server_endpoint);
-
         Ok(MpcNetworkCoordinatorHandler {
             connections,
-            endpoints,
+            server_endpoint,
             my_id: config.my_id,
         })
+    }
+
+    /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
+    pub async fn extend(&mut self, config: NetworkConfig) -> eyre::Result<()> {
+        // config.check_config()?;
+
+        // Accept all connections first, then identify each one
+        let mut new_connections = vec![];
+        for party in &config.parties {
+            let id = PartyWorkerID::new(party.id.into(), party.worker);
+            let global_worker_id = id.global_worker_id();
+            if self.connections.contains_key(&global_worker_id) {
+                continue;
+            }
+
+            match tokio::time::timeout(
+                config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
+                self.server_endpoint.accept(),
+            )
+            .await
+            {
+                Ok(Some(maybe_conn)) => {
+                    let conn = maybe_conn.await?;
+                    tracing::trace!(
+                        "Coordinator accepted connection with id {} from {}",
+                        conn.stable_id(),
+                        conn.remote_address(),
+                    );
+
+                    // Now identify which worker this is
+                    let mut uni: RecvStream = conn.accept_uni().await?;
+                    let party_id = uni.read_u32().await?;
+                    let worker_id = uni.read_u32().await?;
+
+                    let id = PartyWorkerID::new(party_id as usize, worker_id as usize);
+                    let global_worker_id = id.global_worker_id();
+
+                    tracing::trace!(
+                        "Coordinator identified connection: party {}, worker {}, global_id {}",
+                        party_id,
+                        worker_id,
+                        global_worker_id
+                    );
+
+                    new_connections.push((global_worker_id, conn));
+                }
+                Ok(None) => {
+                    return Err(eyre::eyre!(
+                        "server endpoint did not accept a connection from party",
+                    ));
+                }
+                Err(_) => {
+                    return Err(eyre::eyre!("timeout waiting for worker connection"));
+                }
+            }
+        }
+
+        for (global_worker_id, conn) in new_connections {
+            assert!(
+                self.connections.insert(global_worker_id, conn).is_none(),
+                "Duplicate global worker ID: {}",
+                global_worker_id
+            );
+        }
+
+        Ok(())
+    }
+
+    pub async fn trim(&mut self, new_num_workers: usize) -> eyre::Result<()> {
+        for (id, conn) in self.connections.iter() {
+            if *id > 3 * new_num_workers - 1 {
+                let mut recv = conn.accept_uni().await?;
+                let mut buffer = vec![0u8; b"done".len()];
+                recv.read_exact(&mut buffer).await.map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
+                })?;
+
+                conn.close(0u32.into(), format!("close from coordinator").as_bytes());
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the number of sent and received bytes.
@@ -437,10 +599,9 @@ impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
 
             conn.close(0u32.into(), format!("close from coordinator").as_bytes());
         }
-        for endpoint in self.endpoints.iter() {
-            endpoint.wait_idle().await;
-            endpoint.close(VarInt::from_u32(0), &[]);
-        }
+        self.server_endpoint.wait_idle().await;
+        self.server_endpoint.close(VarInt::from_u32(0), &[]);
+
         Ok(())
     }
 }

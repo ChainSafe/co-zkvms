@@ -1,7 +1,7 @@
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(test)]
-use crate::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, Rep3ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
