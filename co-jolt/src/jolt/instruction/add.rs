@@ -44,7 +44,12 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        add_and_chunk_operands(self.0.as_public() as u128, self.1.as_public() as u128, C, log_M)
+        add_and_chunk_operands(
+            self.0.as_public() as u128,
+            self.1.as_public() as u128,
+            C,
+            log_M,
+        )
     }
 
     fn lookup_entry(&self) -> F {

@@ -1,7 +1,8 @@
 use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, split_public_poly, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        split_public_poly, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
@@ -174,7 +175,6 @@ where
                     E_poly.as_shared_mut().evals.push(E_eval);
                 });
                 outputs_poly.as_shared_mut().evals.push(outputs_eval);
-                
                 (
                     r_primary_sumcheck, // same for each worker
                     eq_poly,
@@ -185,16 +185,16 @@ where
             },
         );
 
-       let (r_primary_sumchecks, _, flag_evals, E_evals, outputs_eval) = Self::prove_primary_sumcheck(
-            preprocessing,
-            num_rounds,
-            eq_poly,
-            E_polys,
-            flag_polys,
-            outputs_poly,
-            io_ctx,
-        )?;
-
+        let (r_primary_sumchecks, _, flag_evals, E_evals, outputs_eval) =
+            Self::prove_primary_sumcheck(
+                preprocessing,
+                num_rounds,
+                eq_poly,
+                E_polys,
+                flag_polys,
+                outputs_poly,
+                io_ctx,
+            )?;
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
@@ -319,7 +319,6 @@ where
             .collect();
         let outputs_eval = lookup_outputs_poly.as_shared()[0];
         let eq_eval = eq_poly.final_sumcheck_claim();
-
 
         Ok((r, eq_eval, flag_evals, memory_evals, outputs_eval))
     }

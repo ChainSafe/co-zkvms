@@ -1,8 +1,8 @@
 pub mod arithmetic;
 pub mod binary;
+pub mod network;
 pub mod poly;
 pub mod rngs;
-pub mod network;
 
 pub use mpc_core::protocols::rep3::{conversion, gadgets, pointshare, yao};
 

@@ -118,7 +118,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         #[cfg(feature = "public-eq")]
         let divisor_is_zero = {
             let divisor_is_zero_vals = rep3::arithmetic::open_vec(&vals_by_subtable[2], io_ctx)?;
-            rep3::arithmetic::promote_to_trivial_share(io_ctx.id, divisor_is_zero_vals.iter().product::<F>())
+            rep3::arithmetic::promote_to_trivial_share(
+                io_ctx.id,
+                divisor_is_zero_vals.iter().product::<F>(),
+            )
         };
 
         let mut sum = ltu[0].into_additive();

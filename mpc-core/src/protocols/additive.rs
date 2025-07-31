@@ -42,7 +42,6 @@ pub fn sub_public_by_shared<F: PrimeField>(
     add_public(-shared, public, id)
 }
 
-
 pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(
     rng: &mut SSRandom<R>,
 ) -> F {

@@ -19,11 +19,7 @@ use super::{
     zk::{zk_sumcheck_verifier_wrapper, ZKMLCommit},
     R1CSProof,
 };
-use crate::{
-    math::MaskPolynomial,
-    transcript::Transcript,
-    utils::eq_eval,
-};
+use crate::{math::MaskPolynomial, transcript::Transcript, utils::eq_eval};
 
 /// Verification result.
 pub type VerificationResult = anyhow::Result<()>;

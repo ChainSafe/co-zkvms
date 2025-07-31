@@ -2,7 +2,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::Context;
 use mpc_types::protocols::rep3::id::PartyID;
 use mpi::{
-    datatype::{Partition, PartitionMut}, environment::Universe, topology::{Process, SimpleCommunicator}, traits::{Communicator, Partitioned, Root}, Count
+    datatype::{Partition, PartitionMut},
+    environment::Universe,
+    topology::{Process, SimpleCommunicator},
+    traits::{Communicator, Partitioned, Root},
+    Count,
 };
 
 use crate::{
@@ -37,7 +41,6 @@ impl MpiContext {
     }
 }
 
-
 pub struct Rep3CoordinatorMPI<'a> {
     pub root_process: Process<'a, SimpleCommunicator>,
     pub log_num_workers_per_party: usize,
@@ -52,7 +55,7 @@ impl<'a> Rep3CoordinatorMPI<'a> {
         log_num_workers_per_party: usize,
         log_num_public_workers: usize,
         mpi_ctx: &'a MpiContext,
-    ) -> Self {    
+    ) -> Self {
         let root_process = mpi_ctx.communicator.process_at_rank(ROOT_RANK as i32);
         let size = mpi_ctx.communicator.size();
         Self {
@@ -87,7 +90,10 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
         Ok(ret)
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: T) -> Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        data: T,
+    ) -> Result<()> {
         let requests_chunked = vec![data; (1 << self.log_num_workers_per_party) * 3];
         let mut request_bytes = vec![];
         let request_bytes_buf =
@@ -129,7 +135,7 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
     fn total_bandwidth_used(&self) -> (u64, u64) {
         (self.total_send_bytes as u64, self.total_recv_bytes as u64)
     }
-    
+
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,
@@ -172,7 +178,10 @@ impl<'a> Rep3WorkerMPI<'a> {
 }
 
 impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()> {
         let responses_bytes = serialize_to_vec(&data);
         self.root_process.gather_varcount_into(&responses_bytes);
         self.total_send_bytes += responses_bytes.len();

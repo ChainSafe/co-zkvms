@@ -2,9 +2,9 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use jolt_core::utils::math::Math;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::subtable::LassoSubtable;
+use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
@@ -47,7 +47,9 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for POW2Instructio
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for POW2Instruction<WORD_SIZE, F> {
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
+    for POW2Instruction<WORD_SIZE, F>
+{
     fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), Rep3Operand::default())
     }

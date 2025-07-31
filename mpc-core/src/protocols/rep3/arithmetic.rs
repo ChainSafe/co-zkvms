@@ -117,9 +117,13 @@ pub fn product_many_into_additive<F: PrimeField, N: Rep3Network>(
         .iter()
         .skip(1)
         .take(num_multiplications - 2)
-        .try_fold(shares.iter().map(|x| x[0] * public_extra.unwrap_or(F::one())).collect_vec(), |acc, x| {
-            mul_vec(&acc, *x, io_ctx)
-        })
+        .try_fold(
+            shares
+                .iter()
+                .map(|x| x[0] * public_extra.unwrap_or(F::one()))
+                .collect_vec(),
+            |acc, x| mul_vec(&acc, *x, io_ctx),
+        )
         .context("while computing product")?;
     Ok(products_except_last
         .into_iter()

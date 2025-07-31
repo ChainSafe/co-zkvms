@@ -11,8 +11,8 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
+use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SRLInstruction<const WORD_SIZE: usize, F: JoltField>(

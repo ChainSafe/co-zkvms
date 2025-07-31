@@ -8,12 +8,10 @@ use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use jolt_core::jolt::subtable::{
-    identity::IdentitySubtable, LassoSubtable
-};
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
 };
+use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SUBInstruction<const WORD_SIZE: usize, F: JoltField>(

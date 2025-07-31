@@ -3,9 +3,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
 
 pub trait MpcStarNetCoordinator: Sized {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<T>>;
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self)
+        -> Result<Vec<T>>;
     fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
     ) -> Result<Vec<Vec<T>>>;

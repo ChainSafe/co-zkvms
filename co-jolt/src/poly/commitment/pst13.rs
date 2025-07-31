@@ -492,17 +492,17 @@ where
 mod tests {
     use std::iter;
 
+    use crate::poly::Rep3DensePolynomial;
     use ark_ff::UniformRand;
     use ark_poly::DenseMultilinearExtension;
     use ark_poly::MultilinearExtension;
     use ark_poly::Polynomial;
     use itertools::Itertools;
+    use jolt_core::poly::dense_mlpoly::DensePolynomial;
     use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
     use jolt_core::utils::math::Math;
-    use mpc_core::protocols::rep3;
-    use jolt_core::poly::dense_mlpoly::DensePolynomial;
     use jolt_core::utils::transcript::KeccakTranscript;
-    use crate::poly::Rep3DensePolynomial;
+    use mpc_core::protocols::rep3;
 
     use super::*;
 

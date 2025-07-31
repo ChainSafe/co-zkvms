@@ -9,12 +9,12 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use jolt_core::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
     concatenate_lookups_rep3,
 };
 use jolt_core::field::JoltField;
+use jolt_core::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SLLInstruction<const WORD_SIZE: usize, F: JoltField>(

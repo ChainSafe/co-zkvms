@@ -1,4 +1,4 @@
-use color_eyre::{Result, eyre::Context};
+use color_eyre::{eyre::Context, Result};
 use rcgen::CertifiedKey;
 use std::path::PathBuf;
 

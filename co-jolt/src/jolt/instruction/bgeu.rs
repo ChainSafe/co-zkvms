@@ -13,10 +13,8 @@ use mpc_core::protocols::rep3::{
 use super::{
     sltu::SLTUInstruction, JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices,
 };
-use crate::{
-    utils::instruction_utils::{
-        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
-    },
+use crate::utils::instruction_utils::{
+    chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

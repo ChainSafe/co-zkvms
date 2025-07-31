@@ -21,14 +21,14 @@ use ark_poly_commit::multilinear_pc::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs};
 use clap::{Parser, Subcommand};
-use mpc_core::protocols::rep3::{
-    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
-};
 use co_spartan::{
     utils::{pad_to_power_of_two, split_vec},
     Rep3ProverKey,
 };
 use itertools::{merge, Itertools};
+use mpc_core::protocols::rep3::{
+    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
+};
 use noir_r1cs::{FieldElement, NoirProofScheme};
 use rand::{rngs::StdRng, seq::SliceRandom, RngCore, SeedableRng};
 use rayon::prelude::*;

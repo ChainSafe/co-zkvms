@@ -198,7 +198,8 @@ where
     T: Sized + Send + Clone,
     R: Sync + Send,
 {
-    let res = i.into_par_iter()
+    let res = i
+        .into_par_iter()
         .zip_eq(ctx.fork_into_worker_subnets(num_workers)?)
         .map(|(val, mut ctx)| {
             let res = map_fn(val, &mut ctx);

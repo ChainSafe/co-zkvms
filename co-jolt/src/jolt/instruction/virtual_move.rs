@@ -57,7 +57,9 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVEInstructio
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MOVEInstruction<WORD_SIZE, F> {
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
+    for MOVEInstruction<WORD_SIZE, F>
+{
     fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
         (self.0.clone(), Rep3Operand::default())
     }

@@ -60,8 +60,12 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
 
     fn lookup_entry(&self) -> F {
         match WORD_SIZE {
-            32 => (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0) as u64).into(),
-            64 => (((self.0.as_public() as i64 + self.1.as_public() as i64) % 2 == 0) as u64).into(),
+            32 => (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
+                as u64)
+                .into(),
+            64 => {
+                (((self.0.as_public() as i64 + self.1.as_public() as i64) % 2 == 0) as u64).into()
+            }
             _ => panic!("Only 32-bit and 64-bit word sizes are supported"),
         }
     }

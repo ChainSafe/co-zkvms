@@ -282,12 +282,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(poly) => {
                 Rep3DensePolynomial::split_poly(poly, log_workers)
             }
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
-                split_public_poly(poly, log_workers)
-                    .into_iter()
-                    .map(|poly| Rep3MultilinearPolynomial::public(poly))
-                    .collect()
-            }
+            Rep3MultilinearPolynomial::Public { poly, .. } => split_public_poly(poly, log_workers)
+                .into_iter()
+                .map(|poly| Rep3MultilinearPolynomial::public(poly))
+                .collect(),
         }
     }
 
@@ -316,36 +314,24 @@ pub fn split_public_poly<F: JoltField>(
 
     for i in 0..1 << log_workers {
         match poly {
-            MultilinearPolynomial::LargeScalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.Z[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
-            MultilinearPolynomial::U8Scalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
-            MultilinearPolynomial::U16Scalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
-            MultilinearPolynomial::U32Scalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
-            MultilinearPolynomial::U64Scalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
-            MultilinearPolynomial::I64Scalars(poly) => res.push(
-                MultilinearPolynomial::from(
-                    poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
-                ),
-            ),
+            MultilinearPolynomial::LargeScalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.Z[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
+            MultilinearPolynomial::U8Scalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
+            MultilinearPolynomial::U16Scalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
+            MultilinearPolynomial::U32Scalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
+            MultilinearPolynomial::U64Scalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
+            MultilinearPolynomial::I64Scalars(poly) => res.push(MultilinearPolynomial::from(
+                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+            )),
         }
     }
 

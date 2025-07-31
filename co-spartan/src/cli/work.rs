@@ -29,12 +29,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{cfg_chunks, cfg_chunks_mut, cfg_into_iter, cfg_iter, fs, time::Instant};
 use bytesize::ByteSize;
 use clap::{Parser, Subcommand};
-use mpc_core::protocols::rep3::{
-    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
-};
 use co_spartan::setup::CoordinatorKey;
 use crossbeam::thread;
 use itertools::{merge, Itertools};
+use mpc_core::protocols::rep3::{
+    arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
+};
 use mpc_net::{
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::mpi::{Rep3CoordinatorMPI, Rep3WorkerMPI},
@@ -104,11 +104,8 @@ pub fn work<E: Pairing>(
                 worker_id.map(|x| x - 1).unwrap_or(0) // 0 worker is coordinator
             };
 
-            let network = Rep3WorkerMPI::new(
-                log_num_public_workers,
-                log_num_workers_per_party,
-                &mpi_ctx,
-            );
+            let network =
+                Rep3WorkerMPI::new(log_num_public_workers, log_num_workers_per_party, &mpi_ctx);
 
             (worker_id, network)
         };
@@ -190,7 +187,8 @@ fn coordinator_work<E: Pairing, N: MpcStarNetCoordinator>(
         &pk.ivk,
         &mut transcript,
         network,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut verifier_transcript = TranscriptMerlin::new(b"dfs");
     if let Err(e) = proof.verify(&pk.ivk, &Vec::new(), &mut verifier_transcript) {
@@ -264,7 +262,8 @@ fn worker_work<E: Pairing, N: MpcStarNetWorker>(
         pub_log_chunk_size,
         pub_start_eq,
     )
-    .prove(&pk, witness_share, &mut random, active, network).unwrap();
+    .prove(&pk, witness_share, &mut random, active, network)
+    .unwrap();
 
     let (send_bytes, recv_bytes) = network.total_bandwidth_used();
     tracing::info!(

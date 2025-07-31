@@ -1,7 +1,5 @@
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(test)]
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::opening_proof::{
     ProverOpeningAccumulator, Rep3ProverOpeningAccumulator, VerifierOpeningAccumulator,
 };
@@ -17,6 +15,8 @@ use crate::subprotocols::sumcheck::{
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use itertools::Itertools;
+#[cfg(test)]
+use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;

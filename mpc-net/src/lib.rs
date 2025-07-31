@@ -54,7 +54,10 @@ pub struct MpcNetworkHandlerWrapperMut<H: MpcNetworkHandlerShutdown = MpcNetwork
 impl<H: MpcNetworkHandlerShutdown> MpcNetworkHandlerWrapperMut<H> {
     /// Create a new wrapper  
     pub fn new(runtime: Runtime, inner: H) -> Self {
-        Self { runtime, inner: Mutex::new(inner) }
+        Self {
+            runtime,
+            inner: Mutex::new(inner),
+        }
     }
 }
 

@@ -648,7 +648,6 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
             }
         }
 
-
         if let Some(conn) = self.coordinator_connection.as_ref() {
             let mut send = conn.open_uni().await?;
             send.write_all(b"done").await?;
