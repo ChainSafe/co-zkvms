@@ -38,7 +38,7 @@ pub trait MpcStarNetCoordinator: Sized {
     fn reset_stats(&mut self);
 
     fn fork(&mut self) -> Result<Self>;
-    fn fork_with_worker_subnets(&mut self, num_workers: usize) -> Result<Self>;
+    fn extend_with_worker_subnets(&mut self, num_workers: usize) -> Result<()>;
     fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
 }
 
@@ -56,7 +56,8 @@ pub trait MpcStarNetWorker: Sized {
     fn total_bandwidth_used(&self) -> (u64, u64);
 
     fn party_id(&self) -> PartyID;
+    fn worker_idx(&self) -> usize;
 
     fn fork_with_coordinator(&mut self) -> Result<Self>;
-    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
+    fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>>;
 }

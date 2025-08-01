@@ -168,12 +168,13 @@ where
         // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        Self::fiat_shamir_preamble(
-            &mut transcript,
-            &program_io,
-            &program_io.memory_layout,
-            trace_length,
-        );
+        // TODO: why does this work different from jolt_core?
+        // Self::fiat_shamir_preamble(
+        //     &mut transcript,
+        //     &program_io,
+        //     &program_io.memory_layout,
+        //     trace_length,
+        // );
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 

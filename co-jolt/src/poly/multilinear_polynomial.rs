@@ -71,6 +71,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::shared(Rep3DensePolynomial::new(evals))
     }
 
+    pub fn public_zero(num_evals: usize) -> Self {
+        Self::public(MultilinearPolynomial::from(vec![F::zero(); num_evals]))
+    }
+
     pub fn as_public(&self) -> &MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly,

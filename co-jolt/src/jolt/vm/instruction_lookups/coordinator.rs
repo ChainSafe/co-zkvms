@@ -50,21 +50,18 @@ where
 
         let num_rounds = num_ops.log_2();
 
-        let log_num_workers = 1;
         let primary_sumcheck_proof = Self::prove_primary_sumcheck_rep3(
-            num_rounds - log_num_workers,
+            num_rounds,
+            F::zero(),
             transcript,
-            &mut network.fork_with_worker_subnets(1 << log_num_workers)?,
+            network,
         )
         .context("while proving primary sumcheck")?;
-
-        network.trim_subnets(1)?;
 
         let mut flag_evals = vec![F::zero(); Self::NUM_INSTRUCTIONS];
         let mut E_evals = vec![F::zero(); preprocessing.num_memories];
         let mut outputs_eval = F::zero();
 
-        println!("receiving claims");
         let claims = Rep3ProverOpeningAccumulator::<F>::receive_claims(transcript, network)?;
 
         E_evals
@@ -106,34 +103,50 @@ where
     #[tracing::instrument(skip_all, name = "Rep3LassoProver::prove_primary_sumcheck")]
     fn prove_primary_sumcheck_rep3<Network: Rep3NetworkCoordinator>(
         num_rounds: usize,
+        mut previous_claim: F,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<SumcheckInstanceProof<F, ProofTranscript>> {
-        // Check all polys are the same size
+        let log_num_workers = network.log_num_workers_per_party();
+        if log_num_workers > 0 {
+            network.extend_with_worker_subnets(1 << log_num_workers)?;
+        }
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-        for _round in 0..num_rounds {
-            let responces = network.receive_responses_from_subnets()?;
-            let degree = responces[0].len();
-            let coeffs = responces
-                .into_iter()
-                .map(|shares| additive::combine_field_element_vec::<F>(shares))
-                .fold(vec![F::zero(); degree], |mut acc, coeff| {
-                    acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
-                        *acc += coeff;
-                    });
-                    acc
-                });
-            let round_poly = UniPoly::from_coeff(coeffs);
+        for round in 0..num_rounds {
+            let mut round_evals = if round >= num_rounds - log_num_workers || log_num_workers == 0 {
+                if log_num_workers > 0 {
+                    network.trim_subnets(1)?;
+                }
+                additive::combine_field_element_vec(network.receive_responses()?)
+            } else {
+                let subnet_responces = network.receive_responses_from_subnets::<Vec<F>>()?;
+                let degree = subnet_responces[0][0].len();
+                subnet_responces
+                    .into_iter()
+                    .map(|shares| additive::combine_field_element_vec::<F>(shares))
+                    .fold(vec![F::zero(); degree], |mut acc, coeff| {
+                        acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
+                            *acc += coeff;
+                        });
+                        acc
+                    })
+            };
+
+            round_evals.insert(1, previous_claim - round_evals[0]);
+            let round_poly = UniPoly::from_evals(&round_evals);
+
             let compressed_round_poly = round_poly.compress();
             compressed_round_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_round_poly);
             let r_j = transcript.challenge_scalar::<F>();
-            let new_claim = round_poly.evaluate(&r_j);
-            network.broadcast_request((r_j, new_claim))?;
+            network.broadcast_request(r_j)?;
             random_vars.push(r_j);
+
+            let new_claim = round_poly.evaluate(&r_j);
+            previous_claim = new_claim;
         } // End rounds
 
         Ok(SumcheckInstanceProof::new(compressed_polys))

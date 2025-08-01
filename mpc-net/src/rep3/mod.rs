@@ -38,6 +38,12 @@ impl PartyWorkerID {
     }
 }
 
+impl std::fmt::Display for PartyWorkerID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "party: {}, worker: {}", self.party_id(), self.worker_idx())
+    }
+}
+
 #[test]
 fn test_global_worker_idn() {
     assert_eq!(PartyWorkerID::new(0, 0).global_worker_id(), 0);

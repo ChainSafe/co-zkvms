@@ -27,7 +27,6 @@ use crate::{
 pub struct Rep3QuicNetCoordinator {
     pub(crate) channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>>,
     pub(crate) net_handler: Arc<MpcNetworkHandlerWrapperMut<MpcNetworkCoordinatorHandler>>,
-    pub(crate) log_num_pub_workers: usize,
     pub(crate) log_num_workers_per_party: usize,
     pub(crate) stats_checkpoints: Vec<(u64, u64)>,
     pub(crate) config: NetworkConfig,
@@ -37,7 +36,6 @@ impl Rep3QuicNetCoordinator {
     pub fn new(
         config: NetworkConfig,
         log_num_workers_per_party: usize,
-        log_num_pub_workers: usize,
     ) -> Result<Self> {
         if config.parties.len() % 3 != 0 {
             bail!("REP3 protocol requires exactly 3 workers per party")
@@ -65,9 +63,8 @@ impl Rep3QuicNetCoordinator {
         Ok(Self {
             channels,
             net_handler: Arc::new(MpcNetworkHandlerWrapperMut::new(runtime, net_handler)),
-            log_num_pub_workers,
             log_num_workers_per_party,
-            stats_checkpoints: vec![(0, 0); num_parties],
+            stats_checkpoints: vec![(0, 0); num_parties * (1 << log_num_workers_per_party)],
             config,
         })
     }
@@ -205,7 +202,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn log_num_pub_workers(&self) -> usize {
-        self.log_num_pub_workers
+        std::cmp::min(self.log_num_workers_per_party - 1, 1)
     }
 
     fn log_num_workers_per_party(&self) -> usize {
@@ -246,11 +243,12 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let net_handler = self.net_handler.inner.lock().unwrap();
         for (i, conn) in &net_handler.connections {
+            let id = PartyWorkerID::from_global_worker_id(*i);
             let stats = conn.stats();
             tracing::info!(
-                "{}: Connection {} stats: SENT: {} bytes RECV: {} bytes",
+                "{}: connection with {} | stats: SENT: {} bytes | RECV: {} bytes",
                 label.unwrap_or("Coordinator stats"),
-                i,
+                id,
                 ByteSize(stats.udp_tx.bytes - self.stats_checkpoints[*i].0),
                 ByteSize(stats.udp_rx.bytes - self.stats_checkpoints[*i].1)
             );
@@ -286,23 +284,21 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(Self {
             channels,
             net_handler: net_handler,
-            log_num_pub_workers: self.log_num_pub_workers,
             log_num_workers_per_party: self.log_num_workers_per_party,
             stats_checkpoints: self.stats_checkpoints.clone(),
             config: self.config.clone(),
         })
     }
 
-    fn fork_with_worker_subnets(&mut self, num_workers: usize) -> Result<Self> {
-        let extended_config = self.config.extend_with_workers(num_workers);
+    fn extend_with_worker_subnets(&mut self, new_num_workers: usize) -> eyre::Result<()> {
+        let num_workers = self.channels.len() / 3;
+        let extended_config = self.config.extend_with_workers(new_num_workers);
 
-        let net_handler = Arc::clone(&self.net_handler);
-
-        let channels = net_handler.runtime.block_on(async {
-            let mut net_handler = net_handler.inner.lock().unwrap();
+        let new_channels = self.net_handler.runtime.block_on(async {
+            let mut net_handler = self.net_handler.inner.lock().unwrap();
             net_handler.extend(extended_config).await?;
             let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
-                .get_byte_channels()
+                .get_byte_channels_filter(|id| id >= 3 * num_workers)
                 .await
                 .context("getting byte channels")?
                 .into_iter()
@@ -312,18 +308,17 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             Ok::<_, Report>(channels)
         })?;
 
-        Ok(Self {
-            channels,
-            net_handler,
-            log_num_pub_workers: self.log_num_pub_workers,
-            log_num_workers_per_party: self.log_num_workers_per_party,
-            stats_checkpoints: self.stats_checkpoints.clone(),
-            config: self.config.clone(),
-        })
+        self.channels.extend(new_channels);
+
+        self.stats_checkpoints.resize(
+            std::cmp::max(self.stats_checkpoints.len(), 3 * num_workers),
+            (0, 0),
+        );
+
+        Ok(())
     }
 
     fn trim_subnets(&mut self, num_workers: usize) -> Result<()> {
-        println!("coordinator trimming subnets");
         self.net_handler.runtime.block_on(async {
             self.net_handler
                 .inner
@@ -332,6 +327,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 .trim(num_workers)
                 .await
         })?;
+
+        self.channels.retain(|id, _| *id < 3 * num_workers);
 
         Ok(())
     }
@@ -500,6 +497,7 @@ impl MpcNetworkCoordinatorHandler {
             }
         }
 
+        // keep connections for communication stats
         Ok(())
     }
 
@@ -537,7 +535,21 @@ impl MpcNetworkCoordinatorHandler {
             .length_field_length(NUM_BYTES)
             .max_frame_length(1usize << (NUM_BYTES * 8))
             .new_codec();
-        self.get_custom_channels(codec).await
+        self.get_custom_channels(codec, |_| true).await
+    }
+
+    pub async fn get_byte_channels_filter(
+        &self,
+        filter: impl Fn(usize) -> bool,
+    ) -> std::io::Result<BTreeMap<usize, BytesChannel<RecvStream, SendStream>>> {
+        // set max frame length to 1Tb and length_field_length to 5 bytes
+        const NUM_BYTES: usize = 5;
+        let codec = LengthDelimitedCodec::builder()
+            .length_field_type::<u64>() // u64 because this is the type the length is decoded into, and u32 doesnt fit 5 bytes
+            .length_field_length(NUM_BYTES)
+            .max_frame_length(1usize << (NUM_BYTES * 8))
+            .new_codec();
+        self.get_custom_channels(codec, filter).await
     }
 
     /// Set up a new [Channel] using [BincodeCodec] between each party. The resulting map maps the id of the party to its respective [Channel].
@@ -545,7 +557,7 @@ impl MpcNetworkCoordinatorHandler {
         &self,
     ) -> std::io::Result<BTreeMap<usize, Channel<RecvStream, SendStream, BincodeCodec<M>>>> {
         let bincodec = BincodeCodec::<M>::new();
-        self.get_custom_channels(bincodec).await
+        self.get_custom_channels(bincodec, |_| true).await
     }
 
     /// Set up a new [Channel] using the provided codec between each party. The resulting map maps the id of the party to its respective [Channel].
@@ -559,12 +571,14 @@ impl MpcNetworkCoordinatorHandler {
     >(
         &self,
         codec: C,
+        filter: impl Fn(usize) -> bool,
+
     ) -> std::io::Result<BTreeMap<usize, Channel<RecvStream, SendStream, C>>> {
         let mut channels = BTreeMap::new();
 
         // For coordinator, all connections are already established and identified
         // We just need to create channels from the existing bidirectional streams
-        for (&global_worker_id, conn) in self.connections.iter() {
+        for (&global_worker_id, conn) in self.connections.iter().filter(|(&id, _)| filter(id)) {
             // The streams were already established during connection setup
             // We need to create new streams for data communication
             let (send_stream, mut recv_stream) = conn.accept_bi().await?;

@@ -18,6 +18,7 @@ use co_jolt::{
     },
     utils::transcript::{KeccakTranscript, Transcript},
 };
+use co_jolt::utils::math::Math;
 use co_jolt::{lasso::memory_checking::StructuredPolynomialData, poly::commitment::pst13::PST13};
 use color_eyre::{
     eyre::{eyre, Context},
@@ -72,6 +73,9 @@ pub struct Args {
 
     #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
     pub trace_parties: bool,
+
+    #[clap(short, long, value_name = "NUM_WORKERS_PER_PARTY", default_value = "1", env = "NUM_WORKERS_PER_PARTY")]
+    pub num_workers_per_party: usize,
 }
 
 fn main() -> Result<()> {
@@ -97,9 +101,9 @@ fn main() -> Result<()> {
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
-        run_coordinator(args, config, program, inputs, 1, 1)?;
+        run_coordinator(args, config, program, inputs)?;
     } else {
-        run_party(args, config, program, inputs, 1, 1)?;
+        run_party(args, config, program, inputs)?;
     }
 
     Ok(())
@@ -110,8 +114,6 @@ pub fn run_party(
     config: NetworkConfig,
     mut program: host::Program,
     inputs: Vec<u8>,
-    log_num_workers_per_party: usize,
-    log_num_pub_workers: usize,
 ) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
@@ -136,8 +138,7 @@ pub fn run_party(
 
     let network = Rep3QuicMpcNetWorker::new_with_coordinator(
         config.clone(),
-        log_num_workers_per_party,
-        log_num_pub_workers,
+        args.num_workers_per_party.log_2(),
     )
     .unwrap();
 
@@ -169,8 +170,6 @@ pub fn run_coordinator(
     config: NetworkConfig,
     mut program: host::Program,
     inputs: Vec<u8>,
-    log_num_workers_per_party: usize,
-    log_num_pub_workers: usize,
 ) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
@@ -212,12 +211,8 @@ pub fn run_coordinator(
         return Ok(());
     }
 
-    let mut network = Rep3QuicNetCoordinator::new(
-        config.clone(),
-        log_num_workers_per_party,
-        log_num_pub_workers,
-    )
-    .unwrap();
+    let mut network =
+        Rep3QuicNetCoordinator::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,

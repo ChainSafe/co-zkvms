@@ -338,12 +338,12 @@ where
         JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        Self::fiat_shamir_preamble(
-            &mut transcript,
-            &program_io,
-            &program_io.memory_layout,
-            trace_length,
-        );
+        // Self::fiat_shamir_preamble(
+        //     &mut transcript,
+        //     &program_io,
+        //     &program_io.memory_layout,
+        //     trace_length,
+        // );
 
         let instruction_polynomials =
             InstructionLookupsProof::<
@@ -509,12 +509,12 @@ where
 
         // opening_accumulator.compare_to(proof.opening_accumulator, &preprocessing.generators);
 
-        Self::fiat_shamir_preamble(
-            &mut transcript,
-            &program_io,
-            &preprocessing.memory_layout,
-            proof.trace_length,
-        );
+        // Self::fiat_shamir_preamble(
+        //     &mut transcript,
+        //     &program_io,
+        //     &preprocessing.memory_layout,
+        //     proof.trace_length,
+        // );
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
@@ -541,7 +541,7 @@ where
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
-
+        
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
@@ -550,6 +550,7 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
+
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,

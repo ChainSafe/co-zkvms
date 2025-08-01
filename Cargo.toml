@@ -104,3 +104,5 @@ mpc-net = { path = "./mpc-net" }
 inherits = "release"
 debug = false
 
+[profile.release]
+debug = true

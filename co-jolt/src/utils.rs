@@ -37,12 +37,12 @@ impl<N: Rep3Network> Forkable for IoContext<N> {
     }
 }
 
-pub trait ForkIntoWorkerSubnets: Sized + Send {
-    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
+pub trait Extendable: Sized + Send {
+    fn get_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
 }
 
-impl<N: Rep3NetworkWorker> ForkIntoWorkerSubnets for IoContext<N> {
-    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
+impl<N: Rep3NetworkWorker> Extendable for IoContext<N> {
+    fn get_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
         let rngs = &mut self.rngs;
         let rng = &mut self.rng;
         let id = self.id;
@@ -50,7 +50,7 @@ impl<N: Rep3NetworkWorker> ForkIntoWorkerSubnets for IoContext<N> {
 
         Ok(self
             .network
-            .fork_into_worker_subnets(num_workers)
+            .get_worker_subnets(num_workers)
             .context("while trying to fork IoContext")?
             .into_iter()
             .map(|network| {
@@ -161,6 +161,11 @@ where
     R: Sync + Send,
 {
     let len = i.len();
+
+    if len == 1 {
+        return Ok(vec![map_fn(i.into_iter().next().unwrap(), ctx)?]);
+    }
+
     let chunk_size = len.div_ceil(max_forks);
     assert!(chunk_size != 0);
     let forks = len.div_ceil(chunk_size);
@@ -183,11 +188,10 @@ where
     })
     .flatten()
     .collect::<eyre::Result<Vec<_>>>()
-    .context("while trying to fork_chunks_flat_map")
 }
 
 pub fn try_map_chunks_with_worker_subnets<T, N, R, M>(
-    i: Vec<T>,
+    mut inputs: Vec<T>,
     ctx: &mut IoContext<N>,
     num_workers: usize,
     map_fn: M,
@@ -198,17 +202,17 @@ where
     T: Sized + Send + Clone,
     R: Sync + Send,
 {
-    let res = i
+    assert!(num_workers > 0);
+
+    if num_workers == 1 {
+        return Ok(vec![map_fn(inputs.pop().unwrap(), ctx)?]);
+    }
+    let mut worker_subnets = ctx.get_worker_subnets(num_workers)?;
+    inputs
         .into_par_iter()
-        .zip_eq(ctx.fork_into_worker_subnets(num_workers)?)
-        .map(|(val, mut ctx)| {
-            let res = map_fn(val, &mut ctx);
-            drop(ctx);
-            res
-        })
-        .collect::<eyre::Result<Vec<_>>>();
-    println!("try_map_chunks_with_worker_subnets done");
-    res
+        .zip_eq(rayon::iter::once(ctx).chain(worker_subnets.par_iter_mut()))
+        .map(|(val, mut ctx)| map_fn(val, &mut ctx))
+        .collect::<eyre::Result<Vec<_>>>()
 }
 
 #[inline]

@@ -39,7 +39,6 @@ pub struct Rep3QuicMpcNetWorker {
     pub chan_next: ChannelHandle<Bytes, BytesMut>,
     pub chan_prev: ChannelHandle<Bytes, BytesMut>,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
-    pub log_num_pub_workers: usize,
     pub log_num_workers_per_party: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
     pub config: NetworkConfig,
@@ -47,13 +46,12 @@ pub struct Rep3QuicMpcNetWorker {
 
 impl Rep3QuicMpcNetWorker {
     pub fn new(config: NetworkConfig) -> Result<Self> {
-        Self::new_with_coordinator(config, 0, 0)
+        Self::new_with_coordinator(config, 0)
     }
 
     pub fn new_with_coordinator(
         config: NetworkConfig,
         log_num_workers_per_party: usize,
-        log_num_pub_workers: usize,
     ) -> Result<Self> {
         ensure!(
             config.parties.len() == 3,
@@ -94,7 +92,6 @@ impl Rep3QuicMpcNetWorker {
             chan_next,
             chan_prev,
             chan_coordinator,
-            log_num_pub_workers,
             log_num_workers_per_party,
             config,
         })
@@ -176,16 +173,16 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .unwrap()
             .blocking_recv()
             .blocking_recv()
-            .context("while receiving response")??;
+            .context("while receiving request")??;
 
         let ret = T::deserialize_uncompressed_unchecked(&response[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
-            .context("while deserializing response")?;
+            .context("while deserializing request")?;
         Ok(ret)
     }
 
     fn log_num_pub_workers(&self) -> usize {
-        self.log_num_pub_workers
+        std::cmp::min(self.log_num_workers_per_party - 1, 1)
     }
 
     fn log_num_workers_per_party(&self) -> usize {
@@ -248,26 +245,27 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             chan_next,
             chan_prev,
             chan_coordinator,
-            log_num_pub_workers: self.log_num_pub_workers,
             log_num_workers_per_party: self.log_num_workers_per_party,
             config: self.config.clone(),
         })
     }
 
     #[tracing::instrument(skip_all, name = "MpcStarNetWorker::fork_into_worker_subnets")]
-    fn fork_into_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
+    fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>> {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;
-        let log_num_pub_workers = self.log_num_pub_workers;
-        iter::once(self.fork_with_coordinator())
-            .chain((1..num_workers).map(|worker_id| {
+        (1..num_workers)
+            .map(|worker_id| {
                 Self::new_with_coordinator(
                     config.for_worker(worker_id),
                     log_num_workers_per_party,
-                    log_num_pub_workers,
                 )
-            }))
+            })
             .collect::<Result<Vec<_>>>()
+    }
+
+    fn worker_idx(&self) -> usize {
+        self.id.1
     }
 }
 
