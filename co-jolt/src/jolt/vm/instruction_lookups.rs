@@ -887,7 +887,6 @@ where
             );
 
             let compressed_poly = univariate_poly.compress();
-            tracing::info!("compressed_poly: {:?}", compressed_poly.coeffs_except_linear_term);
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
@@ -1006,8 +1005,6 @@ where
             );
 
         evaluations.insert(1, previous_claim - evaluations[0]);
-        tracing::info!("previous_claim: {:?}", previous_claim);
-        tracing::info!("evaluations: {:?}", &evaluations);
         UniPoly::from_evals(&evaluations)
     }
 

@@ -7,8 +7,9 @@ MPC based on Replicated Secret Sharing (RSS).
 ## Requirements
 
 - Rust `nightly`
+    - rustup target add riscv32im-unknown-none-elf
 - Noir `noirup --version nightly-2025-05-28`
-- Misc packages: `openmpi-bin libopenmpi-dev build-essential`
+- Misc packages: `openmpi-bin libopenmpi-dev build-essential libssl-dev pkg-config`
 
 ## Demo
 

@@ -1,5 +1,7 @@
+use ark_ff::UniformRand;
 use ark_std::test_rng;
 use clap::Parser;
+use co_jolt::utils::math::Math;
 use co_jolt::{
     host,
     jolt::{
@@ -18,7 +20,6 @@ use co_jolt::{
     },
     utils::transcript::{KeccakTranscript, Transcript},
 };
-use co_jolt::utils::math::Math;
 use co_jolt::{lasso::memory_checking::StructuredPolynomialData, poly::commitment::pst13::PST13};
 use color_eyre::{
     eyre::{eyre, Context},
@@ -74,7 +75,13 @@ pub struct Args {
     #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
     pub trace_parties: bool,
 
-    #[clap(short, long, value_name = "NUM_WORKERS_PER_PARTY", default_value = "1", env = "NUM_WORKERS_PER_PARTY")]
+    #[clap(
+        short,
+        long,
+        value_name = "NUM_WORKERS_PER_PARTY",
+        default_value = "1",
+        env = "NUM_WORKERS_PER_PARTY"
+    )]
     pub num_workers_per_party: usize,
 }
 
@@ -90,7 +97,7 @@ fn main() -> Result<()> {
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
     if config.is_coordinator {
-        init_tracing();
+        // init_tracing();
     }
 
     // let mut program = host::Program::new("sha3-guest");
@@ -99,6 +106,11 @@ fn main() -> Result<()> {
 
     let inputs = postcard::to_stdvec(&9u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build_global()
+        .unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -142,13 +154,39 @@ pub fn run_party(
     )
     .unwrap();
 
+    tracing::info!("num cores: {}", rayon::current_num_threads());
+    let span = tracing::info_span!("test");
+    let _span_enter = span.enter();
+    let mut io_ctx = IoContext::init(network).unwrap();
+    let field_elements_a = rep3::arithmetic::promote_to_trivial_shares(
+        std::iter::repeat_with(|| F::rand(&mut test_rng()))
+            .take(1000)
+            .collect::<Vec<_>>(),
+        io_ctx.id,
+    );
+    let mut field_elements_b = rep3::arithmetic::promote_to_trivial_shares(
+        std::iter::repeat_with(|| F::rand(&mut test_rng()))
+            .take(1000)
+            .collect::<Vec<_>>(),
+        io_ctx.id,
+    );
+    for i in 0..10000 {
+        field_elements_b =
+            rep3::arithmetic::mul_vec(&field_elements_a, &field_elements_b, &mut io_ctx).unwrap();
+    }
+
+    drop(_span_enter);
+    drop(span);
+
+    let network = io_ctx.network;
+
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
         program_io.memory_layout,
         memory_init,
-        1 << trace.len().next_power_of_two(),
-        1 << trace.len().next_power_of_two(),
-        1 << trace.len().next_power_of_two(),
+        trace.len().next_power_of_two(),
+        trace.len().next_power_of_two(),
+        trace.len().next_power_of_two(),
     );
 
     let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
@@ -192,9 +230,9 @@ pub fn run_coordinator(
             bytecode,
             program_io.memory_layout.clone(),
             memory_init,
-            1 << num_inputs.next_power_of_two(),
-            1 << num_inputs.next_power_of_two(),
-            1 << num_inputs.next_power_of_two(),
+            num_inputs.next_power_of_two(),
+            num_inputs.next_power_of_two(),
+            num_inputs.next_power_of_two(),
         );
 
     if args.debug {

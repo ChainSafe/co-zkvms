@@ -162,6 +162,13 @@ where
 {
     let len = i.len();
 
+    if max_forks == 0 {
+        return i
+            .into_iter()
+            .map(|val| map_fn(val, ctx))
+            .collect::<eyre::Result<Vec<_>>>();
+    }
+
     if len == 1 {
         return Ok(vec![map_fn(i.into_iter().next().unwrap(), ctx)?]);
     }

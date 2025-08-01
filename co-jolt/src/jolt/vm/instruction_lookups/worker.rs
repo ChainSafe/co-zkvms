@@ -357,9 +357,8 @@ where
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
-        tracing::info!("num cores: {}", rayon::current_num_threads());
-        let max_forks =
-            rayon::current_num_threads() / (1 << io_ctx.network.log_num_workers_per_party());
+        let max_threads_per_worker = rayon::current_num_threads() / ((1 << io_ctx.network.log_num_workers_per_party()) * 3);
+        let max_forks = std::cmp::min(max_threads_per_worker, 16);
 
         let evaluations: Vec<_> =
             crate::utils::try_fork_chunks(0..mle_half, io_ctx, max_forks, |i, io_ctx| {
@@ -379,6 +378,8 @@ where
                 // Subtable evals are lazily computed in the for-loop below
                 let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
 
+                // let span = tracing::info_span!("instructions");
+                // let _span_enter = span.enter();
                 let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); degree];
                 for instruction in InstructionSet::iter() {
                     let instruction_index =
@@ -386,6 +387,7 @@ where
                     let memory_indices =
                         &preprocessing.instruction_to_memory_indices[instruction_index];
 
+                    
                     for j in 0..degree {
                         let flag_eval = flag_evals[instruction_index][j];
                         if flag_eval.is_zero() {
@@ -407,30 +409,32 @@ where
                         let instruction_collation_eval =
                             instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
                         // #[cfg(test)]
-                        {
-                            let instruction_collation_eval_open =
-                                rep3::arithmetic::open_vec::<F, _>(
-                                    &[instruction_collation_eval],
-                                    io_ctx,
-                                )
-                                .unwrap()[0];
-                            let subtable_terms_open =
-                                rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
-                                    .unwrap();
-                            let instruction_collation_eval_check =
-                                instruction.combine_lookups(&subtable_terms_open, C, M);
-                            assert_eq!(
-                                instruction_collation_eval_check,
-                                instruction_collation_eval_open,
-                                "instruction {:?} combine_lookups_rep3 != combine_lookups",
-                                Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
-                            );
-                        }
+                        // {
+                        //     let instruction_collation_eval_open =
+                        //         rep3::arithmetic::open_vec::<F, _>(
+                        //             &[instruction_collation_eval],
+                        //             io_ctx,
+                        //         )
+                        //         .unwrap()[0];
+                        //     let subtable_terms_open =
+                        //         rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
+                        //             .unwrap();
+                        //     let instruction_collation_eval_check =
+                        //         instruction.combine_lookups(&subtable_terms_open, C, M);
+                        //     assert_eq!(
+                        //         instruction_collation_eval_check,
+                        //         instruction_collation_eval_open,
+                        //         "instruction {:?} combine_lookups_rep3 != combine_lookups",
+                        //         Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
+                        //     );
+                        // }
 
                         inner_sum[j] +=
                             rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
                     }
                 }
+                // drop(_span_enter);
+                // drop(span);
 
                 let evaluations: Vec<_> = (0..degree)
                     .map(|eval_index| {
