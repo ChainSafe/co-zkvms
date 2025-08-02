@@ -24,7 +24,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker},
+    network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
     PartyID,
 };
 use snarks_core::math::Math;
@@ -69,7 +69,7 @@ pub struct JoltRep3Prover<
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    pub io_ctx: IoContext<Network>,
+    pub io_ctx: IoContextPool<Network>, 
     pub preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     pub polynomials: Rep3JoltPolynomials<F>,
     pub r1cs_builder: CombinedUniformBuilder<C, F, Constraints::Inputs>,
@@ -111,7 +111,8 @@ where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
-        let mut io_ctx = IoContext::init(network).context("failed to initialize io context")?;
+        let num_workers = 1 << network.log_num_workers_per_party();
+        let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() / num_workers)?;
 
         let generate_witness = witness.is_some();
 
@@ -130,7 +131,7 @@ where
                 let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
                     &preprocessing.shared.read_write_memory,
                     program_io,
-                    &mut io_ctx,
+                    io_ctx.main(),
                 )?;
 
                 let trace_length = trace.len();
@@ -152,12 +153,12 @@ where
                         memory_layout,
                     };
 
-                    io_ctx.network.send_response(meta)?;
+                    io_ctx.network().send_response(meta)?;
                 }
 
                 (polynomials, program_io, trace_length)
             }
-            None => io_ctx.network.receive_request()?,
+            None => io_ctx.network().receive_request()?,
         };
         let r1cs_builder = Constraints::construct_constraints(
             trace_length.next_power_of_two(),
@@ -211,7 +212,7 @@ where
         // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         polynomials
-            .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, &mut self.io_ctx)?;
+            .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, self.io_ctx.main())?;
 
         let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
 
@@ -223,7 +224,7 @@ where
             &polynomials.bytecode,
             &polynomials,
             &mut opening_accumulator,
-            &mut self.io_ctx,
+            self.io_ctx.main(),
         )?;
         drop(_guard);
         drop(span);
@@ -245,7 +246,7 @@ where
             polynomials,
             &self.program_io,
             &mut opening_accumulator,
-            &mut self.io_ctx,
+            self.io_ctx.main(),
         )?;
 
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
@@ -253,21 +254,21 @@ where
             &self.spartan_key,
             polynomials,
             &mut opening_accumulator,
-            &mut self.io_ctx,
+            self.io_ctx.main(),
         )?;
 
         // Batch-prove all openings
         opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
             &preprocessing.shared.generators,
-            &mut self.io_ctx,
+            self.io_ctx.main(),
         )?;
 
         Ok(())
     }
 
-    pub fn switch_network(&mut self, network: Network) -> eyre::Result<()> {
-        let io_ctx = IoContext::init(network).context("failed to initialize io context")?;
-        self.io_ctx = io_ctx;
-        Ok(())
-    }
+    // pub fn switch_network(&mut self, network: Network) -> eyre::Result<()> {
+    //     let io_ctx = IoContext::init(network).context("failed to initialize io context")?;
+    //     self.io_ctx = io_ctx;
+    //     Ok(())
+    // }
 }

@@ -10,6 +10,7 @@ use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
 use eyre::ensure;
+use once_cell::sync::Lazy;
 use quinn::{
     crypto::rustls::QuicClientConfig,
     rustls::{pki_types::CertificateDer, RootCertStore},
@@ -26,7 +27,10 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     time::Duration,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    runtime::Runtime,
+};
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::{
@@ -34,6 +38,15 @@ use crate::{
     MpcNetworkHandlerWrapper, Result,
 };
 
+pub static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        // .worker_threads(8)
+        .enable_all()
+        .build()
+        .unwrap()
+});
+
+#[derive(Clone)]
 pub struct Rep3QuicMpcNetWorker {
     pub id: PartyWorkerID,
     pub chan_next: ChannelHandle<Bytes, BytesMut>,
@@ -45,27 +58,15 @@ pub struct Rep3QuicMpcNetWorker {
 }
 
 impl Rep3QuicMpcNetWorker {
-    pub fn new(config: NetworkConfig) -> Result<Self> {
-        Self::new_with_coordinator(config, 0)
-    }
-
-    pub fn new_with_coordinator(
-        config: NetworkConfig,
-        log_num_workers_per_party: usize,
-    ) -> Result<Self> {
+    pub fn new(config: NetworkConfig, log_num_workers_per_party: usize) -> Result<Self> {
         ensure!(
             config.parties.len() == 3,
             "REP3 protocol requires exactly 3 parties"
         );
-        ensure!(
-            config.coordinator.is_some(),
-            "REP3 star protocol requires a coordinator"
-        );
+
         let id = PartyWorkerID::new(config.my_id, config.worker);
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let (net_handler, chan_next, chan_prev, chan_coordinator) = runtime.block_on(async {
+
+        let (net_handler, chan_next, chan_prev, chan_coordinator) = RUNTIME.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
                 .get_coordinator_byte_channel()
@@ -88,7 +89,10 @@ impl Rep3QuicMpcNetWorker {
         })?;
         Ok(Self {
             id,
-            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(runtime, net_handler)),
+            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(
+                RUNTIME.handle().clone(),
+                net_handler,
+            )),
             chan_next,
             chan_prev,
             chan_coordinator,
@@ -100,10 +104,25 @@ impl Rep3QuicMpcNetWorker {
     /// Sends bytes over the network to the target party.
     pub fn send_bytes(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
         if target == self.id.party_id().next_id() {
-            std::mem::drop(self.chan_next.blocking_send(data));
+            std::mem::drop(RUNTIME.block_on(self.chan_next.send(data)));
             Ok(())
         } else if target == self.id.party_id().prev_id() {
-            std::mem::drop(self.chan_prev.blocking_send(data));
+            std::mem::drop(RUNTIME.block_on(self.chan_prev.send(data)));
+            Ok(())
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot send to self",
+            ));
+        }
+    }
+
+    pub async fn send_bytes_async(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
+        if target == self.id.party_id().next_id() {
+            std::mem::drop(self.chan_next.send(data).await);
+            Ok(())
+        } else if target == self.id.party_id().prev_id() {
+            std::mem::drop(self.chan_prev.send(data).await);
             Ok(())
         } else {
             return Err(std::io::Error::new(
@@ -115,10 +134,36 @@ impl Rep3QuicMpcNetWorker {
 
     /// Receives bytes over the network from the party with the given id.
     pub fn recv_bytes(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
+        // let data = if from == self.id.party_id().prev_id() {
+        //     self.chan_prev.blocking_recv().blocking_recv()
+        // } else if from == self.id.party_id().next_id() {
+        //     self.chan_next.blocking_recv().blocking_recv()
+        // } else {
+        //     return Err(std::io::Error::new(
+        //         std::io::ErrorKind::InvalidInput,
+        //         "Cannot recv from self",
+        //     ));
+        // };
+        let data = RUNTIME.block_on(async {
+            if from == self.id.party_id().prev_id() {
+                self.chan_prev.recv().await.await
+            } else if from == self.id.party_id().next_id() {
+                self.chan_next.recv().await.await
+            } else {
+                panic!("Cannot recv from self");
+            }
+        });
+        let data = data.map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
+        })??;
+        Ok(data)
+    }
+
+    pub async fn recv_bytes_async(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
         let data = if from == self.id.party_id().prev_id() {
-            self.chan_prev.blocking_recv().blocking_recv()
+            self.chan_prev.recv().await.await
         } else if from == self.id.party_id().next_id() {
-            self.chan_next.blocking_recv().blocking_recv()
+            self.chan_next.recv().await.await
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -255,12 +300,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;
         (1..num_workers)
-            .map(|worker_id| {
-                Self::new_with_coordinator(
-                    config.for_worker(worker_id),
-                    log_num_workers_per_party,
-                )
-            })
+            .map(|worker_id| Self::new(config.for_worker(worker_id), log_num_workers_per_party))
             .collect::<Result<Vec<_>>>()
     }
 
@@ -305,15 +345,35 @@ impl MpcNetworkHandlerWorker {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
+        // let link_rtt = Duration::from_micros(50_000); // 50 µs → adjust
+        // let link_bw = 12_500_000u32; // 100 Mb/s → adjust
+        // let bdp_bytes = (link_bw as u64 * link_rtt.as_micros() as u64 / 1_000_000) as u32;
+
+        // let mut transport_config = TransportConfig::default();
+        // transport_config
+        //     .receive_window(VarInt::from(bdp_bytes)) // conn-level
+        //     .stream_receive_window(VarInt::from(bdp_bytes / 2)) // per-stream
+        //     .max_concurrent_bidi_streams(VarInt::from(2_048u32))
+        //     .max_idle_timeout(Some(
+        //         IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
+        //     ))
+        //     .keep_alive_interval(Some(Duration::from_secs(1)));
+
+        // let transport_config = Arc::new(transport_config);
+
         let client_config = {
+            // let mut transport_config = TransportConfig::default();
+            // // we dont set this to timeout, because it is the timeout for a idle connection
+            // // maybe we want to make this configurable too?
+            // transport_config.max_idle_timeout(Some(
+            //     IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
+            // ));
+            // // atm clients send keepalive packets
+            // transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             let mut transport_config = TransportConfig::default();
-            // we dont set this to timeout, because it is the timeout for a idle connection
-            // maybe we want to make this configurable too?
             transport_config.max_idle_timeout(Some(
                 IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
             ));
-            // atm clients send keepalive packets
-            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             let mut client_config =
                 ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
             client_config.transport_config(Arc::new(transport_config));

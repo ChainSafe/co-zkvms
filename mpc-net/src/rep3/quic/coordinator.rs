@@ -24,19 +24,18 @@ use crate::{
     channel::ChannelHandle, config::NetworkConfig, mpc_star::MpcStarNetCoordinator, Result,
 };
 
+#[derive(Clone)]
 pub struct Rep3QuicNetCoordinator {
     pub(crate) channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>>,
     pub(crate) net_handler: Arc<MpcNetworkHandlerWrapperMut<MpcNetworkCoordinatorHandler>>,
     pub(crate) log_num_workers_per_party: usize,
     pub(crate) stats_checkpoints: Vec<(u64, u64)>,
     pub(crate) config: NetworkConfig,
+    pub(crate) current_num_workers: usize,
 }
 
 impl Rep3QuicNetCoordinator {
-    pub fn new(
-        config: NetworkConfig,
-        log_num_workers_per_party: usize,
-    ) -> Result<Self> {
+    pub fn new(config: NetworkConfig, log_num_workers_per_party: usize) -> Result<Self> {
         if config.parties.len() % 3 != 0 {
             bail!("REP3 protocol requires exactly 3 workers per party")
         }
@@ -66,7 +65,15 @@ impl Rep3QuicNetCoordinator {
             log_num_workers_per_party,
             stats_checkpoints: vec![(0, 0); num_parties * (1 << log_num_workers_per_party)],
             config,
+            current_num_workers: 1,
         })
+    }
+
+    // todo: return parallel iterator
+    fn channels(&mut self) -> impl Iterator<Item = (&usize, &mut ChannelHandle<Bytes, BytesMut>)> {
+        self.channels
+            .iter_mut()
+            .filter(|(&id, _)| id < self.current_num_workers * 3)
     }
 }
 
@@ -75,7 +82,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         &mut self,
     ) -> Result<Vec<T>> {
         let mut responses_bytes = Vec::new();
-        for (_, channel) in self.channels.iter_mut() {
+        // todo try recieve in parallel
+        for (_, channel) in self.channels() {
             let response = channel
                 .blocking_recv()
                 .blocking_recv()
@@ -99,7 +107,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         &mut self,
     ) -> Result<Vec<Vec<T>>> {
         let mut responses_bytes: Vec<Vec<_>> = Vec::with_capacity(2);
-        for (global_worker_id, channel) in self.channels.iter_mut() {
+        for (global_worker_id, channel) in self.channels() {
             let worker_idx = PartyWorkerID::from_global_worker_id(*global_worker_id).worker_idx();
             let response = channel
                 .blocking_recv()
@@ -141,7 +149,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while serializing data")?;
 
-        for (_, channel) in self.channels.iter_mut() {
+        for (_, channel) in self.channels() {
             std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
         }
 
@@ -152,7 +160,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         &mut self,
         data: Vec<T>,
     ) -> Result<()> {
-        for (&i, channel) in self.channels.iter_mut() {
+        for (&i, channel) in self.channels() {
             let size = data[i].uncompressed_size();
             let mut ser_data = Vec::with_capacity(size);
             data[i]
@@ -287,48 +295,52 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             log_num_workers_per_party: self.log_num_workers_per_party,
             stats_checkpoints: self.stats_checkpoints.clone(),
             config: self.config.clone(),
+            current_num_workers: self.current_num_workers,
         })
     }
 
     fn extend_with_worker_subnets(&mut self, new_num_workers: usize) -> eyre::Result<()> {
-        let num_workers = self.channels.len() / 3;
-        let extended_config = self.config.extend_with_workers(new_num_workers);
+        // let num_workers = self.channels.len() / 3;
+        // let extended_config = self.config.extend_with_workers(new_num_workers);
 
-        let new_channels = self.net_handler.runtime.block_on(async {
-            let mut net_handler = self.net_handler.inner.lock().unwrap();
-            net_handler.extend(extended_config).await?;
-            let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
-                .get_byte_channels_filter(|id| id >= 3 * num_workers)
-                .await
-                .context("getting byte channels")?
-                .into_iter()
-                .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
-                .collect();
+        // let new_channels = self.net_handler.runtime.block_on(async {
+        //     let mut net_handler = self.net_handler.inner.lock().unwrap();
+        //     net_handler.extend(extended_config).await?;
+        //     let channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>> = net_handler
+        //         .get_byte_channels_filter(|id| id >= 3 * num_workers)
+        //         .await
+        //         .context("getting byte channels")?
+        //         .into_iter()
+        //         .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
+        //         .collect();
 
-            Ok::<_, Report>(channels)
-        })?;
+        //     Ok::<_, Report>(channels)
+        // })?;
 
-        self.channels.extend(new_channels);
+        // self.channels.extend(new_channels);
 
-        self.stats_checkpoints.resize(
-            std::cmp::max(self.stats_checkpoints.len(), 3 * num_workers),
-            (0, 0),
-        );
+        // self.stats_checkpoints.resize(
+        //     std::cmp::max(self.stats_checkpoints.len(), 3 * num_workers),
+        //     (0, 0),
+        // );
+
+        self.current_num_workers = new_num_workers;
 
         Ok(())
     }
 
     fn trim_subnets(&mut self, num_workers: usize) -> Result<()> {
-        self.net_handler.runtime.block_on(async {
-            self.net_handler
-                .inner
-                .lock()
-                .unwrap()
-                .trim(num_workers)
-                .await
-        })?;
+        // self.net_handler.runtime.block_on(async {
+        //     self.net_handler
+        //         .inner
+        //         .lock()
+        //         .unwrap()
+        //         .trim(num_workers)
+        //         .await
+        // })?;
 
-        self.channels.retain(|id, _| *id < 3 * num_workers);
+        // self.channels.retain(|id, _| *id < 3 * num_workers);
+        self.current_num_workers = num_workers;
 
         Ok(())
     }
@@ -572,7 +584,6 @@ impl MpcNetworkCoordinatorHandler {
         &self,
         codec: C,
         filter: impl Fn(usize) -> bool,
-
     ) -> std::io::Result<BTreeMap<usize, Channel<RecvStream, SendStream, C>>> {
         let mut channels = BTreeMap::new();
 

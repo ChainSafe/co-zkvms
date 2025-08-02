@@ -50,13 +50,9 @@ where
 
         let num_rounds = num_ops.log_2();
 
-        let primary_sumcheck_proof = Self::prove_primary_sumcheck_rep3(
-            num_rounds,
-            F::zero(),
-            transcript,
-            network,
-        )
-        .context("while proving primary sumcheck")?;
+        let primary_sumcheck_proof =
+            Self::prove_primary_sumcheck_rep3(num_rounds, F::zero(), transcript, network)
+                .context("while proving primary sumcheck")?;
 
         let mut flag_evals = vec![F::zero(); Self::NUM_INSTRUCTIONS];
         let mut E_evals = vec![F::zero(); preprocessing.num_memories];
@@ -117,7 +113,7 @@ where
 
         for round in 0..num_rounds {
             let mut round_evals = if round >= num_rounds - log_num_workers || log_num_workers == 0 {
-                if log_num_workers > 0 {
+                if log_num_workers > 0 && round == num_rounds - log_num_workers {
                     network.trim_subnets(1)?;
                 }
                 additive::combine_field_element_vec(network.receive_responses()?)
@@ -134,6 +130,7 @@ where
                         acc
                     })
             };
+
 
             round_evals.insert(1, previous_claim - round_evals[0]);
             let round_poly = UniPoly::from_evals(&round_evals);

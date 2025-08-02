@@ -100,17 +100,12 @@ fn main() -> Result<()> {
         // init_tracing();
     }
 
-    // let mut program = host::Program::new("sha3-guest");
-    let mut program = host::Program::new("fibonacci-guest");
+    let mut program = host::Program::new("sha3-guest");
+    // let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
-    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
-        .build_global()
-        .unwrap();
+    // let inputs = postcard::to_stdvec(&50u32).unwrap();
+    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -136,8 +131,8 @@ pub fn run_party(
         init_tracing();
     }
 
-    let span = tracing::info_span!("run_party", id = my_id);
-    let _enter = span.enter();
+    // let span = tracing::info_span!("run_party", id = my_id);
+    // let _enter = span.enter();
 
     // if args.debug {
     //     return Ok(());
@@ -148,37 +143,11 @@ pub fn run_party(
     }
     icicle_init();
 
-    let network = Rep3QuicMpcNetWorker::new_with_coordinator(
+    let network = Rep3QuicMpcNetWorker::new(
         config.clone(),
         args.num_workers_per_party.log_2(),
     )
     .unwrap();
-
-    tracing::info!("num cores: {}", rayon::current_num_threads());
-    let span = tracing::info_span!("test");
-    let _span_enter = span.enter();
-    let mut io_ctx = IoContext::init(network).unwrap();
-    let field_elements_a = rep3::arithmetic::promote_to_trivial_shares(
-        std::iter::repeat_with(|| F::rand(&mut test_rng()))
-            .take(1000)
-            .collect::<Vec<_>>(),
-        io_ctx.id,
-    );
-    let mut field_elements_b = rep3::arithmetic::promote_to_trivial_shares(
-        std::iter::repeat_with(|| F::rand(&mut test_rng()))
-            .take(1000)
-            .collect::<Vec<_>>(),
-        io_ctx.id,
-    );
-    for i in 0..10000 {
-        field_elements_b =
-            rep3::arithmetic::mul_vec(&field_elements_a, &field_elements_b, &mut io_ctx).unwrap();
-    }
-
-    drop(_span_enter);
-    drop(span);
-
-    let network = io_ctx.network;
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
@@ -197,8 +166,8 @@ pub fn run_party(
 
     prover.prove()?;
 
-    prover.io_ctx.network.log_connection_stats();
-    drop(_enter);
+    prover.io_ctx.network().log_connection_stats();
+    // drop(_enter);
     Ok(())
 }
 
@@ -250,8 +219,8 @@ pub fn run_coordinator(
     }
 
     let mut network =
-        Rep3QuicNetCoordinator::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
-
+        Rep3QuicNetCoordinator::new(config.extend_with_workers(args.num_workers_per_party), args.num_workers_per_party.log_2()).unwrap();
+    network.trim_subnets(1).unwrap();
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
         Some((trace.clone(), program_io.clone())),

@@ -724,6 +724,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "async-trait"
+version = "0.1.88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e539d3fca749fcee5236ab05e93a52867dd549cc157c8cb7f99595f3cedffdb5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3349,19 +3360,21 @@ dependencies = [
  "mpc-types",
  "num-bigint 0.4.6",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
 name = "mpc-core"
 version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#ff1f5b5d47b9860d66e7a28a0223757434563278"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-grumpkin",
  "ark-serialize 0.5.0",
+ "async-trait",
  "bytes",
  "eyre",
  "fancy-garbling",
@@ -3398,6 +3411,7 @@ dependencies = [
  "futures",
  "mpc-types",
  "mpi",
+ "once_cell",
  "quinn",
  "rayon",
  "rcgen",
@@ -3412,7 +3426,6 @@ dependencies = [
 [[package]]
 name = "mpc-types"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/co-snarks#ff1f5b5d47b9860d66e7a28a0223757434563278"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",

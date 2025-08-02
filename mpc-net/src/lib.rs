@@ -18,14 +18,15 @@ pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug)]
 pub struct MpcNetworkHandlerWrapper<H: MpcNetworkHandlerShutdown = MpcNetworkHandler> {
     /// The runtime used by the network handler
-    pub runtime: Runtime,
+    pub runtime: tokio::runtime::Handle,
+    // pub runtime: Runtime,
     /// The wrapped network handler
     pub inner: H,
 }
 
 impl<H: MpcNetworkHandlerShutdown> MpcNetworkHandlerWrapper<H> {
     /// Create a new wrapper  
-    pub fn new(runtime: Runtime, inner: H) -> Self {
+    pub fn new(runtime: tokio::runtime::Handle, inner: H) -> Self {
         Self { runtime, inner }
     }
 }
