@@ -412,7 +412,7 @@ where
 
         let max_threads_per_worker =
             rayon::current_num_threads() / (1 << io_ctx.network().log_num_workers_per_party());
-        let max_forks = std::cmp::min(max_threads_per_worker, 4);
+        let max_forks = std::cmp::min(max_threads_per_worker, 8);
 
         let evaluations: Vec<_> =
             io_ctx.try_chunks(0..mle_half, max_forks, |i, io_ctx| {

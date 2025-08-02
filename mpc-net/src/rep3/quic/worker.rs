@@ -374,6 +374,8 @@ impl MpcNetworkHandlerWorker {
             transport_config.max_idle_timeout(Some(
                 IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
             ));
+            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+
             let mut client_config =
                 ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
             client_config.transport_config(Arc::new(transport_config));
