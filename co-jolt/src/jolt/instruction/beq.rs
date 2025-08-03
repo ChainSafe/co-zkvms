@@ -13,6 +13,8 @@ use mpc_core::protocols::rep3::{
     Rep3PrimeFieldShare,
 };
 
+#[cfg(not(feature = "public-eq"))]
+use crate::utils::instruction_utils::transpose;
 use crate::{
     jolt::instruction::SubtableIndices,
     utils::instruction_utils::{
@@ -95,6 +97,30 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
 
         #[cfg(not(feature = "public-eq"))]
         rep3::arithmetic::product(vals, io_ctx)
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        #[cfg(feature = "public-eq")]
+        {
+            return Ok(rep3::arithmetic::open_vec(&vals_many.concat(), io_ctx)?
+                .chunks(vals_many[0].len())
+                .map(|chunk| {
+                    rep3::arithmetic::promote_to_trivial_share(
+                        io_ctx.id,
+                        chunk.iter().product::<F>(),
+                    )
+                })
+                .collect::<Vec<_>>());
+        }
+
+        #[cfg(not(feature = "public-eq"))]
+        rep3::arithmetic::product_many(&transpose(vals_many), io_ctx)
     }
 
     fn to_indices_rep3(

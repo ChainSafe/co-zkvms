@@ -52,7 +52,7 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     }
     fn random(&self, rng: &mut StdRng) -> Self;
 
-    fn slice_values<'a, T>(&self, vals: &'a [T], C: usize, M: usize) -> Vec<&'a [T]> {
+    fn slice_values_ref<'a, T>(&self, vals: &'a [T], C: usize, M: usize) -> Vec<&'a [T]> {
         let mut offset = 0;
         let mut slices = vec![];
         for (_, indices) in self.subtables(C, M) {
@@ -60,6 +60,14 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
             offset += indices.len();
         }
         assert_eq!(offset, vals.len());
+        slices
+    }
+
+    fn slice_values<T: Default>(&self, mut vals: Vec<T>, C: usize, M: usize) -> Vec<Vec<T>> {
+        let mut slices = vec![];
+        for (_, indices) in self.subtables(C, M) {
+            slices.push(vals.drain(..indices.len()).collect());
+        }
         slices
     }
 }
@@ -78,6 +86,19 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
+
+    /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        vals.iter()
+            .map(|val| self.combine_lookups_rep3(val, C, M, io_ctx))
+            .collect()
+    }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 

@@ -37,7 +37,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
     }
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
         let right_msb = vals_by_subtable[1];
@@ -165,7 +165,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
 
         let left_msb = vals_by_subtable[0];
         let right_msb = vals_by_subtable[1];
@@ -255,6 +255,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             + divisor_is_zero, // EQ(y, 0)
         )
     }
+
+    // fn combine_lookups_rep3_batched<N: Rep3Network>(
+    //     &self,
+    //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    //     C: usize,
+    //     M: usize,
+    //     io_ctx: &mut IoContext<N>,
+    // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    
+    // }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(

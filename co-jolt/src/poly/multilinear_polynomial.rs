@@ -279,7 +279,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     }
 
     pub fn split_poly(
-        polys: &Rep3MultilinearPolynomial<F>,
+        polys: Rep3MultilinearPolynomial<F>,
         log_workers: usize,
     ) -> Vec<Rep3MultilinearPolynomial<F>> {
         match polys {
@@ -294,7 +294,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     }
 
     pub fn split_poly_vec(
-        polys: &[Rep3MultilinearPolynomial<F>],
+        polys: Vec<Rep3MultilinearPolynomial<F>>,
         log_workers: usize,
     ) -> Vec<Vec<Rep3MultilinearPolynomial<F>>> {
         let mut chunks = vec![vec![]; 1 << log_workers];
@@ -306,10 +306,29 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
         chunks
     }
+
+    pub fn reorder_poly(
+        &mut self,
+        swap: (usize, usize),
+    ) {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => {
+                match poly {
+                    MultilinearPolynomial::LargeScalars(poly) => poly.Z.swap(swap.0, swap.1),
+                    MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                    MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                    MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                    MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                    MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                }
+            }
+            Rep3MultilinearPolynomial::Shared(poly) => poly.evals.swap(swap.0, swap.1),
+        }
+    }
 }
 
 pub fn split_public_poly<F: JoltField>(
-    poly: &MultilinearPolynomial<F>,
+    mut poly: MultilinearPolynomial<F>,
     log_workers: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
     let nv = poly.get_num_vars() - log_workers;
@@ -317,24 +336,24 @@ pub fn split_public_poly<F: JoltField>(
     let mut res = Vec::new();
 
     for i in 0..1 << log_workers {
-        match poly {
+        match &mut poly {
             MultilinearPolynomial::LargeScalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.Z[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.Z.drain(..chunk_size).collect::<Vec<_>>(),
             )),
             MultilinearPolynomial::U8Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
             )),
             MultilinearPolynomial::U16Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
             )),
             MultilinearPolynomial::U32Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
             )),
             MultilinearPolynomial::U64Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
             )),
             MultilinearPolynomial::I64Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
             )),
         }
     }

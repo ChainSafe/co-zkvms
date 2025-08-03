@@ -82,16 +82,21 @@ pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
     Ok(product_except_last * *shares.last().unwrap())
 }
 
-pub fn product_many<F: PrimeField, N: Rep3Network>(
-    shares: &[&[Rep3PrimeFieldShare<F>]],
+pub fn product_many<F: PrimeField, N: Rep3Network, I>(
+    shares: &[I],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    I: AsRef<[Rep3PrimeFieldShare<F>]>,
+{
+    let first_share = shares[0].as_ref();
     shares
         .iter()
         .skip(1)
-        .try_fold(shares.iter().map(|x| x[0]).collect_vec(), |acc, x| {
-            mul_vec(&acc, *x, io_ctx)
-        })
+        .try_fold(
+            (0..first_share.len()).map(|i| first_share[i]).collect_vec(),
+            |acc, x| mul_vec(&acc, x.as_ref(), io_ctx),
+        )
         .context("while computing product")
 }
 

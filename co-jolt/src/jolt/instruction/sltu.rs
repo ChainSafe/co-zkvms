@@ -17,7 +17,7 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{
     jolt::instruction::SubtableIndices,
     utils::instruction_utils::{
-        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
+        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands, transpose,
     },
 };
 
@@ -33,7 +33,7 @@ impl<F: JoltField> JoltInstruction<F> for SLTUInstruction<F> {
     }
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
         let ltu = vals_by_subtable[0];
         let eq = vals_by_subtable[1];
 
@@ -100,7 +100,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
         let ltu = vals_by_subtable[0];
         #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];
@@ -132,6 +132,71 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         #[cfg(feature = "public-eq")]
         Ok(sum + (ltu[C - 1] * eq_prod))
     }
+
+    // fn combine_lookups_rep3_batched<N: Rep3Network>(
+    //     &self,
+    //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    //     C: usize,
+    //     M: usize,
+    //     io_ctx: &mut IoContext<N>,
+    // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    //     let terms_len = vals_many.len();
+    //     let mut vals_by_subtable_by_term = transpose(
+    //         vals_many
+    //             .into_iter()
+    //             .map(|vals| self.slice_values(vals, C, M)),
+    //     );
+
+    //     let ltu = std::mem::take(&mut vals_by_subtable_by_term[0]);
+    //     #[cfg(not(feature = "public-eq"))]
+    //     let mut eq = transpose(std::mem::take(&mut vals_by_subtable_by_term[1]));
+    //     #[cfg(feature = "public-eq")]
+    //     let mut eq = rep3::arithmetic::open_vec(&vals_by_subtable_by_term[1].concat(), io_ctx)?
+    //         .chunks(terms_len)
+    //         .map(|vals| vals.to_vec())
+    //         .collect::<Vec<_>>();
+
+    //     #[cfg(not(feature = "public-eq"))]
+    //     let mut sums = ltu.iter().map(|x| x[0].into_additive()).collect::<Vec<_>>();
+    //     #[cfg(feature = "public-eq")]
+    //     let mut sums = ltu.iter().map(|x| x[0]).collect::<Vec<_>>();
+    //     let mut eq_prods = std::mem::take(&mut eq[0]);
+
+    //     for i in 1..C - 1 {
+    //         #[cfg(not(feature = "public-eq"))]
+    //         {
+    //             sums.iter_mut().zip(ltu[i].iter()).for_each(|(sum, ltu_i)| {
+    //                 *sum += *ltu_i * eq_prods[i];
+    //             });
+    //             eq_prods = rep3::arithmetic::mul_vec(&eq_prods, &eq[i], io_ctx)?;
+    //         }
+    //         #[cfg(feature = "public-eq")]
+    //         {
+    //             sums.iter_mut().zip(ltu[i].iter()).for_each(|(sum, ltu_i)| {
+    //                 *sum += rep3::arithmetic::mul_public(*ltu_i, eq_prods[i]);
+    //             });
+    //             eq_prods
+    //                 .iter_mut()
+    //                 .zip(eq[i].iter())
+    //                 .for_each(|(eq_prod, eq_i)| {
+    //                     *eq_prod *= *eq_i;
+    //                 });
+    //         }
+    //     }
+
+    //     #[cfg(not(feature = "public-eq"))]
+    //     return rep3::arithmetic::reshare_additive_many(
+    //         &itertools::multizip((sums, ltu.into_iter().map(|x| x[C - 1]), eq_prods))
+    //             .map(|(sum, ltu, eq_prod)| sum + ltu * eq_prod)
+    //             .collect::<Vec<_>>(),
+    //         io_ctx,
+    //     );
+
+    //     #[cfg(feature = "public-eq")]
+    //     Ok(itertools::multizip((sums, &ltu[C - 1], eq_prods))
+    //         .map(|(sum, ltu, eq_prod)| sum + *ltu * eq_prod)
+    //         .collect::<Vec<_>>())
+    // }
 
     fn to_indices_rep3(
         &self,

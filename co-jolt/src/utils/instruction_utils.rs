@@ -45,6 +45,36 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
         .collect()
 }
 
+
+pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
+where
+    I: IntoIterator<Item = Vec<T>>,
+{
+    let mut it = matrix.into_iter();
+    let first_row = match it.next() {
+        Some(r) => r,
+        None    => return Vec::new(),
+    };
+    let cols = first_row.len();
+    let (low, _) = it.size_hint();
+    let mut out: Vec<Vec<T>> = (0..cols)
+        .map(|_| Vec::with_capacity(low + 1))
+        .collect();
+
+    // push first row
+    for (c, v) in first_row.into_iter().enumerate() {
+        out[c].push(v);
+    }
+    // push remaining rows
+    for row in it {
+        assert_eq!(row.len(), cols, "ragged matrix");
+        for (c, v) in row.into_iter().enumerate() {
+            out[c].push(v);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

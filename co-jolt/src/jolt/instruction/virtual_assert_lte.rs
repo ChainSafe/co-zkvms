@@ -31,7 +31,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
     }
 
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
         let ltu = vals_by_subtable[0];
         let eq = vals_by_subtable[1];
 
@@ -103,7 +103,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values(vals, C, M);
+        let vals_by_subtable = self.slice_values_ref(vals, C, M);
         let ltu = vals_by_subtable[0];
         #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];

@@ -15,8 +15,10 @@ use eyre::Context;
 use itertools::Itertools;
 use jolt_core::{
     field::JoltField,
-    jolt::subtable::JoltSubtableSet,
-    jolt::vm::instruction_lookups::InstructionLookupStuff,
+    jolt::{
+        instruction::sltu::SLTUInstruction, subtable::JoltSubtableSet,
+        vm::instruction_lookups::InstructionLookupStuff,
+    },
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
         compact_polynomial::SmallScalar,
@@ -122,9 +124,9 @@ where
                 preprocessing,
                 num_rounds,
                 eq_poly,
-                &polynomials.instruction_lookups.instruction_flags,
-                &polynomials.instruction_lookups.E_polys,
-                &polynomials.instruction_lookups.lookup_outputs,
+                polynomials.instruction_lookups.instruction_flags.clone(),
+                polynomials.instruction_lookups.E_polys.clone(),
+                polynomials.instruction_lookups.lookup_outputs.clone(),
                 io_ctx,
             )?;
 
@@ -175,10 +177,10 @@ where
     fn prove_primary_sumcheck(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
-        eq_poly: MultilinearPolynomial<F>,
-        instruction_flags: &[Rep3MultilinearPolynomial<F>],
-        memory_polys: &[Rep3MultilinearPolynomial<F>],
-        lookup_outputs_poly: &Rep3MultilinearPolynomial<F>,
+        mut eq_poly: MultilinearPolynomial<F>,
+        mut instruction_flags: Vec<Rep3MultilinearPolynomial<F>>,
+        mut memory_polys: Vec<Rep3MultilinearPolynomial<F>>,
+        mut lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
         Vec<F>,
@@ -188,25 +190,36 @@ where
     )> {
         let log_num_workers = io_ctx.log_num_workers_per_party();
 
-        let (eq_poly_chunks, flag_poly_chunks, memory_poly_chunks, lookup_outputs_poly_chunks) =
-            tracing::info_span!("split_polys").in_scope(|| {
-                let eq_poly_chunks = split_public_poly(&eq_poly, log_num_workers);
-                let flag_poly_chunks =
-                    Rep3MultilinearPolynomial::split_poly_vec(instruction_flags, log_num_workers);
-                let memory_poly_chunks =
-                    Rep3MultilinearPolynomial::split_poly_vec(memory_polys, log_num_workers);
-                let lookup_outputs_poly_chunks =
-                    Rep3MultilinearPolynomial::split_poly(&lookup_outputs_poly, log_num_workers);
-                (
-                    eq_poly_chunks,
-                    flag_poly_chunks,
-                    memory_poly_chunks,
-                    lookup_outputs_poly_chunks,
-                )
-            });
-
         let num_flag_polys = instruction_flags.len();
         let num_memory_polys = memory_polys.len();
+
+        // Self::reorder_polys(&mut eq_poly, &mut instruction_flags, &mut memory_polys, &mut lookup_outputs_poly);
+
+        let (
+            mut eq_poly_chunks,
+            mut flag_poly_chunks,
+            mut memory_poly_chunks,
+            mut lookup_outputs_poly_chunks,
+        ) = tracing::info_span!("split_polys").in_scope(|| {
+            let eq_poly_chunks = split_public_poly(eq_poly, log_num_workers);
+            let flag_poly_chunks =
+                Rep3MultilinearPolynomial::split_poly_vec(instruction_flags, log_num_workers);
+            let memory_poly_chunks =
+                Rep3MultilinearPolynomial::split_poly_vec(memory_polys, log_num_workers);
+            let lookup_outputs_poly_chunks =
+                Rep3MultilinearPolynomial::split_poly(lookup_outputs_poly, log_num_workers);
+            (
+                eq_poly_chunks,
+                flag_poly_chunks,
+                memory_poly_chunks,
+                lookup_outputs_poly_chunks,
+            )
+        });
+
+        // eq_poly_chunks.reverse();
+        // flag_poly_chunks.reverse();
+        // memory_poly_chunks.reverse();
+        // lookup_outputs_poly_chunks.reverse();
 
         let worker_polys = itertools::multizip((
             eq_poly_chunks,
@@ -321,6 +334,27 @@ where
         Ok((r_primary_sumchecks, flag_evals, E_evals, outputs_eval))
     }
 
+    fn reorder_polys(
+        eq_poly: &mut MultilinearPolynomial<F>,
+        instruction_flags: &mut [Rep3MultilinearPolynomial<F>],
+        memory_polys: &mut [Rep3MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
+    ) {
+        let eq_poly_len = eq_poly.len();
+
+        instruction_flags.par_iter_mut().for_each(|flag_poly| {
+            flag_poly.reorder_poly((0, eq_poly_len - 1));
+        });
+
+        memory_polys.par_iter_mut().for_each(|memory_poly| {
+            memory_poly.reorder_poly((0, eq_poly_len - 1));
+        });
+        rayon::join(
+            || lookup_outputs_poly.reorder_poly((0, eq_poly_len - 1)),
+            || eq_poly.as_dense_poly_mut().Z.swap(0, eq_poly_len - 1),
+        );
+    }
+
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner", fields(worker_id = io_ctx.network().worker_idx()))]
     fn prove_primary_sumcheck_inner(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
@@ -377,16 +411,16 @@ where
             let _bind_enter = _bind_span.enter();
             let (tx, rx) = tokio::sync::oneshot::channel();
             CPU_ONLY_POOL.spawn(move || {
-                    flag_polys
-                        .iter_mut()
-                        .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-                    memory_polys
-                        .iter_mut()
-                        .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-                    lookup_outputs_poly.bind(r_j, BindingOrder::LowToHigh);
-                    eq_poly.bind(r_j, BindingOrder::LowToHigh);
-                    tx.send((flag_polys, memory_polys, lookup_outputs_poly, eq_poly))
-                        .unwrap();
+                flag_polys
+                    .iter_mut()
+                    .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                memory_polys
+                    .iter_mut()
+                    .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                lookup_outputs_poly.bind(r_j, BindingOrder::LowToHigh);
+                eq_poly.bind(r_j, BindingOrder::LowToHigh);
+                tx.send((flag_polys, memory_polys, lookup_outputs_poly, eq_poly))
+                    .unwrap();
             });
             (flag_polys, memory_polys, lookup_outputs_poly, eq_poly) = rx.blocking_recv().unwrap();
 
@@ -431,100 +465,149 @@ where
             rayon::current_num_threads() / (1 << io_ctx.network().log_num_workers_per_party());
         let max_forks = std::cmp::min(max_threads_per_worker, 8);
 
-        let evaluations: Vec<_> = io_ctx
-            .try_chunks(0..mle_half, max_forks, |i, io_ctx| {
-                let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
-                    i,
-                    degree,
-                    BindingOrder::LowToHigh,
-                );
-                let flag_evals: Vec<Vec<F>> = flag_polys
-                    .iter()
-                    .map(|poly| {
-                        poly.as_public()
-                            .sumcheck_evals(i, degree, BindingOrder::LowToHigh)
-                    })
-                    .collect();
-                // Subtable evals are lazily computed in the for-loop below
-                let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
+        let evaluations: Vec<_> =
+            io_ctx
+                .try_chunks(0..mle_half, max_forks, |i, io_ctx| {
+                    let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                    let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
+                        i,
+                        degree,
+                        BindingOrder::LowToHigh,
+                    );
+                    let flag_evals: Vec<Vec<F>> = flag_polys
+                        .iter()
+                        .map(|poly| {
+                            poly.as_public()
+                                .sumcheck_evals(i, degree, BindingOrder::LowToHigh)
+                        })
+                        .collect();
+                    // Subtable evals are lazily computed in the for-loop below
+                    let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
 
-                // let span = tracing::info_span!("instructions");
-                // let _span_enter = span.enter();
-                let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); degree];
-                for instruction in InstructionSet::iter() {
-                    let instruction_index =
-                        <InstructionSet as Rep3JoltInstructionSet<F>>::enum_index(&instruction);
-                    let memory_indices =
-                        &preprocessing.instruction_to_memory_indices[instruction_index];
 
-                    for j in 0..degree {
-                        let flag_eval = flag_evals[instruction_index][j];
-                        if flag_eval.is_zero() {
+                    let toggled_flag_indices = flag_evals
+                        .iter()
+                        .map(|evals| {
+                            evals
+                                .iter()
+                                .positions(|eval| !eval.is_zero())
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+
+                    // tracing::info!("toggled_flag_evals: {:?}", &toggled_flag_indices[8..11]);
+
+                    // let span = tracing::info_span!("instructions");
+                    // let _span_enter = span.enter();
+                    let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); degree];
+                    for instruction in InstructionSet::iter() {
+                        let instruction_index =
+                            <InstructionSet as Rep3JoltInstructionSet<F>>::enum_index(&instruction);
+                        let memory_indices =
+                            &preprocessing.instruction_to_memory_indices[instruction_index];
+
+                        if toggled_flag_indices[instruction_index].is_empty() {
                             continue;
-                        }; // Early exit if no contribution.
+                        }
 
-                        let subtable_terms: Vec<_> = memory_indices
+                        let toggled_subtable_terms = toggled_flag_indices[instruction_index]
                             .iter()
-                            .map(|memory_index| {
-                                if subtable_evals[*memory_index].is_empty() {
-                                    subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                                        .as_shared()
-                                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                                }
-                                subtable_evals[*memory_index][j]
+                            .map(|&j| {
+                                memory_indices
+                                    .iter()
+                                    .map(|memory_index| {
+                                        if subtable_evals[*memory_index].is_empty() {
+                                            subtable_evals[*memory_index] = subtable_polys
+                                                [*memory_index]
+                                                .as_shared()
+                                                .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                                        }
+                                        subtable_evals[*memory_index][j]
+                                    })
+                                    .collect::<Vec<_>>()
                             })
-                            .collect();
+                            .collect::<Vec<_>>();
 
-                        let instruction_collation_eval =
-                            instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
-                        // #[cfg(test)]
-                        // {
-                        //     let instruction_collation_eval_open =
-                        //         rep3::arithmetic::open_vec::<F, _>(
-                        //             &[instruction_collation_eval],
-                        //             io_ctx,
-                        //         )
-                        //         .unwrap()[0];
-                        //     let subtable_terms_open =
-                        //         rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
-                        //             .unwrap();
-                        //     let instruction_collation_eval_check =
-                        //         instruction.combine_lookups(&subtable_terms_open, C, M);
-                        //     assert_eq!(
-                        //         instruction_collation_eval_check,
-                        //         instruction_collation_eval_open,
-                        //         "instruction {:?} combine_lookups_rep3 != combine_lookups",
-                        //         Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
-                        //     );
+                        let instruction_collation_evals = instruction
+                            .combine_lookups_rep3_batched(toggled_subtable_terms, C, M, io_ctx)?;
+
+                        toggled_flag_indices[instruction_index]
+                            .iter()
+                            .enumerate()
+                            .for_each(|(i, &j)| {
+                                inner_sum[j] += rep3::arithmetic::mul_public(
+                                    instruction_collation_evals[i],
+                                    flag_evals[instruction_index][j],
+                                );
+                            });
+
+                        // for j in 0..degree {
+                        //     let flag_eval = flag_evals[instruction_index][j];
+                        //     if flag_eval.is_zero() {
+                        //         continue;
+                        //     }; // Early exit if no contribution.
+
+                        //     let subtable_terms: Vec<_> = memory_indices
+                        //         .iter()
+                        //         .map(|memory_index| {
+                        //             if subtable_evals[*memory_index].is_empty() {
+                        //                 subtable_evals[*memory_index] = subtable_polys[*memory_index]
+                        //                     .as_shared()
+                        //                     .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                        //             }
+                        //             subtable_evals[*memory_index][j]
+                        //         })
+                        //         .collect();
+
+                        //     let instruction_collation_eval =
+                        //         instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
+                        //     // #[cfg(test)]
+                        //     // {
+                        //     //     let instruction_collation_eval_open =
+                        //     //         rep3::arithmetic::open_vec::<F, _>(
+                        //     //             &[instruction_collation_eval],
+                        //     //             io_ctx,
+                        //     //         )
+                        //     //         .unwrap()[0];
+                        //     //     let subtable_terms_open =
+                        //     //         rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
+                        //     //             .unwrap();
+                        //     //     let instruction_collation_eval_check =
+                        //     //         instruction.combine_lookups(&subtable_terms_open, C, M);
+                        //     //     assert_eq!(
+                        //     //         instruction_collation_eval_check,
+                        //     //         instruction_collation_eval_open,
+                        //     //         "instruction {:?} combine_lookups_rep3 != combine_lookups",
+                        //     //         Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
+                        //     //     );
+                        //     // }
+
+                        //     inner_sum[j] +=
+                        //         rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
                         // }
-
-                        inner_sum[j] +=
-                            rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
                     }
-                }
-                // drop(_span_enter);
-                // drop(span);
+                    // drop(_span_enter);
+                    // drop(span);
 
-                let evaluations: Vec<_> = (0..degree)
-                    .map(|eval_index| {
-                        rep3::arithmetic::mul_public(
-                            inner_sum[eval_index] - output_evals[eval_index],
-                            eq_evals[eval_index],
-                        )
-                        .into_additive()
-                    })
-                    .collect();
-                Ok(evaluations)
-            })?
-            .into_par_iter()
-            .reduce_with(|a, b| {
-                a.iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| *x + *y)
-                    .collect::<Vec<F>>()
-            })
-            .unwrap_or(vec![F::zero(); degree]);
+                    let evaluations: Vec<_> = (0..degree)
+                        .map(|eval_index| {
+                            rep3::arithmetic::mul_public(
+                                inner_sum[eval_index] - output_evals[eval_index],
+                                eq_evals[eval_index],
+                            )
+                            .into_additive()
+                        })
+                        .collect();
+                    Ok(evaluations)
+                })?
+                .into_par_iter()
+                .reduce_with(|a, b| {
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|(x, y)| *x + *y)
+                        .collect::<Vec<F>>()
+                })
+                .unwrap_or(vec![F::zero(); degree]);
 
         // subtracing privious claim for each party/worker will break reconstraction of round poly,
         // so we let coordinator do it instead of workers

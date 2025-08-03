@@ -274,7 +274,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn split_poly(
-        polys: &Rep3DensePolynomial<F>,
+        polys: Rep3DensePolynomial<F>,
         log_workers: usize,
     ) -> Vec<Rep3MultilinearPolynomial<F>> {
         let nv = polys.num_vars - log_workers;
@@ -282,17 +282,17 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         let mut res = Vec::new();
 
         let (a, b) = polys.copy_poly_shares();
-        let a_evals = a.evals();
-        let b_evals = b.evals();
+        let mut a_evals = a.Z;
+        let mut b_evals = b.Z;
 
-        for i in 0..1 << log_workers {
+        for _ in 0..1 << log_workers {
             res.push(Rep3MultilinearPolynomial::shared(
                 Rep3DensePolynomial::<F>::from_poly_shares(
                     DensePolynomial::<F>::new(
-                        a_evals[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                        a_evals.drain(..chunk_size).collect(),
                     ),
                     DensePolynomial::<F>::new(
-                        b_evals[chunk_size * i..chunk_size * (i + 1)].to_vec(),
+                        b_evals.drain(..chunk_size).collect(),
                     ),
                 ),
             ))
