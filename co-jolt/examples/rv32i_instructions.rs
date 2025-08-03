@@ -91,6 +91,11 @@ fn main() -> Result<()> {
         .install_default()
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build_global() // only once; subsequent calls → Err
+        .expect("set global Rayon pool");
+
     let config: NetworkConfigFile =
         toml::from_str(&std::fs::read_to_string(&args.config_file).context("opening config file")?)
             .context("parsing config file")?;
@@ -143,11 +148,8 @@ pub fn run_party(
     }
     icicle_init();
 
-    let network = Rep3QuicMpcNetWorker::new(
-        config.clone(),
-        args.num_workers_per_party.log_2(),
-    )
-    .unwrap();
+    let network =
+        Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
@@ -218,8 +220,11 @@ pub fn run_coordinator(
         return Ok(());
     }
 
-    let mut network =
-        Rep3QuicNetCoordinator::new(config.extend_with_workers(args.num_workers_per_party), args.num_workers_per_party.log_2()).unwrap();
+    let mut network = Rep3QuicNetCoordinator::new(
+        config.extend_with_workers(args.num_workers_per_party),
+        args.num_workers_per_party.log_2(),
+    )
+    .unwrap();
     network.trim_subnets(1).unwrap();
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,

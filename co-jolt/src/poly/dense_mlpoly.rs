@@ -143,7 +143,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
         rayon::join(|| a.bound_poly_var_bot(r), || b.bound_poly_var_bot(r));
-
+        
         *self = Self::from_poly_shares(a, b);
     }
 

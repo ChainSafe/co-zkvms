@@ -56,9 +56,19 @@ use crate::jolt::{
     },
 };
 
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPoolBuilder};
 
 type Rep3InstructionLookupOpenings<F> = InstructionLookupStuff<Rep3PrimeFieldShare<F>>;
+
+use once_cell::sync::Lazy;
+use rayon::ThreadPool;
+pub static CPU_ONLY_POOL: Lazy<ThreadPool> = Lazy::new(|| {
+    ThreadPoolBuilder::new()
+        .num_threads(16) // tune
+        .thread_name(|i| format!("cpu-only-{}", i))
+        .build()
+        .unwrap()
+});
 
 pub struct Rep3InstructionLookupsProver<
     const C: usize,
@@ -161,7 +171,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck", fields(worker_id = io_ctx.network().worker_idx()))]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
@@ -311,7 +321,7 @@ where
         Ok((r_primary_sumchecks, flag_evals, E_evals, outputs_eval))
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner", fields(worker_id = io_ctx.network().worker_idx()))]
     fn prove_primary_sumcheck_inner(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         num_rounds: usize,
@@ -340,41 +350,48 @@ where
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
 
         for _round in 0..num_rounds {
-            let round_evaluations = Self::primary_sumcheck_prover_message(
-                preprocessing,
-                &eq_poly,
-                &flag_polys,
-                &mut memory_polys,
-                &mut lookup_outputs_poly,
-                io_ctx,
-            )?;
+            let r_j = rayon::scope(|_| {
+                let round_evaluations = Self::primary_sumcheck_prover_message(
+                    preprocessing,
+                    &eq_poly,
+                    &flag_polys,
+                    &mut memory_polys,
+                    &lookup_outputs_poly,
+                    io_ctx,
+                )?;
 
-            let span = tracing::info_span!("coordinator_part");
-            let _span_enter = span.enter();
-            io_ctx.network().send_response(round_evaluations)?;
+                let span = tracing::info_span!("coordinator_part");
+                let _span_enter = span.enter();
+                io_ctx.network().send_response(round_evaluations)?;
 
-            let r_j = io_ctx
-                .network()
-                .receive_request::<F>()
-                .context("while receiving new claim")?;
+                io_ctx
+                    .network()
+                    .receive_request::<F>()
+                    .context("while receiving new claim")
+            })?;
+
             r.push(r_j);
 
             // Bind all polys
             let _bind_span = trace_span!("bind");
             let _bind_enter = _bind_span.enter();
-            flag_polys
-                .par_iter_mut()
-                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-            eq_poly.bind(r_j, BindingOrder::LowToHigh);
-            memory_polys
-                .par_iter_mut()
-                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-            lookup_outputs_poly.bind(r_j, BindingOrder::LowToHigh);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            CPU_ONLY_POOL.spawn(move || {
+                    flag_polys
+                        .iter_mut()
+                        .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                    memory_polys
+                        .iter_mut()
+                        .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                    lookup_outputs_poly.bind(r_j, BindingOrder::LowToHigh);
+                    eq_poly.bind(r_j, BindingOrder::LowToHigh);
+                    tx.send((flag_polys, memory_polys, lookup_outputs_poly, eq_poly))
+                        .unwrap();
+            });
+            (flag_polys, memory_polys, lookup_outputs_poly, eq_poly) = rx.blocking_recv().unwrap();
 
             drop(_bind_enter);
-            drop(_span_enter);
-            drop(span);
-        } // End rounds
+        }
 
         // Pass evaluations at point r back in proof:
         // - flags(r) * NUM_INSTRUCTIONS
@@ -403,7 +420,7 @@ where
         eq_poly: &MultilinearPolynomial<F>,
         flag_polys: &[Rep3MultilinearPolynomial<F>],
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
-        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
+        lookup_outputs_poly: &Rep3MultilinearPolynomial<F>,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Vec<F>> {
         let degree = Self::sumcheck_poly_degree();
@@ -414,8 +431,8 @@ where
             rayon::current_num_threads() / (1 << io_ctx.network().log_num_workers_per_party());
         let max_forks = std::cmp::min(max_threads_per_worker, 8);
 
-        let evaluations: Vec<_> =
-            io_ctx.try_chunks(0..mle_half, max_forks, |i, io_ctx| {
+        let evaluations: Vec<_> = io_ctx
+            .try_chunks(0..mle_half, max_forks, |i, io_ctx| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                 let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
                     i,

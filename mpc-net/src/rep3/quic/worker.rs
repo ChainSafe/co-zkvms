@@ -104,10 +104,10 @@ impl Rep3QuicMpcNetWorker {
     /// Sends bytes over the network to the target party.
     pub fn send_bytes(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
         if target == self.id.party_id().next_id() {
-            std::mem::drop(RUNTIME.block_on(self.chan_next.send(data)));
+            std::mem::drop(self.chan_next.blocking_send(data));
             Ok(())
         } else if target == self.id.party_id().prev_id() {
-            std::mem::drop(RUNTIME.block_on(self.chan_prev.send(data)));
+            std::mem::drop(self.chan_prev.blocking_send(data));
             Ok(())
         } else {
             return Err(std::io::Error::new(
@@ -134,25 +134,16 @@ impl Rep3QuicMpcNetWorker {
 
     /// Receives bytes over the network from the party with the given id.
     pub fn recv_bytes(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
-        // let data = if from == self.id.party_id().prev_id() {
-        //     self.chan_prev.blocking_recv().blocking_recv()
-        // } else if from == self.id.party_id().next_id() {
-        //     self.chan_next.blocking_recv().blocking_recv()
-        // } else {
-        //     return Err(std::io::Error::new(
-        //         std::io::ErrorKind::InvalidInput,
-        //         "Cannot recv from self",
-        //     ));
-        // };
-        let data = RUNTIME.block_on(async {
-            if from == self.id.party_id().prev_id() {
-                self.chan_prev.recv().await.await
-            } else if from == self.id.party_id().next_id() {
-                self.chan_next.recv().await.await
-            } else {
-                panic!("Cannot recv from self");
-            }
-        });
+        let data = if from == self.id.party_id().prev_id() {
+            self.chan_prev.blocking_recv().blocking_recv()
+        } else if from == self.id.party_id().next_id() {
+            self.chan_next.blocking_recv().blocking_recv()
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot recv from self",
+            ));
+        };
         let data = data.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
         })??;

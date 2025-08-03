@@ -7,7 +7,7 @@ use tokio::{
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use crate::rep3::quic::RUNTIME;
+// use crate::rep3::quic::RUNTIME;
 
 /// A read end of the channel, just a type alias for [`FramedRead`].
 pub type ReadChannel<T, D> = FramedRead<T, D>;
@@ -283,73 +283,73 @@ where
     }
 }
 
-/// A handle to a channel that allows sending and receiving messages.
-#[derive(Debug)]
-pub struct ChannelHandle2<R, W, C, MSend, MRecv> {
-    read: FramedRead<R, C>,
-    write: FramedWrite<W, C>,
-    _phantom: std::marker::PhantomData<(MSend, MRecv)>,
-}
+// /// A handle to a channel that allows sending and receiving messages.
+// #[derive(Debug)]
+// pub struct ChannelHandle2<R, W, C, MSend, MRecv> {
+//     read: FramedRead<R, C>,
+//     write: FramedWrite<W, C>,
+//     _phantom: std::marker::PhantomData<(MSend, MRecv)>,
+// }
 
-impl<R, W, C, MSend, MRecv> ChannelHandle2<R, W, C, MSend, MRecv>
-where
-    MSend: Send + std::fmt::Debug + 'static,
-    MRecv: Send + std::fmt::Debug + 'static,
-    R: AsyncReadExt + Unpin + 'static,
-    W: AsyncWriteExt + Unpin + 'static,
-    C: Encoder<MSend, Error = io::Error> + 'static,
-    FramedRead<R, C>: Stream<Item = Result<MRecv, io::Error>> + Send,
-    FramedWrite<W, C>: Sink<MSend, Error = io::Error> + Send,
-{
-    /// Create a new [`ChannelHandle`] from a [`Channel`]. This spawns a new tokio task that handles the read and write jobs so they can happen concurrently.
-    pub fn manage(chan: Channel<R, W, C>) -> ChannelHandle2<R, W, C, MSend, MRecv>
-    {
-        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<MSend>>(1024);
-        // let (read_send, mut read_recv) = mpsc::channel::<ReadJob<MRecv>>(1024);
+// impl<R, W, C, MSend, MRecv> ChannelHandle2<R, W, C, MSend, MRecv>
+// where
+//     MSend: Send + std::fmt::Debug + 'static,
+//     MRecv: Send + std::fmt::Debug + 'static,
+//     R: AsyncReadExt + Unpin + 'static,
+//     W: AsyncWriteExt + Unpin + 'static,
+//     C: Encoder<MSend, Error = io::Error> + 'static,
+//     FramedRead<R, C>: Stream<Item = Result<MRecv, io::Error>> + Send,
+//     FramedWrite<W, C>: Sink<MSend, Error = io::Error> + Send,
+// {
+//     /// Create a new [`ChannelHandle`] from a [`Channel`]. This spawns a new tokio task that handles the read and write jobs so they can happen concurrently.
+//     pub fn manage(chan: Channel<R, W, C>) -> ChannelHandle2<R, W, C, MSend, MRecv>
+//     {
+//         let (write_send, mut write_recv) = mpsc::channel::<WriteJob<MSend>>(1024);
+//         // let (read_send, mut read_recv) = mpsc::channel::<ReadJob<MRecv>>(1024);
 
-        let (mut write, mut read) = chan.split();
+//         let (mut write, mut read) = chan.split();
 
-        // tokio::spawn(async move {
-        //     while let Some(write_job) = write_recv.recv().await {
-        //         match write.send(write_job.data).await {
-        //             Ok(_) => {
-        //                 // we don't really care if the receiver for a write job is gone, as this is a common case
-        //                 // therefore we only emit a trace message
-        //                 if write_job.ret.send(Ok(())).is_err() {
-        //                     tracing::trace!("Debug: Write Job finished but receiver is gone!");
-        //                 }
-        //             }
-        //             Err(err) => {
-        //                 tracing::error!("Write job failed: {err}");
-        //             }
-        //         }
-        //     }
-        // });
+//         // tokio::spawn(async move {
+//         //     while let Some(write_job) = write_recv.recv().await {
+//         //         match write.send(write_job.data).await {
+//         //             Ok(_) => {
+//         //                 // we don't really care if the receiver for a write job is gone, as this is a common case
+//         //                 // therefore we only emit a trace message
+//         //                 if write_job.ret.send(Ok(())).is_err() {
+//         //                     tracing::trace!("Debug: Write Job finished but receiver is gone!");
+//         //                 }
+//         //             }
+//         //             Err(err) => {
+//         //                 tracing::error!("Write job failed: {err}");
+//         //             }
+//         //         }
+//         //     }
+//         // });
 
-        Self {
-            read,
-            write,
-            _phantom: std::marker::PhantomData,
-        }
-    }
+//         Self {
+//             read,
+//             write,
+//             _phantom: std::marker::PhantomData,
+//         }
+//     }
 
-    /// Instructs the channel to send a message. Returns a [oneshot::Receiver] that will return the result of the send operation.
-    pub async fn send(&mut self, data: MSend) -> Result<(), io::Error> {
-        self.write.send(data).await
-    }
+//     /// Instructs the channel to send a message. Returns a [oneshot::Receiver] that will return the result of the send operation.
+//     pub async fn send(&mut self, data: MSend) -> Result<(), io::Error> {
+//         self.write.send(data).await
+//     }
 
-    /// Instructs the channel to receive a message. Returns a [oneshot::Receiver] that will return the result of the receive operation.
-    pub async fn recv(&mut self) -> Option<Result<MRecv, io::Error>> {
-        self.read.next().await
-    }
+//     /// Instructs the channel to receive a message. Returns a [oneshot::Receiver] that will return the result of the receive operation.
+//     pub async fn recv(&mut self) -> Option<Result<MRecv, io::Error>> {
+//         self.read.next().await
+//     }
 
-    /// A blocking version of [ChannelHandle::send]. This will block until the send operation is complete.
-    pub fn blocking_send(&mut self, data: MSend) -> Result<(), io::Error> {
-        RUNTIME.block_on(async move { self.write.send(data).await })
-    }
+//     /// A blocking version of [ChannelHandle::send]. This will block until the send operation is complete.
+//     pub fn blocking_send(&mut self, data: MSend) -> Result<(), io::Error> {
+//         RUNTIME.block_on(async move { self.write.send(data).await })
+//     }
 
-    /// A blocking version of [ChannelHandle::recv]. This will block until the receive operation is complete.
-    pub fn blocking_recv(&mut self) -> Option<Result<MRecv, io::Error>> {
-        RUNTIME.block_on(async move { self.read.next().await })
-    }
-}
+//     /// A blocking version of [ChannelHandle::recv]. This will block until the receive operation is complete.
+//     pub fn blocking_recv(&mut self) -> Option<Result<MRecv, io::Error>> {
+//         RUNTIME.block_on(async move { self.read.next().await })
+//     }
+// }
