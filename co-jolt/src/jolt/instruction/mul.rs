@@ -10,7 +10,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    jolt::instruction::Rep3JoltInstruction, utils::instruction_utils::concatenate_lookups_rep3,
+    jolt::instruction::Rep3JoltInstruction, utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched},
 };
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
@@ -127,10 +127,20 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        io_ctx: &mut IoContext<N>,
+        _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(vals.len() == C / 2);
         Ok(concatenate_lookups_rep3(vals, C / 2, log2(M) as usize))
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        Ok(concatenate_lookups_rep3_batched(vals, C / 2, log2(M) as usize))
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

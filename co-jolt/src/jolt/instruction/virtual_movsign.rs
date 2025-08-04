@@ -17,7 +17,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::concatenate_lookups_rep3;
+use crate::utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 
@@ -121,6 +121,21 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(concatenate_lookups_rep3(
             &vec![val; repeat],
             repeat,
+            log2(M) as usize,
+        ))
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        mut vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        let repeat = WORD_SIZE / 16;
+        Ok(concatenate_lookups_rep3_batched(
+            vals.remove(0).into_iter().map(|val| vec![val; repeat]),
+            C,
             log2(M) as usize,
         ))
     }

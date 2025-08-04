@@ -2,6 +2,7 @@ use jolt_core::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use itertools::multizip;
 
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use mpc_core::protocols::{
@@ -147,7 +148,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
     //             .map(|vals| self.slice_values(vals, C, M)),
     //     );
 
-    //     let ltu = std::mem::take(&mut vals_by_subtable_by_term[0]);
+    //     let ltu = transpose(std::mem::take(&mut vals_by_subtable_by_term[0]));
     //     #[cfg(not(feature = "public-eq"))]
     //     let mut eq = transpose(std::mem::take(&mut vals_by_subtable_by_term[1]));
     //     #[cfg(feature = "public-eq")]
@@ -157,23 +158,23 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
     //         .collect::<Vec<_>>();
 
     //     #[cfg(not(feature = "public-eq"))]
-    //     let mut sums = ltu.iter().map(|x| x[0].into_additive()).collect::<Vec<_>>();
+    //     let mut sums = ltu[0].iter().map(|x| x.into_additive()).collect::<Vec<_>>();
     //     #[cfg(feature = "public-eq")]
-    //     let mut sums = ltu.iter().map(|x| x[0]).collect::<Vec<_>>();
+    //     let mut sums = ltu[0].iter().map(|x| x).collect::<Vec<_>>();
     //     let mut eq_prods = std::mem::take(&mut eq[0]);
 
     //     for i in 1..C - 1 {
     //         #[cfg(not(feature = "public-eq"))]
     //         {
-    //             sums.iter_mut().zip(ltu[i].iter()).for_each(|(sum, ltu_i)| {
-    //                 *sum += *ltu_i * eq_prods[i];
+    //             multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(|(sum, ltu_i, eq_prod)| {
+    //                 *sum += *ltu_i * *eq_prod;
     //             });
     //             eq_prods = rep3::arithmetic::mul_vec(&eq_prods, &eq[i], io_ctx)?;
     //         }
     //         #[cfg(feature = "public-eq")]
     //         {
-    //             sums.iter_mut().zip(ltu[i].iter()).for_each(|(sum, ltu_i)| {
-    //                 *sum += rep3::arithmetic::mul_public(*ltu_i, eq_prods[i]);
+    //             multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(|(sum, ltu_i, eq_prod)| {
+    //                 *sum += rep3::arithmetic::mul_public(*ltu_i, *eq_prod);
     //             });
     //             eq_prods
     //                 .iter_mut()

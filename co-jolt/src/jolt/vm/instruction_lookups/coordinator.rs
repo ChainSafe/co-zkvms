@@ -83,15 +83,16 @@ where
             _marker: PhantomData,
         };
 
-        let memory_checking_proof =
-            Self::coordinate_memory_checking(preprocessing, num_ops, M, transcript, network)
-                .context("while proving memory checking")?;
+        // let memory_checking_proof =
+        //     Self::coordinate_memory_checking(preprocessing, num_ops, M, transcript, network)
+        //         .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {
             primary_sumcheck,
-            memory_checking: memory_checking_proof,
+            // memory_checking: memory_checking_proof,
             _instructions: PhantomData,
             _subtables: PhantomData,
+            _marker: PhantomData,
         })
     }
 

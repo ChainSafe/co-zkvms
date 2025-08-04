@@ -124,8 +124,10 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
         #[cfg(not(feature = "public-eq"))]
         {
+            use crate::utils::instruction_utils::transpose;
+
             let [divisor_is_zero, is_valid_div_by_zero] =
-                rep3::arithmetic::product_many(&vals_by_subtable[..2], io_ctx)?
+                rep3::arithmetic::product_many(&transpose(vec![vals_by_subtable[0].to_vec(), vals_by_subtable[1].to_vec()]), io_ctx)?
                     .try_into()
                     .unwrap();
 
@@ -153,67 +155,67 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         }
     }
 
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
-        &self,
-        vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        let mut vals_by_term_by_subtable = vals_many
-            .into_iter()
-            .map(|vals| self.slice_values(vals, C, M))
-            .collect::<Vec<_>>();
+    // fn combine_lookups_rep3_batched<N: Rep3Network>(
+    //     &self,
+    //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    //     C: usize,
+    //     M: usize,
+    //     io_ctx: &mut IoContext<N>,
+    // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    //     let mut vals_by_term_by_subtable = vals_many
+    //         .into_iter()
+    //         .map(|vals| self.slice_values(vals, C, M))
+    //         .collect::<Vec<_>>();
 
-        let vals_len = vals_by_term_by_subtable[0][0].len();
-        assert_eq!(vals_len, vals_by_term_by_subtable[0][1].len());
+    //     let vals_len = vals_by_term_by_subtable[0][0].len();
+    //     assert_eq!(vals_len, vals_by_term_by_subtable[0][1].len());
 
-        let product_vals = (0..vals_len)
-            .map(|i| {
-                vals_by_term_by_subtable
-                    .iter_mut()
-                    .flat_map(|vals| [mem::take(&mut vals[0][i]), mem::take(&mut vals[1][i])])
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+    //     let product_vals = (0..vals_len)
+    //         .map(|i| {
+    //             vals_by_term_by_subtable
+    //                 .iter_mut()
+    //                 .flat_map(|vals| [mem::take(&mut vals[0][i]), mem::take(&mut vals[1][i])])
+    //                 .collect::<Vec<_>>()
+    //         })
+    //         .collect::<Vec<_>>();
 
-        #[cfg(not(feature = "public-eq"))]
-        {
-            let products = rep3::arithmetic::product_many(&product_vals, io_ctx)?;
-            let res = products
-                .chunks(2)
-                .map(|chunk| {
-                    let [divisor_is_zero, is_valid_div_by_zero] = chunk.try_into().unwrap();
-                    rep3::arithmetic::sub_public_by_shared(
-                        F::one(),
-                        divisor_is_zero + is_valid_div_by_zero,
-                        io_ctx.id,
-                    )
-                })
-                .collect::<Vec<_>>();
+    //     #[cfg(not(feature = "public-eq"))]
+    //     {
+    //         let products = rep3::arithmetic::product_many(&product_vals, io_ctx)?;
+    //         let res = products
+    //             .chunks(2)
+    //             .map(|chunk| {
+    //                 let [divisor_is_zero, is_valid_div_by_zero] = chunk.try_into().unwrap();
+    //                 rep3::arithmetic::sub_public_by_shared(
+    //                     F::one(),
+    //                     divisor_is_zero + is_valid_div_by_zero,
+    //                     io_ctx.id,
+    //                 )
+    //             })
+    //             .collect::<Vec<_>>();
 
-            return Ok(res);
-        }
+    //         return Ok(res);
+    //     }
 
-        #[cfg(feature = "public-eq")]
-        {
-            let res = rep3::arithmetic::open_vec(&product_vals.concat(), io_ctx)?
-                .chunks(vals_len * 2)
-                .map(|chunk| {
-                    let (divisor_is_zero_vals, is_valid_div_by_zero_vals) =
-                        chunk.split_at(vals_len);
-                    let divisor_is_zero: F = divisor_is_zero_vals.iter().product();
-                    let is_valid_div_by_zero: F = is_valid_div_by_zero_vals.iter().product();
-                    rep3::arithmetic::promote_to_trivial_share(
-                        io_ctx.id,
-                        F::one() - divisor_is_zero + is_valid_div_by_zero,
-                    )
-                })
-                .collect::<Vec<_>>();
+    //     #[cfg(feature = "public-eq")]
+    //     {
+    //         let res = rep3::arithmetic::open_vec(&product_vals.concat(), io_ctx)?
+    //             .chunks(vals_len * 2)
+    //             .map(|chunk| {
+    //                 let (divisor_is_zero_vals, is_valid_div_by_zero_vals) =
+    //                     chunk.split_at(vals_len);
+    //                 let divisor_is_zero: F = divisor_is_zero_vals.iter().product();
+    //                 let is_valid_div_by_zero: F = is_valid_div_by_zero_vals.iter().product();
+    //                 rep3::arithmetic::promote_to_trivial_share(
+    //                     io_ctx.id,
+    //                     F::one() - divisor_is_zero + is_valid_div_by_zero,
+    //                 )
+    //             })
+    //             .collect::<Vec<_>>();
 
-            return Ok(res);
-        }
-    }
+    //         return Ok(res);
+    //     }
+    // }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(

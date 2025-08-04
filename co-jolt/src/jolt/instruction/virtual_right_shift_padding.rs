@@ -71,6 +71,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(Rep3PrimeFieldShare::zero_share())
     }
 
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        Ok(vec![Rep3PrimeFieldShare::zero_share(); vals[0].len()])
+    }
+
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         vec![Rep3BigUintShare::zero_share(); C]
     }

@@ -102,7 +102,7 @@ fn main() -> Result<()> {
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
     if config.is_coordinator {
-        init_tracing();
+        // init_tracing();
     }
 
     let mut program = host::Program::new("sha3-guest");

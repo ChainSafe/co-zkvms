@@ -12,7 +12,7 @@ use mpc_core::protocols::rep3::{
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::chunk_operand_usize;
+use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups_rep3_batched};
 use crate::utils::instruction_utils::concatenate_lookups_rep3;
 use jolt_core::{field::JoltField, utils::instruction_utils::concatenate_lookups};
 
@@ -89,6 +89,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(concatenate_lookups_rep3(vals, C / 2, log2(M) as usize))
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        Ok(concatenate_lookups_rep3_batched(vals, C / 2, log2(M) as usize))
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<rep3::Rep3BigUintShare<F>> {

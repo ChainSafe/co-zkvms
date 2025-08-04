@@ -109,6 +109,22 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         ))
     }
 
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        assert_eq!(vals.len(), 1);
+        Ok(vals[0]
+            .iter()
+            .map(|lowest_bit| {
+                rep3::arithmetic::sub_public_by_shared(F::one(), *lowest_bit, io_ctx.id)
+            })
+            .collect::<Vec<_>>())
+    }
+
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<rep3::Rep3BigUintShare<F>> {
         // add_and_chunk_operands_rep3(self.0, self.1, C, log_M)
         todo!()

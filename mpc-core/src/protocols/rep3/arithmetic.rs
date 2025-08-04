@@ -162,6 +162,19 @@ pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -
     a * mul_public(b, c)
 }
 
+pub fn sum_batched<F: PrimeField>(
+    vals: &[Vec<Rep3PrimeFieldShare<F>>],
+) -> Vec<Rep3PrimeFieldShare<F>> {
+    let bathes_len = vals[0].len();
+    (0..bathes_len)
+        .map(|i| {
+            vals.iter()
+                .map(|val| val[i])
+                .sum::<Rep3PrimeFieldShare<F>>()
+        })
+        .collect()
+}
+
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.

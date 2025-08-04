@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
-    multiply_and_chunk_operands,
+    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3, concatenate_lookups_rep3_batched, multiply_and_chunk_operands
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
@@ -99,6 +98,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(concatenate_lookups_rep3(vals, vals.len(), log2(M) as usize))
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        Ok(concatenate_lookups_rep3_batched(vals, C, log2(M) as usize))
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

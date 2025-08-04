@@ -1,3 +1,4 @@
+use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 
 use jolt_core::field::JoltField;
@@ -24,6 +25,29 @@ pub fn concatenate_lookups_rep3<F: JoltField>(
     sum
 }
 
+pub fn concatenate_lookups_rep3_batched<F: JoltField>(
+    vals: impl IntoIterator<
+        Item = Vec<Rep3PrimeFieldShare<F>>,
+        IntoIter: DoubleEndedIterator + ExactSizeIterator,
+    >,
+    C: usize,
+    operand_bits: usize,
+) -> Vec<Rep3PrimeFieldShare<F>> {
+    let mut vals_rev = vals.into_iter().rev();
+    assert_eq!(vals_rev.len(), C);
+    let mut sums = vals_rev.next().unwrap();
+    let shift = F::from_u64(1u64 << operand_bits).unwrap();
+    let mut weight = shift;
+    for val in vals_rev {
+        // sum += rep3::arithmetic::mul_public(vals[C - i - 1], weight);
+        izip!(sums.iter_mut(), val).for_each(|(sum, val)| {
+            *sum += rep3::arithmetic::mul_public(val, weight);
+        });
+        weight *= shift;
+    }
+    sums
+}
+
 pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
     x: Rep3BigUintShare<F>,
     y: Rep3BigUintShare<F>,
@@ -45,7 +69,6 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
         .collect()
 }
 
-
 pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
 where
     I: IntoIterator<Item = Vec<T>>,
@@ -53,13 +76,11 @@ where
     let mut it = matrix.into_iter();
     let first_row = match it.next() {
         Some(r) => r,
-        None    => return Vec::new(),
+        None => return Vec::new(),
     };
     let cols = first_row.len();
     let (low, _) = it.size_hint();
-    let mut out: Vec<Vec<T>> = (0..cols)
-        .map(|_| Vec::with_capacity(low + 1))
-        .collect();
+    let mut out: Vec<Vec<T>> = (0..cols).map(|_| Vec::with_capacity(low + 1)).collect();
 
     // push first row
     for (c, v) in first_row.into_iter().enumerate() {
@@ -70,6 +91,52 @@ where
         assert_eq!(row.len(), cols, "ragged matrix");
         for (c, v) in row.into_iter().enumerate() {
             out[c].push(v);
+        }
+    }
+    out
+}
+
+/// “double‐transpose” a 3D Vec: [R][C][D] → [C][D][R]
+pub fn double_transpose<I, T>(matrix: I) -> Vec<Vec<Vec<T>>>
+where
+    I: IntoIterator<Item = Vec<Vec<T>>>,
+{
+    let mut rows_it = matrix.into_iter();
+    let first = match rows_it.next() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    let cols = first.len(); // C
+    assert!(cols > 0, "need at least one column");
+    let depth = first[0].len(); // D
+    let (low_rows, _) = rows_it.size_hint();
+    let rows = low_rows + 1; // R estimate
+
+    // allocate [C][D] with capacity R
+    let mut out = (0..cols)
+        .map(|_| {
+            (0..depth)
+                .map(|_| Vec::with_capacity(rows))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    // insert first row
+    for (c, dv) in first.into_iter().enumerate() {
+        assert_eq!(dv.len(), depth, "ragged depth");
+        for (d, x) in dv.into_iter().enumerate() {
+            out[c][d].push(x);
+        }
+    }
+
+    for row in rows_it {
+        assert_eq!(row.len(), cols, "ragged cols");
+        for (c, dv) in row.into_iter().enumerate() {
+            assert_eq!(dv.len(), depth, "ragged depth");
+            for (d, x) in dv.into_iter().enumerate() {
+                out[c][d].push(x);
+            }
         }
     }
     out
@@ -119,5 +186,18 @@ mod test {
                 ((left << operand_bits) ^ right) as usize
             })
             .collect()
+    }
+
+    #[test]
+    fn test_transpose() {
+        let matrix = vec![
+            vec![vec![1; 4], vec![2; 4]],
+            vec![vec![3; 4], vec![4; 4]],
+            vec![vec![5; 4], vec![6; 4]],
+        ];
+        let transposed = transpose(matrix);
+        println!("{:?}", transposed);
+        let x = transpose(transposed[1].clone());
+        println!("\n{:?}", x);
     }
 }

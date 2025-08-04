@@ -11,7 +11,7 @@ use mpc_core::protocols::rep3::{
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
-    concatenate_lookups_rep3,
+    concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
 };
 use jolt_core::field::JoltField;
 use jolt_core::jolt::subtable::{sll::SllSubtable, LassoSubtable};
@@ -111,6 +111,17 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(C <= 10);
         Ok(concatenate_lookups_rep3(vals, C, (log2(M) / 2) as usize))
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        assert!(C <= 10);
+        Ok(concatenate_lookups_rep3_batched(vals, C, (log2(M) / 2) as usize))
     }
 
     fn to_indices_rep3(

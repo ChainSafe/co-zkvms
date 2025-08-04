@@ -125,7 +125,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction<F> {
 
         #[cfg(not(feature = "public-eq"))]
         Ok(
-            rep3::arithmetic::product_many(&transpose(vals_many), io_ctx)?
+            rep3::arithmetic::product_many(&vals_many, io_ctx)?
                 .into_iter()
                 .map(|prod| {
                     rep3::arithmetic::sub_public_by_shared(F::one(), prod, io_ctx.network.get_id())

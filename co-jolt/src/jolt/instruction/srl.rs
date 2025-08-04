@@ -6,8 +6,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    self, network::{IoContext, Rep3Network}, Rep3PrimeFieldShare
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
@@ -110,6 +109,18 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         assert!(C <= 10);
         assert!(vals.len() == C);
         Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied())) // TODO: make sum over &Rep3PrimeFieldShare<F>
+    }
+
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        assert!(C <= 10);
+        assert_eq!(vals.len(), C);
+        Ok(rep3::arithmetic::sum_batched(&vals))
     }
 
     fn to_indices_rep3(

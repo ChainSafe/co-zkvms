@@ -120,7 +120,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         }
 
         #[cfg(not(feature = "public-eq"))]
-        rep3::arithmetic::product_many(&transpose(vals_many), io_ctx)
+        rep3::arithmetic::product_many(&vals_many, io_ctx)
     }
 
     fn to_indices_rep3(
