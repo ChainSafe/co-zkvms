@@ -383,7 +383,7 @@ where
                     io_ctx,
                 )?;
 
-                let span = tracing::info_span!("coordinator_part");
+                let span = tracing::info_span!("coordinator_io");
                 let _span_enter = span.enter();
                 io_ctx.network().send_response(round_evaluations)?;
 
@@ -396,7 +396,7 @@ where
             r.push(r_j);
 
             // Bind all polys
-            let _bind_span = trace_span!("bind");
+            let _bind_span = trace_span!("bind polys");
             let _bind_enter = _bind_span.enter();
             let (tx, rx) = tokio::sync::oneshot::channel();
             CPU_ONLY_POOL.spawn(move || {
@@ -462,13 +462,16 @@ where
                     degree,
                     BindingOrder::LowToHigh,
                 );
-                let flag_evals: Vec<Vec<F>> = flag_polys
-                    .iter()
-                    .map(|poly| {
-                        poly.as_public()
-                            .sumcheck_evals(i, degree, BindingOrder::LowToHigh)
-                    })
-                    .collect();
+                let flag_evals: Vec<Vec<F>> =
+                    tracing::trace_span!("compute_flag_evals").in_scope(|| {
+                        flag_polys
+                            .iter()
+                            .map(|poly| {
+                                poly.as_public()
+                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh)
+                            })
+                            .collect()
+                    });
                 // Subtable evals are lazily computed in the for-loop below
                 let mut subtable_evals: Vec<Vec<_>> = vec![vec![]; subtable_polys.len()];
 
@@ -482,10 +485,6 @@ where
                     })
                     .collect::<Vec<_>>();
 
-                // tracing::info!("toggled_flag_evals: {:?}", &toggled_flag_indices[8..11]);
-
-                // let span = tracing::info_span!("instructions");
-                // let _span_enter = span.enter();
                 let mut inner_sum = vec![Rep3PrimeFieldShare::zero_share(); degree];
                 for instruction in InstructionSet::iter() {
                     let instruction_index =
@@ -497,41 +496,27 @@ where
                         continue;
                     }
 
-                    // let toggled_subtable_terms_batches = toggled_flag_indices[instruction_index]
-                    //     .iter()
-                    //     .map(|&j| {
-                    //         memory_indices
-                    //             .iter()
-                    //             .map(|memory_index| {
-                    //                 if subtable_evals[*memory_index].is_empty() {
-                    //                     subtable_evals[*memory_index] = subtable_polys
-                    //                         [*memory_index]
-                    //                         .as_shared()
-                    //                         .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                    //                 }
-                    //                 subtable_evals[*memory_index][j]
-                    //             })
-                    //             .collect::<Vec<_>>()
-                    //     })
-                    //     .collect::<Vec<_>>();
-
-                    let toggled_subtable_terms_batches = memory_indices
-                        .iter()
-                        .map(|memory_index| {
-                            if subtable_evals[*memory_index].is_empty()
-                                && !toggled_flag_indices[instruction_index].is_empty()
-                            {
-                                subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                                    .as_shared()
-                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                                // this is the bottleneck
-                            }
-                            toggled_flag_indices[instruction_index]
+                    let toggled_subtable_terms_batches =
+                        tracing::trace_span!("compute_subtable_evals").in_scope(|| {
+                            memory_indices
                                 .iter()
-                                .map(|&j| subtable_evals[*memory_index][j])
+                                .map(|memory_index| {
+                                    if subtable_evals[*memory_index].is_empty()
+                                        && !toggled_flag_indices[instruction_index].is_empty()
+                                    {
+                                        subtable_evals[*memory_index] = subtable_polys
+                                            [*memory_index]
+                                            .as_shared()
+                                            .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                                        // this is the bottleneck
+                                    }
+                                    toggled_flag_indices[instruction_index]
+                                        .iter()
+                                        .map(|&j| subtable_evals[*memory_index][j])
+                                        .collect::<Vec<_>>()
+                                })
                                 .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
+                        });
 
                     let instruction_collation_evals = instruction.combine_lookups_rep3_batched(
                         toggled_subtable_terms_batches,

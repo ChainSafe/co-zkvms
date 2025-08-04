@@ -39,6 +39,7 @@ where
 
     type Preprocessing = BytecodePreprocessing<F>;
 
+    #[tracing::instrument(skip_all, name = "Rep3BytecodeProver::compute_leaves", level = "trace")]
     fn compute_leaves(
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,

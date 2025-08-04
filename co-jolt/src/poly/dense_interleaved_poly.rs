@@ -99,10 +99,11 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         Self::new(interleaved)
     }
 
+    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::uninterleave", level = "trace")]
     pub fn uninterleave(&self) -> (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) {
-        let left: Vec<_> = self.coeffs[..self.len].iter().copied().step_by(2).collect();
+        let left: Vec<_> = self.coeffs[..self.len].par_iter().copied().step_by(2).collect();
         let mut right: Vec<_> = self.coeffs[..self.len]
-            .iter()
+            .par_iter()
             .copied()
             .skip(1)
             .step_by(2)
@@ -113,18 +114,14 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         (left, right)
     }
 
+    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::layer_output", level = "trace")]
     pub fn layer_output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Self> {
-        // let output = self
-        //     .chunks(2)
-        //     .map(|chunk| rep3::arithmetic::mul(chunk[0], chunk[1], io_ctx))
-        //     .collect::<Result<Vec<_>, _>>()
-        //     .context("while computing layer output")?;
-
-        // Ok(Self::new(output))
-
         let (left, right) = self.uninterleave();
+        let span = tracing::trace_span!("mul_vec");
+        let _span_enter = span.enter();
         let prod =
-            rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")?;
+            rep3::arithmetic::mul_vec_par(&left, &right, io_ctx).context("while multiplying left")?;
+        drop(_span_enter);
         Ok(Self::new(prod))
     }
 }

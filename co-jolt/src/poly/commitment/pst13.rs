@@ -68,6 +68,7 @@ where
     E::ScalarField: JoltField,
     E::G1: Icicle,
 {
+    #[tracing::instrument(skip_all, name = "PST13::combine_commitment_shares", level = "trace")]
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<PST13Commitment<E>>],
     ) -> PST13Commitment<E> {
@@ -120,6 +121,7 @@ where
         Ok(Proof { proofs })
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::prove_rep3", level = "trace")]
     fn prove_rep3<Network>(
         poly: &Rep3DensePolynomial<E::ScalarField>,
         setup: &Self::Setup,
@@ -134,6 +136,7 @@ where
         network.send_response(pf.proofs)
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::commit_rep3", level = "trace")]
     fn commit_rep3(
         poly: &Rep3MultilinearPolynomial<E::ScalarField>,
         setup: &Self::Setup,
@@ -158,6 +161,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::batch_commit_rep3", level = "trace")]
     fn batch_commit_rep3<U>(
         polys: &[U],
         setup: &Self::Setup,
@@ -268,11 +272,13 @@ where
     type BatchedProof = Proof<E>;
     type Commitment = PST13Commitment<E>;
 
+    #[tracing::instrument(skip_all, name = "PST13::setup", level = "trace")]
     fn setup(max_len: usize) -> Self::Setup {
         let mut rng = test_rng();
         PST13::setup(max_len, &mut rng)
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::commit", level = "trace")]
     fn commit(poly: &MultilinearPolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         let nv = poly.get_num_vars();
         let poly = DensePolynomial::new(poly.coeffs_as_field_elements());
@@ -289,6 +295,7 @@ where
         PST13Commitment { nv, g_product }
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::batch_commit", level = "trace")]
     fn batch_commit<U>(polys: &[U], setup: &Self::Setup) -> Vec<Self::Commitment>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
@@ -339,6 +346,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "PST13::prove", level = "trace")]
     fn prove(
         setup: &Self::Setup,
         poly: &MultilinearPolynomial<Self::Field>,
@@ -415,29 +423,6 @@ impl<E: Pairing> Into<Commitment<E>> for &PST13Commitment<E> {
             g_product: self.g_product,
         }
     }
-}
-
-pub fn aggregate_poly<F: JoltField, U>(eta: F, polys: &[U]) -> DensePolynomial<F>
-where
-    U: Borrow<DensePolynomial<F>> + Sync,
-{
-    let mut vars = 0;
-    for p in polys {
-        let num_vars = p.borrow().get_num_vars();
-        if num_vars > vars {
-            vars = num_vars;
-        }
-    }
-    let mut evals = vec![F::zero(); 1 << vars];
-    let mut x = F::one();
-    for p in polys {
-        cfg_iter_mut!(evals)
-            .zip(p.borrow().evals_ref())
-            .for_each(|(a, b)| *a += x * b);
-        x *= eta
-    }
-    assert_eq!(evals.len(), 1 << vars);
-    DensePolynomial::new(evals)
 }
 
 fn open<E: Pairing>(

@@ -60,7 +60,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let chunk_size = num_steps.div_ceil(num_chunks);
 
         // let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {
-        let unbound_coeffs_shards_iter = (0..num_chunks).into_iter().map(|chunk_index| {
+        let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {
             let mut coeffs: Vec<SparseCoefficient<SharedOrPublic<F>>> =
                 Vec::with_capacity(chunk_size * padded_num_constraints * 3);
             for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {

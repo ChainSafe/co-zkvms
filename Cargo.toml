@@ -44,7 +44,7 @@ ark-crypto-primitives = { version = "^0.5.0", default-features = false, features
 ] }
 
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "ansi"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "ansi", "registry", "std"] }
 tracing-forest = { version = "0.1.6", features = ["ansi", "smallvec"] }
 tracing-chrome = "0.7"
 serde = { version = "1.0", features = ["derive"] }

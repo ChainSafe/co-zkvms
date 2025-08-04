@@ -40,10 +40,10 @@ use mpc_net::{
     mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
-use tracing_forest::util::LevelFilter;
 use std::env;
 use std::path::PathBuf;
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
+use tracing_forest::util::LevelFilter;
 
 use clap::Subcommand;
 use tracing_forest::ForestLayer;
@@ -54,8 +54,8 @@ const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-// type CommitmentScheme = PST13<E>;
-type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+type CommitmentScheme = PST13<E>;
+// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -277,16 +277,23 @@ fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
 pub fn init_tracing() -> Option<FlushGuard> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
-        .from_env_lossy();
-    // .add_directive("jolt_core=trace".parse().unwrap());
+        .from_env_lossy()
+        .add_directive("jolt_core=info".parse().unwrap())
+        .add_directive("co-snarks=info".parse().unwrap())
+        .add_directive("mpc_net=info".parse().unwrap())
+        .add_directive("quinn=info".parse().unwrap());
 
     let current_level = env_filter.max_level_hint().unwrap_or(LevelFilter::INFO);
     let subscriber = Registry::default().with(env_filter);
 
     if current_level == LevelFilter::TRACE {
-        println!("tracing enabled");
+        println!("tracing...");
         let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
-        let _ = tracing::subscriber::set_global_default(subscriber.with(chrome_layer));
+        let _ = tracing::subscriber::set_global_default(
+            subscriber
+                .with(chrome_layer)
+                // .with(ForestLayer::default().with_level(LevelFilter::INFO)),
+        );
         Some(_guard)
     } else {
         let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));

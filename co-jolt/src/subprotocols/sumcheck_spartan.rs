@@ -56,6 +56,7 @@ pub fn coordinate_eq_sumcheck_round<
 }
 
 #[inline]
+#[tracing::instrument(skip_all, name = "process_eq_sumcheck_round_worker", level = "trace")]
 pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker>(
     quadratic_evals: (F, F), // (t_i(0), t_i(infty))
     eq_poly: &mut GruenSplitEqPolynomial<F>,

@@ -158,7 +158,7 @@ where
 
                 (polynomials, program_io, trace_length)
             }
-            None => io_ctx.network().receive_request()?,
+            None => tracing::trace_span!("recieve_witness_polys").in_scope(|| io_ctx.network().receive_request())?,
         };
         let r1cs_builder = Constraints::construct_constraints(
             trace_length.next_power_of_two(),

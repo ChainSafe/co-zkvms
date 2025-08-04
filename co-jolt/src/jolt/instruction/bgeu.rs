@@ -105,6 +105,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEUInstruction<F> {
         Ok(res)
     }
 
+    #[tracing::instrument(skip_all, name = "BGEUInstruction::combine_lookups_rep3_batched", level = "trace")]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,

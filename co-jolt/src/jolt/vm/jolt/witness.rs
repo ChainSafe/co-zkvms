@@ -342,6 +342,11 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 )
             },
         );
+        drop(_guard);
+        drop(span);
+
+        let span = tracing::span!(tracing::Level::INFO, "commit::instruction_final_cts");
+        let _guard = span.enter();
         commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
             &self.instruction_lookups.final_cts,
             &preprocessing.generators,
@@ -406,6 +411,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::compute_aux", level = "trace")]
     fn compute_aux<const C: usize, I: ConstraintInput>(
         &mut self,
         constraint_builder: &CombinedUniformBuilder<C, F, I>,

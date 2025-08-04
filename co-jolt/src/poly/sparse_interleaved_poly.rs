@@ -5,6 +5,7 @@ use crate::subprotocols::sumcheck::{Rep3BatchedCubicSumcheckWorker, Rep3Bindable
 use crate::subprotocols::{
     grand_product::Rep3BatchedGrandProductLayer, sumcheck::Rep3BatchedCubicSumcheck,
 };
+use crate::utils::future::{FutureExt, FutureVal};
 
 use eyre::Context;
 use jolt_core::poly::{
@@ -146,7 +147,9 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 .coeffs
                 .iter()
                 .map(|segment| {
-                    let mut output_segment = Vec::with_capacity(segment.len());
+                    let mut output_segment: Vec<
+                        FutureVal<F, SparseCoefficient<Rep3PrimeFieldShare<F>>, usize>,
+                    > = Vec::with_capacity(segment.len());
                     let mut next_index_to_process = 0usize;
                     for (j, coeff) in segment.iter().enumerate() {
                         if coeff.index < next_index_to_process {
@@ -161,21 +164,26 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                                 .unwrap_or((coeff.index + 1, one_share).into());
                             if right.index == coeff.index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                let val = rep3::arithmetic::mul(right.value, coeff.value, io_ctx)?;
-                                output_segment.push((coeff.index / 2, val).into());
+                                output_segment.push(FutureVal::pending_mul_args(
+                                    right.value,
+                                    coeff.value,
+                                    coeff.index / 2,
+                                ));
                             } else {
                                 // Corresponding right node not found, so it must be 1
-                                output_segment.push((coeff.index / 2, coeff.value).into());
+                                output_segment
+                                    .push(FutureVal::Ready((coeff.index / 2, coeff.value).into()));
                             }
                             next_index_to_process = coeff.index + 2;
                         } else {
                             // Right node; corresponding left node was not encountered in
                             // previous iteration, so it must have value 1
-                            output_segment.push((coeff.index / 2, coeff.value).into());
+                            output_segment
+                                .push(FutureVal::Ready((coeff.index / 2, coeff.value).into()));
                             next_index_to_process = coeff.index + 1;
                         }
                     }
-                    Ok(output_segment)
+                    output_segment.fufill_batched(io_ctx, |c, index| (index, c).into())
                 })
                 .collect::<eyre::Result<Vec<_>>>()
                 .context("while computing layer output")?;

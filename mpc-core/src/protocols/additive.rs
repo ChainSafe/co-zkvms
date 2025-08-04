@@ -11,7 +11,6 @@ use crate::protocols::rep3::rngs::SSRandom;
 
 pub type AdditiveShare<F> = F;
 
-#[tracing::instrument(skip_all, name = "add_public", level = "trace")]
 pub fn add_public<F: PrimeField>(
     shared: AdditiveShare<F>,
     public: F,
@@ -26,7 +25,6 @@ pub fn add_public<F: PrimeField>(
     res
 }
 
-#[tracing::instrument(skip_all, name = "sub_shared_by_public", level = "trace")]
 pub fn sub_shared_by_public<F: PrimeField>(
     shared: AdditiveShare<F>,
     public: F,
@@ -36,7 +34,6 @@ pub fn sub_shared_by_public<F: PrimeField>(
 }
 
 /// Performs subtraction between a shared value and a public value, returning public - shared.
-#[tracing::instrument(skip_all, name = "sub_public_by_shared", level = "trace")]
 pub fn sub_public_by_shared<F: PrimeField>(
     public: F,
     shared: AdditiveShare<F>,

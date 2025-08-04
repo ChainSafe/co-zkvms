@@ -181,6 +181,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         Ok(res[0] + rep3::arithmetic::mul(res[1] + res[2], res[3], io_ctx)?)
     }
 
+    #[tracing::instrument(skip_all, name = "SLTInstruction::combine_lookups_rep3_batched", level = "trace")]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,

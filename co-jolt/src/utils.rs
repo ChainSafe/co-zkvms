@@ -1,6 +1,7 @@
 pub mod element;
 pub mod instruction_utils;
 pub mod transcript;
+pub mod future;
 
 pub use jolt_core::{
     field::JoltField,
@@ -34,37 +35,6 @@ pub trait Forkable: Sized + Send {
 impl<N: Rep3Network> Forkable for IoContext<N> {
     fn fork(&mut self) -> Result<Self> {
         self.fork().context("while trying to fork IoContext")
-    }
-}
-
-pub trait Extendable: Sized + Send {
-    fn get_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>>;
-}
-
-impl<N: Rep3NetworkWorker> Extendable for IoContext<N> {
-    fn get_worker_subnets(&mut self, num_workers: usize) -> Result<Vec<Self>> {
-        let rngs = &mut self.rngs;
-        let rng = &mut self.rng;
-        let id = self.id;
-        let a2b_type = self.a2b_type;
-
-        Ok(self
-            .network
-            .get_worker_subnets(num_workers)
-            .context("while trying to fork IoContext")?
-            .into_iter()
-            .map(|network| {
-                let rngs = rngs.fork();
-                let rng = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
-                IoContext {
-                    network,
-                    rngs,
-                    rng,
-                    id,
-                    a2b_type,
-                }
-            })
-            .collect())
     }
 }
 
@@ -195,31 +165,6 @@ where
     })
     .flatten()
     .collect::<eyre::Result<Vec<_>>>()
-}
-
-pub fn try_map_chunks_with_worker_subnets<T, N, R, M>(
-    mut inputs: Vec<T>,
-    ctx: &mut IoContext<N>,
-    num_workers: usize,
-    map_fn: M,
-) -> eyre::Result<Vec<R>>
-where
-    N: Rep3NetworkWorker,
-    M: Fn(T, &mut IoContext<N>) -> eyre::Result<R> + Sync + Send,
-    T: Sized + Send + Clone,
-    R: Sync + Send,
-{
-    assert!(num_workers > 0);
-
-    if num_workers == 1 {
-        return Ok(vec![map_fn(inputs.pop().unwrap(), ctx)?]);
-    }
-    let mut worker_subnets = ctx.get_worker_subnets(num_workers)?;
-    inputs
-        .into_par_iter()
-        .zip_eq(rayon::iter::once(ctx).chain(worker_subnets.par_iter_mut()))
-        .map(|(val, mut ctx)| map_fn(val, &mut ctx))
-        .collect::<eyre::Result<Vec<_>>>()
 }
 
 #[inline]

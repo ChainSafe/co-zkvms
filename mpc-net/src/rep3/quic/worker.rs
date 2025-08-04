@@ -286,7 +286,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         })
     }
 
-    #[tracing::instrument(skip_all, name = "MpcStarNetWorker::fork_into_worker_subnets")]
+    #[tracing::instrument(skip_all, name = "MpcStarNetWorker::get_worker_subnets")]
     fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>> {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;

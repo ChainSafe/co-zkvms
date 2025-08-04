@@ -84,7 +84,6 @@ pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
     Ok(product_except_last * *shares.last().unwrap())
 }
 
-#[tracing::instrument(skip_all, name = "product_many", level = "trace")]
 pub fn product_many<F: PrimeField, N: Rep3Network, S>(
     shares: impl IntoIterator<Item = S>,
     io_ctx: &mut IoContext<N>,
@@ -140,7 +139,6 @@ pub fn product_many_into_additive<F: PrimeField, N: Rep3Network>(
         .collect())
 }
 
-#[tracing::instrument(skip_all, name = "reshare_additive", level = "trace")]
 pub fn reshare_additive<F: PrimeField, N: Rep3Network>(
     additive: AdditiveShare<F>,
     io_ctx: &mut IoContext<N>,
@@ -149,7 +147,6 @@ pub fn reshare_additive<F: PrimeField, N: Rep3Network>(
     Ok(Rep3PrimeFieldShare::new(additive, prev_share))
 }
 
-#[tracing::instrument(skip_all, name = "reshare_additive_many", level = "trace")]
 pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
     additive_shares: &[AdditiveShare<F>],
     io_ctx: &mut IoContext<N>,
@@ -163,12 +160,10 @@ pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
 }
 
 /// Convenience method for \[a\] * (\[b\] * c)
-#[tracing::instrument(skip_all, name = "mul_mul_public", level = "trace")]
 pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
     a * mul_public(b, c)
 }
 
-#[tracing::instrument(skip_all, name = "sum_batched", level = "trace")]
 pub fn sum_batched<F: PrimeField>(
     vals: &[Vec<Rep3PrimeFieldShare<F>>],
 ) -> Vec<Rep3PrimeFieldShare<F>> {
@@ -185,7 +180,6 @@ pub fn sum_batched<F: PrimeField>(
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.
-#[tracing::instrument(skip_all, name = "combine_field_elements_vec", level = "trace")]
 pub fn combine_field_elements_vec<F: PrimeField>(
     shares: Vec<Vec<Rep3PrimeFieldShare<F>>>,
 ) -> Vec<F> {

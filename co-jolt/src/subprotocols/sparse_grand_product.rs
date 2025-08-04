@@ -155,7 +155,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3BatchedGrandProductToggleLayer<F> {
         name = "BatchedGrandProductToggleLayer::bind",
         level = "trace"
     )]
-    fn bind(&mut self, r: F, party_id: PartyID) {
+    fn bind(&mut self, r: F, _party_id: PartyID) {
         if let Some(coalesced_flags) = &mut self.coalesced_flags {
             // Polynomials have already been coalesced, so bind the coalesced vectors.
             let mut bound_flags = vec![F::one(); coalesced_flags.len() / 2];
@@ -361,46 +361,6 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             eq_evals.2 - t2,
                             party_id,
                         );
-
-                        // let e0 = rep3::arithmetic::mul_public(
-                        //     rep3::arithmetic::add_public(
-                        //         rep3::arithmetic::mul_public(fingerprints[0], flags[0]),
-                        //         F::one() - flags[0],
-                        //         party_id,
-                        //     ),
-                        //     eq_evals.0,
-                        // )
-                        // .into_additive();
-
-                        // let e0 = rep3::arithmetic::mul_public(
-                        //     rep3::arithmetic::add_public(
-                        //         rep3::arithmetic::mul_public(fingerprints[0], flags[0]),
-                        //         F::one() - flags[0],
-                        //         party_id,
-                        //     ),
-                        //     eq_evals.0,
-                        // )
-                        // .into_additive();
-
-                        // let e1 = rep3::arithmetic::mul_public(
-                        //     rep3::arithmetic::add_public(
-                        //         rep3::arithmetic::mul_public(fingerprint_eval_2, flag_eval_2),
-                        //         F::one() - flag_eval_2,
-                        //         party_id,
-                        //     ),
-                        //     eq_evals.1,
-                        // )
-                        // .into_additive();
-
-                        // let e2 = rep3::arithmetic::mul_public(
-                        //     rep3::arithmetic::add_public(
-                        //         rep3::arithmetic::mul_public(fingerprint_eval_3, flag_eval_3),
-                        //         F::one() - flag_eval_3,
-                        //         party_id,
-                        //     ),
-                        //     eq_evals.2,
-                        // )
-                        // .into_additive();
 
                         (e0, e1, e2)
                     })
