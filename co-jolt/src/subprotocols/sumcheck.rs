@@ -85,6 +85,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         previous_round_claim: F,
         party_id: PartyID,
     ) -> UniPoly<F>;
+    
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
     #[tracing::instrument(

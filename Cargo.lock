@@ -1236,6 +1236,7 @@ dependencies = [
  "toml 0.8.23",
  "tracer",
  "tracing",
+ "tracing-chrome",
  "tracing-forest",
  "tracing-subscriber 0.3.19",
 ]

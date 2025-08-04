@@ -26,6 +26,7 @@ crossbeam.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-forest.workspace = true
+tracing-chrome.workspace = true
 bytesize = "2.0.1"
 color-eyre.workspace = true
 num-bigint.workspace = true

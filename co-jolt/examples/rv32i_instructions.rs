@@ -40,7 +40,10 @@ use mpc_net::{
     mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
+use tracing_forest::util::LevelFilter;
+use std::env;
 use std::path::PathBuf;
+use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 
 use clap::Subcommand;
 use tracing_forest::ForestLayer;
@@ -132,9 +135,11 @@ pub fn run_party(
 
     let my_id = config.my_id;
 
-    if args.trace_parties && my_id == 0 {
-        init_tracing();
-    }
+    let tracing_guard = if args.trace_parties && my_id == 0 {
+        init_tracing()
+    } else {
+        None
+    };
 
     // let span = tracing::info_span!("run_party", id = my_id);
     // let _enter = span.enter();
@@ -170,6 +175,7 @@ pub fn run_party(
 
     prover.io_ctx.network().log_connection_stats();
     // drop(_enter);
+    drop(tracing_guard);
     Ok(())
 }
 
@@ -268,15 +274,22 @@ fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
     tracing::info!("opcodes_used: {:?}", opcodes_used);
 }
 
-pub fn init_tracing() {
+pub fn init_tracing() -> Option<FlushGuard> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy();
     // .add_directive("jolt_core=trace".parse().unwrap());
 
-    let subscriber = Registry::default()
-        .with(env_filter)
-        .with(ForestLayer::default());
+    let current_level = env_filter.max_level_hint().unwrap_or(LevelFilter::INFO);
+    let subscriber = Registry::default().with(env_filter);
 
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    if current_level == LevelFilter::TRACE {
+        println!("tracing enabled");
+        let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+        let _ = tracing::subscriber::set_global_default(subscriber.with(chrome_layer));
+        Some(_guard)
+    } else {
+        let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));
+        None
+    }
 }

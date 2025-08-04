@@ -868,6 +868,7 @@ where
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorker<F, Network>
     for Rep3BatchedGrandProductToggleLayer<F>
 {
+    #[tracing::instrument(skip_all, name = "Rep3BatchedGrandProductToggleLayer::prove_layer", level = "trace")]
     fn prove_layer(
         &mut self,
         claim: &mut AdditiveShare<F>,

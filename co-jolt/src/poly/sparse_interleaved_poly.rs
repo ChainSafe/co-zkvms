@@ -413,6 +413,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         // io_ctx: &mut IoContext<Network>,
     ) -> UniPoly<F> {
         if let Some(coalesced) = &self.coalesced {
+            let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::coalesced");
+            let _enter = span.enter();
             return Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
                 coalesced,
                 eq_poly,
@@ -426,6 +428,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
+            let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len=1");
+            let _enter = span.enter();
             // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm with optimizations for sparsity.
@@ -520,6 +524,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 additive::add_public(deltas.2, eq_eval_sums.2, party_id),
             )
         } else {
+            let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1");
+            let _enter = span.enter();
             // This is a more complicated version of the `else` case in
             // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
 
@@ -668,6 +674,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         E2_sum * E1_eval_sums.2,
                     )
                 } else {
+                    let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1_dense_len_not_power_of_two");
                     // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
                     // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
                     // followed by (chunk_size - self.dense_len % chunk_size) zeros,

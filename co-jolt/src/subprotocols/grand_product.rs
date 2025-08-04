@@ -180,6 +180,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     Rep3BatchedCubicSumcheckWorker<F, Network> + std::fmt::Debug
 {
     /// Proves a single layer of a batched grand product circuit
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductLayer::prove_layer", level = "trace")]
     fn prove_layer(
         &mut self,
         claim: &mut AdditiveShare<F>,
@@ -228,6 +229,7 @@ where
 {
     type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
 
+    #[tracing::instrument(skip_all, name = "Rep3BatchedDenseGrandProduct::construct", level = "trace")]
     fn construct(leaves: Self::Leaves, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self> {
         let (leaves, batch_size) = leaves;
         assert!(leaves.len() % batch_size == 0);
@@ -250,6 +252,7 @@ where
         self.layers.len()
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3BatchedDenseGrandProduct::claimed_outputs", level = "trace")]
     fn claimed_outputs(&self) -> Vec<F> {
         let last_layer = &self.layers[self.layers.len() - 1];
         last_layer
