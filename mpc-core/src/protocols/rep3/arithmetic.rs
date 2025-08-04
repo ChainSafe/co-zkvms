@@ -2,6 +2,7 @@ use ark_ff::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
 use itertools::Itertools;
+use itertools::izip;
 use rand::Rng;
 use rand::RngCore;
 
@@ -82,19 +83,19 @@ pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
     Ok(product_except_last * *shares.last().unwrap())
 }
 
-pub fn product_many<F: PrimeField, N: Rep3Network, I>(
-    shares: &[I],
+pub fn product_many<F: PrimeField, N: Rep3Network, S>(
+    shares: impl IntoIterator<Item = S>,
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
 where
-    I: AsRef<[Rep3PrimeFieldShare<F>]>,
+    S: AsRef<[Rep3PrimeFieldShare<F>]>,
 {
-    let first_share = shares[0].as_ref();
+    let mut shares = shares.into_iter();
+    let first_share = shares.next().unwrap();
+    let first_share_ref = first_share.as_ref();
     shares
-        .iter()
-        .skip(1)
         .try_fold(
-            (0..first_share.len()).map(|i| first_share[i]).collect_vec(),
+            (0..first_share_ref.len()).map(|i| first_share_ref[i]).collect_vec(),
             |acc, x| mul_vec(&acc, x.as_ref(), io_ctx),
         )
         .context("while computing product")

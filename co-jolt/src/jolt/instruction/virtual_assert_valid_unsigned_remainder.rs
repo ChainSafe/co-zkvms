@@ -1,4 +1,4 @@
-use itertools::{Itertools, multizip};
+use itertools::{multizip, Itertools};
 use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -12,7 +12,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::{double_transpose, rep3_chunk_and_concatenate_operands, transpose};
+use crate::utils::instruction_utils::{chunks_take_nth, rep3_chunk_and_concatenate_operands, transpose};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
@@ -112,13 +112,13 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         #[cfg(not(feature = "public-eq"))]
         let eq = vals_by_subtable[1];
         #[cfg(feature = "public-eq")]
-        let eq = rep3::arithmetic::open_vec(&vals_by_subtable[1], io_ctx)?;
+        let eq = rep3::arithmetic::open_vec(vals_by_subtable[1], io_ctx)?;
 
         #[cfg(not(feature = "public-eq"))]
         let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[2], io_ctx)?;
         #[cfg(feature = "public-eq")]
         let divisor_is_zero = {
-            let divisor_is_zero_vals = rep3::arithmetic::open_vec(&vals_by_subtable[2], io_ctx)?;
+            let divisor_is_zero_vals = rep3::arithmetic::open_vec(vals_by_subtable[2], io_ctx)?;
             rep3::arithmetic::promote_to_trivial_share(
                 io_ctx.id,
                 divisor_is_zero_vals.iter().product::<F>(),
@@ -148,100 +148,104 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(rep3::arithmetic::reshare_additive(sum + ltu_sum_eq_prod, io_ctx)? + divisor_is_zero)
     }
 
-    // fn combine_lookups_rep3_batched<N: Rep3Network>(
-    //     &self,
-    //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-    //     C: usize,
-    //     M: usize,
-    //     io_ctx: &mut IoContext<N>,
-    // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    //     #[cfg(feature = "public-eq")]
-    //     let terms_len = vals_many.len();
-    //     let mut val_bathes_by_subtable = transpose(
-    //         self.slice_values(vals_many, C, M),
-    //     );
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        #[cfg(feature = "public-eq")]
+        let batch_size = vals_many[0].len();
+        let mut val_batches_by_subtable = self.slice_values(vals_many, C, M);
 
-    //     let ltu = std::mem::take(&mut val_bathes_by_subtable[0]);
-    //     #[cfg(not(feature = "public-eq"))]
-    //     let mut eq = std::mem::take(&mut val_bathes_by_subtable[1]);
-    //     #[cfg(feature = "public-eq")]
-    //     let mut eq: Vec<_> =
-    //         rep3::arithmetic::open_vec(&std::mem::take(&mut val_bathes_by_subtable[1]).concat(), io_ctx)?
-    //             .chunks(terms_len)
-    //             .map(|vals| vals.to_vec())
-    //             .collect();
+        let ltu = std::mem::take(&mut val_batches_by_subtable[0]);
+        #[cfg(not(feature = "public-eq"))]
+        let mut eq = std::mem::take(&mut val_batches_by_subtable[1]);
+        #[cfg(feature = "public-eq")]
+        let mut eq: Vec<_> = rep3::arithmetic::open_vec(
+            &std::mem::take(&mut val_batches_by_subtable[1]).concat(),
+            io_ctx,
+        )?
+        .chunks(batch_size)
+        .map(|vals| vals.to_vec())
+        .collect();
 
-    //     #[cfg(not(feature = "public-eq"))]
-    //     let divisor_is_zero = rep3::arithmetic::product_many(
-    //         &std::mem::take(&mut val_bathes_by_subtable[2]),
-    //         io_ctx,
-    //     )?;
-    //     #[cfg(feature = "public-eq")]
-    //     let divisor_is_zero = {
-    //         rep3::arithmetic::open_vec(&vals_by_subtable_by_term[2].concat(), io_ctx)?
-    //             .chunks(C)
-    //             .map(|vals| {
-    //                 rep3::arithmetic::promote_to_trivial_share(
-    //                     io_ctx.id,
-    //                     vals.iter().product::<F>(),
-    //                 )
-    //             })
-    //             .collect_vec()
-    //     };
+        #[cfg(not(feature = "public-eq"))]
+        let divisor_is_zero = rep3::arithmetic::product_many(
+            &std::mem::take(&mut val_batches_by_subtable[2]),
+            io_ctx,
+        )?;
+        #[cfg(feature = "public-eq")]
+        let divisor_is_zero = {
+            chunks_take_nth(
+                &rep3::arithmetic::open_vec(&val_batches_by_subtable[2].concat(), io_ctx)?,
+                C,
+                batch_size,
+            )
+            .map(|vals| {
+                rep3::arithmetic::promote_to_trivial_share(io_ctx.id, vals.product::<F>())
+            })
+            .collect_vec()
+        };
 
-    //     let mut sums = ltu[0].iter().map(|x| x.into_additive()).collect::<Vec<_>>();
-    //     let mut eq_prods = std::mem::take(&mut eq[0]);
+        let mut sums = ltu[0].iter().map(|x| x.into_additive()).collect::<Vec<_>>();
+        let mut eq_prods = std::mem::take(&mut eq[0]);
 
-    //     for i in 1..C - 1 {
-    //         #[cfg(not(feature = "public-eq"))]
-    //         {
-    //             multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(|(sum, ltu_i, eq_prod)| {
-    //                 *sum += *ltu_i * *eq_prod;
-    //             });
-    //             eq_prods = rep3::arithmetic::mul_vec(&eq_prods, &eq[i], io_ctx)?;
-    //         }
-    //         #[cfg(feature = "public-eq")]
-    //         {
-    //             multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(|(sum, ltu_i, eq_prod)| {
-    //                 *sum += rep3::arithmetic::mul_public(*ltu_i, *eq_prod).into_additive();
-    //             });
-    //             eq_prods
-    //                 .iter_mut()
-    //                 .zip(eq[i].iter())
-    //                 .for_each(|(eq_prod, eq_i)| {
-    //                     *eq_prod *= *eq_i;
-    //                 });
-    //         }
-    //     }
+        for i in 1..C - 1 {
+            #[cfg(not(feature = "public-eq"))]
+            {
+                multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(
+                    |(sum, ltu_i, eq_prod)| {
+                        *sum += *ltu_i * *eq_prod;
+                    },
+                );
+                eq_prods = rep3::arithmetic::mul_vec(&eq_prods, &eq[i], io_ctx)?;
+            }
+            #[cfg(feature = "public-eq")]
+            {
+                multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(
+                    |(sum, ltu_i, eq_prod)| {
+                        *sum += rep3::arithmetic::mul_public(*ltu_i, *eq_prod).into_additive();
+                    },
+                );
+                eq_prods
+                    .iter_mut()
+                    .zip(eq[i].iter())
+                    .for_each(|(eq_prod, eq_i)| {
+                        *eq_prod *= *eq_i;
+                    });
+            }
+        }
 
-    //     #[cfg(not(feature = "public-eq"))]
-    //     let ltu_sum_eq_prod = ltu[C - 1]
-    //         .iter()
-    //         .zip_eq(eq_prods.into_iter())
-    //         .map(|(ltu, eq_prod)| *ltu * eq_prod)
-    //         .collect::<Vec<_>>();
-    //     #[cfg(feature = "public-eq")]
-    //     let ltu_sum_eq_prod = ltu
-    //         .iter()
-    //         .zip(eq_prods.into_iter())
-    //         .map(|(ltu, eq_prod)| rep3::arithmetic::mul_public(ltu[C - 1], eq_prod).into_additive())
-    //         .collect::<Vec<_>>();
+        #[cfg(not(feature = "public-eq"))]
+        let ltu_sum_eq_prod = ltu[C - 1]
+            .iter()
+            .zip_eq(eq_prods.into_iter())
+            .map(|(ltu, eq_prod)| *ltu * eq_prod)
+            .collect::<Vec<_>>();
+        #[cfg(feature = "public-eq")]
+        let ltu_sum_eq_prod = ltu[C - 1]
+            .iter()
+            .zip(eq_prods.into_iter())
+            .map(|(ltu, eq_prod)| rep3::arithmetic::mul_public(*ltu, eq_prod).into_additive())
+            .collect::<Vec<_>>();
 
-    //     let res = rep3::arithmetic::reshare_additive_many(
-    //         &sums
-    //             .iter()
-    //             .zip_eq(ltu_sum_eq_prod.iter())
-    //             .map(|(sum, ltu_sum_eq_prod)| *sum + ltu_sum_eq_prod)
-    //             .collect::<Vec<_>>(),
-    //         io_ctx,
-    //     )?
-    //     .into_iter()
-    //     .zip_eq(divisor_is_zero.into_iter())
-    //     .map(|(sum, divisor_is_zero)| sum + divisor_is_zero)
-    //     .collect::<Vec<_>>();
+        let res = rep3::arithmetic::reshare_additive_many(
+            &sums
+                .iter()
+                .zip_eq(ltu_sum_eq_prod.iter())
+                .map(|(sum, ltu_sum_eq_prod)| *sum + ltu_sum_eq_prod)
+                .collect::<Vec<_>>(),
+            io_ctx,
+        )?
+        .into_iter()
+        .zip_eq(divisor_is_zero.into_iter())
+        .map(|(sum, divisor_is_zero)| sum + divisor_is_zero)
+        .collect::<Vec<_>>();
 
-    //     Ok(res)
-    // }
+        Ok(res)
+    }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(

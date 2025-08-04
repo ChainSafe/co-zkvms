@@ -94,22 +94,20 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         C: usize,
         M: usize,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        // vals.iter()
-        //     .map(|val| self.combine_lookups_rep3(val, C, M, io_ctx))
-        //     .collect()
-        let bathes_len = vals[0].len();
-        (0..bathes_len)
-            .map(|i| {
-                self.combine_lookups_rep3(
-                    &vals.iter().map(|val| val[i]).collect::<Vec<_>>(),
-                    C,
-                    M,
-                    io_ctx,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-    }
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>;
+    // {
+    //     let bathes_len = vals[0].len();
+    //     (0..bathes_len)
+    //         .map(|i| {
+    //             self.combine_lookups_rep3(
+    //                 &vals.iter().map(|val| val[i]).collect::<Vec<_>>(),
+    //                 C,
+    //                 M,
+    //                 io_ctx,
+    //             )
+    //         })
+    //         .collect::<Result<Vec<_>, _>>()
+    // }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 

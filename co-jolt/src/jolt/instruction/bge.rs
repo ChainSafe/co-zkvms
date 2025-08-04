@@ -113,6 +113,27 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
         Ok(res)
     }
 
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+        let res = <SLTInstruction<F> as Rep3JoltInstruction<F>>::combine_lookups_rep3_batched(
+            &SLTInstruction(self.0.clone(), self.1.clone()),
+            vals,
+            C,
+            M,
+            io_ctx,
+        )?
+        .into_iter()
+        .map(|slt| rep3::arithmetic::sub_public_by_shared(F::one(), slt, io_ctx.network.get_id()))
+        .collect::<Vec<_>>();
+
+        Ok(res)
+    }
+
     fn to_indices_rep3(
         &self,
         C: usize,

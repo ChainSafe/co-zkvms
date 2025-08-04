@@ -256,6 +256,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         )
     }
 
+    fn combine_lookups_rep3_batched<N: Rep3Network>(
+        &self,
+        vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+        C: usize,
+        M: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {        
+        todo!()
+    }
+
     // fn combine_lookups_rep3_batched<N: Rep3Network>(
     //     &self,
     //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,

@@ -529,19 +529,16 @@ where
                     let toggled_subtable_terms_batches = memory_indices
                         .iter()
                         .map(|memory_index| {
-                            if subtable_evals[*memory_index].is_empty() {
+                            if subtable_evals[*memory_index].is_empty()
+                                && !toggled_flag_indices[instruction_index].is_empty()
+                            {
                                 subtable_evals[*memory_index] = subtable_polys[*memory_index]
                                     .as_shared()
-                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh); // this is the bottleneck
                             }
                             toggled_flag_indices[instruction_index]
                                 .iter()
-                                .map(|&j| {
-                                    subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                                        .as_shared()
-                                        .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                                    subtable_evals[*memory_index][j]
-                                })
+                                .map(|&j| subtable_evals[*memory_index][j])
                                 .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>();

@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 #![feature(bool_to_result)]
+#![feature(iter_array_chunks)]
 
 pub mod host;
 pub mod jolt;

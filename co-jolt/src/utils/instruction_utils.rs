@@ -1,4 +1,4 @@
-use itertools::izip;
+use itertools::{izip, Itertools};
 pub use jolt_core::utils::instruction_utils::*;
 
 use jolt_core::field::JoltField;
@@ -96,51 +96,15 @@ where
     out
 }
 
-/// “double‐transpose” a 3D Vec: [R][C][D] → [C][D][R]
-pub fn double_transpose<I, T>(matrix: I) -> Vec<Vec<Vec<T>>>
-where
-    I: IntoIterator<Item = Vec<Vec<T>>>,
-{
-    let mut rows_it = matrix.into_iter();
-    let first = match rows_it.next() {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-
-    let cols = first.len(); // C
-    assert!(cols > 0, "need at least one column");
-    let depth = first[0].len(); // D
-    let (low_rows, _) = rows_it.size_hint();
-    let rows = low_rows + 1; // R estimate
-
-    // allocate [C][D] with capacity R
-    let mut out = (0..cols)
-        .map(|_| {
-            (0..depth)
-                .map(|_| Vec::with_capacity(rows))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    // insert first row
-    for (c, dv) in first.into_iter().enumerate() {
-        assert_eq!(dv.len(), depth, "ragged depth");
-        for (d, x) in dv.into_iter().enumerate() {
-            out[c][d].push(x);
-        }
-    }
-
-    for row in rows_it {
-        assert_eq!(row.len(), cols, "ragged cols");
-        for (c, dv) in row.into_iter().enumerate() {
-            assert_eq!(dv.len(), depth, "ragged depth");
-            for (d, x) in dv.into_iter().enumerate() {
-                out[c][d].push(x);
-            }
-        }
-    }
-    out
+pub fn chunks_take_nth<'a, T>(
+    data: &'a [T],
+    chunk_len: usize,
+    step: usize,
+) -> impl Iterator<Item = impl Iterator<Item = &'a T>> {
+    // for each offset 0‥step-1 build a strided view
+    (0..step).map(move |off| data.iter().skip(off).step_by(step).take(chunk_len))
 }
+
 
 #[cfg(test)]
 mod test {
