@@ -160,14 +160,14 @@ where
             io_ctx.main(),
         )?;
 
-        // <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
-        //     pcs_setup,
-        //     preprocessing,
-        //     &polynomials.instruction_lookups,
-        //     &polynomials,
-        //     opening_accumulator,
-        //     io_ctx.main(),
-        // )?;
+        <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
+            pcs_setup,
+            preprocessing,
+            &polynomials.instruction_lookups,
+            &polynomials,
+            opening_accumulator,
+            io_ctx.main(),
+        )?;
 
         Ok(())
     }
@@ -193,33 +193,22 @@ where
         let num_flag_polys = instruction_flags.len();
         let num_memory_polys = memory_polys.len();
 
-        // Self::reorder_polys(&mut eq_poly, &mut instruction_flags, &mut memory_polys, &mut lookup_outputs_poly);
-
-        let (
-            mut eq_poly_chunks,
-            mut flag_poly_chunks,
-            mut memory_poly_chunks,
-            mut lookup_outputs_poly_chunks,
-        ) = tracing::info_span!("split_polys").in_scope(|| {
-            let eq_poly_chunks = split_public_poly(eq_poly, log_num_workers);
-            let flag_poly_chunks =
-                Rep3MultilinearPolynomial::split_poly_vec(instruction_flags, log_num_workers);
-            let memory_poly_chunks =
-                Rep3MultilinearPolynomial::split_poly_vec(memory_polys, log_num_workers);
-            let lookup_outputs_poly_chunks =
-                Rep3MultilinearPolynomial::split_poly(lookup_outputs_poly, log_num_workers);
-            (
-                eq_poly_chunks,
-                flag_poly_chunks,
-                memory_poly_chunks,
-                lookup_outputs_poly_chunks,
-            )
-        });
-
-        // eq_poly_chunks.reverse();
-        // flag_poly_chunks.reverse();
-        // memory_poly_chunks.reverse();
-        // lookup_outputs_poly_chunks.reverse();
+        let (eq_poly_chunks, flag_poly_chunks, memory_poly_chunks, lookup_outputs_poly_chunks) =
+            tracing::info_span!("split_polys").in_scope(|| {
+                let eq_poly_chunks = split_public_poly(eq_poly, log_num_workers);
+                let flag_poly_chunks =
+                    Rep3MultilinearPolynomial::split_poly_vec(instruction_flags, log_num_workers);
+                let memory_poly_chunks =
+                    Rep3MultilinearPolynomial::split_poly_vec(memory_polys, log_num_workers);
+                let lookup_outputs_poly_chunks =
+                    Rep3MultilinearPolynomial::split_poly(lookup_outputs_poly, log_num_workers);
+                (
+                    eq_poly_chunks,
+                    flag_poly_chunks,
+                    memory_poly_chunks,
+                    lookup_outputs_poly_chunks,
+                )
+            });
 
         let worker_polys = itertools::multizip((
             eq_poly_chunks,
@@ -334,26 +323,26 @@ where
         Ok((r_primary_sumchecks, flag_evals, E_evals, outputs_eval))
     }
 
-    fn reorder_polys(
-        eq_poly: &mut MultilinearPolynomial<F>,
-        instruction_flags: &mut [Rep3MultilinearPolynomial<F>],
-        memory_polys: &mut [Rep3MultilinearPolynomial<F>],
-        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
-    ) {
-        let eq_poly_len = eq_poly.len();
+    // fn reorder_polys(
+    //     eq_poly: &mut MultilinearPolynomial<F>,
+    //     instruction_flags: &mut [Rep3MultilinearPolynomial<F>],
+    //     memory_polys: &mut [Rep3MultilinearPolynomial<F>],
+    //     lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
+    // ) {
+    //     let eq_poly_len = eq_poly.len();
 
-        instruction_flags.par_iter_mut().for_each(|flag_poly| {
-            flag_poly.reorder_poly((0, eq_poly_len - 1));
-        });
+    //     instruction_flags.par_iter_mut().for_each(|flag_poly| {
+    //         flag_poly.reorder_poly((0, eq_poly_len - 1));
+    //     });
 
-        memory_polys.par_iter_mut().for_each(|memory_poly| {
-            memory_poly.reorder_poly((0, eq_poly_len - 1));
-        });
-        rayon::join(
-            || lookup_outputs_poly.reorder_poly((0, eq_poly_len - 1)),
-            || eq_poly.as_dense_poly_mut().Z.swap(0, eq_poly_len - 1),
-        );
-    }
+    //     memory_polys.par_iter_mut().for_each(|memory_poly| {
+    //         memory_poly.reorder_poly((0, eq_poly_len - 1));
+    //     });
+    //     rayon::join(
+    //         || lookup_outputs_poly.reorder_poly((0, eq_poly_len - 1)),
+    //         || eq_poly.as_dense_poly_mut().Z.swap(0, eq_poly_len - 1),
+    //     );
+    // }
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner", fields(worker_id = io_ctx.network().worker_idx()))]
     fn prove_primary_sumcheck_inner(
@@ -534,7 +523,8 @@ where
                             {
                                 subtable_evals[*memory_index] = subtable_polys[*memory_index]
                                     .as_shared()
-                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh); // this is the bottleneck
+                                    .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
+                                // this is the bottleneck
                             }
                             toggled_flag_indices[instruction_index]
                                 .iter()
@@ -559,51 +549,6 @@ where
                                 flag_evals[instruction_index][j],
                             );
                         });
-
-                    // for j in 0..degree {
-                    //     let flag_eval = flag_evals[instruction_index][j];
-                    //     if flag_eval.is_zero() {
-                    //         continue;
-                    //     }; // Early exit if no contribution.
-
-                    //     let subtable_terms: Vec<_> = memory_indices
-                    //         .iter()
-                    //         .map(|memory_index| {
-                    //             if subtable_evals[*memory_index].is_empty() {
-                    //                 subtable_evals[*memory_index] = subtable_polys[*memory_index]
-                    //                     .as_shared()
-                    //                     .sumcheck_evals(i, degree, BindingOrder::LowToHigh);
-                    //             }
-                    //             subtable_evals[*memory_index][j]
-                    //         })
-                    //         .collect();
-
-                    //     let instruction_collation_eval =
-                    //         instruction.combine_lookups_rep3(&subtable_terms, C, M, io_ctx)?;
-                    //     // #[cfg(test)]
-                    //     // {
-                    //     //     let instruction_collation_eval_open =
-                    //     //         rep3::arithmetic::open_vec::<F, _>(
-                    //     //             &[instruction_collation_eval],
-                    //     //             io_ctx,
-                    //     //         )
-                    //     //         .unwrap()[0];
-                    //     //     let subtable_terms_open =
-                    //     //         rep3::arithmetic::open_vec::<F, _>(&subtable_terms, io_ctx)
-                    //     //             .unwrap();
-                    //     //     let instruction_collation_eval_check =
-                    //     //         instruction.combine_lookups(&subtable_terms_open, C, M);
-                    //     //     assert_eq!(
-                    //     //         instruction_collation_eval_check,
-                    //     //         instruction_collation_eval_open,
-                    //     //         "instruction {:?} combine_lookups_rep3 != combine_lookups",
-                    //     //         Rep3JoltInstructionSet::<F>::name(&instruction).to_string()
-                    //     //     );
-                    //     // }
-
-                    //     inner_sum[j] +=
-                    //         rep3::arithmetic::mul_public(instruction_collation_eval, flag_eval);
-                    // }
                 }
                 // drop(_span_enter);
                 // drop(span);

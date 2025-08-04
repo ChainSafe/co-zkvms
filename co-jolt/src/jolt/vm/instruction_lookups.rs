@@ -489,14 +489,13 @@ pub struct InstructionLookupsProof<
     _instructions: PhantomData<InstructionSet>,
     _subtables: PhantomData<Subtables>,
     primary_sumcheck: PrimarySumcheck<F, ProofTranscript>,
-    _marker: PhantomData<PCS>,
-    // memory_checking: MemoryCheckingProof<
-    //     F,
-    //     PCS,
-    //     InstructionLookupOpenings<F>,
-    //     NoExogenousOpenings,
-    //     ProofTranscript,
-    // >,
+    memory_checking: MemoryCheckingProof<
+        F,
+        PCS,
+        InstructionLookupOpenings<F>,
+        NoExogenousOpenings,
+        ProofTranscript,
+    >,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -589,21 +588,20 @@ where
             _marker: PhantomData,
         };
 
-        // let memory_checking = Self::prove_memory_checking(
-        //     generators,
-        //     preprocessing,
-        //     &polynomials.instruction_lookups,
-        //     polynomials,
-        //     opening_accumulator,
-        //     transcript,
-        // );
+        let memory_checking = Self::prove_memory_checking(
+            generators,
+            preprocessing,
+            &polynomials.instruction_lookups,
+            polynomials,
+            opening_accumulator,
+            transcript,
+        );
 
         InstructionLookupsProof {
             _instructions: PhantomData,
             _subtables: PhantomData,
             primary_sumcheck,
-            // memory_checking,
-            _marker: PhantomData,
+            memory_checking,
         }
     }
 
@@ -666,15 +664,15 @@ where
             transcript,
         );
 
-        // Self::verify_memory_checking(
-        //     preprocessing,
-        //     pcs_setup,
-        //     proof.memory_checking,
-        //     &commitments.instruction_lookups,
-        //     commitments,
-        //     opening_accumulator,
-        //     transcript,
-        // )?;
+        Self::verify_memory_checking(
+            preprocessing,
+            pcs_setup,
+            proof.memory_checking,
+            &commitments.instruction_lookups,
+            commitments,
+            opening_accumulator,
+            transcript,
+        )?;
 
         Ok(())
     }
