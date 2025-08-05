@@ -1300,7 +1300,7 @@ dependencies = [
  "bytesize",
  "clap",
  "color-eyre",
- "common 0.2.0",
+ "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "core_affinity",
  "crossbeam",
  "enum_dispatch",
@@ -1311,7 +1311,7 @@ dependencies = [
  "icicle-core",
  "icicle-runtime",
  "itertools 0.12.1",
- "jolt-core 0.1.0",
+ "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "mimalloc",
  "mpc-core 0.1.0",
  "mpc-net",
@@ -1330,7 +1330,7 @@ dependencies = [
  "strum_macros 0.26.4",
  "tokio",
  "toml 0.8.23",
- "tracer 0.2.0",
+ "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "tracing",
  "tracing-chrome",
  "tracing-forest",
@@ -1445,6 +1445,32 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
+dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "serde",
+ "serde_json",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "common"
+version = "0.2.0"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#b1b7727bee6633b113c62b36e74b376922660fe6"
+dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "serde",
+ "serde_json",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "common"
+version = "0.2.0"
+source = "git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2#42de0ca1f581dd212dda7ff44feee806556531d2"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "serde",
@@ -2240,14 +2266,14 @@ version = "0.1.0"
 dependencies = [
  "fibonacci-guest",
  "hex",
- "jolt-sdk 0.1.0",
+ "jolt-sdk 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
 ]
 
 [[package]]
 name = "fibonacci-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk 0.1.0",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
 ]
 
 [[package]]
@@ -2758,7 +2784,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3174,6 +3200,60 @@ dependencies = [
  "eyre",
  "fixedbitset 0.5.7",
  "getrandom 0.2.16",
+ "indicatif",
+ "itertools 0.10.5",
+ "lazy_static",
+ "memory-stats",
+ "num",
+ "num-derive",
+ "num-integer",
+ "num-traits",
+ "once_cell",
+ "paste",
+ "postcard",
+ "rand 0.7.3",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rand_distr",
+ "rayon",
+ "reqwest",
+ "serde",
+ "sha3",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "sys-info",
+ "target-lexicon",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracer 0.2.0",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "jolt-core"
+version = "0.1.0"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#b1b7727bee6633b113c62b36e74b376922660fe6"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-std 0.5.0",
+ "bincode",
+ "bytemuck",
+ "clap",
+ "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "dirs",
+ "enum_dispatch",
+ "eyre",
+ "fixedbitset 0.5.7",
+ "getrandom 0.2.16",
  "icicle-bn254",
  "icicle-core",
  "icicle-runtime",
@@ -3202,7 +3282,61 @@ dependencies = [
  "target-lexicon",
  "thiserror 1.0.69",
  "tokio",
- "tracer 0.2.0",
+ "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "jolt-core"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2#42de0ca1f581dd212dda7ff44feee806556531d2"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-std 0.5.0",
+ "bincode",
+ "bytemuck",
+ "clap",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "dirs",
+ "enum_dispatch",
+ "eyre",
+ "fixedbitset 0.5.7",
+ "getrandom 0.2.16",
+ "indicatif",
+ "itertools 0.10.5",
+ "lazy_static",
+ "memory-stats",
+ "num",
+ "num-derive",
+ "num-integer",
+ "num-traits",
+ "once_cell",
+ "paste",
+ "postcard",
+ "rand 0.7.3",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rand_distr",
+ "rayon",
+ "reqwest",
+ "serde",
+ "sha3",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "sys-info",
+ "target-lexicon",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber 0.3.19",
@@ -3298,6 +3432,34 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#b1b7727bee6633b113c62b36e74b376922660fe6"
+dependencies = [
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "jolt-sdk-macros 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "postcard",
+ "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+]
+
+[[package]]
+name = "jolt-sdk"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2#42de0ca1f581dd212dda7ff44feee806556531d2"
+dependencies = [
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "jolt-core 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "jolt-sdk-macros 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "postcard",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+]
+
+[[package]]
+name = "jolt-sdk"
+version = "0.1.0"
 source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
 dependencies = [
  "ark-bn254",
@@ -3314,6 +3476,28 @@ name = "jolt-sdk-macros"
 version = "0.1.0"
 dependencies = [
  "common 0.2.0",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#b1b7727bee6633b113c62b36e74b376922660fe6"
+dependencies = [
+ "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2#42de0ca1f581dd212dda7ff44feee806556531d2"
+dependencies = [
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -3645,6 +3829,7 @@ dependencies = [
 [[package]]
 name = "mpc-core"
 version = "0.9.0"
+source = "git+https://github.com/nulltea/co-snarks#3f84417fc08120f604fec2d7f0cfb281416c518d"
 dependencies = [
  "ark-bn254",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
@@ -3703,6 +3888,7 @@ dependencies = [
 [[package]]
 name = "mpc-types"
 version = "0.1.0"
+source = "git+https://github.com/nulltea/co-snarks#3f84417fc08120f604fec2d7f0cfb281416c518d"
 dependencies = [
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
@@ -5461,7 +5647,7 @@ dependencies = [
 name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk 0.1.0",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "sha2",
 ]
 
@@ -5498,7 +5684,7 @@ dependencies = [
 name = "sha3-chain-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git)",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "sha3",
 ]
 
@@ -5507,7 +5693,7 @@ name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
- "jolt-sdk 0.1.0",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "sha3-guest",
 ]
 
@@ -5515,7 +5701,7 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk 0.1.0",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "sha3",
 ]
 
@@ -6287,6 +6473,32 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "common 0.2.0",
+ "fnv",
+ "object",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "tracer"
+version = "0.2.0"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#b1b7727bee6633b113c62b36e74b376922660fe6"
+dependencies = [
+ "clap",
+ "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "fnv",
+ "object",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "tracer"
+version = "0.2.0"
+source = "git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2#42de0ca1f581dd212dda7ff44feee806556531d2"
+dependencies = [
+ "clap",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "fnv",
  "object",
  "tracing",

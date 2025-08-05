@@ -20,7 +20,7 @@ rand_chacha.workspace = true
 tracing.workspace = true
 
 mpc-types.workspace = true
-mpc-core.workspace = true
+mpc-core = { git = "https://github.com/nulltea/co-snarks" }
 mpc-net = { path = "../mpc-net" }
 
 [features]

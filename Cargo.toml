@@ -93,10 +93,9 @@ noirc_printable_type = { git = "https://github.com/noir-lang/noir", rev = "ceaa1
 # bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
 # bls12_381_blackbox_solver = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
 
-# mpc-types = { git = "https://github.com/nulltea/co-snarks" }
-# mpc-core = { git = "https://github.com/nulltea/co-snarks" }
-mpc-types = { path = "../co-snarks/mpc-types" }
-mpc-core = { path = "../co-snarks/mpc-core" }
+mpc-types = { git = "https://github.com/nulltea/co-snarks" }
+# mpc-types = { path = "../co-snarks/mpc-types" }
+# mpc-core = { path = "../co-snarks/mpc-core" }
 
 anyhow = "1.0.93"
 argh = "0.1.12"

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../../../jolt/jolt-sdk", features = ["host"] }
+# jolt-sdk = { path = "../../../../jolt/jolt-sdk", features = ["host"] }
+jolt-sdk = { git = "https://github.com/nulltea/jolt.git", branch = "co-jolt", features = ["host"] }
 guest = { package = "fibonacci-guest", path = "./guest" }
 hex = "0.4.3"

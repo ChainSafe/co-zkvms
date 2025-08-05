@@ -57,9 +57,9 @@ tokio = { version = "1.34.0", features = [
 
 # Jolt dependencies
 bincode = "1.3.3"
-jolt-core = { path = "../../jolt/jolt-core" }
-jolt-common = { path = "../../jolt/common", package = "common" }
-jolt-tracer = { path = "../../jolt/tracer", package = "tracer" }
+jolt-core = { git = "https://github.com/nulltea/jolt.git", branch = "co-jolt" }
+jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
+jolt-tracer = { git = "https://github.com/nulltea/jolt.git", package = "tracer", branch = "co-jolt" }
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
@@ -70,7 +70,7 @@ mpc-net = { path = "../mpc-net" }
 
 
 [build-dependencies]
-jolt-common = { path = "../../jolt/common", package = "common" }
+jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
 
 [features]
 default = ["std", "parallel"]
@@ -112,3 +112,8 @@ icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", feat
 icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
     # "cuda_backend",
 ], rev = "2441eba", optional = true }
+
+# [patch."https://github.com/nulltea/jolt.git"]
+# jolt-core = { path = "../../jolt/jolt-core" }
+# jolt-common = { path = "../../jolt/common", package = "common" }
+# jolt-tracer = { path = "../../jolt/tracer", package = "tracer" }

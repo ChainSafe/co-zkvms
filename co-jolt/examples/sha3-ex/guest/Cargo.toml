@@ -8,5 +8,5 @@ guest = []
 
 [dependencies]
 sha3 = { version = "0.10.8", default-features = false }
-jolt = { package = "jolt-sdk", path = "../../../../../jolt/jolt-sdk" }
-
+# jolt = { package = "jolt-sdk", path = "../../../../../jolt/jolt-sdk" }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt.git", rev = "42de0ca1f581dd212dda7ff44feee806556531d2" }
