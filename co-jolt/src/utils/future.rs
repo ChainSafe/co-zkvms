@@ -40,16 +40,12 @@ pub trait FutureExt<F: JoltField, T, Args> {
         MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync;
 }
 
-enum ValOrIndex<T> {
-    Val(T),
-    Mul(usize),
-}
-
 impl<F: JoltField, T, Args: Default> FutureExt<F, T, Args> for Vec<FutureVal<F, T, Args>>
 where
     T: Send,
     Args: Send + Default,
 {
+    #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
     fn fufill_batched<N: Rep3Network, MapFn>(
         mut self,
         io_ctx: &mut IoContext<N>,
@@ -65,8 +61,10 @@ where
                 _ => None,
             })
             .multiunzip();
+
         let c = if !a.is_empty() && !b.is_empty() {
-            rep3::arithmetic::mul_vec(&a, &b, io_ctx)?
+            tracing::trace_span!("mul_vec")
+                .in_scope(|| rep3::arithmetic::mul_vec(&a, &b, io_ctx))?
         } else {
             vec![]
         };
