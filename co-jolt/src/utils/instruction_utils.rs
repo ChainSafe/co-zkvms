@@ -4,7 +4,7 @@ pub use jolt_core::utils::instruction_utils::*;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
-use std::ops::Shr;
+use std::{collections::HashMap, ops::Shr};
 
 use crate::jolt::instruction::JoltInstruction;
 
@@ -94,6 +94,24 @@ where
         }
     }
     out
+}
+
+pub fn transpose_hashmap<T>(
+    rows: Vec<HashMap<usize, T>>,
+    index_map_fn: Option<impl Fn(usize) -> usize>,
+) -> (HashMap<usize, Vec<T>>, HashMap<usize, Vec<usize>>) {
+    let mut out: HashMap<usize, Vec<T>> = HashMap::new();
+    let mut index_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, row) in rows.into_iter().enumerate() {
+        for (k, v) in row {
+            out.entry(k).or_default().push(v);
+            index_map
+                .entry(k)
+                .or_default()
+                .push(index_map_fn.as_ref().map_or(i, |f| f(i)));
+        }
+    }
+    (out, index_map)
 }
 
 pub fn chunks_take_nth<'a, T>(
