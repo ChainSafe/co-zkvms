@@ -25,7 +25,7 @@ version = "1.0.0-beta.3"
 source = "git+https://github.com/noir-lang/noir?rev=ceaa1986628197bd1170147f6a07f0f98d21030a#ceaa1986628197bd1170147f6a07f0f98d21030a"
 dependencies = [
  "ark-bn254",
- "ark-ff 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "cfg-if",
  "hex",
@@ -139,7 +139,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "const-hex",
- "derive_more",
+ "derive_more 0.99.20",
  "hex-literal",
  "itoa",
  "k256 0.13.4",
@@ -338,8 +338,8 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
 dependencies = [
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
 ]
 
@@ -351,10 +351,10 @@ checksum = "1e0c292754729c8a190e50414fd1a37093c786c709899f29c9f7daccecfa855e"
 dependencies = [
  "ahash",
  "ark-crypto-primitives-macros",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-relations",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-snark",
  "ark-std 0.5.0",
  "blake2 0.10.6",
@@ -380,12 +380,32 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "ahash",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-poly 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "educe",
+ "fnv",
+ "hashbrown 0.15.4",
+ "itertools 0.13.0",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "zeroize",
+]
+
+[[package]]
+name = "ark-ec"
+version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-poly 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "educe",
  "fnv",
@@ -439,11 +459,30 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "ark-ff-asm 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff-macros 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "arrayvec",
+ "digest 0.10.7",
+ "educe",
+ "itertools 0.13.0",
+ "num-bigint 0.4.6",
+ "num-traits",
+ "paste",
+ "zeroize",
+]
+
+[[package]]
+name = "ark-ff"
+version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
- "ark-ff-asm 0.5.0",
- "ark-ff-macros 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ff-asm 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff-macros 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
@@ -474,6 +513,15 @@ checksum = "3ed4aa4fe255d0bc6d79373f7e31d2ea147bcf486cba1be5ba7ea85abdb92348"
 dependencies = [
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "ark-ff-asm"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -513,6 +561,18 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-traits",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "ark-ff-macros"
+version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "num-bigint 0.4.6",
@@ -529,8 +589,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef677b59f5aff4123207c4dceb1c0ec8fdde2d4af7886f48be42ad864bfa0352"
 dependencies = [
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
 ]
 
@@ -539,9 +599,9 @@ name = "ark-linear-sumcheck"
 version = "0.5.0"
 source = "git+https://github.com/nulltea/sumcheck#e0500b8ea9ad1e04de22aa9dc747e71e526ed147"
 dependencies = [
- "ark-ff 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "blake2 0.9.2",
  "hashbrown 0.15.4",
@@ -555,8 +615,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579305839da207f02b89cd1679e50e67b4331e2f9294a57693e5051b7703fe27"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "educe",
  "fnv",
@@ -567,11 +627,25 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "ahash",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "educe",
+ "fnv",
+ "hashbrown 0.15.4",
+]
+
+[[package]]
+name = "ark-poly"
+version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "educe",
  "fnv",
@@ -585,11 +659,11 @@ source = "git+https://github.com/nulltea/poly-commit#40eb68dea2ff7812c83795f555e
 dependencies = [
  "ahash",
  "ark-crypto-primitives",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-relations",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "blake2 0.10.6",
  "derivative",
@@ -607,7 +681,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec46ddc93e7af44bcab5230937635b06fb5744464dd6a7e7b083e80ebd274384"
 dependencies = [
- "ark-ff 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "tracing",
  "tracing-subscriber 0.2.25",
@@ -630,6 +704,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb7b85a02b83d2f22f89bd5cac66c9c89474240cb6207cb1efc16d098e822a5"
 dependencies = [
  "ark-std 0.4.0",
+ "digest 0.10.7",
+ "num-bigint 0.4.6",
+]
+
+[[package]]
+name = "ark-serialize"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "arrayvec",
  "digest 0.10.7",
  "num-bigint 0.4.6",
 ]
@@ -661,6 +747,16 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "ark-serialize-derive"
+version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64#4ae5018533f1e757bb321e21927c8bbbf8c27ffc"
 dependencies = [
  "proc-macro2",
@@ -674,9 +770,9 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d368e2848c2d4c129ce7679a7d0d2d612b6a274d3ea6a13bad4445d61b381b88"
 dependencies = [
- "ark-ff 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-relations",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
 ]
 
@@ -964,8 +1060,8 @@ dependencies = [
  "acir",
  "acvm_blackbox_solver",
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-grumpkin",
  "hex",
  "lazy_static",
@@ -1193,18 +1289,18 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-crypto-primitives",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-poly-commit",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "bincode",
  "bytesize",
  "clap",
  "color-eyre",
- "common",
+ "common 0.2.0",
  "core_affinity",
  "crossbeam",
  "enum_dispatch",
@@ -1215,7 +1311,7 @@ dependencies = [
  "icicle-core",
  "icicle-runtime",
  "itertools 0.12.1",
- "jolt-core",
+ "jolt-core 0.1.0",
  "mimalloc",
  "mpc-core 0.1.0",
  "mpc-net",
@@ -1234,7 +1330,7 @@ dependencies = [
  "strum_macros 0.26.4",
  "tokio",
  "toml 0.8.23",
- "tracer",
+ "tracer 0.2.0",
  "tracing",
  "tracing-chrome",
  "tracing-forest",
@@ -1247,12 +1343,12 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-crypto-primitives",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-poly-commit",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "bytesize",
  "clap",
@@ -1350,7 +1446,21 @@ dependencies = [
 name = "common"
 version = "0.2.0"
 dependencies = [
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "serde",
+ "serde_json",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "common"
+version = "0.2.0"
+source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "derive_more 2.0.1",
  "serde",
  "serde_json",
  "strum 0.26.3",
@@ -1722,6 +1832,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1772,6 +1902,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.104",
+]
+
+[[package]]
+name = "dory"
+version = "1.0.0"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#b22b6f08fdda11150e5826ee1cba0f6d12f977f7"
+dependencies = [
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "bincode",
+ "blake2 0.10.6",
+ "digest 0.10.7",
+ "jolt-optimizations",
+ "rand_chacha 0.3.1",
+ "rayon",
+ "serde",
+ "thiserror 2.0.12",
+ "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -2088,14 +2240,14 @@ version = "0.1.0"
 dependencies = [
  "fibonacci-guest",
  "hex",
- "jolt-sdk",
+ "jolt-sdk 0.1.0",
 ]
 
 [[package]]
 name = "fibonacci-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk",
+ "jolt-sdk 0.1.0",
 ]
 
 [[package]]
@@ -3008,15 +3160,15 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "bincode",
  "bytemuck",
  "clap",
- "common",
+ "common 0.2.0",
  "dirs",
  "enum_dispatch",
  "eyre",
@@ -3050,10 +3202,84 @@ dependencies = [
  "target-lexicon",
  "thiserror 1.0.69",
  "tokio",
- "tracer",
+ "tracer 0.2.0",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "jolt-core"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-std 0.5.0",
+ "bincode",
+ "bytemuck",
+ "clap",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git)",
+ "derive_more 2.0.1",
+ "dirs",
+ "dory",
+ "enum_dispatch",
+ "eyre",
+ "fixedbitset 0.5.7",
+ "getrandom 0.2.16",
+ "indicatif",
+ "itertools 0.10.5",
+ "jolt-optimizations",
+ "lazy_static",
+ "memory-stats",
+ "num",
+ "num-derive",
+ "num-integer",
+ "num-traits",
+ "once_cell",
+ "paste",
+ "postcard",
+ "rand 0.7.3",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rand_distr",
+ "rayon",
+ "reqwest",
+ "serde",
+ "sha3",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "sys-info",
+ "target-lexicon",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt.git)",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "jolt-optimizations"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#b41cf110459a4f971d6d71780a8d17f018f58159"
+dependencies = [
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "rayon",
 ]
 
 [[package]]
@@ -3061,19 +3287,44 @@ name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
- "ark-ec",
- "common",
- "jolt-core",
- "jolt-sdk-macros",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "common 0.2.0",
+ "jolt-core 0.1.0",
+ "jolt-sdk-macros 0.1.0",
  "postcard",
- "tracer",
+ "tracer 0.2.0",
+]
+
+[[package]]
+name = "jolt-sdk"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+dependencies = [
+ "ark-bn254",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git)",
+ "jolt-core 0.1.0 (git+https://github.com/a16z/jolt.git)",
+ "jolt-sdk-macros 0.1.0 (git+https://github.com/a16z/jolt.git)",
+ "postcard",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt.git)",
 ]
 
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
 dependencies = [
- "common",
+ "common 0.2.0",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+dependencies = [
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git)",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -3373,11 +3624,11 @@ name = "mpc-core"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "eyre",
  "itertools 0.12.1",
@@ -3396,10 +3647,10 @@ name = "mpc-core"
 version = "0.9.0"
 dependencies = [
  "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-grumpkin",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "async-trait",
  "bytes",
  "eyre",
@@ -3427,7 +3678,7 @@ dependencies = [
 name = "mpc-net"
 version = "0.4.0"
 dependencies = [
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "bincode",
  "bytes",
  "bytesize",
@@ -3453,9 +3704,9 @@ dependencies = [
 name = "mpc-types"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "eyre",
  "itertools 0.14.0",
  "num-bigint 0.4.6",
@@ -3543,8 +3794,8 @@ dependencies = [
  "anyhow",
  "argh",
  "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "base64 0.22.1",
  "bytes",
@@ -5198,6 +5449,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2-chain"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-sdk 0.1.0",
+ "sha2-chain-guest",
+]
+
+[[package]]
+name = "sha2-chain-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk 0.1.0",
+ "sha2",
+]
+
+[[package]]
 name = "sha3"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5218,11 +5486,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha3-chain"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git)",
+ "sha3-chain-guest",
+]
+
+[[package]]
+name = "sha3-chain-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git)",
+ "sha3",
+]
+
+[[package]]
 name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
- "jolt-sdk",
+ "jolt-sdk 0.1.0",
  "sha3-guest",
 ]
 
@@ -5230,7 +5515,7 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk",
+ "jolt-sdk 0.1.0",
  "sha3",
 ]
 
@@ -5330,12 +5615,12 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-crypto-primitives",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-poly-commit",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "merlin",
  "rand 0.8.5",
@@ -5374,12 +5659,12 @@ dependencies = [
  "anyhow",
  "ark-bn254",
  "ark-crypto-primitives",
- "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-poly-commit",
- "ark-serialize 0.5.0",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
  "bytesize",
  "itertools 0.12.1",
@@ -6001,9 +6286,31 @@ name = "tracer"
 version = "0.2.0"
 dependencies = [
  "clap",
- "common",
+ "common 0.2.0",
  "fnv",
  "object",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "tracer"
+version = "0.2.0"
+source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
+ "clap",
+ "common 0.2.0 (git+https://github.com/a16z/jolt.git)",
+ "derive_more 2.0.1",
+ "fnv",
+ "itertools 0.10.5",
+ "object",
+ "paste",
+ "rand 0.7.3",
+ "serde",
+ "serde_json",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]

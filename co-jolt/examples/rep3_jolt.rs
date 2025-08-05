@@ -104,10 +104,6 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    if config.is_coordinator {
-        // init_tracing();
-    }
-
     let mut program = host::Program::new("sha3-guest");
     // let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
@@ -134,9 +130,17 @@ pub fn run_party(
     let (program_io, trace) = program.trace::<F>(&inputs);
 
     let my_id = config.my_id;
+    let file = format!(
+        "trace-party{}-{}.json",
+        my_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    );
 
     let tracing_guard = if args.trace_parties && my_id == 0 {
-        init_tracing()
+        init_tracing(&file)
     } else {
         None
     };
@@ -186,6 +190,17 @@ pub fn run_coordinator(
     mut program: host::Program,
     inputs: Vec<u8>,
 ) -> Result<()> {
+    let file = format!(
+        "trace-coordinator-{}.json",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    );
+
+    // let tracing_guard = init_tracing(&file);
+
+
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
 
@@ -274,7 +289,7 @@ fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
     tracing::info!("opcodes_used: {:?}", opcodes_used);
 }
 
-pub fn init_tracing() -> Option<FlushGuard> {
+pub fn init_tracing(file: &str) -> Option<TracingGuard> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
@@ -287,16 +302,33 @@ pub fn init_tracing() -> Option<FlushGuard> {
     let subscriber = Registry::default().with(env_filter);
 
     if current_level == LevelFilter::TRACE {
-        println!("tracing...");
-        let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+        let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(file).build();
         let _ = tracing::subscriber::set_global_default(
             subscriber
                 .with(chrome_layer)
-                // .with(ForestLayer::default().with_level(LevelFilter::INFO)),
+                .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
         );
-        Some(_guard)
+        tracing::info!("tracing_chrome writes to file:{}", file);
+        Some(TracingGuard {
+            _guard: Some(_guard),
+            file: file.to_string(),
+        })
     } else {
         let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));
         None
+    }
+}
+
+pub struct TracingGuard {
+    _guard: Option<FlushGuard>,
+    file: String,
+}
+
+impl Drop for TracingGuard {
+    fn drop(&mut self) {
+        tracing::info!("tracing_chrome available at: {}", self.file);
+        if let Some(guard) = self._guard.take() {
+            drop(guard);
+        }
     }
 }

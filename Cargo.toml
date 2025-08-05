@@ -13,6 +13,10 @@ members = [
     "co-jolt/examples/fibonacci/guest",
     "co-jolt/examples/sha3-ex",
     "co-jolt/examples/sha3-ex/guest",
+    "co-jolt/examples/sha2-chain",
+    "co-jolt/examples/sha2-chain/guest",
+    "co-jolt/examples/sha3-chain",
+    "co-jolt/examples/sha3-chain/guest",
 ]
 
 [workspace.package]
