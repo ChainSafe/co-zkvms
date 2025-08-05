@@ -11,7 +11,7 @@ use jolt_core::poly::{
     unipoly::{CompressedUniPoly, UniPoly},
 };
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
@@ -97,18 +97,18 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         &mut self,
         claim: &F,
         eq_poly: &mut SplitEqPolynomial<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(Vec<F>, (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>))> {
         let num_rounds = eq_poly.get_num_vars();
 
         let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
-        let party_id = io_ctx.network.get_id();
+        let party_id = io_ctx.party_id();
         for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim, party_id);
             // append the prover's message to the transcript
-            io_ctx.network.send_response(cubic_poly.as_vec())?;
-            let (r_j, next_claim) = io_ctx.network.receive_request()?;
+            io_ctx.network().send_response(cubic_poly.as_vec())?;
+            let (r_j, next_claim) = io_ctx.network().receive_request()?;
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
@@ -124,7 +124,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         debug_assert_eq!(eq_poly.len(), 1);
 
         let final_claims = self.final_claims(party_id);
-        io_ctx.network.send_response(final_claims)?;
+        io_ctx.network().send_response(final_claims)?;
 
         Ok((r, final_claims))
     }
@@ -172,7 +172,7 @@ pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
     polys: &mut Vec<Poly>,
     comb_func: Func,
     combined_degree: usize,
-    io_ctx: &mut IoContext<Network>,
+    io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<(Vec<F>, Vec<F>)>
 where
     F: JoltField,
@@ -227,12 +227,12 @@ where
 
         eval_points.insert(1, previous_claim - eval_points[0]);
         let univariate_poly = UniPoly::from_evals(&eval_points);
-        io_ctx.network.send_response(univariate_poly.as_vec())?;
+        io_ctx.network().send_response(univariate_poly.as_vec())?;
 
         // append the prover's message to the transcript
         // compressed_poly.append_to_transcript(transcript);
         // let r_j = transcript.challenge_scalar();
-        let (r_j, next_claim) = io_ctx.network.receive_request()?;
+        let (r_j, next_claim) = io_ctx.network().receive_request()?;
         r.push(r_j);
 
         // bound all tables to the verifier's challenge

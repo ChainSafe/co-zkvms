@@ -166,7 +166,7 @@ where
             &polynomials.instruction_lookups,
             &polynomials,
             opening_accumulator,
-            io_ctx.main(),
+            io_ctx,
         )?;
 
         Ok(())
@@ -383,7 +383,7 @@ where
                     io_ctx,
                 )?;
 
-                let span = tracing::info_span!("coordinator_io");
+                let span = tracing::trace_span!("coordinator_io");
                 let _span_enter = span.enter();
                 io_ctx.network().send_response(round_evaluations)?;
 
@@ -450,12 +450,8 @@ where
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
-        let max_threads_per_worker =
-            rayon::current_num_threads() / (1 << io_ctx.network().log_num_workers_per_party());
-        let max_forks = std::cmp::min(max_threads_per_worker, 8);
-
         let evaluations: Vec<_> = io_ctx
-            .try_chunks(0..mle_half, max_forks, |i, io_ctx| {
+            .par_iter(0..mle_half, None, |i, io_ctx| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
                 let output_evals = lookup_outputs_poly.as_shared().sumcheck_evals(
                     i,
@@ -615,7 +611,7 @@ where
         _jolt_polynomials: &Rep3JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(
         <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
             F,
@@ -632,7 +628,7 @@ where
     )> {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
-        let party_id = io_ctx.network.party_id();
+        let party_id = io_ctx.party_id();
 
         let read_write_leaves: Vec<_> = (0..preprocessing.num_memories)
             .into_par_iter()

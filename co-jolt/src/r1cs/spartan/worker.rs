@@ -6,6 +6,7 @@ use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::network::IoContext;
+use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
@@ -82,7 +83,7 @@ where
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &Rep3JoltPolynomials<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.id;
         let flattened_polys: Vec<&Rep3MultilinearPolynomial<F>> = I::flatten::<C>()
@@ -95,7 +96,7 @@ where
         /* Sumcheck 1: Outer sumcheck */
         let span = span!(Level::INFO, "outer_sumcheck");
         let _guard = span.enter();
-        let tau = io_ctx.network.receive_request::<Vec<F>>()?;
+        let tau = io_ctx.network().receive_request::<Vec<F>>()?;
         let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly =
@@ -127,7 +128,8 @@ where
         let num_steps_bits = num_steps.ilog2() as usize;
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
-        let (inner_sumcheck_RLC, claim_inner_joint) = io_ctx.network.receive_request::<(F, F)>()?;
+        let (inner_sumcheck_RLC, claim_inner_joint) =
+            io_ctx.network().receive_request::<(F, F)>()?;
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
@@ -227,15 +229,17 @@ where
             MixedPolynomial::from_public_evals(eq_plus_one_rx_step, party_id),
         ];
 
-        let shift_sumcheck_claim = (0..1 << num_rounds_shift_sumcheck)
-            .into_par_iter()
-            .map(|i| {
-                let params: Vec<_> = shift_sumcheck_polys.iter().map(|poly| poly[i]).collect();
-                comb_func(&params)
-            })
-            .reduce(|| F::zero(), |acc, x| acc + x);
+        let shift_sumcheck_claim = tracing::trace_span!("shift_sumcheck_claim").in_scope(|| {
+            (0..1 << num_rounds_shift_sumcheck)
+                .into_par_iter()
+                .map(|i| {
+                    let params: Vec<_> = shift_sumcheck_polys.iter().map(|poly| poly[i]).collect();
+                    comb_func(&params)
+                })
+                .reduce(|| F::zero(), |acc, x| acc + x)
+        });
 
-        io_ctx.network.send_response(shift_sumcheck_claim)?;
+        io_ctx.network().send_response(shift_sumcheck_claim)?;
 
         let (shift_sumcheck_r, _shift_sumcheck_claims) = sumcheck::prove_arbitrary_worker(
             &shift_sumcheck_claim,
@@ -263,7 +267,7 @@ where
                 .iter()
                 .map(|x| x.into_additive(party_id))
                 .collect::<Vec<_>>(),
-            io_ctx,
+            io_ctx.main(),
         )?;
 
         // Shift sumcheck evaluations: evaluate z on ry_var
@@ -278,7 +282,7 @@ where
                 .iter()
                 .map(|x| x.into_additive(party_id))
                 .collect::<Vec<_>>(),
-            io_ctx,
+            io_ctx.main(),
         )?;
 
         Ok(())
@@ -290,22 +294,23 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
     num_rounds: usize,
     eq_poly: &mut GruenSplitEqPolynomial<F>,
     az_bz_cz_poly: &mut Rep3SpartanInterleavedPolynomial<F>,
-    io_ctx: &mut IoContext<Network>,
+    io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<(Vec<F>, [AdditiveShare<F>; 3])> {
     let mut r: Vec<F> = Vec::new();
     let mut claim = F::zero();
 
+    // TODO: parallelize into subnets
     for round in 0..num_rounds {
         if round == 0 {
-            az_bz_cz_poly.first_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx)?;
+            az_bz_cz_poly.first_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx.main())?;
         } else {
-            az_bz_cz_poly.subsequent_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx)?;
+            az_bz_cz_poly.subsequent_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx.main())?;
         }
     }
 
     let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.id);
 
-    io_ctx.network.send_response(final_evals.to_vec())?;
+    io_ctx.network().send_response(final_evals.to_vec())?;
 
     Ok((r, final_evals))
 }

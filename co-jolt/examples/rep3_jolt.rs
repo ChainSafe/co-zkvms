@@ -104,12 +104,15 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    let mut program = host::Program::new("sha3-guest");
+    let mut program = host::Program::new("sha2-chain-guest");
     // let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
     // let inputs = postcard::to_stdvec(&50u32).unwrap();
-    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&10u32).unwrap());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -160,11 +163,13 @@ pub fn run_party(
     let network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
+    let max_bytecode_size = bytecode.len().next_power_of_two();
+
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
         program_io.memory_layout,
         memory_init,
-        trace.len().next_power_of_two(),
+        max_bytecode_size,
         trace.len().next_power_of_two(),
         trace.len().next_power_of_two(),
     );
@@ -216,13 +221,14 @@ pub fn run_coordinator(
     }
 
     // use jolt_core::poly::commitment::mock::MockCommitScheme;
+    let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
         RV32IJoltVM::prover_preprocess(
             bytecode,
             program_io.memory_layout.clone(),
             memory_init,
-            num_inputs.next_power_of_two(),
+            max_bytecode_size,
             num_inputs.next_power_of_two(),
             num_inputs.next_power_of_two(),
         );

@@ -29,7 +29,7 @@ use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
@@ -833,12 +833,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
         &mut self,
         claim: &mut AdditiveShare<F>,
         r_grand_product: &mut Vec<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
-        if io_ctx.network.get_id() == rep3::PartyID::ID0 {
-            io_ctx.network.send_response(eq_poly.get_num_vars())?;
+        if io_ctx.party_id() == rep3::PartyID::ID0 {
+            io_ctx.network().send_response(eq_poly.get_num_vars())?;
         }
 
         let (r_sumcheck, _) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
@@ -909,7 +909,7 @@ where
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>); // (flags, fingerprints)
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self> {
+    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
         let (flags, fingerprints) = leaves;
         let batch_size = fingerprints.len();
         let tree_depth = fingerprints[0].len().log_2();
@@ -918,7 +918,7 @@ where
 
         let toggle_layer = Rep3BatchedGrandProductToggleLayer::new(flags, fingerprints);
         let mut sparse_layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
-        sparse_layers.push(toggle_layer.layer_output(io_ctx.id));
+        sparse_layers.push(toggle_layer.layer_output(io_ctx.party_id()));
 
         for i in 0..num_sparse_layers {
             let previous_layer = &sparse_layers[i];

@@ -65,13 +65,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 Vec::with_capacity(chunk_size * padded_num_constraints * 3);
             for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
                 // Uniform constraints
+                let span = tracing::trace_span!("uniform_constraints");
+                let _span_enter = span.enter();
                 for (constraint_index, constraint) in uniform_constraints.iter().enumerate() {
-                    // #[cfg(test)]
-                    // {
-                    //     let mut constraint_string = String::new();
-                    //     constraint.pretty_fmt::<4, JoltR1CSInputs, F>(&mut constraint_string, flattened_polynomials, step_index);
-                    //     println!("constraint[{constraint_index}] = {:?}", constraint_string);
-                    // }
                     let global_index = 3 * (step_index * padded_num_constraints + constraint_index);
 
                     // Az
@@ -123,6 +119,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         }
                     }
                 }
+                drop(_span_enter);
 
                 // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
                 let next_step_index = if step_index + 1 < num_steps {
@@ -132,6 +129,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 };
 
                 // Cross-step constraints
+                let span = tracing::trace_span!("cross_step_constraints");
+                let _span_enter = span.enter();
                 for (constraint_index, constraint) in cross_step_constraints.iter().enumerate() {
                     let global_index = 3
                         * (step_index * padded_num_constraints
@@ -170,6 +169,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     coeffs.push((global_index + 1, bz_coeff).into());
                     // Cz is always 0 for cross-step constraints
                 }
+                drop(_span_enter);
             }
 
             coeffs
@@ -214,6 +214,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
         // In the first round, we only need to compute the quadratic evaluation at infinity,
         // since the eval at zero is always zero.
+        let span = tracing::trace_span!("quadratic_eval_at_infty");
+        let _span_enter = span.enter();
         let quadratic_eval_at_infty = self
             .unbound_coeffs_shards
             .par_iter()
@@ -270,6 +272,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 shard_eval_point_infty
             })
             .sum_for(party_id);
+        drop(_span_enter);
 
         let r_i = process_eq_sumcheck_round_worker(
             (F::zero(), quadratic_eval_at_infty.as_additive()),
@@ -303,6 +306,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         }
         debug_assert_eq!(remainder.len(), 0);
 
+        let span = tracing::trace_span!("unbound_coeffs_shards");
+        let _span_enter = span.enter();
         self.unbound_coeffs_shards
             .par_iter()
             .zip_eq(output_slices.into_par_iter())
@@ -368,6 +373,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 }
                 debug_assert_eq!(output_index, output_slice_for_shard.len())
             });
+        drop(_span_enter);
 
         // Drop the unbound coeffs shards now that we've bound them
         self.unbound_coeffs_shards.clear();
@@ -409,6 +415,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .collect();
 
         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
+            let span = tracing::trace_span!("quadratic_evals_in_current_len_1");
+            let _span_enter = span.enter();
             let evals = chunks
                 .par_iter()
                 .flat_map_iter(|chunk| {
@@ -443,8 +451,11 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     || (AdditiveShare::zero(), AdditiveShare::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
+            drop(_span_enter);
             evals
         } else {
+            let span = tracing::trace_span!("quadratic_evals_in_current_len_gt_1");
+            let _span_enter = span.enter();
             let num_x_in_bits = eq_poly.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
 
@@ -501,6 +512,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     || (F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
+            drop(_span_enter);
             evals
         };
 
@@ -529,6 +541,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         }
         debug_assert_eq!(remainder.len(), 0);
 
+        let span = tracing::trace_span!("bind_chunks");
+        let _span_enter = span.enter();
         chunks
             .par_iter()
             .zip_eq(output_slices.into_par_iter())
@@ -595,6 +609,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 }
                 debug_assert_eq!(output_index, output_slice.len())
             });
+        drop(_span_enter);
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
         self.dense_len /= 2;

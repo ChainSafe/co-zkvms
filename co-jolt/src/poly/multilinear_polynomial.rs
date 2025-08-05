@@ -176,6 +176,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::linear_combination", level = "trace")]
     pub fn linear_combination(
         polynomials: &[&Self],
         coefficients: &[F],

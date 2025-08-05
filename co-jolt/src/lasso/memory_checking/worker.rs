@@ -13,7 +13,7 @@ use jolt_core::{
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::rep3::{
-    network::{IoContext, Rep3NetworkWorker},
+    network::{IoContext, IoContextPool, Rep3NetworkWorker},
     PartyID,
 };
 use mpc_net::mpc_star::MpcStarNetWorker;
@@ -56,7 +56,7 @@ where
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) =
             Self::prove_grand_products(
@@ -92,10 +92,10 @@ where
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
         pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
-        let (gamma, tau) = tracing::trace_span!("receive_gamma_tau").in_scope(|| io_ctx.network.receive_request())?;
+        let (gamma, tau) = tracing::trace_span!("receive_gamma_tau").in_scope(|| io_ctx.network().receive_request())?;
 
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,
@@ -114,7 +114,7 @@ where
                 .context("while computing init-final grand product")?;
 
         io_ctx
-            .network
+            .network()
             .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
 
         let r_read_write = read_write_circuit.prove_grand_product_worker(
@@ -144,7 +144,7 @@ where
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         r_read_write: &[F],
         r_init_final: &[F],
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let read_write_polys: Vec<&_> = polynomials
             .read_write_values()
@@ -163,7 +163,7 @@ where
                 .iter()
                 .map(|x| x.into_additive(io_ctx.id))
                 .collect::<Vec<_>>(),
-            io_ctx,
+            io_ctx.main(),
         )?;
         tracing::info!("read_write_evals appended");
 
@@ -180,7 +180,7 @@ where
                 .iter()
                 .map(|x| x.into_additive(io_ctx.id))
                 .collect::<Vec<_>>(),
-            io_ctx,
+            io_ctx.main(),
         )?;
         tracing::info!("init_final_evals appended");
 
@@ -196,7 +196,7 @@ where
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         gamma: &F,
         tau: &F,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(
         <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
             F,
@@ -224,7 +224,7 @@ where
             ProofTranscript,
             Network,
         >>::Leaves,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(Self::ReadWriteGrandProduct, Vec<F>)> {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves, io_ctx)?;
         let claims = batched_circuit.claimed_outputs();
@@ -243,7 +243,7 @@ where
             ProofTranscript,
             Network,
         >>::Leaves,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(Self::InitFinalGrandProduct, Vec<F>)> {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves, io_ctx)?;
         let claims = batched_circuit.claimed_outputs();

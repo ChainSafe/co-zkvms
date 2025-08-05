@@ -69,7 +69,7 @@ pub struct JoltRep3Prover<
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    pub io_ctx: IoContextPool<Network>, 
+    pub io_ctx: IoContextPool<Network>,
     pub preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     pub polynomials: Rep3JoltPolynomials<F>,
     pub r1cs_builder: CombinedUniformBuilder<C, F, Constraints::Inputs>,
@@ -158,7 +158,8 @@ where
 
                 (polynomials, program_io, trace_length)
             }
-            None => tracing::trace_span!("recieve_witness_polys").in_scope(|| io_ctx.network().receive_request())?,
+            None => tracing::trace_span!("recieve_witness_polys")
+                .in_scope(|| io_ctx.network().receive_request())?,
         };
         let r1cs_builder = Constraints::construct_constraints(
             trace_length.next_power_of_two(),
@@ -214,6 +215,9 @@ where
         polynomials
             .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, self.io_ctx.main())?;
 
+        let _ = tracing::trace_span!("coordinator_ready_to_prove")
+            .in_scope(|| self.io_ctx.network().receive_request::<bool>())?;
+
         let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
 
         let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
@@ -224,7 +228,7 @@ where
             &polynomials.bytecode,
             &polynomials,
             &mut opening_accumulator,
-            self.io_ctx.main(),
+            &mut self.io_ctx,
         )?;
         drop(_guard);
         drop(span);
@@ -246,7 +250,7 @@ where
             polynomials,
             &self.program_io,
             &mut opening_accumulator,
-            self.io_ctx.main(),
+            &mut self.io_ctx,
         )?;
 
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
@@ -254,7 +258,7 @@ where
             &self.spartan_key,
             polynomials,
             &mut opening_accumulator,
-            self.io_ctx.main(),
+            &mut self.io_ctx,
         )?;
 
         // Batch-prove all openings

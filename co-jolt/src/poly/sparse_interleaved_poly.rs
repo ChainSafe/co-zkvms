@@ -21,7 +21,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::{
-    IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
@@ -133,7 +133,10 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         name = "SparseInterleavedPolynomial::layer_output",
         level = "trace"
     )]
-    pub fn layer_output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Self> {
+    pub fn layer_output<N: Rep3NetworkWorker>(
+        &self,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<Self> {
         if let Some(coalesced) = &self.coalesced {
             Ok(Self {
                 dense_len: self.dense_len / 2,
@@ -143,10 +146,9 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
             })
         } else {
             let one_share = rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
-            let coeffs = self
-                .coeffs
-                .iter()
-                .map(|segment| {
+            let coeffs = io_ctx
+                .worker(0)
+                .par_iter(&self.coeffs, None, |segment, io_ctx| {
                     let mut output_segment: Vec<
                         FutureVal<F, SparseCoefficient<Rep3PrimeFieldShare<F>>, usize>,
                     > = Vec::with_capacity(segment.len());
@@ -185,7 +187,6 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                     }
                     output_segment.fufill_batched(io_ctx, |c, index| (index, c).into())
                 })
-                .collect::<eyre::Result<Vec<_>>>()
                 .context("while computing layer output")?;
 
             Ok(Self::new(coeffs, self.dense_len / 2, io_ctx.id))

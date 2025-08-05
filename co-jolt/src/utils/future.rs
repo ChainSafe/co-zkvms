@@ -40,10 +40,10 @@ pub trait FutureExt<F: JoltField, T, Args> {
         MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync;
 }
 
-impl<F: JoltField, T, Args: Default> FutureExt<F, T, Args> for Vec<FutureVal<F, T, Args>>
+impl<F: JoltField, T, Args> FutureExt<F, T, Args> for Vec<FutureVal<F, T, Args>>
 where
     T: Send,
-    Args: Send + Default,
+    Args: Send + Copy,
 {
     #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
     fn fufill_batched<N: Rep3Network, MapFn>(
@@ -69,23 +69,26 @@ where
             vec![]
         };
 
-        futures
-            .into_par_iter()
-            .zip(c.into_par_iter())
-            .for_each(|(f, c)| match f {
-                FutureVal::Pending(ArithmeticOp::Mul(..), args) => {
-                    *f = FutureVal::Ready(map(c, std::mem::take(args)));
-                }
-                _ => unreachable!(),
-            });
+        tracing::trace_span!("set_ready").in_scope(|| {
+            futures
+                .into_par_iter()
+                .zip(c.into_par_iter())
+                .for_each(|(f, c)| match f {
+                    FutureVal::Pending(ArithmeticOp::Mul(..), args) => {
+                        *f = FutureVal::Ready(map(c, *args));
+                    }
+                    _ => unreachable!(),
+                })
+        });
 
-        Ok(self
-            .into_par_iter()
-            .map(|f| match f {
-                FutureVal::Ready(t) => t,
-                _ => unreachable!(),
-            })
-            .collect())
+        Ok(tracing::trace_span!("map_ready").in_scope(|| {
+            self.into_par_iter()
+                .map(|f| match f {
+                    FutureVal::Ready(t) => t,
+                    _ => unreachable!(),
+                })
+                .collect()
+        }))
     }
 }
 

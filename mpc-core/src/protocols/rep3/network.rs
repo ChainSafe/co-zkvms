@@ -37,51 +37,99 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         &mut self.main.network
     }
 
-    pub fn try_chunks<T, R, M>(
+    /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
+    ///
+    /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.
+    ///
+    /// The `map` is a function that takes an input and an `IoContext` and returns a flattened result.
+    ///
+    /// The `max_forks` is the maximum number of forks to use.
+    /// If `None`, all forks are used. (Default: rayon::current_num_threads() / num_workers)
+    pub fn par_iter<T, R, MapFn>(
         &mut self,
-        inputs: impl IntoIterator<Item = T> + ExactSizeIterator,
-        max_forks: usize,
-        map_fn: M,
+        inputs: impl IntoParallelIterator<Item = T, Iter: IndexedParallelIterator>,
+        max_forks: Option<usize>,
+        map: MapFn,
     ) -> eyre::Result<Vec<R>>
     where
-        M: Fn(T, &mut IoContext<Network>) -> eyre::Result<R> + Sync + Send,
+        MapFn: Fn(T, &mut IoContext<Network>) -> eyre::Result<R> + Sync + Send,
         T: Sized + Send + Clone,
         R: Sync + Send,
     {
-        let len = inputs.len();
+        let inputs_iter = inputs.into_par_iter();
+        let max_forks = max_forks.unwrap_or(self.forks.len());
+        let len = inputs_iter.len();
 
         if max_forks == 0 {
-            return inputs
+            return inputs_iter
+                .collect::<Vec<_>>()
                 .into_iter()
-                .map(|val| map_fn(val, self.main()))
+                .map(|val| map(val, self.main()))
                 .collect::<eyre::Result<Vec<_>>>();
         }
 
         if len == 1 {
-            return Ok(vec![map_fn(
-                inputs.into_iter().next().unwrap(),
-                self.main(),
-            )?]);
+            return Ok(vec![map(inputs_iter.collect::<Vec<_>>().pop().unwrap(), self.main())?]);
         }
 
         let chunk_size = len.div_ceil(max_forks);
         assert!(chunk_size != 0);
         let forks = len.div_ceil(chunk_size);
 
-        inputs
-            .into_iter()
-            .collect_vec()
+        inputs_iter
             .into_par_iter()
             .chunks(chunk_size)
             .zip_eq(self.forks(forks).par_iter_mut())
             .map(|(chunk, mut ctx)| {
                 chunk
                     .into_iter()
-                    .map(|val| map_fn(val, &mut ctx))
+                    .map(|val| map(val, &mut ctx))
                     .collect_vec()
             })
             .flatten()
             .collect::<eyre::Result<Vec<_>>>()
+    }
+
+    /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
+    ///
+    /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.
+    ///
+    /// The `map` is a function that takes a chunk of inputs and an `IoContext` and returns a flattened result.
+    ///
+    /// The `chunk_size` is the size of each chunk.
+    /// If `None`, the chunk size is the number of inputs divided by the number of available forks.
+    pub fn par_chunks<T, R, MapFn>(
+        &mut self,
+        inputs: impl IntoParallelIterator<Item = T, Iter: IndexedParallelIterator>,
+        chunk_size: Option<usize>,
+        map: MapFn,
+    ) -> eyre::Result<Vec<R>>
+    where
+        MapFn: Fn(Vec<T>, &mut IoContext<Network>) -> eyre::Result<Vec<R>> + Sync + Send,
+        T: Sized + Send + Clone,
+        R: Sync + Send,
+    {
+        let inputs_iter = inputs.into_par_iter();
+        let len = inputs_iter.len();
+
+        let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
+        assert!(chunk_size != 0);
+        if len <= chunk_size {
+            return map(inputs_iter.collect(), self.main());
+        }
+        let forks = len.div_ceil(chunk_size);
+
+        Ok(inputs_iter
+            .into_par_iter()
+            .chunks(chunk_size)
+            .zip_eq(self.forks(forks).par_iter_mut())
+            .flat_map_iter(|(chunk, mut ctx)| {
+                map(chunk, &mut ctx)
+                    // .map(|r| r.into_iter().map(|r| Ok(r)))
+                    // .map_err(|e| iter::once(e))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>())
     }
 }
 
@@ -181,5 +229,9 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
     pub fn workers_mut(&mut self) -> &mut [WorkerIoContext<Network>] {
         &mut self.workers
+    }
+
+    pub fn party_id(&self) -> PartyID {
+        self.id
     }
 }

@@ -12,7 +12,7 @@ use jolt_core::{
     subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
     utils::thread::drop_in_background_thread,
 };
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
+use mpc_core::protocols::{additive, rep3::{network::IoContextPool, Rep3PrimeFieldShare}};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -93,7 +93,7 @@ where
     type Leaves;
 
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self>;
+    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self>;
 
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
@@ -114,16 +114,16 @@ where
         &mut self,
         _opening_accumulator: Option<&mut Rep3ProverOpeningAccumulator<F>>,
         _setup: Option<&PCS::Setup>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
         let outputs = self.claimed_outputs();
-        io_ctx.network.send_response(outputs.clone())?;
-        let (mut r, mut claim): (Vec<F>, F) = io_ctx.network.receive_request()?;
-        claim = additive::promote_to_trivial_share(claim, io_ctx.network.get_id());
+        io_ctx.network().send_response(outputs.clone())?;
+        let (mut r, mut claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
+        claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
         }
@@ -185,12 +185,12 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         &mut self,
         claim: &mut AdditiveShare<F>,
         r_grand_product: &mut Vec<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
-        if io_ctx.network.get_id() == rep3::PartyID::ID0 {
-            io_ctx.network.send_response(eq_poly.get_num_vars())?;
+        if io_ctx.party_id() == rep3::PartyID::ID0 {
+            io_ctx.network().send_response(eq_poly.get_num_vars())?;
         }
 
         let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
@@ -205,7 +205,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
             .collect_into_vec(r_grand_product);
 
         // produce a random challenge to condense two claims into a single claim
-        let r_layer = io_ctx.network.receive_request()?;
+        let r_layer = io_ctx.network().receive_request()?;
         *claim = rep3::arithmetic::add_mul_public(left_claim, right_claim - left_claim, r_layer)
             .into_additive();
 
@@ -230,7 +230,7 @@ where
     type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
 
     #[tracing::instrument(skip_all, name = "Rep3BatchedDenseGrandProduct::construct", level = "trace")]
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self> {
+    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
         let (leaves, batch_size) = leaves;
         assert!(leaves.len() % batch_size == 0);
         assert!((leaves.len() / batch_size).is_power_of_two());

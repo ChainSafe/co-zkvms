@@ -5,25 +5,23 @@ use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::element::SharedOrPublic;
 use crate::utils::transcript::TranscriptExt;
-use itertools::Itertools;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
-    ReadWriteMemoryStuff, RegisterAddressOpenings,
+    RegisterAddressOpenings,
 };
-use jolt_core::jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
-use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
-use jolt_core::utils::thread::unsafe_allocate_zero_vec;
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
@@ -73,7 +71,7 @@ where
         polynomials: &mut Rep3JoltPolynomials<F>,
         program_io: &Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         Self::prove_memory_checking(
             pcs_setup,
@@ -91,7 +89,7 @@ where
             io_ctx,
         )?;
 
-        let state: Option<ProofTranscript::State> = io_ctx.network.receive_request()?;
+        let state: Option<ProofTranscript::State> = io_ctx.network().receive_request()?;
 
         if let Some(state) = state {
             let mut transcript = ProofTranscript::from_state(state);
@@ -111,26 +109,28 @@ where
                 &mut transcript,
             );
 
-            opening_accumulator.append_public(&opening_accumulator_public.openings[0], io_ctx)?;
+            opening_accumulator
+                .append_public(&opening_accumulator_public.openings[0], io_ctx.main())?;
             io_ctx
-                .network
+                .network()
                 .send_response((timestamp_validity_proof, transcript.state()))?;
         } else {
-            opening_accumulator.receive_public_opening(io_ctx)?;
+            opening_accumulator.receive_public_opening(io_ctx.main())?;
         }
 
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove_outputs", level = "trace")]
     fn prove_outputs(
         polynomials: &Rep3ReadWriteMemoryPolynomials<F>,
         program_io: &Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let memory_size = polynomials.v_final.len();
         let num_rounds = memory_size.log_2();
-        let r_eq: Vec<F> = io_ctx.network.receive_request()?;
+        let r_eq: Vec<F> = io_ctx.network().receive_request()?;
         let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
 
         let input_start_index = memory_address_to_witness_index(
@@ -183,7 +183,7 @@ where
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
             &[sumcheck_openings[2]],
-            io_ctx,
+            io_ctx.main(),
         )?;
 
         Ok(())
@@ -214,7 +214,7 @@ where
         jolt_polynomials: &Rep3JoltPolynomials<F>,
         gamma: &F,
         tau: &F,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
         (Vec<Rep3PrimeFieldShare<F>>, usize),
         (Vec<Rep3PrimeFieldShare<F>>, usize),

@@ -9,6 +9,7 @@ use crate::{
     utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
 };
 use eyre::Context;
+use itertools::izip;
 use jolt_core::field::JoltField;
 use jolt_core::subprotocols::{
     grand_product::BatchedGrandProductLayer,
@@ -18,7 +19,9 @@ use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
-        network::{IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker},
+        network::{
+            IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+        },
         PartyID, Rep3PrimeFieldShare,
     },
 };
@@ -99,9 +102,17 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         Self::new(interleaved)
     }
 
-    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::uninterleave", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "DenseInterleavedPolynomial::uninterleave",
+        level = "trace"
+    )]
     pub fn uninterleave(&self) -> (Vec<Rep3PrimeFieldShare<F>>, Vec<Rep3PrimeFieldShare<F>>) {
-        let left: Vec<_> = self.coeffs[..self.len].par_iter().copied().step_by(2).collect();
+        let left: Vec<_> = self.coeffs[..self.len]
+            .par_iter()
+            .copied()
+            .step_by(2)
+            .collect();
         let mut right: Vec<_> = self.coeffs[..self.len]
             .par_iter()
             .copied()
@@ -114,14 +125,30 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         (left, right)
     }
 
-    #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::layer_output", level = "trace")]
-    pub fn layer_output<N: Rep3Network>(&self, io_ctx: &mut IoContext<N>) -> eyre::Result<Self> {
+    #[tracing::instrument(
+        skip_all,
+        name = "DenseInterleavedPolynomial::layer_output",
+        level = "trace"
+    )]
+    pub fn layer_output<N: Rep3NetworkWorker>(
+        &self,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<Self> {
         let (left, right) = self.uninterleave();
-        let span = tracing::trace_span!("mul_vec");
-        let _span_enter = span.enter();
-        let prod =
-            rep3::arithmetic::mul_vec_par(&left, &right, io_ctx).context("while multiplying left")?;
-        drop(_span_enter);
+        let prod = io_ctx
+            .worker(0)
+            .par_chunks(left.into_par_iter().zip(right.into_par_iter()), None, |chunk, io_ctx| {
+                let (left, right): (Vec<_>, Vec<_>) =
+                    tracing::trace_span!("unzip").in_scope(|| chunk.into_iter().unzip());
+                let span = tracing::trace_span!("mul_vec");
+                let _span_enter = span.enter();
+                rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")
+            })?;
+        // let span = tracing::trace_span!("mul_vec");
+        // let _span_enter = span.enter();
+        // let prod = rep3::arithmetic::mul_vec_par(&left, &right, io_ctx)
+        //     .context("while multiplying left")?;
+        // drop(_span_enter);
         Ok(Self::new(prod))
     }
 }

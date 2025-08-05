@@ -189,6 +189,8 @@ where
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
+        network.broadcast_request(true)?; // ready to prove
+
         let span = tracing::span!(tracing::Level::INFO, "BytecodeProof::prove");
         let _guard = span.enter();
         let bytecode_proof = BytecodeProof::coordinate_memory_checking(
