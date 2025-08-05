@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::utils::instruction_utils::{
-    chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_and_concatenate_operands
+    chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
+    concatenate_lookups_rep3_batched, rep3_chunk_and_concatenate_operands,
 };
 use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 
@@ -101,7 +102,11 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         M: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        Ok(concatenate_lookups_rep3_batched(vals, C, log2(M) as usize / 2))
+        Ok(concatenate_lookups_rep3_batched(
+            vals,
+            C,
+            log2(M) as usize / 2,
+        ))
     }
 
     fn to_indices_rep3(

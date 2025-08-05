@@ -11,7 +11,9 @@ use jolt_core::poly::{
     unipoly::{CompressedUniPoly, UniPoly},
 };
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
@@ -85,7 +87,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         previous_round_claim: F,
         party_id: PartyID,
     ) -> UniPoly<F>;
-    
+
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
     #[tracing::instrument(

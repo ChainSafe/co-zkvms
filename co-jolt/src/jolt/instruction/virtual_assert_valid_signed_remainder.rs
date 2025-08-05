@@ -256,14 +256,18 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         )
     }
 
-    #[tracing::instrument(skip_all, name = "AssertValidSignedRemainderInstruction::combine_lookups_rep3_batched", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "AssertValidSignedRemainderInstruction::combine_lookups_rep3_batched",
+        level = "trace"
+    )]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
         M: usize,
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {        
+    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         todo!()
     }
 
@@ -274,7 +278,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     //     M: usize,
     //     io_ctx: &mut IoContext<N>,
     // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    
+
     // }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

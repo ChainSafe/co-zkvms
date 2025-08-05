@@ -121,7 +121,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         _: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         assert!(C <= 10);
-        Ok(concatenate_lookups_rep3_batched(vals, C, (log2(M) / 2) as usize))
+        Ok(concatenate_lookups_rep3_batched(
+            vals,
+            C,
+            (log2(M) / 2) as usize,
+        ))
     }
 
     fn to_indices_rep3(

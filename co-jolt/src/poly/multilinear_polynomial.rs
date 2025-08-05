@@ -176,7 +176,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::linear_combination", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3MultilinearPolynomial::linear_combination",
+        level = "trace"
+    )]
     pub fn linear_combination(
         polynomials: &[&Self],
         coefficients: &[F],
@@ -308,21 +312,16 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         chunks
     }
 
-    pub fn reorder_poly(
-        &mut self,
-        swap: (usize, usize),
-    ) {
+    pub fn reorder_poly(&mut self, swap: (usize, usize)) {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
-                match poly {
-                    MultilinearPolynomial::LargeScalars(poly) => poly.Z.swap(swap.0, swap.1),
-                    MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                    MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                    MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                    MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                    MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                }
-            }
+            Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                MultilinearPolynomial::LargeScalars(poly) => poly.Z.swap(swap.0, swap.1),
+                MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+            },
             Rep3MultilinearPolynomial::Shared(poly) => poly.evals.swap(swap.0, swap.1),
         }
     }

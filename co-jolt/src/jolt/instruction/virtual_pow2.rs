@@ -76,7 +76,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         _: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         Ok(vec![Rep3PrimeFieldShare::zero_share(); vals[0].len()])
-
     }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {

@@ -135,15 +135,17 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<Self> {
         let (left, right) = self.uninterleave();
-        let prod = io_ctx
-            .worker(0)
-            .par_chunks(left.into_par_iter().zip(right.into_par_iter()), None, |chunk, io_ctx| {
+        let prod = io_ctx.worker(0).par_chunks(
+            left.into_par_iter().zip(right.into_par_iter()),
+            None,
+            |chunk, io_ctx| {
                 let (left, right): (Vec<_>, Vec<_>) =
                     tracing::trace_span!("unzip").in_scope(|| chunk.into_iter().unzip());
                 let span = tracing::trace_span!("mul_vec");
                 let _span_enter = span.enter();
                 rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")
-            })?;
+            },
+        )?;
         // let span = tracing::trace_span!("mul_vec");
         // let _span_enter = span.enter();
         // let prod = rep3::arithmetic::mul_vec_par(&left, &right, io_ctx)

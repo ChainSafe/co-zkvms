@@ -105,7 +105,6 @@ pub fn chunks_take_nth<'a, T>(
     (0..step).map(move |off| data.iter().skip(off).step_by(step).take(chunk_len))
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;

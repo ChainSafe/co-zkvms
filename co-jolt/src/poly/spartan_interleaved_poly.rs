@@ -56,7 +56,10 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
     ) -> Self {
         let num_steps = flattened_polynomials[0].len();
 
-        let num_chunks = std::cmp::min(rayon::current_num_threads().next_power_of_two() * 16, num_steps / 2);
+        let num_chunks = std::cmp::min(
+            rayon::current_num_threads().next_power_of_two() * 16,
+            num_steps / 2,
+        );
         let chunk_size = num_steps.div_ceil(num_chunks);
 
         // let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {

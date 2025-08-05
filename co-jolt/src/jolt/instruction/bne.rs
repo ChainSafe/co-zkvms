@@ -102,7 +102,11 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction<F> {
         ))
     }
 
-    #[tracing::instrument(skip_all, name = "BNEInstruction::combine_lookups_rep3_batched", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "BNEInstruction::combine_lookups_rep3_batched",
+        level = "trace"
+    )]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,

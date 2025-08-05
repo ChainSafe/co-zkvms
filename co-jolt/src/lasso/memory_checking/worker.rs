@@ -95,7 +95,8 @@ where
         io_ctx: &mut IoContextPool<Network>,
         pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
-        let (gamma, tau) = tracing::trace_span!("receive_gamma_tau").in_scope(|| io_ctx.network().receive_request())?;
+        let (gamma, tau) = tracing::trace_span!("receive_gamma_tau")
+            .in_scope(|| io_ctx.network().receive_request())?;
 
         let (read_write_leaves, init_final_leaves) = Self::compute_leaves(
             preprocessing,

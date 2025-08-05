@@ -99,7 +99,11 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         rep3::arithmetic::product(vals, io_ctx)
     }
 
-    #[tracing::instrument(skip_all, name = "BEQInstruction::combine_lookups_rep3_batched", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "BEQInstruction::combine_lookups_rep3_batched",
+        level = "trace"
+    )]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,

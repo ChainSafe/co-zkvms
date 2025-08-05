@@ -48,7 +48,6 @@ where
 
     pub fn setup<R: RngCore>(max_len: usize, rng: &mut R) -> PST13Setup<E> {
         let num_vars = max_len.log_2();
-        println!("num_vars: {}", num_vars);
         let uni_params = MultilinearPC::setup(num_vars, rng);
         // #[cfg(feature = "icicle")]
         // let gpu_g1 = Some(
@@ -374,9 +373,6 @@ where
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
         // reverse becasue evaluations via `DensePolynomial::bound_poly_var_top`
-
-        println!("opening_point: {:?}", opening_point.len());
-        println!("commitment: {:?}", commitment);
 
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         MultilinearPC::check(

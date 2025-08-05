@@ -29,7 +29,9 @@ use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
 use jolt_core::subprotocols::QuarkHybridLayerDepth;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
@@ -828,7 +830,11 @@ where
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorker<F, Network>
     for Rep3BatchedGrandProductToggleLayer<F>
 {
-    #[tracing::instrument(skip_all, name = "Rep3BatchedGrandProductToggleLayer::prove_layer", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3BatchedGrandProductToggleLayer::prove_layer",
+        level = "trace"
+    )]
     fn prove_layer(
         &mut self,
         claim: &mut AdditiveShare<F>,

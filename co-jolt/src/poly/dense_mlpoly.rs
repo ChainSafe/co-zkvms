@@ -143,7 +143,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let (mut a, mut b) = self.copy_poly_shares();
         rayon::join(|| a.bound_poly_var_bot(r), || b.bound_poly_var_bot(r));
-        
+
         *self = Self::from_poly_shares(a, b);
     }
 
@@ -288,12 +288,8 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         for _ in 0..1 << log_workers {
             res.push(Rep3MultilinearPolynomial::shared(
                 Rep3DensePolynomial::<F>::from_poly_shares(
-                    DensePolynomial::<F>::new(
-                        a_evals.drain(..chunk_size).collect(),
-                    ),
-                    DensePolynomial::<F>::new(
-                        b_evals.drain(..chunk_size).collect(),
-                    ),
+                    DensePolynomial::<F>::new(a_evals.drain(..chunk_size).collect()),
+                    DensePolynomial::<F>::new(b_evals.drain(..chunk_size).collect()),
                 ),
             ))
         }

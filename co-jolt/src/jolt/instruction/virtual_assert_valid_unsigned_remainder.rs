@@ -12,7 +12,9 @@ use jolt_core::{
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::{chunks_take_nth, rep3_chunk_and_concatenate_operands, transpose};
+use crate::utils::instruction_utils::{
+    chunks_take_nth, rep3_chunk_and_concatenate_operands, transpose,
+};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
@@ -148,7 +150,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(rep3::arithmetic::reshare_additive(sum + ltu_sum_eq_prod, io_ctx)? + divisor_is_zero)
     }
 
-    #[tracing::instrument(skip_all, name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3_batched", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3_batched",
+        level = "trace"
+    )]
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
@@ -184,9 +190,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
                 C,
                 batch_size,
             )
-            .map(|vals| {
-                rep3::arithmetic::promote_to_trivial_share(io_ctx.id, vals.product::<F>())
-            })
+            .map(|vals| rep3::arithmetic::promote_to_trivial_share(io_ctx.id, vals.product::<F>()))
             .collect_vec()
         };
 

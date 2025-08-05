@@ -205,7 +205,6 @@ pub fn run_coordinator(
 
     // let tracing_guard = init_tracing(&file);
 
-
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
 

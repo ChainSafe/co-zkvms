@@ -541,7 +541,7 @@ where
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
-        
+
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
