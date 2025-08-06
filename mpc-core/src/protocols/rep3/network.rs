@@ -69,7 +69,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         }
 
         if len == 1 {
-            return Ok(vec![map(inputs_iter.collect::<Vec<_>>().pop().unwrap(), self.main())?]);
+            return Ok(vec![map(
+                inputs_iter.collect::<Vec<_>>().pop().unwrap(),
+                self.main(),
+            )?]);
         }
 
         let chunk_size = len.div_ceil(max_forks);

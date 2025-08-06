@@ -8,7 +8,10 @@ use crate::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::{instruction_utils::transpose_hashmap, transcript::Transcript},
+    utils::{
+        instruction_utils::{transpose_flatten, transpose_hashmap},
+        transcript::Transcript,
+    },
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
@@ -450,6 +453,9 @@ where
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
 
+
+        println!("party: {:?} primary_sumcheck_prover_message", io_ctx.network().party_id());
+
         let precomputed_evals: Vec<_> = (0..mle_half)
             .into_par_iter()
             .map(|i| {
@@ -532,16 +538,18 @@ where
             })
             .collect();
 
+        println!("party: {:?} done precomputed_evals", io_ctx.network().party_id());
+
         let evaluations: Vec<_> = io_ctx
             .par_chunks(precomputed_evals, None, |chunk, io_ctx| {
                 let chunk_size = chunk.len();
                 let (
-                    mle_indices,                            // [mle_index; i]
-                    eq_evals,                               // [[eq_eval; degree]; i]
-                    output_evals,                           // [[output_eval; degree]; i]
-                    flag_evals,        // [[[flag_eval; degree]; instruction_index]; i]
-                    used_flag_indices, // [[[degree index where instruction is used]; flag_poly_index]; i]
-                    subtable_terms_batches_per_instruction, // [instruction_index -> [[subtable_eval; memory_index]; degree]; i]
+                    mle_indices,                            // [i: mle_index]
+                    eq_evals,                               // [i: [degree: eq_eval]]
+                    output_evals,                           // [i: [degree: output_eval]]
+                    flag_evals,        // [i: [instruction_index: [degree: flag_eval]]]
+                    used_flag_indices, // [i: [instruction_index: [idx for flag_evals[i][instruction_index][idx] != 0]]]
+                    subtable_eval_batches_per_mem_by_instr, // [i: instruction_index -> [memory_index: [subtable_eval for used_flag_indices[i][instruction_index]]]]
                 ): (
                     Vec<usize>,
                     Vec<Vec<F>>,
@@ -551,46 +559,61 @@ where
                     Vec<HashMap<usize, Vec<Vec<Rep3PrimeFieldShare<F>>>>>,
                 ) = chunk.into_iter().multiunzip();
 
-                // subtable_terms_batches_per_instruction: instruction_index -> [[[subtable_eval; memory_index]; degree]]
-                // subtable_terms_batches_per_instruction doesn't align by mle_index i.e. an instruction may be inactive for some mle_index
+                // `subtable_eval_batches_per_mem_batches_by_instr`: instruction_index -> [i: [memory_index: [idx: subtable_eval]]]
+                // subtable_eval_batches_per_mem_batches_by_instr` doesn't align by mle_index i.e. an instruction may be inactive for some mle_index
                 // i.e. mle_index in tuple != position in vector, so we do the following to align them later:
                 // mle_indices_per_instruction: instruction_index -> [mle_indices[i]]
-                let (subtable_terms_batches_per_instruction, mle_indices_per_instruction) =
-                    transpose_hashmap(
-                        subtable_terms_batches_per_instruction,
-                        Some(|index_in_chunk| mle_indices[index_in_chunk]),
-                    );
+                let (
+                    mut subtable_eval_batches_per_mem_batches_by_instr,
+                    mle_indices_per_instruction,
+                ) = transpose_hashmap(
+                    subtable_eval_batches_per_mem_by_instr,
+                    Some(|index_in_chunk| mle_indices[index_in_chunk]),
+                );
 
                 let mut inner_sums =
                     vec![vec![Rep3PrimeFieldShare::zero_share(); degree]; chunk_size];
 
-                for (instruction_index, subtable_terms_batches) in
-                    subtable_terms_batches_per_instruction
-                {
-                    let instruction: InstructionSet =
-                        InstructionSet::iter().nth(instruction_index).unwrap();
-                    //
-                    let subtable_terms_batches =
-                        subtable_terms_batches.into_iter().flatten().collect();
-                    let instruction_collation_evals = instruction.combine_lookups_rep3_batched(
-                        // todo: ensure that memory indexing and slice_values would work with greater batches..
-                        subtable_terms_batches, // todo make combine_lookups_rep3_batched take iterator
-                        C,
-                        M,
-                        io_ctx,
-                    )?;
+                println!("party: {:?} computed_evals for chunk size: {:?}", io_ctx.id, chunk_size);
 
-                    mle_indices.iter().enumerate().for_each(|(i, &mle_index)| {
-                        used_flag_indices[i][instruction_index]
-                            .iter()
-                            .enumerate()
-                            .for_each(|(index_in_terms_batch, &degree_index)| {
-                                inner_sums[i][degree_index] += rep3::arithmetic::mul_public(
-                                    instruction_collation_evals[todo!()],
-                                    flag_evals[i][instruction_index][degree_index],
-                                );
-                            });
-                    });
+                for (instruction_index, instruction) in InstructionSet::iter().enumerate() {
+                    if let Some(subtable_eval_batches_per_mem_batches) =
+                        subtable_eval_batches_per_mem_batches_by_instr.remove(&instruction_index)
+                    {
+                        println!("party: {:?} instruction: {:?}", io_ctx.id, Rep3JoltInstructionSet::<F>::name(&instruction));
+                        let subtable_eval_greater_batches_per_mem =
+                            transpose_flatten(subtable_eval_batches_per_mem_batches);
+
+                        // instruction_collation_evals: [i * degree: instruction_collation_eval]
+                        let instruction_collation_evals = instruction
+                            .combine_lookups_rep3_batched(
+                                subtable_eval_greater_batches_per_mem, // todo make combine_lookups_rep3_batched take iterator
+                                C,
+                                M,
+                                io_ctx,
+                            )?;
+
+                        let mut offset = 0;
+
+                        mle_indices.iter().enumerate().for_each(|(i, _)| {
+                            used_flag_indices[i][instruction_index]
+                                .iter()
+                                .enumerate()
+                                .for_each(|(index_in_terms_batch, &degree_index)| {
+                                    let degrees_used =
+                                        used_flag_indices[i][instruction_index].len();
+                                    if degrees_used > 0 {
+                                        inner_sums[i][degree_index] += rep3::arithmetic::mul_public(
+                                            instruction_collation_evals
+                                                [offset + index_in_terms_batch],
+                                            flag_evals[i][instruction_index][degree_index],
+                                        );
+                                    }
+                                });
+                            offset += used_flag_indices[i][instruction_index].len();
+                        });
+                        println!("party: {:?} instruction: {:?} done", io_ctx.id, Rep3JoltInstructionSet::<F>::name(&instruction));
+                    }
                 }
 
                 let evaluations_in_chunk: Vec<Vec<F>> = mle_indices
@@ -624,7 +647,7 @@ where
         // so we let coordinator do it instead of workers
         // evaluations.insert(1, previous_claim - evaluations[0]);
 
-        Ok(vec![F::zero(); degree])
+        Ok(evaluations)
     }
 
     /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression

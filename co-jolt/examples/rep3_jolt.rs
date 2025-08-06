@@ -54,8 +54,8 @@ const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-type CommitmentScheme = PST13<E>;
-// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+// type CommitmentScheme = PST13<E>;
+type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -104,8 +104,9 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    let mut program = host::Program::new("sha2-chain-guest");
     // let mut program = host::Program::new("fibonacci-guest");
+    // let mut program = host::Program::new("sha3-guest");
+    let mut program = host::Program::new("sha2-chain-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
     // let inputs = postcard::to_stdvec(&50u32).unwrap();

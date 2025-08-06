@@ -96,6 +96,41 @@ where
     out
 }
 
+pub fn transpose_flatten<I, T>(matrix: I) -> Vec<Vec<T>>
+where
+    I: IntoIterator<Item = Vec<Vec<T>>>, // [R][C][D] with D possibly var-length
+{
+    let mut rows = matrix.into_iter();
+    let first = match rows.next() {
+        Some(r) => r,
+        None    => return Vec::new(),
+    };
+    let cols = first.len();
+    let (low, _) = rows.size_hint();
+    // estimate avg depth from first row
+    let avg_depth = if cols > 0 {
+        first.iter().map(Vec::len).sum::<usize>() / cols
+    } else {
+        0
+    };
+    // pre-allocate each column to (rows_est × avg_depth)
+    let mut out: Vec<Vec<T>> = 
+        (0..cols).map(|_| Vec::with_capacity((low + 1) * avg_depth)).collect();
+
+    // flatten first row
+    for (c, dv) in first.into_iter().enumerate() {
+        out[c].extend(dv);
+    }
+    // flatten remaining rows
+    for row in rows {
+        assert_eq!(row.len(), cols, "ragged cols");
+        for (c, dv) in row.into_iter().enumerate() {
+            out[c].extend(dv);
+        }
+    }
+    out
+}
+
 pub fn transpose_hashmap<T>(
     rows: Vec<HashMap<usize, T>>,
     index_map_fn: Option<impl Fn(usize) -> usize>,
@@ -130,6 +165,17 @@ mod test {
     use ark_std::test_rng;
 
     type F = ark_bn254::Fr;
+
+    #[test]
+    fn test_transpose_flatten() {
+        let matrix = vec![vec![vec![(); 8]; 4], vec![vec![(); 8]; 4]];
+        let transposed = transpose_flatten(matrix);
+        assert_eq!(transposed.iter().map(|v| v.len()).collect::<Vec<_>>(), vec![16; 4]);
+
+        let matrix = vec![vec![vec![(); 7]; 4], vec![vec![(); 8]; 4]];
+        let transposed = transpose_flatten(matrix);
+        assert_eq!(transposed.iter().map(|v| v.len()).collect::<Vec<_>>(), vec![15; 4]);
+    }
 
     #[test]
     fn test_chunk_and_concatenate_operands() {
