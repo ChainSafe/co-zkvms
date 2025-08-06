@@ -103,7 +103,7 @@ where
     let mut rows = matrix.into_iter();
     let first = match rows.next() {
         Some(r) => r,
-        None    => return Vec::new(),
+        None => return Vec::new(),
     };
     let cols = first.len();
     let (low, _) = rows.size_hint();
@@ -114,8 +114,9 @@ where
         0
     };
     // pre-allocate each column to (rows_est × avg_depth)
-    let mut out: Vec<Vec<T>> = 
-        (0..cols).map(|_| Vec::with_capacity((low + 1) * avg_depth)).collect();
+    let mut out: Vec<Vec<T>> = (0..cols)
+        .map(|_| Vec::with_capacity((low + 1) * avg_depth))
+        .collect();
 
     // flatten first row
     for (c, dv) in first.into_iter().enumerate() {
@@ -131,22 +132,14 @@ where
     out
 }
 
-pub fn transpose_hashmap<T>(
-    rows: Vec<HashMap<usize, T>>,
-    index_map_fn: Option<impl Fn(usize) -> usize>,
-) -> (HashMap<usize, Vec<T>>, HashMap<usize, Vec<usize>>) {
+pub fn transpose_hashmap<T>(rows: Vec<HashMap<usize, T>>) -> HashMap<usize, Vec<T>> {
     let mut out: HashMap<usize, Vec<T>> = HashMap::new();
-    let mut index_map: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, row) in rows.into_iter().enumerate() {
         for (k, v) in row {
             out.entry(k).or_default().push(v);
-            index_map
-                .entry(k)
-                .or_default()
-                .push(index_map_fn.as_ref().map_or(i, |f| f(i)));
         }
     }
-    (out, index_map)
+    out
 }
 
 pub fn chunks_take_nth<'a, T>(
@@ -170,11 +163,17 @@ mod test {
     fn test_transpose_flatten() {
         let matrix = vec![vec![vec![(); 8]; 4], vec![vec![(); 8]; 4]];
         let transposed = transpose_flatten(matrix);
-        assert_eq!(transposed.iter().map(|v| v.len()).collect::<Vec<_>>(), vec![16; 4]);
+        assert_eq!(
+            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
+            vec![16; 4]
+        );
 
         let matrix = vec![vec![vec![(); 7]; 4], vec![vec![(); 8]; 4]];
         let transposed = transpose_flatten(matrix);
-        assert_eq!(transposed.iter().map(|v| v.len()).collect::<Vec<_>>(), vec![15; 4]);
+        assert_eq!(
+            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
+            vec![15; 4]
+        );
     }
 
     #[test]

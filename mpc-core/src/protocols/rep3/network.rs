@@ -37,6 +37,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         &mut self.main.network
     }
 
+    pub fn party_id(&self) -> PartyID {
+        self.main.id
+    }
+
     /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
     ///
     /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.

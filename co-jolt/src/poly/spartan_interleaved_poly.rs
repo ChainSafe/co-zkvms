@@ -68,8 +68,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 Vec::with_capacity(chunk_size * padded_num_constraints * 3);
             for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
                 // Uniform constraints
-                let span = tracing::trace_span!("uniform_constraints");
-                let _span_enter = span.enter();
                 for (constraint_index, constraint) in uniform_constraints.iter().enumerate() {
                     let global_index = 3 * (step_index * padded_num_constraints + constraint_index);
 
@@ -122,7 +120,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         }
                     }
                 }
-                drop(_span_enter);
 
                 // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
                 let next_step_index = if step_index + 1 < num_steps {
@@ -132,8 +129,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 };
 
                 // Cross-step constraints
-                let span = tracing::trace_span!("cross_step_constraints");
-                let _span_enter = span.enter();
                 for (constraint_index, constraint) in cross_step_constraints.iter().enumerate() {
                     let global_index = 3
                         * (step_index * padded_num_constraints
@@ -172,7 +167,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     coeffs.push((global_index + 1, bz_coeff).into());
                     // Cz is always 0 for cross-step constraints
                 }
-                drop(_span_enter);
             }
 
             coeffs

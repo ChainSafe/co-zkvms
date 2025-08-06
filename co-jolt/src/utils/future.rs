@@ -63,32 +63,29 @@ where
             .multiunzip();
 
         let c = if !a.is_empty() && !b.is_empty() {
-            tracing::trace_span!("mul_vec")
-                .in_scope(|| rep3::arithmetic::mul_vec(&a, &b, io_ctx))?
+           rep3::arithmetic::mul_vec(&a, &b, io_ctx)?
         } else {
             vec![]
         };
 
-        tracing::trace_span!("set_ready").in_scope(|| {
-            futures
-                .into_par_iter()
-                .zip(c.into_par_iter())
-                .for_each(|(f, c)| match f {
-                    FutureVal::Pending(ArithmeticOp::Mul(..), args) => {
-                        *f = FutureVal::Ready(map(c, *args));
-                    }
-                    _ => unreachable!(),
-                })
-        });
+        futures
+            .into_par_iter()
+            .zip(c.into_par_iter())
+            .for_each(|(f, c)| match f {
+                FutureVal::Pending(ArithmeticOp::Mul(..), args) => {
+                    *f = FutureVal::Ready(map(c, *args));
+                }
+                _ => unreachable!(),
+            });
 
-        Ok(tracing::trace_span!("map_ready").in_scope(|| {
+        Ok(
             self.into_par_iter()
                 .map(|f| match f {
                     FutureVal::Ready(t) => t,
                     _ => unreachable!(),
                 })
                 .collect()
-        }))
+        )
     }
 }
 

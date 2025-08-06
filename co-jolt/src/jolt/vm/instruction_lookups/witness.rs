@@ -318,6 +318,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 read_cts: std::mem::take(&mut read_cts_shares[i]),
                 final_cts: std::mem::take(&mut final_cts_shares[i]),
                 E_polys: std::mem::take(&mut e_polys_shares[i]),
+                // E_polys: Rep3MultilinearPolynomial::public_with_trivial_share_vec(
+                //     E_polys.clone(),
+                //     party_ids[i],
+                // ),
                 lookup_outputs: std::mem::take(&mut lookup_outputs_shares[i]),
                 instruction_flags: Rep3MultilinearPolynomial::public_with_trivial_share_vec(
                     instruction_flags.clone(),

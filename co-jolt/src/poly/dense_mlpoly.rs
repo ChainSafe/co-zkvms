@@ -27,15 +27,18 @@ pub struct Rep3DensePolynomial<F: JoltField> {
     // pub party_id: usize,
     pub num_vars: usize,
     pub evals: Vec<Rep3PrimeFieldShare<F>>,
-    // pub a: DensePolynomial<F>,
-    // pub b: DensePolynomial<F>,
+    pub binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
 }
 
 impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn new(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         let num_vars = evals.len().log_2();
 
-        Rep3DensePolynomial { num_vars, evals }
+        Rep3DensePolynomial {
+            num_vars,
+            evals,
+            binding_scratch_space: None,
+        }
     }
     pub fn new_padded(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
@@ -47,6 +50,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars,
             evals: poly_evals,
+            binding_scratch_space: None,
         }
     }
 
@@ -68,42 +72,18 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn into_poly_shares(self) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        let mut a = Vec::with_capacity(1 << self.num_vars);
-        let mut b = Vec::with_capacity(1 << self.num_vars);
-        for share in self.evals {
-            a.push(share.a);
-            b.push(share.b);
-        }
+        let (a, b) = self
+            .evals
+            .into_iter()
+            .map(|share| (share.a, share.b))
+            .unzip();
         (DensePolynomial::new(a), DensePolynomial::new(b))
     }
 
-    pub fn copy_poly_shares(&self) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        let mut a = Vec::with_capacity(1 << self.num_vars);
-        let mut b = Vec::with_capacity(1 << self.num_vars);
-        for share in &self.evals {
-            a.push(share.a);
-            b.push(share.b);
-        }
-        (DensePolynomial::new(a), DensePolynomial::new(b))
-    }
-
+    #[inline]
+    #[tracing::instrument(skip_all, level = "trace")]
     pub fn copy_share_a(&self) -> DensePolynomial<F> {
-        let mut a = Vec::with_capacity(1 << self.num_vars);
-        for share in &self.evals {
-            a.push(share.a);
-        }
-        DensePolynomial::new(a)
-    }
-
-    pub fn split(&self, idx: usize) -> (Self, Self) {
-        let (a, b) = self.copy_poly_shares();
-        let (left_a, right_a) = a.split(idx);
-        let (left_b, right_b) = b.split(idx);
-        assert!(idx < self.len());
-        (
-            Self::from_poly_shares(left_a, left_b),
-            Self::from_poly_shares(right_a, right_b),
-        )
+        DensePolynomial::new(self.evals.par_iter().map(|share| share.a).collect())
     }
 
     #[inline]
@@ -113,17 +93,34 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         degree: usize,
         order: BindingOrder,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let (a, b) = self.copy_poly_shares();
-
-        let evals_a = MultilinearPolynomial::LargeScalars(a).sumcheck_evals(index, degree, order);
-        let evals_b = MultilinearPolynomial::LargeScalars(b).sumcheck_evals(index, degree, order);
-
-        assert_eq!(evals_a.len(), evals_b.len());
-        evals_a
-            .into_iter()
-            .zip(evals_b.into_iter())
-            .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
-            .collect()
+        let mut evals = vec![Rep3PrimeFieldShare::zero_share(); degree];
+        match order {
+            BindingOrder::HighToLow => {
+                evals[0] = self[index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[index + self.len() / 2];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+            BindingOrder::LowToHigh => {
+                evals[0] = self[2 * index];
+                if degree == 1 {
+                    return evals;
+                }
+                let mut eval = self[2 * index + 1];
+                let m = eval - evals[0];
+                for i in 1..degree {
+                    eval += m;
+                    evals[i] = eval;
+                }
+            }
+        }
+        evals
     }
 
     pub fn split_evals(
@@ -134,53 +131,66 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
-        let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(|| a.bound_poly_var_top(r), || b.bound_poly_var_top(r));
+        let n = self.len() / 2;
+        let (left, right) = self.evals.split_at_mut(n);
 
-        *self = Self::from_poly_shares(a, b);
+        left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
+            *a += rep3::arithmetic::mul_public(*b - *a, *r);
+        });
+
+        self.num_vars -= 1;
+        self.evals.truncate(n);
     }
 
     pub fn bound_poly_var_bot(&mut self, r: &F) {
-        let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(|| a.bound_poly_var_bot(r), || b.bound_poly_var_bot(r));
+        let n = self.len() / 2;
+        for i in 0..n {
+            self.evals[i] = self.evals[2 * i]
+                + rep3::arithmetic::mul_public(self.evals[2 * i + 1] - self.evals[2 * i], *r);
+        }
 
-        *self = Self::from_poly_shares(a, b);
+        self.num_vars -= 1;
+        self.evals.truncate(n);
     }
 
-    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
-        let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(
-            || a.bound_poly_var_bot_01_optimized(r),
-            || b.bound_poly_var_bot_01_optimized(r),
-        );
+    pub fn bound_poly_var_bot_parallel(&mut self, r: &F) {
+        let n = self.len() / 2;
 
-        *self = Self::from_poly_shares(a, b);
+        if self.binding_scratch_space.is_none() {
+            self.binding_scratch_space = Some(unsafe_allocate_zero_share_vec(n));
+        }
+
+        let scratch_space = self.binding_scratch_space.as_mut().unwrap();
+
+        scratch_space
+            .par_iter_mut()
+            .take(n)
+            .enumerate()
+            .for_each(|(i, z)| {
+                let m = self.evals[2 * i + 1] - self.evals[2 * i];
+                *z = self.evals[2 * i] + rep3::arithmetic::mul_public(m, *r)
+            });
+
+        std::mem::swap(&mut self.evals, scratch_space);
+
+        self.num_vars -= 1;
+        self.evals.truncate(n);
     }
 
-    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F) {
-        let (mut a, mut b) = self.copy_poly_shares();
-        rayon::join(
-            || a.bound_poly_var_top_zero_optimized(r),
-            || b.bound_poly_var_top_zero_optimized(r),
-        );
+    pub fn bound_poly_var_top_parallel(&mut self, r: &F) {
+        let n = self.len() / 2;
 
-        *self = Self::from_poly_shares(a, b);
-    }
+        let (left, right) = self.evals.split_at_mut(n);
 
-    pub fn fix_var_top_many_ones(&mut self, r: &F) {
-        let (mut a, mut b) = self.copy_poly_shares();
-        a.bound_poly_var_top_many_ones(r);
-        b.bound_poly_var_top_many_ones(r);
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .filter(|(&mut a, &b)| a != b)
+            .for_each(|(a, b)| {
+                *a += rep3::arithmetic::mul_public(*b - *a, *r);
+            });
 
-        *self = Self::from_poly_shares(a, b);
-    }
-
-    pub fn new_poly_from_fix_var_top(&self, r: &F) -> Self {
-        let (a, b) = self.copy_poly_shares();
-        let a = a.new_poly_from_bound_poly_var_top(r);
-        let b = b.new_poly_from_bound_poly_var_top(r); // TODO: check if this is correct with rep3 shares
-
-        Self::from_poly_shares(a, b)
+        self.num_vars -= 1;
+        self.evals.truncate(n);
     }
 
     pub fn evaluate(&self, r: &[F]) -> F {
@@ -270,27 +280,23 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars: 0,
             evals: vec![Rep3PrimeFieldShare::zero()],
+            binding_scratch_space: None,
         }
     }
 
     pub fn split_poly(
-        polys: Rep3DensePolynomial<F>,
+        poly: Rep3DensePolynomial<F>,
         log_workers: usize,
     ) -> Vec<Rep3MultilinearPolynomial<F>> {
-        let nv = polys.num_vars - log_workers;
+        let nv = poly.num_vars - log_workers;
         let chunk_size = 1 << nv;
         let mut res = Vec::new();
 
-        let (a, b) = polys.copy_poly_shares();
-        let mut a_evals = a.Z;
-        let mut b_evals = b.Z;
+        let mut evals = poly.evals;
 
         for _ in 0..1 << log_workers {
             res.push(Rep3MultilinearPolynomial::shared(
-                Rep3DensePolynomial::<F>::from_poly_shares(
-                    DensePolynomial::<F>::new(a_evals.drain(..chunk_size).collect()),
-                    DensePolynomial::<F>::new(b_evals.drain(..chunk_size).collect()),
-                ),
+                Rep3DensePolynomial::<F>::new(evals.drain(..chunk_size).collect()),
             ))
         }
 
@@ -314,8 +320,8 @@ impl<F: JoltField> PolynomialBinding<F> for Rep3DensePolynomial<F> {
     #[inline]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match order {
-            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
-            BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
+            BindingOrder::LowToHigh => self.bound_poly_var_bot_parallel(&r),
+            BindingOrder::HighToLow => self.bound_poly_var_top_parallel(&r),
         }
     }
 
@@ -460,6 +466,35 @@ pub fn generate_poly_shares_rep3_vec<F: JoltField, R: Rng>(
     }
 
     shares_of_polys
+}
+
+#[tracing::instrument(skip_all, level = "trace")]
+pub fn unsafe_allocate_zero_share_vec<F: JoltField + Sized>(
+    size: usize,
+) -> Vec<Rep3PrimeFieldShare<F>> {
+    // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
+
+    // Check for safety of 0 allocation
+    unsafe {
+        let value = &Rep3PrimeFieldShare::<F>::zero_share();
+        let ptr = value as *const Rep3PrimeFieldShare<F> as *const u8;
+        let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+        assert!(bytes.iter().all(|&byte| byte == 0));
+    }
+
+    // Bulk allocate zeros, unsafely
+    let result: Vec<Rep3PrimeFieldShare<F>>;
+    unsafe {
+        let layout = std::alloc::Layout::array::<Rep3PrimeFieldShare<F>>(size).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut Rep3PrimeFieldShare<F>;
+
+        if ptr.is_null() {
+            panic!("Zero vec allocation failed");
+        }
+
+        result = Vec::from_raw_parts(ptr, size, size);
+    }
+    result
 }
 
 #[cfg(test)]

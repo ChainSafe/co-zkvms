@@ -13,6 +13,7 @@ use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
 };
+use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
 use rayon::prelude::*;
@@ -312,17 +313,53 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         chunks
     }
 
-    pub fn reorder_poly(&mut self, swap: (usize, usize)) {
+    #[inline]
+    pub fn sumcheck_evals_into_share(
+        &self,
+        index: usize,
+        degree: usize,
+        order: BindingOrder,
+        party_id: PartyID,
+    ) -> Vec<Rep3PrimeFieldShare<F>> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => {
+                rep3::arithmetic::promote_to_trivial_shares(
+                    poly.sumcheck_evals(index, degree, order),
+                    party_id,
+                )
+            }
+            Rep3MultilinearPolynomial::Shared(poly) => poly.sumcheck_evals(index, degree, order),
+        }
+    }
+
+    pub fn final_sumcheck_claim_safe(&self) -> SharedOrPublic<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim().into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.evals[0].into(),
+        }
+    }
+
+    pub fn set_bound_eval(&mut self, index: usize, eval: SharedOrPublic<F>) {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
-                MultilinearPolynomial::LargeScalars(poly) => poly.Z.swap(swap.0, swap.1),
-                MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                MultilinearPolynomial::U64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
-                MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.swap(swap.0, swap.1),
+                MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] = eval.as_public(),
+                MultilinearPolynomial::U8Scalars(poly) => {
+                    poly.bound_coeffs[index] = eval.as_public()
+                }
+                MultilinearPolynomial::U16Scalars(poly) => {
+                    poly.bound_coeffs[index] = eval.as_public()
+                }
+                MultilinearPolynomial::U32Scalars(poly) => {
+                    poly.bound_coeffs[index] = eval.as_public()
+                }
+                MultilinearPolynomial::U64Scalars(poly) => {
+                    poly.bound_coeffs[index] = eval.as_public()
+                }
+                MultilinearPolynomial::I64Scalars(poly) => {
+                    poly.bound_coeffs[index] = eval.as_public()
+                }
             },
-            Rep3MultilinearPolynomial::Shared(poly) => poly.evals.swap(swap.0, swap.1),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.evals[index] = eval.as_shared(),
         }
     }
 }
@@ -335,7 +372,7 @@ pub fn split_public_poly<F: JoltField>(
     let chunk_size = 1 << nv;
     let mut res = Vec::new();
 
-    for i in 0..1 << log_workers {
+    for _ in 0..1 << log_workers {
         match &mut poly {
             MultilinearPolynomial::LargeScalars(poly) => res.push(MultilinearPolynomial::from(
                 poly.Z.drain(..chunk_size).collect::<Vec<_>>(),
@@ -400,6 +437,7 @@ impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {
     }
 
     /// Warning: when poly is shared, returns the additive share.
+    /// Use `final_sumcheck_claim_additive` instead.
     fn final_sumcheck_claim(&self) -> F {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim(),

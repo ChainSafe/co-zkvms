@@ -140,9 +140,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
             None,
             |chunk, io_ctx| {
                 let (left, right): (Vec<_>, Vec<_>) =
-                    tracing::trace_span!("unzip").in_scope(|| chunk.into_iter().unzip());
-                let span = tracing::trace_span!("mul_vec");
-                let _span_enter = span.enter();
+                    chunk.into_iter().unzip();
                 rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")
             },
         )?;

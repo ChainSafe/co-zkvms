@@ -50,12 +50,11 @@ use tracing_forest::ForestLayer;
 use tracing_subscriber::{prelude::*, util::SubscriberInitExt, EnvFilter, Registry};
 
 const C: usize = co_jolt::jolt::vm::rv32i_vm::C;
-const M: usize = co_jolt::jolt::vm::rv32i_vm::M;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-// type CommitmentScheme = PST13<E>;
-type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+type CommitmentScheme = PST13<E>;
+// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -204,7 +203,7 @@ pub fn run_coordinator(
             .as_secs()
     );
 
-    // let tracing_guard = init_tracing(&file);
+    let _tracing_guard = init_tracing(&file);
 
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
