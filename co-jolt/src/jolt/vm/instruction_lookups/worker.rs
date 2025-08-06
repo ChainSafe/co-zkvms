@@ -573,6 +573,7 @@ where
                     let subtable_terms_batches =
                         subtable_terms_batches.into_iter().flatten().collect();
                     let instruction_collation_evals = instruction.combine_lookups_rep3_batched(
+                        // todo: ensure that memory indexing and slice_values would work with greater batches..
                         subtable_terms_batches, // todo make combine_lookups_rep3_batched take iterator
                         C,
                         M,
