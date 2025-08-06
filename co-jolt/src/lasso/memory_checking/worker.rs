@@ -166,13 +166,11 @@ where
                 .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
-        tracing::info!("read_write_evals appended");
 
         let init_final_polys = polynomials.init_final_values();
         let (init_final_evals, eq_init_final) =
             Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
-        tracing::info!("init_final_evals appending");
         opening_accumulator.append(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
@@ -183,7 +181,6 @@ where
                 .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
-        tracing::info!("init_final_evals appended");
 
         Ok(())
     }

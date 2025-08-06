@@ -112,7 +112,7 @@ fn main() -> Result<()> {
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&10u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -179,6 +179,8 @@ pub fn run_party(
         preprocessing,
         network,
     )?;
+
+    tracing::trace_span!("syncing").in_scope(|| prover.io_ctx.network().receive_request::<bool>())?;
 
     prover.prove()?;
 
@@ -260,6 +262,8 @@ pub fn run_coordinator(
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
+
+    tracing::trace_span!("syncing").in_scope(|| network.broadcast_request(true))?;
 
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
         meta,

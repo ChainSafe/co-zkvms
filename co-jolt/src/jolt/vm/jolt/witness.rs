@@ -214,13 +214,20 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         ProofTranscript: Transcript,
         Network: Rep3NetworkCoordinator,
     {
+        tracing::trace_span!("syncing").in_scope(|| network.broadcast_request(true))?;
+        tracing::trace_span!("waiting").in_scope(|| network.receive_responses::<bool>())?;
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
+        let span = tracing::span!(tracing::Level::INFO, "download");
+        let _guard = span.enter();
         let mut commitments_shares: Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>> = network
             .receive_responses()?
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+        drop(_guard);
 
+        let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
+        let _guard = span.enter();
         multizip((
             commitments_shares[0].read_write_values(),
             commitments_shares[1].read_write_values(),
@@ -229,7 +236,10 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
         .zip(commitments.read_write_values_mut())
         .for_each(|(commitment, dest)| *dest = commitment);
+        drop(_guard);
 
+        let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
+        let _guard = span.enter();
         commitments.instruction_lookups.final_cts = multizip((
             &commitments_shares[0].instruction_lookups.final_cts,
             &commitments_shares[1].instruction_lookups.final_cts,
@@ -237,7 +247,10 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         ))
         .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
         .collect_vec();
+        drop(_guard);
 
+        let span = tracing::span!(tracing::Level::INFO, "combine_t_final");
+        let _guard = span.enter();
         commitments.bytecode.t_final = std::mem::take(
             commitments_shares[0]
                 .bytecode
@@ -259,7 +272,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 .try_into_public_mut()
                 .expect("party 0 must compute commitment to public t_final"),
         );
-
+        drop(_guard);
         Ok(commitments)
     }
 
@@ -290,6 +303,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         ProofTranscript: Transcript,
         Network: Rep3NetworkWorker,
     {
+        tracing::trace_span!("syncing").in_scope(|| io_ctx.network.receive_request::<bool>())?;
         let mut commitments =
             JoltMaybeSharedCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
@@ -354,6 +368,8 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         );
         drop(_guard);
         drop(span);
+        
+        io_ctx.network.send_response(true)?;
 
         io_ctx.network.send_response(commitments)
     }
