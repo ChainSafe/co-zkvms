@@ -41,7 +41,7 @@ use mpc_net::{
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_forest::util::LevelFilter;
 
@@ -143,7 +143,7 @@ pub fn run_party(
 
     let my_id = config.my_id;
     let file = format!(
-        "traces/trace_party-{}_sha2-chain-{}_{}CPU.json",
+        "trace_party-{}_sha2-chain-{}_{}CPU.json",
         my_id,
         args.num_iterations,
         num_cpus::get(),
@@ -213,7 +213,7 @@ pub fn run_coordinator(
     inputs: Vec<u8>,
 ) -> Result<()> {
     let file = format!(
-        "traces/trace_coordinator_sha2-chain-{}_{}CPU.json",
+        "trace_coordinator_sha2-chain-{}_{}CPU.json",
         args.num_iterations,
         num_cpus::get(),
         // std::time::SystemTime::now()
@@ -314,6 +314,8 @@ fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
 }
 
 pub fn init_tracing(file: &str) -> Option<TracingGuard> {
+    std::fs::create_dir_all("./traces").unwrap();
+    let trace_path = Path::new("./traces").join(file);
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
@@ -326,7 +328,7 @@ pub fn init_tracing(file: &str) -> Option<TracingGuard> {
     let subscriber = Registry::default().with(env_filter);
 
     if current_level == LevelFilter::TRACE {
-        let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(file).build();
+        let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
         let _ = tracing::subscriber::set_global_default(
             subscriber
                 .with(chrome_layer)
