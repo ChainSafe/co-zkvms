@@ -9,7 +9,6 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
-use jolt_core::utils::math::Math;
 use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
@@ -73,14 +72,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::shared(Rep3DensePolynomial::new(coeffs))
     }
 
-    pub fn bound_from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Self::shared(Rep3DensePolynomial {
-            num_vars: coeffs.len().log_2(),
-            len: coeffs.len(),
-            bound_coeffs: coeffs.clone(),
-            coeffs,
-            binding_scratch_space: None,
-        })
+    pub fn from_shared_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        Self::shared(Rep3DensePolynomial::from_bound_coeffs(bound_coeffs))
     }
 
     pub fn public_zero(num_evals: usize) -> Self {
@@ -306,6 +299,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         polys: Rep3MultilinearPolynomial<F>,
         log_workers: usize,
     ) -> Vec<Rep3MultilinearPolynomial<F>> {
+        if log_workers == 0 {
+            return vec![polys];
+        }
+
         match polys {
             Rep3MultilinearPolynomial::Shared(poly) => {
                 Rep3DensePolynomial::split_poly(poly, log_workers)
@@ -350,27 +347,27 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn set_bound_eval(&mut self, index: usize, eval: SharedOrPublic<F>) {
+    pub fn set_bound_coeff(&mut self, index: usize, coeff: SharedOrPublic<F>) {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
-                MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] = eval.as_public(),
+                MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] = coeff.as_public(),
                 MultilinearPolynomial::U8Scalars(poly) => {
-                    poly.bound_coeffs[index] = eval.as_public()
+                    poly.bound_coeffs[index] = coeff.as_public()
                 }
                 MultilinearPolynomial::U16Scalars(poly) => {
-                    poly.bound_coeffs[index] = eval.as_public()
+                    poly.bound_coeffs[index] = coeff.as_public()
                 }
                 MultilinearPolynomial::U32Scalars(poly) => {
-                    poly.bound_coeffs[index] = eval.as_public()
+                    poly.bound_coeffs[index] = coeff.as_public()
                 }
                 MultilinearPolynomial::U64Scalars(poly) => {
-                    poly.bound_coeffs[index] = eval.as_public()
+                    poly.bound_coeffs[index] = coeff.as_public()
                 }
                 MultilinearPolynomial::I64Scalars(poly) => {
-                    poly.bound_coeffs[index] = eval.as_public()
+                    poly.bound_coeffs[index] = coeff.as_public()
                 }
             },
-            Rep3MultilinearPolynomial::Shared(poly) => poly.bound_coeffs[index] = eval.as_shared(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.set_bound_coeff(index, coeff.as_shared()),
         }
     }
 }
@@ -379,6 +376,10 @@ pub fn split_public_poly<F: JoltField>(
     mut poly: MultilinearPolynomial<F>,
     log_workers: usize,
 ) -> Vec<MultilinearPolynomial<F>> {
+    if log_workers == 0 {
+        return vec![poly];
+    }
+
     let nv = poly.get_num_vars() - log_workers;
     let chunk_size = 1 << nv;
 

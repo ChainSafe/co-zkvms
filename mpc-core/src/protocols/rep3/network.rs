@@ -54,6 +54,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         self.party_id().into()
     }
 
+    pub fn worker_idx(&self) -> usize {
+        self.worker_id
+    }
+
     /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
     ///
     /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.

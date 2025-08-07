@@ -53,8 +53,8 @@ const C: usize = co_jolt::jolt::vm::rv32i_vm::C;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-type CommitmentScheme = PST13<E>;
-// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+// type CommitmentScheme = PST13<E>;
+type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -74,7 +74,13 @@ pub struct Args {
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
     pub debug: bool,
 
-    #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES", default_value = "true")]
+    #[clap(
+        short,
+        long,
+        value_name = "TRACE_PARTIES",
+        env = "TRACE_PARTIES",
+        default_value = "true"
+    )]
     pub trace_parties: TraceParties,
 
     #[clap(

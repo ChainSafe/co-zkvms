@@ -201,7 +201,12 @@ where
         E_polys: Vec<Rep3MultilinearPolynomial<F>>,
         lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<(Vec<F>, Vec<F>, Vec<AdditiveShare<F>>, AdditiveShare<F>)> {
+    ) -> eyre::Result<(
+        Vec<AdditiveShare<F>>,
+        Vec<AdditiveShare<F>>,
+        Vec<AdditiveShare<F>>,
+        AdditiveShare<F>,
+    )> {
         let log_num_workers = io_ctx.log_num_workers_per_party();
 
         let num_flag_polys = instruction_flags.len();
@@ -213,7 +218,7 @@ where
                     Rep3MultilinearPolynomial::public_zero(1 << log_num_workers)
                 }
                 Rep3MultilinearPolynomial::Shared(_) => {
-                    Rep3MultilinearPolynomial::bound_from_shared_coeffs(
+                    Rep3MultilinearPolynomial::from_shared_bound_coeffs(
                         vec![Rep3PrimeFieldShare::zero_share(); 1 << log_num_workers],
                     )
                 }
@@ -286,7 +291,7 @@ where
                         num_flag_polys
                     ],
                     E_polys_zero,
-                    Rep3MultilinearPolynomial::bound_from_shared_coeffs(vec![
+                    Rep3MultilinearPolynomial::from_shared_bound_coeffs(vec![
                         Rep3PrimeFieldShare::zero_share();
                         1 << log_num_workers
                     ]),
@@ -301,15 +306,16 @@ where
                         .par_iter_mut()
                         .zip(flag_evals_chunk.into_par_iter())
                         .for_each(|(flag_poly, flag_eval)| {
-                            flag_poly.as_public_mut().as_dense_poly_mut().Z[i] = flag_eval;
+                            flag_poly.as_public_mut().as_dense_poly_mut().Z[i] =
+                                flag_eval.as_public();
                         });
                     E_polys
                         .par_iter_mut()
                         .zip(E_evals_chunk.into_par_iter())
                         .for_each(|(E_poly, E_eval)| {
-                            E_poly.set_bound_eval(i, E_eval);
+                            E_poly.set_bound_coeff(i, E_eval);
                         });
-                    outputs_poly.set_bound_eval(i, outputs_eval.into());
+                    outputs_poly.set_bound_coeff(i, outputs_eval.into());
                     (
                         r_primary_sumcheck, // same for each worker
                         eq_poly,
@@ -338,18 +344,23 @@ where
                 )
                 .context("while proving remaining primary sumcheck rounds")?;
             r_primary_sumchecks.extend(r_primary_sumchecks_final);
+            let flag_evals = flag_evals
+                .par_iter()
+                .map(|eval| eval.into_additive(io_ctx.id))
+                .collect();
+
             let E_evals = E_evals
-                .into_iter()
+                .par_iter()
                 .map(|e| e.into_additive(io_ctx.id))
                 .collect();
             (flag_evals, E_evals, outputs_eval.into_additive())
         } else {
             let flag_evals = flag_polys
-                .iter()
+                .par_iter()
                 .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
                 .collect();
             let E_evals = E_polys
-                .iter()
+                .par_iter()
                 .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
                 .collect();
             (
@@ -376,7 +387,7 @@ where
     ) -> eyre::Result<(
         Vec<F>,
         F,
-        Vec<F>,
+        Vec<SharedOrPublic<F>>,
         Vec<SharedOrPublic<F>>,
         Rep3PrimeFieldShare<F>,
     )> {
@@ -443,7 +454,7 @@ where
 
         let flag_evals = flag_polys
             .iter()
-            .map(|poly| poly.as_public().final_sumcheck_claim())
+            .map(|poly| poly.final_sumcheck_claim())
             .collect();
         let E_evals = E_polys
             .iter()
