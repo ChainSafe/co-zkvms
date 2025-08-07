@@ -110,7 +110,7 @@ impl<F: JoltField> MixedPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for MixedPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for MixedPolynomial<F> {
     fn is_bound(&self) -> bool {
         unimplemented!()
     }
@@ -126,8 +126,8 @@ impl<F: JoltField> PolynomialBinding<F> for MixedPolynomial<F> {
         todo!()
     }
 
-    fn final_sumcheck_claim(&self) -> F {
-        self.evals[0].into_additive(self.party_id)
+    fn final_sumcheck_claim(&self) -> SharedOrPublic<F> {
+        self.evals[0]
     }
 }
 

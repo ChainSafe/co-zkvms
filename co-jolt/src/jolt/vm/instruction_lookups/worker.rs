@@ -33,7 +33,7 @@ use jolt_core::{
         },
         unipoly::UniPoly,
     },
-    utils::{math::Math, mul_0_1_optimized},
+    utils::{math::Math, mul_0_1_optimized, thread::drop_in_background_thread},
 };
 use mpc_core::protocols::{
     additive,
@@ -169,6 +169,25 @@ where
             io_ctx,
         )?;
 
+        // drop polynomials that won't be used anymore
+        drop_in_background_thread(std::mem::take(&mut polynomials.instruction_lookups.E_polys));
+        drop_in_background_thread(std::mem::take(
+            &mut polynomials.instruction_lookups.read_cts,
+        ));
+        drop_in_background_thread(std::mem::take(
+            &mut polynomials.instruction_lookups.final_cts,
+        ));
+        polynomials
+            .instruction_lookups
+            .instruction_flags
+            .par_iter_mut()
+            .for_each(|poly| match poly {
+                Rep3MultilinearPolynomial::Public { trivial_share, .. } => {
+                    drop_in_background_thread(trivial_share.take());
+                }
+                _ => unreachable!(),
+            });
+
         Ok(())
     }
 
@@ -194,7 +213,7 @@ where
                     Rep3MultilinearPolynomial::public_zero(1 << log_num_workers)
                 }
                 Rep3MultilinearPolynomial::Shared(_) => {
-                    Rep3MultilinearPolynomial::from_shared_evals(
+                    Rep3MultilinearPolynomial::bound_from_shared_coeffs(
                         vec![Rep3PrimeFieldShare::zero_share(); 1 << log_num_workers],
                     )
                 }
@@ -267,7 +286,10 @@ where
                         num_flag_polys
                     ],
                     E_polys_zero,
-                    Rep3MultilinearPolynomial::shared(Default::default()),
+                    Rep3MultilinearPolynomial::bound_from_shared_coeffs(vec![
+                        Rep3PrimeFieldShare::zero_share();
+                        1 << log_num_workers
+                    ]),
                 ),
                 |(_, mut eq_poly, mut flag_polys, mut E_polys, mut outputs_poly),
                  (
@@ -287,7 +309,7 @@ where
                         .for_each(|(E_poly, E_eval)| {
                             E_poly.set_bound_eval(i, E_eval);
                         });
-                    outputs_poly.as_shared_mut().evals.push(outputs_eval);
+                    outputs_poly.set_bound_eval(i, outputs_eval.into());
                     (
                         r_primary_sumcheck, // same for each worker
                         eq_poly,
@@ -324,18 +346,16 @@ where
         } else {
             let flag_evals = flag_polys
                 .iter()
-                .map(|poly| poly.final_sumcheck_claim_safe().into_additive(io_ctx.id))
+                .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
                 .collect();
             let E_evals = E_polys
                 .iter()
-                .map(|poly| poly.final_sumcheck_claim_safe().into_additive(io_ctx.id))
+                .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
                 .collect();
             (
                 flag_evals,
                 E_evals,
-                outputs_poly
-                    .final_sumcheck_claim_safe()
-                    .into_additive(io_ctx.id),
+                outputs_poly.final_sumcheck_claim().into_additive(io_ctx.id),
             )
         };
         drop(_span_enter);
@@ -427,15 +447,15 @@ where
             .collect();
         let E_evals = E_polys
             .iter()
-            .map(|poly| poly.final_sumcheck_claim_safe())
+            .map(|poly| poly.final_sumcheck_claim())
             .collect();
-        let outputs_eval = lookup_outputs_poly.as_shared()[0];
+        let outputs_eval = lookup_outputs_poly.final_sumcheck_claim().as_shared();
         let eq_eval = eq_poly.final_sumcheck_claim();
 
         Ok((r, eq_eval, flag_evals, E_evals, outputs_eval))
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(party_id = io_ctx.party_idx()))]
     fn primary_sumcheck_prover_message(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         eq_poly: &MultilinearPolynomial<F>,

@@ -354,7 +354,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let claims: Vec<_> = self
             .openings
             .iter()
-            .map(|opening| opening.polynomial.get_coeff(0).into_additive(io_ctx.id))
+            .map(|opening| opening.polynomial.get_bound_coeff(0).into_additive(io_ctx.id))
             .collect();
 
         Ok((r, claims))
@@ -385,7 +385,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                         .map(|i| {
                             opening
                                 .polynomial
-                                .get_coeff(i)
+                                .get_bound_coeff(i)
                                 .mul_public(opening.eq_poly.get_bound_coeff(i) * coeff)
                                 .into_additive(party_id)
                         })
@@ -394,9 +394,9 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                         .map(|i| {
                             let poly_bound_point = opening
                                 .polynomial
-                                .get_coeff(i + mle_half)
-                                .add(&opening.polynomial.get_coeff(i + mle_half), party_id)
-                                .sub(&opening.polynomial.get_coeff(i), party_id);
+                                .get_bound_coeff(i + mle_half)
+                                .add(&opening.polynomial.get_bound_coeff(i + mle_half), party_id)
+                                .sub(&opening.polynomial.get_bound_coeff(i), party_id);
                             let eq_bound_point = opening.eq_poly.get_bound_coeff(i + mle_half)
                                 + opening.eq_poly.get_bound_coeff(i + mle_half)
                                 - opening.eq_poly.get_bound_coeff(i);

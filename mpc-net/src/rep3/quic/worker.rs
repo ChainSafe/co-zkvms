@@ -353,16 +353,9 @@ impl MpcNetworkHandlerWorker {
         // let transport_config = Arc::new(transport_config);
 
         let client_config = {
-            // let mut transport_config = TransportConfig::default();
-            // // we dont set this to timeout, because it is the timeout for a idle connection
-            // // maybe we want to make this configurable too?
-            // transport_config.max_idle_timeout(Some(
-            //     IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
-            // ));
-            // // atm clients send keepalive packets
             let mut transport_config = TransportConfig::default();
             transport_config.max_idle_timeout(Some(
-                IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
+                IdleTimeout::try_from(Duration::from_secs(3 * 60)).unwrap(),
             ));
             transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 

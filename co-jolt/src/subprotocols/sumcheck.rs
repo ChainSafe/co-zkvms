@@ -178,7 +178,7 @@ pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
 ) -> eyre::Result<(Vec<F>, Vec<F>)>
 where
     F: JoltField,
-    Poly: PolynomialBinding<F>
+    Poly: PolynomialBinding<F, SharedOrPublic<F>>
         + PolynomialEvaluation<F, SharedOrPublic<F>>
         + PolyDegree
         + Send
@@ -246,7 +246,11 @@ where
 
     let final_evals = polys
         .iter()
-        .map(|poly| poly.final_sumcheck_claim())
+        .map(|poly| match poly.final_sumcheck_claim() {
+            SharedOrPublic::Public(x) => x,
+            SharedOrPublic::Shared(x) => x.into_additive(),
+            SharedOrPublic::Additive(x) => x,
+        })
         .collect();
 
     Ok((r, final_evals))

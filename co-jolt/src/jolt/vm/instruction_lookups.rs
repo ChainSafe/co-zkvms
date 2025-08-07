@@ -887,7 +887,6 @@ where
             );
 
             let compressed_poly = univariate_poly.compress();
-            tracing::info!("compressed_poly: {:?}", compressed_poly);
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 

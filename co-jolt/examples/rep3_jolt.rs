@@ -74,7 +74,7 @@ pub struct Args {
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
     pub debug: bool,
 
-    #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
+    #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES", default_value = "true")]
     pub trace_parties: TraceParties,
 
     #[clap(
@@ -143,7 +143,7 @@ pub fn run_party(
 
     let my_id = config.my_id;
     let file = format!(
-        "traces/trace_party-{}_sha2-shain-{}_{}CPU.json",
+        "traces/trace_party-{}_sha2-chain-{}_{}CPU.json",
         my_id,
         args.num_iterations,
         num_cpus::get(),
@@ -213,7 +213,7 @@ pub fn run_coordinator(
     inputs: Vec<u8>,
 ) -> Result<()> {
     let file = format!(
-        "traces/trace_coordinator_sha2-shain-{}_{}CPU.json",
+        "traces/trace_coordinator_sha2-chain-{}_{}CPU.json",
         args.num_iterations,
         num_cpus::get(),
         // std::time::SystemTime::now()

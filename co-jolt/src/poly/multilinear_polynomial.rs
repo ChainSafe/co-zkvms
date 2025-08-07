@@ -9,6 +9,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use jolt_core::utils::math::Math;
 use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
@@ -68,8 +69,18 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn from_shared_evals(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Self::shared(Rep3DensePolynomial::new(evals))
+    pub fn from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        Self::shared(Rep3DensePolynomial::new(coeffs))
+    }
+
+    pub fn bound_from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        Self::shared(Rep3DensePolynomial {
+            num_vars: coeffs.len().log_2(),
+            len: coeffs.len(),
+            bound_coeffs: coeffs.clone(),
+            coeffs,
+            binding_scratch_space: None,
+        })
     }
 
     pub fn public_zero(num_evals: usize) -> Self {
@@ -108,9 +119,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     pub fn try_combine_shares(polys: Vec<Self>) -> Result<MultilinearPolynomial<F>, eyre::Error> {
         let [s0, s1, s2] = polys.try_into().unwrap();
         let a = rep3::combine_field_elements::<F>(
-            s0.as_shared().evals_ref(),
-            s1.as_shared().evals_ref(),
-            s2.as_shared().evals_ref(),
+            s0.as_shared().coeffs_ref(),
+            s1.as_shared().coeffs_ref(),
+            s2.as_shared().coeffs_ref(),
         );
         Ok(MultilinearPolynomial::from(a))
     }
@@ -126,6 +137,13 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_coeff(index).into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly[index].into(),
+        }
+    }
+
+    pub fn get_bound_coeff(&self, index: usize) -> SharedOrPublic<F> {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_bound_coeff(index).into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.get_bound_coeff(index).into(),
         }
     }
 
@@ -256,7 +274,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                             }
                         },
                         Rep3MultilinearPolynomial::Shared(poly) => {
-                            let poly_evals = &poly.evals_ref()[index..];
+                            let poly_evals = &poly.coeffs_ref()[index..];
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 rlc.add_shared_assign(
                                     rep3::arithmetic::mul_public(*poly_eval, *coeff),
@@ -271,7 +289,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .collect();
 
         if result_is_shared {
-            Rep3MultilinearPolynomial::from_shared_evals(
+            Rep3MultilinearPolynomial::from_shared_coeffs(
                 lc_coeffs.into_par_iter().map(|x| x.as_shared()).collect(),
             )
         } else {
@@ -332,13 +350,6 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn final_sumcheck_claim_safe(&self) -> SharedOrPublic<F> {
-        match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim().into(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.evals[0].into(),
-        }
-    }
-
     pub fn set_bound_eval(&mut self, index: usize, eval: SharedOrPublic<F>) {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
@@ -359,7 +370,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                     poly.bound_coeffs[index] = eval.as_public()
                 }
             },
-            Rep3MultilinearPolynomial::Shared(poly) => poly.evals[index] = eval.as_shared(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.bound_coeffs[index] = eval.as_shared(),
         }
     }
 }
@@ -370,6 +381,11 @@ pub fn split_public_poly<F: JoltField>(
 ) -> Vec<MultilinearPolynomial<F>> {
     let nv = poly.get_num_vars() - log_workers;
     let chunk_size = 1 << nv;
+
+    if log_workers == 0 {
+        return vec![poly];
+    }
+
     let mut res = Vec::new();
 
     for _ in 0..1 << log_workers {
@@ -398,7 +414,7 @@ pub fn split_public_poly<F: JoltField>(
     res
 }
 
-impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for Rep3MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.is_bound(),
@@ -438,10 +454,10 @@ impl<F: JoltField> PolynomialBinding<F> for Rep3MultilinearPolynomial<F> {
 
     /// Warning: when poly is shared, returns the additive share.
     /// Use `final_sumcheck_claim_additive` instead.
-    fn final_sumcheck_claim(&self) -> F {
+    fn final_sumcheck_claim(&self) -> SharedOrPublic<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim(),
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim().into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim().into(),
         }
     }
 }
