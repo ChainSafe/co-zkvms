@@ -190,6 +190,7 @@ where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: TranscriptExt,
     {
+        self.io_ctx.sync_with_coordinator()?;
         let preprocessing = &self.preprocessing;
         let polynomials = &mut self.polynomials;
 
@@ -213,10 +214,9 @@ where
         // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         polynomials
-            .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, self.io_ctx.main())?;
+            .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, &mut self.io_ctx)?;
 
-        let _ = tracing::trace_span!("coordinator_ready_to_prove")
-            .in_scope(|| self.io_ctx.network().receive_request::<bool>())?;
+        self.io_ctx.sync_with_coordinator()?;
 
         let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
 
@@ -233,6 +233,8 @@ where
         drop(_guard);
         drop(span);
 
+        self.io_ctx.sync_with_parties()?;
+
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
             PCS,
             ProofTranscript,
@@ -244,6 +246,8 @@ where
             &mut self.io_ctx,
         )?;
 
+        self.io_ctx.sync_with_parties()?;
+
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
             &preprocessing.shared.generators,
             &preprocessing.shared.read_write_memory,
@@ -253,6 +257,8 @@ where
             &mut self.io_ctx,
         )?;
 
+        self.io_ctx.sync_with_parties()?;
+
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
             &self.r1cs_builder,
             &self.spartan_key,
@@ -260,6 +266,8 @@ where
             &mut opening_accumulator,
             &mut self.io_ctx,
         )?;
+
+        self.io_ctx.sync_with_parties()?;
 
         // Batch-prove all openings
         opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(

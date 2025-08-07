@@ -96,7 +96,9 @@ where
     let first_share_ref = first_share.as_ref();
     shares
         .try_fold(
-            (0..first_share_ref.len()).map(|i| first_share_ref[i]).collect_vec(),
+            (0..first_share_ref.len())
+                .map(|i| first_share_ref[i])
+                .collect_vec(),
             |acc, x| mul_vec(&acc, x.as_ref(), io_ctx),
         )
         .context("while computing product")
@@ -159,6 +161,21 @@ pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
         .collect())
 }
 
+/// Performs multiplication of a shared value and a public value.
+#[inline]
+pub fn mul_public_0_1_optimized<F: PrimeField>(shared: FieldShare<F>, public: F) -> FieldShare<F> {
+    if public.is_zero() {
+        Rep3PrimeFieldShare::zero_share()
+    } else if public.is_one() {
+        shared
+    } else {
+        Rep3PrimeFieldShare::new(
+            field_mul_0_1_optimized(&shared.a, &public),
+            field_mul_0_1_optimized(&shared.b, &public),
+        )
+    }
+}
+
 /// Convenience method for \[a\] * (\[b\] * c)
 pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
     a * mul_public(b, c)
@@ -185,4 +202,17 @@ pub fn combine_field_elements_vec<F: PrimeField>(
 ) -> Vec<F> {
     let [s0, s1, s2]: [Vec<_>; 3] = shares.try_into().unwrap();
     mpc_core::protocols::rep3::combine_field_elements(&s0, &s1, &s2)
+}
+
+#[inline(always)]
+pub fn field_mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
+    if a.is_zero() || b.is_zero() {
+        F::zero()
+    } else if a.is_one() {
+        *b
+    } else if b.is_one() {
+        *a
+    } else {
+        *a * *b
+    }
 }

@@ -469,7 +469,7 @@ impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for Rep3Multilinea
                     SharedOrPublic::Public(poly.dot_product(&eq))
                 }
                 Rep3MultilinearPolynomial::Shared(poly) => {
-                    SharedOrPublic::Additive(poly.evaluate_at_chi(&eq))
+                    SharedOrPublic::Additive(poly.evaluate_at_chi_optimized(&eq))
                 }
             })
             .collect();

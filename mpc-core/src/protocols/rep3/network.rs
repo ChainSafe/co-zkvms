@@ -12,11 +12,20 @@ use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 
 pub trait Rep3NetworkWorker: Rep3Network + MpcStarNetWorker + 'static {}
-pub trait Rep3NetworkCoordinator: MpcStarNetCoordinator + 'static {}
+pub trait Rep3NetworkCoordinator: MpcStarNetCoordinator + 'static {
+    fn sync_with_parties(&mut self) -> eyre::Result<()>;
+}
 
 impl Rep3NetworkWorker for Rep3QuicMpcNetWorker {}
 
-impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {}
+impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
+    #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
+    fn sync_with_parties(&mut self) -> eyre::Result<()> {
+        self.broadcast_request(true)?;
+        self.receive_responses::<bool>()?;
+        Ok(())
+    }
+}
 
 pub struct WorkerIoContext<Network: Rep3NetworkWorker> {
     pub worker_id: usize,
@@ -240,5 +249,19 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
     pub fn party_id(&self) -> PartyID {
         self.id
+    }
+
+    #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
+    pub fn sync_with_parties(&mut self) -> eyre::Result<()> {
+        self.main().network.send_next(true)?;
+        self.main().network.recv_prev::<bool>()?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, name = "sync_with_coordinator", level = "trace")]
+    pub fn sync_with_coordinator(&mut self) -> eyre::Result<()> {
+        self.main().network.receive_request::<bool>()?;
+        self.main().network.send_response(true)?;
+        Ok(())
     }
 }

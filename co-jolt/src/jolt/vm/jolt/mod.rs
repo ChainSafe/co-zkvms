@@ -164,14 +164,6 @@ where
         max_trace_length: usize,
     ) -> JoltVerifierPreprocessing<C, F, PCS, ProofTranscript> {
         // icicle::icicle_init();
-
-        fn counts(items: &[u32]) -> std::collections::HashMap<&u32, usize> {
-            let mut map = std::collections::HashMap::new();
-            for item in items {
-                *map.entry(item).or_insert(0) += 1;
-            }
-            map
-        }
         let instruction_lookups_preprocessing = InstructionLookupsProof::<
             C,
             M,
@@ -181,21 +173,6 @@ where
             Self::Subtables,
             ProofTranscript,
         >::preprocess();
-
-        // for (i, subtable) in instruction_lookups_preprocessing
-        //     .materialized_subtables
-        //     .iter()
-        //     .enumerate()
-        // {
-        //     let counts = counts(subtable)
-        //             .iter()
-        //             .filter_map(|(k, v)| if *v < 3 { Some((*k, *v)) } else { None })
-        //             .collect::<Vec<_>>();
-
-        //     if i != 5 {
-        //         tracing::info!("{:?} for subtable {:?}", &counts, i);
-        //     }
-        // }
 
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 

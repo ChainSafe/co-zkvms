@@ -81,7 +81,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     #[inline]
-    #[tracing::instrument(skip_all, level = "trace")]
     pub fn copy_share_a(&self) -> DensePolynomial<F> {
         DensePolynomial::new(self.evals.par_iter().map(|share| share.a).collect())
     }
@@ -196,14 +195,34 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn evaluate(&self, r: &[F]) -> F {
         let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.evals_ref().len());
-        self.evaluate_at_chi(&chis)
+        self.evaluate_at_chi_optimized(&chis)
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3DensePolynomial::evaluate_at_chi",
+        level = "trace"
+    )]
     pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
         self.evals
             .par_iter()
             .zip_eq(chis.par_iter())
             .map(|(eval, chi)| rep3::arithmetic::mul_public(*eval, *chi).into_additive())
+            .sum()
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3DensePolynomial::evaluate_at_chi",
+        level = "trace"
+    )]
+    pub fn evaluate_at_chi_optimized(&self, chis: &[F]) -> F {
+        self.evals
+            .par_iter()
+            .zip_eq(chis.par_iter())
+            .map(|(eval, chi)| {
+                rep3::arithmetic::mul_public_0_1_optimized(*eval, *chi).into_additive()
+            })
             .sum()
     }
 
@@ -213,7 +232,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
 
         let evals: Vec<F> = polys
             .into_par_iter()
-            .map(|&poly| poly.evaluate_at_chi(&eq))
+            .map(|&poly| poly.evaluate_at_chi_optimized(&eq))
             .collect();
         (evals, eq)
     }

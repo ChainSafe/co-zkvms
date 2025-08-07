@@ -75,7 +75,7 @@ pub struct Args {
     pub debug: bool,
 
     #[clap(short, long, value_name = "TRACE_PARTIES", env = "TRACE_PARTIES")]
-    pub trace_parties: bool,
+    pub trace_parties: TraceParties,
 
     #[clap(
         short,
@@ -85,6 +85,15 @@ pub struct Args {
         env = "NUM_WORKERS_PER_PARTY"
     )]
     pub num_workers_per_party: usize,
+
+    #[clap(
+        short,
+        long,
+        value_name = "NUM_ITERATIONS",
+        default_value = "1",
+        env = "NUM_ITERATIONS"
+    )]
+    pub num_iterations: u32,
 }
 
 fn main() -> Result<()> {
@@ -112,7 +121,7 @@ fn main() -> Result<()> {
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -134,18 +143,26 @@ pub fn run_party(
 
     let my_id = config.my_id;
     let file = format!(
-        "trace-party{}-{}.json",
+        "traces/trace_party-{}_sha2-shain-{}_{}CPU.json",
         my_id,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+        args.num_iterations,
+        num_cpus::get(),
+        // std::time::SystemTime::now()
+        //     .duration_since(std::time::UNIX_EPOCH)
+        //     .unwrap()
+        //     .as_secs()
     );
 
-    let tracing_guard = if args.trace_parties && my_id == 0 {
-        init_tracing(&file)
-    } else {
-        None
+    let tracing_guard = match args.trace_parties {
+        TraceParties::All(true) => init_tracing(&file),
+        TraceParties::Party(parties) => {
+            if parties.contains(&my_id) {
+                init_tracing(&file)
+            } else {
+                None
+            }
+        }
+        _ => None,
     };
 
     // let span = tracing::info_span!("run_party", id = my_id);
@@ -180,8 +197,6 @@ pub fn run_party(
         network,
     )?;
 
-    tracing::trace_span!("syncing").in_scope(|| prover.io_ctx.network().receive_request::<bool>())?;
-
     prover.prove()?;
 
     prover.io_ctx.network().log_connection_stats();
@@ -198,11 +213,13 @@ pub fn run_coordinator(
     inputs: Vec<u8>,
 ) -> Result<()> {
     let file = format!(
-        "trace-coordinator-{}.json",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+        "traces/trace_coordinator_sha2-shain-{}_{}CPU.json",
+        args.num_iterations,
+        num_cpus::get(),
+        // std::time::SystemTime::now()
+        //     .duration_since(std::time::UNIX_EPOCH)
+        //     .unwrap()
+        //     .as_secs()
     );
 
     let _tracing_guard = init_tracing(&file);
@@ -262,8 +279,6 @@ pub fn run_coordinator(
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
-
-    tracing::trace_span!("syncing").in_scope(|| network.broadcast_request(true))?;
 
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
         meta,
@@ -338,6 +353,36 @@ impl Drop for TracingGuard {
         tracing::info!("tracing_chrome available at: {}", self.file);
         if let Some(guard) = self._guard.take() {
             drop(guard);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TraceParties {
+    All(bool),
+    Party(Vec<usize>),
+}
+
+impl Default for TraceParties {
+    fn default() -> Self {
+        TraceParties::All(true)
+    }
+}
+
+impl std::str::FromStr for TraceParties {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(b) = s.parse::<bool>() {
+            Ok(TraceParties::All(b))
+        } else if let Ok(nums) = s
+            .split(',')
+            .map(|n| n.parse::<usize>())
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(TraceParties::Party(nums))
+        } else {
+            Err(format!("Invalid trace parties: {}", s))
         }
     }
 }

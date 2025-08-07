@@ -104,7 +104,7 @@ where
                     .map(|(polynomials, program_io)| (polynomials, program_io, trace_length))
                     .collect();
 
-                network.send_requests(witness_shares)?;
+                tracing::trace_span!("send_witness_shares").in_scope(|| network.send_requests(witness_shares))?;
                 (
                     spartan_key,
                     JoltWitnessMeta {
@@ -152,6 +152,7 @@ where
         // Option<ProverDebugInfo<F, ProofTranscript>>,
     )> {
         // icicle::icicle_init();
+        network.sync_with_parties()?;
 
         let trace_length = meta.padded_trace_length;
         let padded_trace_length = trace_length.next_power_of_two();
@@ -189,7 +190,7 @@ where
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        network.broadcast_request(true)?; // ready to prove
+        network.sync_with_parties()?;
 
         let span = tracing::span!(tracing::Level::INFO, "BytecodeProof::prove");
         let _guard = span.enter();

@@ -28,7 +28,7 @@ use jolt_core::r1cs::inputs::ConstraintInput;
 use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::network::{
-    IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
 use rand::Rng;
@@ -197,7 +197,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
@@ -214,17 +214,12 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         ProofTranscript: Transcript,
         Network: Rep3NetworkCoordinator,
     {
-        tracing::trace_span!("syncing").in_scope(|| network.broadcast_request(true))?;
-        tracing::trace_span!("waiting").in_scope(|| network.receive_responses::<bool>())?;
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let span = tracing::span!(tracing::Level::INFO, "download");
-        let _guard = span.enter();
         let mut commitments_shares: Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>> = network
             .receive_responses()?
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
-        drop(_guard);
 
         let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
         let _guard = span.enter();
@@ -296,14 +291,13 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         Network: Rep3NetworkWorker,
     {
-        tracing::trace_span!("syncing").in_scope(|| io_ctx.network.receive_request::<bool>())?;
         let mut commitments =
             JoltMaybeSharedCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
@@ -314,7 +308,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let trace_commitments = PCS::batch_commit_rep3(
             &trace_polys,
             &preprocessing.generators,
-            io_ctx.id == PartyID::ID0,
+            PartyID::ID0 == io_ctx.party_id(),
         );
 
         commitments
@@ -330,7 +324,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         commitments.bytecode.t_final = PCS::commit_rep3(
             &self.bytecode.t_final,
             &preprocessing.generators,
-            io_ctx.id == PartyID::ID0,
+            PartyID::ID0 == io_ctx.party_id(),
         );
         drop(_guard);
         drop(span);
@@ -368,10 +362,10 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         );
         drop(_guard);
         drop(span);
-        
-        io_ctx.network.send_response(true)?;
 
-        io_ctx.network.send_response(commitments)
+        io_ctx.sync_with_parties()?;
+
+        io_ctx.network().send_response(commitments)
     }
 
     fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F> {
