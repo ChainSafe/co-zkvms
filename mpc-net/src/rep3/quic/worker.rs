@@ -360,7 +360,6 @@ impl MpcNetworkHandlerWorker {
             //     IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
             // ));
             // // atm clients send keepalive packets
-            // transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             let mut transport_config = TransportConfig::default();
             transport_config.max_idle_timeout(Some(
                 IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),

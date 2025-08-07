@@ -12,10 +12,10 @@ use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
 use mpc_types::protocols::rep3::id::PartyID;
 use quinn::{
-    rustls::pki_types::CertificateDer, Connection, Endpoint, RecvStream, SendStream, VarInt,
+    rustls::pki_types::CertificateDer, Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::BTreeMap, iter, rc::Rc, sync::Arc};
+use std::{collections::BTreeMap, iter, rc::Rc, sync::Arc, time::Duration};
 use std::{collections::HashMap, io};
 use tokio::io::AsyncReadExt;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
@@ -362,8 +362,15 @@ impl MpcNetworkCoordinatorHandler {
 
         let our_cert = config.coordinator.as_ref().unwrap().cert.clone();
 
-        let server_config = quinn::ServerConfig::with_single_cert(vec![our_cert], config.key)
+        let mut transport_config = TransportConfig::default();
+        transport_config.max_idle_timeout(Some(
+            IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
+        ));
+        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+
+        let mut server_config = quinn::ServerConfig::with_single_cert(vec![our_cert], config.key)
             .context("creating our server config")?;
+        server_config.transport_config(Arc::new(transport_config));
         let our_socket_addr = config.bind_addr;
 
         let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;
