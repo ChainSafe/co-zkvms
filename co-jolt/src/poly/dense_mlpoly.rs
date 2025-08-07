@@ -9,7 +9,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use std::ops::Index;
 
 use crate::poly::Rep3MultilinearPolynomial;
@@ -445,10 +445,20 @@ pub fn generate_poly_shares_rep3<F: JoltField, R: Rng>(
             Rep3DensePolynomial::<F>::zero().into(),
         ];
     }
-    let t0 =
-        DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
-    let t1 =
-        DensePolynomial::<F>::new(itertools::repeat_n(F::random(rng), 1 << num_vars).collect());
+    let mut rng1 = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
+    let mut rng2 = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
+    let (t0, t1) = rayon::join(
+        || {
+            DensePolynomial::<F>::new(
+                itertools::repeat_n(F::random(&mut rng1), 1 << num_vars).collect(),
+            )
+        },
+        || {
+            DensePolynomial::<F>::new(
+                itertools::repeat_n(F::random(&mut rng2), 1 << num_vars).collect(),
+            )
+        },
+    );
     let t2 = (dense_poly - &t0) - &t1;
 
     let p_share_0 = Rep3DensePolynomial::<F>::from_poly_shares(t0.clone(), t2.clone());
@@ -466,23 +476,39 @@ pub fn generate_poly_shares_rep3_vec<F: JoltField, R: Rng>(
         return Vec::new();
     }
 
-    let poly_shares: Vec<Vec<_>> = polys
-        .iter()
-        .map(|poly| generate_poly_shares_rep3(poly, rng))
+    let rngs: Vec<_> = (0..polys.len())
+        .map(|_| rand_chacha::ChaCha12Rng::from_seed(rng.r#gen()))
         .collect();
 
-    let num_shares = poly_shares[0].len();
+    let polys_shares: Vec<Vec<_>> = polys
+        .into_par_iter()
+        .zip(rngs.into_par_iter())
+        .map(|(poly, mut rng)| generate_poly_shares_rep3(poly, &mut rng))
+        .collect();
+
+    let num_shares = polys_shares[0].len();
     let num_polys = polys.len();
 
-    let mut shares_of_polys: Vec<Vec<Rep3MultilinearPolynomial<F>>> = (0..num_shares)
-        .map(|_| Vec::with_capacity(num_polys))
-        .collect();
-
-    for poly_shares in poly_shares {
-        for (i, share) in poly_shares.into_iter().enumerate() {
-            shares_of_polys[i].push(share);
-        }
-    }
+    let shares_of_polys = polys_shares
+        .into_par_iter()
+        .fold(
+            || vec![Vec::with_capacity(num_polys); num_shares],
+            |mut acc, poly_shares| {
+                for (i, share) in poly_shares.into_iter().enumerate() {
+                    acc[i].push(share);
+                }
+                acc
+            },
+        )
+        .reduce(
+            || vec![Vec::with_capacity(num_polys); num_shares],
+            |mut acc1, mut acc2| {
+                for i in 0..num_shares {
+                    acc1[i].extend(std::mem::take(&mut acc2[i]));
+                }
+                acc1
+            },
+        );
 
     shares_of_polys
 }
