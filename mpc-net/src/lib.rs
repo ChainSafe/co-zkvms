@@ -38,14 +38,14 @@ impl<H: MpcNetworkHandlerShutdown> Drop for MpcNetworkHandlerWrapper<H> {
     }
 }
 
-trait MpcNetworkHandlerShutdown: Send + Sync {
+pub(crate) trait MpcNetworkHandlerShutdown: Send + Sync {
     async fn shutdown(&self) -> std::io::Result<()>;
 }
 
 /// A warapper for a runtime and a network handler for MPC protocols.
 /// Ensures a gracefull shutdown on drop
 #[derive(Debug)]
-pub struct MpcNetworkHandlerWrapperMut<H: MpcNetworkHandlerShutdown = MpcNetworkHandler> {
+pub(crate) struct MpcNetworkHandlerWrapperMut<H: MpcNetworkHandlerShutdown = MpcNetworkHandler> {
     /// The runtime used by the network handler
     pub runtime: Runtime,
     /// The wrapped network handler

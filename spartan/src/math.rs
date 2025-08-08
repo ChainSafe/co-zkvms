@@ -2,7 +2,6 @@ use ark_ec::pairing::Pairing;
 use ark_ff::{Field, PrimeField};
 use ark_poly::multivariate::{SparsePolynomial, SparseTerm};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use snarks_core::math::Math;
 
 pub type MaskPolynomial<E: Pairing> = SparsePolynomial<E::ScalarField, SparseTerm>;
 

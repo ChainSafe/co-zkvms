@@ -2,7 +2,6 @@ use ark_ff::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
 use itertools::Itertools;
-use itertools::izip;
 use rand::Rng;
 use rand::RngCore;
 

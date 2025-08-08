@@ -10,7 +10,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::field::JoltField;
-use jolt_core::jolt::vm::instruction_lookups::InstructionLookupStuff;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use jolt_core::jolt::vm::timestamp_range_check::{
     TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,

@@ -2,8 +2,7 @@ use crate::{
     channel::{BytesChannel, Channel},
     codecs::BincodeCodec,
     rep3::PartyWorkerID,
-    MpcNetworkHandlerShutdown, MpcNetworkHandlerWrapper, MpcNetworkHandlerWrapperMut,
-    DEFAULT_CONNECT_TIMEOUT,
+    MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use bytes::{Bytes, BytesMut};
@@ -13,8 +12,8 @@ use color_eyre::eyre::{bail, Context};
 use mpc_types::protocols::rep3::id::PartyID;
 use quinn::{Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::BTreeMap, iter, rc::Rc, sync::Arc, time::Duration};
-use std::{collections::HashMap, io};
+use std::io;
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::io::AsyncReadExt;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
@@ -22,6 +21,7 @@ use rayon::prelude::*;
 
 use crate::{
     channel::ChannelHandle, config::NetworkConfig, mpc_star::MpcStarNetCoordinator, Result,
+    MpcNetworkHandlerWrapperMut,
 };
 
 #[derive(Clone)]

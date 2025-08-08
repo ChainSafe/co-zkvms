@@ -1,13 +1,10 @@
 use std::collections::HashMap;
 
-use ark_ec::pairing::Pairing;
 use ark_ff::Field;
 use ark_poly::{DenseMultilinearExtension, SparseMultilinearExtension};
-use ark_poly_commit::multilinear_pc::data_structures::{Commitment, Proof};
 use ark_std::{cfg_into_iter, cfg_iter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use snarks_core::math::Math;
 
 /// Pads a polynomial to higher dimensions by scaling down evaluations and repeating them.
 /// The scaling factor compensates for the repetition to preserve mathematical properties.

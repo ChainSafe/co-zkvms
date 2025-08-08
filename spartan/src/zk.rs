@@ -365,66 +365,6 @@ where
             random_v: None, //random_v,
         }
     }
-    /* pub fn setup<R: RngCore>(max_deg: usize, num_variables: usize, rng: &mut R) -> Vec<UniversalParams<E>>{
-        let mut params = Vec::with_capacity(num_variables);
-        for _ in 0..num_variables{
-            params.push(KZG10::setup(max_deg, false, rng).unwrap())
-        }
-        params
-    }
-
-    pub(crate) fn trim_for_one(supported_deg: usize, param: &UniversalParams<E>, hiding_bound: usize) -> (Powers<E>, VerifierKey<E>){
-        let powers_of_g = param.powers_of_g[..=supported_deg].to_vec();
-        let powers_of_gamma_g = (0..=hiding_bound + 1)
-        .map(|i| param.powers_of_gamma_g[&i])
-        .collect::<Vec<_>>();
-        let ck = Powers{
-            powers_of_g: powers_of_g.into(),
-            powers_of_gamma_g: powers_of_gamma_g.into()
-        };
-        let vk = VerifierKey {
-            g: param.powers_of_g[0],
-            gamma_g: param.powers_of_gamma_g[&0],
-            h: param.h,
-            beta_h: param.beta_h,
-            prepared_h: param.prepared_h.clone(),
-            prepared_beta_h: param.prepared_beta_h.clone(),
-        };
-        (ck, vk)
-    }
-
-    pub fn trim(params: &Vec<UniversalParams<E>>, deg: usize, hiding_bound: usize) -> (Vec<Powers<E>>, Vec<VerifierKey<E>>){
-        let mut committer_keys: Vec<Powers<E>> = Vec::with_capacity(params.len());
-        let mut verifier_keys: Vec<VerifierKey<E>> = Vec::with_capacity(params.len());
-        for param in params{
-            let (ck, vk) = Self::trim_for_one(deg, param, hiding_bound);
-            committer_keys.push(ck);
-            verifier_keys.push(vk);
-        }
-        (committer_keys, verifier_keys)
-    }
-
-    pub(crate) fn commit_for_one(ck: &Powers<E>, polynomial: &P, hiding_bound: usize, rng: Option<&mut dyn RngCore>)
-            -> (Commitment<E>, Randomness<E::ScalarField, P>){
-        KZG10::commit(ck, &polynomial, Some(hiding_bound), rng).unwrap()
-    }
-
-    pub fn commit(cks: &Vec<Powers<E>>, polynomials: &Vec<P>, hiding_bound: usize, rng: Option<&mut dyn RngCore>)
-            -> (Commitment<E>, Vec<Randomness<E::ScalarField, P>>){
-           let mut random_vec: Vec<Randomness<E::ScalarField, P>> = Vec::with_capacity(cks.len());
-           let (mut sum, random_0) = Self::commit_for_one(&cks[0], &polynomials[0], hiding_bound, rng);
-           random_vec.push(random_0);
-           for i in 1..cks.len(){
-               let (com, random) = Self::commit_for_one(&cks[i], &polynomials[i], hiding_bound, rng);
-               sum += (E::ScalarField::from(1u8), &com);
-               random_vec.push(random);
-           }
-           (sum, random_vec)
-    }
-
-    pub fn open(){
-
-    } */
 }
 
 pub type ZKMLUniversalParam<E, P> = (MLPCParam<E>, MaskParam<E, P>);

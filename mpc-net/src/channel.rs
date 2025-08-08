@@ -183,7 +183,9 @@ where
                         }
 
                         // free capacity after receiving large frames (witness shares)
-                        if read.read_buffer().is_empty() && read.read_buffer().capacity() > RESET_LIMIT {
+                        if read.read_buffer().is_empty()
+                            && read.read_buffer().capacity() > RESET_LIMIT
+                        {
                             *read.read_buffer_mut() = BytesMut::with_capacity(BASE_CAP);
                         }
                     }

@@ -40,7 +40,12 @@ impl PartyWorkerID {
 
 impl std::fmt::Display for PartyWorkerID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "party: {}, worker: {}", self.party_id(), self.worker_idx())
+        write!(
+            f,
+            "party: {}, worker: {}",
+            self.party_id(),
+            self.worker_idx()
+        )
     }
 }
 

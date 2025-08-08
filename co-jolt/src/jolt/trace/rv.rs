@@ -25,7 +25,7 @@ use crate::jolt::instruction::virtual_right_shift_padding::RightShiftPaddingInst
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
-use jolt_common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RV32IM};
+use jolt_common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
 use jolt_core::field::JoltField;
 
 impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
