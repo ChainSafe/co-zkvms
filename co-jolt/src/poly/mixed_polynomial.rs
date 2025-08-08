@@ -126,11 +126,11 @@ impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for MixedPolynomial<F
 }
 
 impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for MixedPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> SharedOrPublic<F> {
+    fn evaluate(&self, _r: &[F]) -> SharedOrPublic<F> {
         todo!()
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
         todo!()
     }
 

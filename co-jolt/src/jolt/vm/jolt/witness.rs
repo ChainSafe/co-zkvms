@@ -428,29 +428,3 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         todo!()
     }
 }
-
-fn read_write_values_except_flags<T>(stuff: &InstructionLookupStuff<T>) -> impl Iterator<Item = &T>
-where
-    T: CanonicalSerialize + CanonicalDeserialize,
-{
-    stuff
-        .dim
-        .iter()
-        .chain(stuff.read_cts.iter())
-        .chain(stuff.E_polys.iter())
-        .chain([&stuff.lookup_outputs])
-}
-
-fn read_write_values_except_flags_mut<T>(
-    stuff: &mut InstructionLookupStuff<T>,
-) -> impl Iterator<Item = &mut T>
-where
-    T: CanonicalSerialize + CanonicalDeserialize,
-{
-    stuff
-        .dim
-        .iter_mut()
-        .chain(stuff.read_cts.iter_mut())
-        .chain(stuff.E_polys.iter_mut())
-        .chain([&mut stuff.lookup_outputs])
-}

@@ -81,8 +81,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
+        _C: usize,
+        _M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         #[cfg(feature = "public-eq")]
@@ -106,8 +106,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
     fn combine_lookups_rep3_batched<N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-        C: usize,
-        M: usize,
+        _C: usize,
+        _M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         #[cfg(feature = "public-eq")]
@@ -144,7 +144,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+            (Rep3Operand::Binary(_), Rep3Operand::Binary(_)) => {
                 unimplemented!()
             }
             _ => panic!("BEQInstruction::output called with non-binary operands"),

@@ -94,9 +94,9 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
+        _C: usize,
         M: usize,
-        io_ctx: &mut IoContext<N>,
+        _io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(concatenate_lookups_rep3(vals, vals.len(), log2(M) as usize))
     }

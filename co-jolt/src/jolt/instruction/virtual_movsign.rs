@@ -108,9 +108,9 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
+        _: usize,
         M: usize,
-        io_ctx: &mut IoContext<N>,
+        _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(M == 1 << 16);
         let val = vals[0];

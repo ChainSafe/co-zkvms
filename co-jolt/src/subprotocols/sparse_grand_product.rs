@@ -10,13 +10,11 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use itertools::Itertools;
 #[cfg(test)]
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
-use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
@@ -887,7 +885,7 @@ where
 }
 
 pub struct Rep3ToggledBatchedGrandProduct<F: JoltField> {
-    batch_size: usize,
+    // batch_size: usize,
     toggle_layer: Rep3BatchedGrandProductToggleLayer<F>,
     sparse_layers: Vec<Rep3SparseInterleavedPolynomial<F>>,
     // quark_poly: Option<Vec<F>>,
@@ -907,7 +905,7 @@ where
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
         let (flags, fingerprints) = leaves;
-        let batch_size = fingerprints.len();
+        // let batch_size = fingerprints.len();
         let tree_depth = fingerprints[0].len().log_2();
 
         let num_sparse_layers = tree_depth - 1;
@@ -922,7 +920,7 @@ where
         }
 
         Ok(Self {
-            batch_size,
+            // batch_size,
             toggle_layer,
             sparse_layers,
         })
@@ -966,7 +964,7 @@ where
     fn construct(num_layers: usize) -> Self {
         let sparse_layers = num_layers - 1;
         Self {
-            batch_size: 1,
+            // batch_size: 1,
             toggle_layer: Rep3BatchedGrandProductToggleLayer::default(),
             sparse_layers: vec![Rep3SparseInterleavedPolynomial::default(); sparse_layers],
         }

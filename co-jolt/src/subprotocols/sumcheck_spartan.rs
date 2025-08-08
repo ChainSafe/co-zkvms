@@ -3,11 +3,8 @@
 
 use crate::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use jolt_core::poly::multilinear_polynomial::PolynomialBinding;
-use jolt_core::subprotocols::sumcheck::Bindable;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_net::mpc_star::MpcStarNetWorker;
 
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};

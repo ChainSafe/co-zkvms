@@ -25,7 +25,6 @@ use rayon::prelude::*;
 
 use jolt_common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS};
 use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},

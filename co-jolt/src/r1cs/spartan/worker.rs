@@ -1,4 +1,3 @@
-use ark_ff::BigInteger;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;

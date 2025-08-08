@@ -54,7 +54,6 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn cooridinate_prove_grand_product(
         &self,
-        claims_to_verify: Vec<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductProof<PCS, ProofTranscript>> {

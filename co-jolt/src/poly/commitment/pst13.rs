@@ -1,5 +1,5 @@
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::{One, Zero};
 use ark_poly_commit::multilinear_pc::{
     data_structures::{Commitment, CommitterKey, Proof, UniversalParams, VerifierKey},
     MultilinearPC,
@@ -308,7 +308,7 @@ where
             .par_iter()
             .all(|s| s.borrow().len() == polys[0].borrow().len()));
 
-        if let Some(invalid) = polys
+        if let Some(_) = polys
             .iter()
             .find(|coeffs| (*coeffs).borrow().len() > powers_of_g.len())
         {

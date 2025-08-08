@@ -105,12 +105,12 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRLInstruc
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
-        M: usize,
+        _: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(C <= 10);
         assert!(vals.len() == C);
-        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied())) // TODO: make sum over &Rep3PrimeFieldShare<F>
+        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()))
     }
 
     fn combine_lookups_rep3_batched<N: Rep3Network>(

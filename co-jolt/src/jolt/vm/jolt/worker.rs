@@ -8,16 +8,13 @@ use crate::{
         },
     },
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{
-        commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
-        opening_proof::Rep3ProverOpeningAccumulator,
-    },
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
     r1cs::spartan::worker::Rep3UniformSpartanProver,
     utils::transcript::{Transcript, TranscriptExt},
 };
 use eyre::Context;
 use mpc_core::protocols::rep3::{
-    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
+    network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
 };
 use snarks_core::math::Math;

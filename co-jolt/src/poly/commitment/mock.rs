@@ -76,8 +76,8 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
     }
 
     fn prove_rep3<Network>(
-        poly: &Rep3DensePolynomial<F>,
-        setup: &Self::Setup,
+        _: &Rep3DensePolynomial<F>,
+        _: &Self::Setup,
         opening_point: &[F],
         network: &mut Network,
     ) -> eyre::Result<()>
@@ -207,7 +207,7 @@ where
         b"mock_commit"
     }
 
-    fn srs_size(setup: &Self::Setup) -> usize {
+    fn srs_size(_: &Self::Setup) -> usize {
         1 << 20
     }
 }

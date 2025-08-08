@@ -153,10 +153,3 @@ impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
         }
     }
 }
-
-fn load_value(row: &RVTraceRow) -> u64 {
-    match row.memory_state.as_ref().unwrap() {
-        MemoryState::Read { address: _, value } => *value,
-        _ => panic!("Unexpected Write"),
-    }
-}

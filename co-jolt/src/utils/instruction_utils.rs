@@ -132,7 +132,7 @@ where
 
 pub fn transpose_hashmap<T>(rows: Vec<HashMap<usize, T>>) -> HashMap<usize, Vec<T>> {
     let mut out: HashMap<usize, Vec<T>> = HashMap::new();
-    for (i, row) in rows.into_iter().enumerate() {
+    for (_, row) in rows.into_iter().enumerate() {
         for (k, v) in row {
             out.entry(k).or_default().push(v);
         }

@@ -73,7 +73,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
         M: usize,
-        io_ctx: &mut IoContext<N>,
+        _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize))
     }

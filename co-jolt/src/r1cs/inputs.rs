@@ -10,7 +10,6 @@ use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
-use jolt_core::utils::transcript::Transcript;
 
 use mpc_core::protocols::rep3::network::IoContext;
 

@@ -13,7 +13,6 @@ use jolt_core::poly::{
 };
 use jolt_core::{
     field::JoltField,
-    subprotocols::sumcheck::Bindable,
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive;
@@ -680,7 +679,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         E2_sum * E1_eval_sums.2,
                     )
                 } else {
-                    let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1_dense_len_not_power_of_two");
+                    let _span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1_dense_len_not_power_of_two");
                     // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
                     // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
                     // followed by (chunk_size - self.dense_len % chunk_size) zeros,

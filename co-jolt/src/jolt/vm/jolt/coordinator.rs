@@ -6,10 +6,7 @@ use crate::{
         witness::JoltWitnessMeta,
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
-    poly::{
-        commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
-        opening_proof::Rep3ProverOpeningAccumulator,
-    },
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     utils::transcript::TranscriptExt,
 };
@@ -19,7 +16,6 @@ use jolt_core::{
         bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof, JoltVerifierPreprocessing,
     },
     r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
-    utils::transcript::Transcript,
 };
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};

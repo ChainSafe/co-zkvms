@@ -3,7 +3,7 @@ use crate::{
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3MultilinearPolynomial,
     },
-    utils::{self, transcript::Transcript, Forkable},
+    utils::{self, Forkable},
 };
 use ark_std::cfg_into_iter;
 use itertools::{multizip, Itertools};
@@ -23,7 +23,6 @@ use mpc_core::protocols::{
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
-use mpc_net::mpc_star::MpcStarNetCoordinator;
 use rand::Rng;
 
 #[cfg(feature = "parallel")]

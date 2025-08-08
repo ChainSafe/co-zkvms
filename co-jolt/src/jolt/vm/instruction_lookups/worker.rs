@@ -43,7 +43,6 @@ use mpc_core::protocols::{
         PartyID,
     },
 };
-use mpc_net::mpc_star::MpcStarNetWorker;
 use std::{collections::HashMap, iter::once, marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
@@ -54,8 +53,6 @@ use crate::jolt::{
 };
 
 use rayon::{prelude::*, ThreadPoolBuilder};
-
-type Rep3InstructionLookupOpenings<F> = InstructionLookupStuff<Rep3PrimeFieldShare<F>>;
 
 use once_cell::sync::Lazy;
 use rayon::ThreadPool;

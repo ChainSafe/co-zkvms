@@ -111,7 +111,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
         C: usize,
-        M: usize,
+        _: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         assert!(C <= 10);
@@ -123,7 +123,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
-        M: usize,
+        _: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         assert!(C <= 10);

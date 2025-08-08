@@ -3,14 +3,11 @@ use eyre::Context;
 use jolt_core::{
     field::JoltField,
     jolt::vm::JoltStuff,
-    lasso::memory_checking::{
-        ExogenousOpenings, Initializable, MemoryCheckingProver, StructuredPolynomialData,
-    },
+    lasso::memory_checking::{ExogenousOpenings, Initializable, StructuredPolynomialData},
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     poly::{
@@ -19,9 +16,6 @@ use crate::{
     },
     subprotocols::grand_product::Rep3BatchedGrandProductWorker,
 };
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 pub trait MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>
 where

@@ -115,10 +115,10 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
 
     fn output<N: Rep3Network>(
         &self,
-        io_ctx: &mut IoContext<N>,
+        _io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
+            (Rep3Operand::Binary(_), Rep3Operand::Binary(_)) => {
                 // Ok(rep3::arithmetic::promote_to_trivial_share(
                 //     io_ctx.network.get_id(),
                 //     (x.clone() & y.clone()).into(),

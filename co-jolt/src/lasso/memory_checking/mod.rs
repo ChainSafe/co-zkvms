@@ -116,16 +116,10 @@ where
         let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
         let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
 
-        let read_write_grand_product = read_write_circuit.cooridinate_prove_grand_product(
-            read_write_hashes,
-            transcript,
-            network,
-        )?;
-        let init_final_grand_product = init_final_circuit.cooridinate_prove_grand_product(
-            init_final_hashes,
-            transcript,
-            network,
-        )?;
+        let read_write_grand_product =
+            read_write_circuit.cooridinate_prove_grand_product(transcript, network)?;
+        let init_final_grand_product =
+            init_final_circuit.cooridinate_prove_grand_product(transcript, network)?;
 
         Ok((
             read_write_grand_product,

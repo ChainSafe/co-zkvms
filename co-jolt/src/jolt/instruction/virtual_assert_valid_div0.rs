@@ -1,6 +1,5 @@
 use std::mem;
 
-use itertools::Itertools;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

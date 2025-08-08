@@ -155,7 +155,7 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3DenseInterleavedPolynomial<F> {
     ///   0  1 2  3  4  5 6  7
     /// Left nodes have even indices, right nodes have odd indices.
     #[tracing::instrument(skip_all, name = "DenseInterleavedPolynomial::bind", level = "trace")]
-    fn bind(&mut self, r: F, party_id: PartyID) {
+    fn bind(&mut self, r: F, _: PartyID) {
         let padded_len = self.len.next_multiple_of(4);
         // In order to parallelize binding while obeying Rust ownership rules, we
         // must write to a different vector than we are reading from. `binding_scratch_space`
