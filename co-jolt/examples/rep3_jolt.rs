@@ -65,7 +65,13 @@ pub struct Args {
     #[clap(short, long, value_name = "FILE")]
     pub config_file: PathBuf,
 
-    #[arg(short, long, value_name = "SOLVE_WITNESS", env = "SOLVE_WITNESS", default_value = "false")]
+    #[arg(
+        short,
+        long,
+        value_name = "SOLVE_WITNESS",
+        env = "SOLVE_WITNESS",
+        default_value = "false"
+    )]
     pub solve_witness: bool,
 
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]

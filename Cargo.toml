@@ -105,4 +105,3 @@ debug = false
 
 [profile.release]
 debug = true
-
