@@ -424,7 +424,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         state.time_elapsed += time;
 
         let responses_chunked: Vec<(E::ScalarField, E::ScalarField, E::ScalarField)> =
-            network.receive_responses(Default::default())?;
+            network.receive_responses()?;
 
         let mut val_a = E::ScalarField::zero();
         let mut val_b = E::ScalarField::zero();
@@ -633,7 +633,7 @@ pub fn rep3_zk_sumcheck_coordinator<
     // assert!(1 << log_num_workers == size);
 
     for _round in 0..poly_info.num_variables - network.log_num_workers_per_party() {
-        let responses_chunked: Vec<_> = network.receive_responses(M::default())?;
+        let responses_chunked: Vec<_> = network.receive_responses::<M>()?;
         let time = Instant::now();
 
         let mut prover_message = M::open_to_msg(&vec![
@@ -677,7 +677,7 @@ pub fn rep3_zk_sumcheck_coordinator<
         v_msg = Some(verifier_msg);
     }
 
-    let responses = network.receive_responses(Default::default())?;
+    let responses = network.receive_responses()?;
 
     let sumcheck_polys = sumcheck_polys_builder(&responses, network.log_num_workers_per_party());
 
@@ -755,11 +755,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: MpcStarNetCoordinator>(
     let mut tot_time = time.elapsed();
 
     for _round in 0..poly_info.num_variables - log_num_workers {
-        let default_response = ProverMsg {
-            evaluations: vec![F::zero(); poly_info.max_multiplicands + 1],
-        };
-
-        let responses_chunked: Vec<_> = network.receive_responses(default_response)?;
+        let responses_chunked: Vec<_> = network.receive_responses::<ProverMsg<F>>()?;
 
         let time = Instant::now();
 
@@ -781,9 +777,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: MpcStarNetCoordinator>(
         network.broadcast_request(r)?;
     }
 
-    let default_response = poly_list_to_prover_state(q_polys);
-
-    let responses_chunked: Vec<_> = network.receive_responses(default_response)?;
+    let responses_chunked: Vec<_> = network.receive_responses()?;
 
     let time = Instant::now();
 
@@ -813,15 +807,7 @@ fn rep3_poly_commit_coordinator<E: Pairing, N: MpcStarNetCoordinator>(
     network: &mut N,
     log_num_workers: Option<usize>,
 ) -> Result<(Vec<Commitment<E>>, Duration)> {
-    let default_response = vec![
-        Commitment::<E> {
-            nv: 0,
-            g_product: g,
-        };
-        num_comms
-    ];
-
-    let responses_chunked = network.receive_responses(default_response)?;
+    let responses_chunked: Vec<Vec<Commitment<E>>> = network.receive_responses()?;
 
     let time = Instant::now();
     // Round 1 process
@@ -845,8 +831,7 @@ pub fn rep3_eval_poly_coordinator<E: Pairing, N: MpcStarNetCoordinator>(
     final_point: &[E::ScalarField],
     network: &mut N,
 ) -> Result<(Vec<E::ScalarField>, Duration)> {
-    let default_response = vec![E::ScalarField::one(); num_poly];
-    let responses_chunked: Vec<_> = network.receive_responses(default_response)?;
+    let responses_chunked: Vec<Vec<E::ScalarField>> = network.receive_responses()?;
 
     let time = Instant::now();
 
@@ -887,14 +872,7 @@ pub fn batch_open_poly_coordinator<'a, E: Pairing, N: MpcStarNetCoordinator>(
     } else {
         network.log_num_pub_workers()
     };
-    let default_response = PartialProof {
-        proofs: Proof {
-            proofs: vec![g; num_var],
-        },
-        val: E::ScalarField::zero(),
-        evals: vec![E::ScalarField::one(); num_poly],
-    };
-    let responses_chunked: Vec<_> = network.receive_responses(default_response)?;
+    let responses_chunked: Vec<PartialProof<E>> = network.receive_responses()?;
 
     let time = Instant::now();
 

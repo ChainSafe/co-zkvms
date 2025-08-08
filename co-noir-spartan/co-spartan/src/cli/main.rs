@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use ark_bn254::Bn254;
 use clap::{Parser, Subcommand};
+use eyre::Context;
 use mimalloc::MiMalloc;
+use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use setup::setup;
 use tracing_forest::ForestLayer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
@@ -37,6 +39,9 @@ enum Command {
     },
 
     Work {
+        #[clap(long, value_name = "FILE")]
+        config_file: PathBuf,
+
         #[clap(long, value_name = "DIR")]
         r1cs_noir_scheme_path: PathBuf,
 
@@ -78,6 +83,7 @@ fn main() {
             log_num_public_workers,
         ),
         Command::Work {
+            config_file,
             r1cs_noir_scheme_path,
             r1cs_input_path,
             artifacts_dir,
@@ -86,7 +92,19 @@ fn main() {
             worker_id,
             local,
         } => {
+            let config: NetworkConfigFile = toml::from_str(
+                &std::fs::read_to_string(&config_file)
+                    .context("opening config file")
+                    .unwrap(),
+            )
+            .context("parsing config file")
+            .unwrap();
+            let config = NetworkConfig::try_from(config)
+                .context("converting network config")
+                .unwrap();
+
             work::<Bn254>(
+                config,
                 artifacts_dir,
                 r1cs_noir_scheme_path,
                 r1cs_input_path,
@@ -94,7 +112,8 @@ fn main() {
                 log_num_public_workers,
                 local,
                 worker_id,
-            );
+            )
+            .unwrap();
         }
     }
 }

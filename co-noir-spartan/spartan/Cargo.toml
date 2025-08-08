@@ -1,16 +1,14 @@
 [package]
-name = "co-spartan"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "co-spartan"
-path = "src/cli/main.rs"
+name = "spartan"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
 
 [dependencies]
-# Workspace dependencies
+# Arkworks dependencies
 ark-linear-sumcheck.workspace = true
-ark-crypto-primitives.workspace = true
 ark-poly-commit.workspace = true
 ark-std.workspace = true
 ark-ff.workspace = true
@@ -18,24 +16,21 @@ ark-bn254.workspace = true
 ark-serialize.workspace = true
 ark-poly.workspace = true
 ark-ec.workspace = true
-rand.workspace = true
-rayon = { version = "1.10.0", optional = true }
-itertools.workspace = true
-clap.workspace = true
-mimalloc.workspace = true
-crossbeam.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-tracing-forest.workspace = true
-bytesize.workspace = true
-color-eyre.workspace = true
-num-bigint.workspace = true
+ark-crypto-primitives.workspace = true
+merlin.workspace = true
 
-mpc-core = { path = "../mpc-core" }
-snarks-core = { path = "../snarks-core" }
-spartan = { path = "../spartan" }
+# Standard dependencies
+serde.workspace = true
+rand.workspace = true
+itertools.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+rayon = { version = "1.8.0", optional = true }
+bytesize = "2.0.1"
+
 noir-r1cs = { path = "../noir-r1cs" }
-mpc-net = { path = "../mpc-net" }
+snarks-core = { path = "../../snarks-core" }
+
 
 [features]
 default = ["std", "parallel"]
@@ -46,6 +41,7 @@ std = [
     "ark-serialize/std",
     "ark-poly-commit/std",
 ]
+#print-trace = [ "ark-std/print-trace" ]
 parallel = [
     "std",
     "ark-ff/parallel",
@@ -55,4 +51,3 @@ parallel = [
     "ark-poly-commit/parallel",
     "rayon",
 ]
-mpi = ["mpc-net/mpi"]
