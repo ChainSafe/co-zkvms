@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # jolt-sdk = { path = "../../../../jolt/jolt-sdk", features = ["host"] }
-jolt-sdk = { package = "jolt-sdk", git = "https://github.com/a16z/jolt.git", features = ["host"] }
+jolt-sdk = { package = "jolt-sdk", git = "https://github.com/a16z/jolt.git", features = ["host"], rev = "42de0ca1f581dd212dda7ff44feee806556531d2" }
 guest = { package = "sha3-chain-guest", path = "./guest" }
 hex = "0.4.3"
 

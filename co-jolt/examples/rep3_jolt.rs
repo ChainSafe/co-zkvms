@@ -65,10 +65,7 @@ pub struct Args {
     #[clap(short, long, value_name = "FILE")]
     pub config_file: PathBuf,
 
-    #[clap(short, long, value_name = "NUM_INPUTS", default_value = "8")]
-    pub log_num_inputs: usize,
-
-    #[arg(short, long, value_name = "SOLVE_WITNESS", env = "SOLVE_WITNESS")]
+    #[arg(short, long, value_name = "SOLVE_WITNESS", env = "SOLVE_WITNESS", default_value = "false")]
     pub solve_witness: bool,
 
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
@@ -110,7 +107,7 @@ fn main() -> Result<()> {
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_cpus::get())
-        .build_global() // only once; subsequent calls → Err
+        .build_global()
         .expect("set global Rayon pool");
 
     let config: NetworkConfigFile =
@@ -118,13 +115,9 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    // let mut program = host::Program::new("fibonacci-guest");
-    // let mut program = host::Program::new("sha3-guest");
     let mut program = host::Program::new("sha2-chain-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    // let inputs = postcard::to_stdvec(&50u32).unwrap();
-    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
@@ -240,6 +233,7 @@ pub fn run_coordinator(
     let num_inputs = trace.len();
     if args.solve_witness {
         tracing::info!("Witness solving enabled");
+        unimplemented!();
     } else {
         tracing::warn!("Witness solving disabled");
     }
