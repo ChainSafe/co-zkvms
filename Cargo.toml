@@ -1,17 +1,36 @@
 [workspace]
 resolver = "2"
-members = ["co-spartan", "noir-r1cs", "spartan"]
+members = [
+    "co-jolt",
+    "co-noir-spartan/co-spartan",
+    # "co-noir-spartan/co-noir",
+    "co-noir-spartan/spartan",
+    "co-noir-spartan/noir-r1cs",
+    "mpc-net",
+    "mpc-core",
+    "snarks-core",
+    "co-jolt/examples/fibonacci",
+    "co-jolt/examples/fibonacci/guest",
+    "co-jolt/examples/sha3-ex",
+    "co-jolt/examples/sha3-ex/guest",
+    "co-jolt/examples/sha2-chain",
+    "co-jolt/examples/sha2-chain/guest",
+    "co-jolt/examples/sha3-chain",
+    "co-jolt/examples/sha3-chain/guest",
+]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["timo <timofey@chainsafe.io>"]
 description = "Co-Spartan implementation for Noir circuits"
 license = "MIT"
 
 [workspace.dependencies]
 # ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
-ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = ["parallel"] }
+ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = [
+    "parallel",
+] }
 ark-poly-commit = { version = "0.5.0", features = ["parallel"] }
 ark-std = { version = "0.5.0", features = ["std"] }
 ark-ff = { version = "0.5.0", features = ["parallel"] }
@@ -29,13 +48,18 @@ ark-crypto-primitives = { version = "^0.5.0", default-features = false, features
 ] }
 
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "ansi"] }
+tracing-subscriber = { version = "0.3.19", features = [
+    "env-filter",
+    "ansi",
+    "registry",
+    "std",
+] }
 tracing-forest = { version = "0.1.6", features = ["ansi", "smallvec"] }
+tracing-chrome = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22.1"
 divan = "0.1.21"
-ruint = { version = "1.12.3", features = ["num-traits", "rand"] }
 rand = "0.8.5"
 subtle = "2.6.1"
 bytemuck = "1.22.0"
@@ -49,30 +73,35 @@ zstd = "0.13.3"
 bytes = "1.10.1"
 zeroize = "1.8.1"
 num-bigint = "0.4.3"
+eyre = "0.6.10"
+color-eyre = "0.6.3"
+bytesize = "2.0.1"
+rand_chacha = "0.3.0"
+toml = "0.9.5"
 
 # Additional dependencies for co-spartan
-mpi = { version = "0.7.0", features = ["user-operations", "derive"] }
-clap = { version = "4.4.13", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 mimalloc = { version = "*", default-features = false }
 crossbeam = "0.8.3"
 merlin = "3.0.0"
 blake2 = "0.9"
 
-# Noir lang: make sure it matches installed version `noirup -C ceaa1986628197bd1170147f6a07f0f98d21030a`
-# Note: to simplify things, pick a version that has the same `ark_ff` version as `whir`.
-acir = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-acvm = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-acir_field = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-noirc_abi = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-noirc_artifacts = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-noirc_printable_type = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-# bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-# bls12_381_blackbox_solver = { git = "https://github.com/noir-lang/noir", rev = "ceaa1986628197bd1170147f6a07f0f98d21030a" }
-
+mpc-types = { git = "https://github.com/nulltea/co-snarks" }
 anyhow = "1.0.93"
 argh = "0.1.12"
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
-# ark-linear-sumcheck = { path = "../sumcheck" }
-# ark-poly-commit = { path = "../poly-commit/poly-commit" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+
+[patch."https://github.com/nulltea/co-snarks"]
+mpc-net = { path = "./mpc-net" }
+
+[profile.guest]
+inherits = "release"
+debug = false
+
+[profile.release]
+debug = true

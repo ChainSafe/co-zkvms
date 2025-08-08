@@ -1,0 +1,21 @@
+[package]
+name = "snarks-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+# Arkworks dependencies
+ark-linear-sumcheck.workspace = true
+ark-poly-commit.workspace = true
+ark-std.workspace = true
+ark-ff.workspace = true
+ark-bn254.workspace = true
+ark-serialize.workspace = true
+ark-poly.workspace = true
+ark-ec.workspace = true
+ark-crypto-primitives.workspace = true
+merlin.workspace = true
+rand.workspace = true

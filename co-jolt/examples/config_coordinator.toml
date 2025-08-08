@@ -1,0 +1,37 @@
+bind_addr = "0.0.0.0:11000"
+key_path = "data/key_coordinator.der"
+is_coordinator = true
+[coordinator]
+dns_name = "localhost:11000"
+cert_path = "data/cert_coordinator.der"
+[[parties]]
+id = 0
+worker = 0
+dns_name = "localhost:10000"
+cert_path = "data/cert0.der"
+[[parties]]
+id = 1
+worker = 0
+dns_name = "localhost:10001"
+cert_path = "data/cert1.der"
+[[parties]]
+id = 2
+worker = 0
+dns_name = "localhost:10002"
+cert_path = "data/cert2.der"
+
+# [[parties]]
+# id = 0
+# worker = 1
+# dns_name = "localhost:10010"
+# cert_path = "data/cert0.der"
+# [[parties]]
+# id = 1
+# worker = 1
+# dns_name = "localhost:10011"
+# cert_path = "data/cert1.der"
+# [[parties]]
+# id = 2
+# worker = 1
+# dns_name = "localhost:10012"
+# cert_path = "data/cert2.der"

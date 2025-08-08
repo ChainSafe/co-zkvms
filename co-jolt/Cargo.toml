@@ -1,0 +1,108 @@
+[package]
+name = "co-jolt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+ark-poly-commit.workspace = true
+ark-std.workspace = true
+ark-ff.workspace = true
+ark-bn254.workspace = true
+ark-serialize.workspace = true
+ark-poly.workspace = true
+ark-ec.workspace = true
+rand.workspace = true
+serde.workspace = true
+itertools.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-forest.workspace = true
+tracing-chrome.workspace = true
+color-eyre.workspace = true
+num-bigint.workspace = true
+eyre.workspace = true
+rand_chacha.workspace = true
+once_cell = "1.20.0"
+num_cpus = "1.16"
+
+toml.workspace = true
+paste = "1.0.15"
+enum_dispatch = "0.3.12"
+strum = "0.26.3"
+strum_macros = "0.26.4"
+rustls = "0.23.15"
+rayon = { version = "1.10.0", optional = true }
+tokio = { version = "1.34.0", features = [
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "sync",
+    "time",
+    "io-util",
+    "macros",
+] }
+# Jolt dependencies
+jolt-core = { git = "https://github.com/nulltea/jolt.git", branch = "co-jolt" }
+jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
+jolt-tracer = { git = "https://github.com/nulltea/jolt.git", package = "tracer", branch = "co-jolt" }
+postcard = { version = "1.0.8", default-features = false, features = [
+    "use-std",
+] }
+
+mpc-core = { path = "../mpc-core" }
+snarks-core = { path = "../snarks-core" }
+mpc-net = { path = "../mpc-net" }
+
+
+[build-dependencies]
+jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
+
+[features]
+default = ["std", "parallel"]
+std = [
+    "ark-ff/std",
+    "ark-poly/std",
+    "ark-std/std",
+    "ark-serialize/std",
+    "ark-poly-commit/std",
+]
+parallel = [
+    "std",
+    "ark-ff/parallel",
+    "ark-ec/parallel",
+    "ark-poly/parallel",
+    "ark-std/parallel",
+    "ark-poly-commit/parallel",
+    "rayon",
+]
+icicle = [
+    "default",
+    "dep:icicle-runtime",
+    "dep:icicle-core",
+    "dep:icicle-bn254",
+    "jolt-core/icicle",
+]
+public-eq = []
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))'.dependencies]
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    # "cuda_backend",
+], rev = "2441eba", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
+    # "cuda_backend",
+], rev = "2441eba", optional = true }
+
+# [patch."https://github.com/nulltea/jolt.git"]
+# jolt-core = { path = "../../jolt/jolt-core" }
+# jolt-common = { path = "../../jolt/common", package = "common" }
+# jolt-tracer = { path = "../../jolt/tracer", package = "tracer" }
