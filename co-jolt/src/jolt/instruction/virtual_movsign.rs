@@ -9,10 +9,7 @@ use jolt_core::{
         instruction::SubtableIndices,
         subtable::{identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable},
     },
-    utils::{
-        instruction_utils::{chunk_operand_usize, concatenate_lookups},
-        interleave_bits,
-    },
+    utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};

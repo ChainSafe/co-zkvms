@@ -1,43 +1,20 @@
 use std::marker::PhantomData;
 
-use crate::jolt::vm::jolt::witness::JoltWitnessMeta;
-use crate::lasso::memory_checking::{MemoryCheckingProver, Rep3MemoryCheckingProver};
+use crate::lasso::memory_checking::Rep3MemoryCheckingProver;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
-use crate::subprotocols::grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProduct};
+use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
-use jolt_core::poly::compact_polynomial::CompactPolynomial;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
-use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
-use jolt_core::utils::thread::unsafe_allocate_zero_vec;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;
-use rayon::prelude::*;
 
-use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_common::constants::{
-    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
-};
-use jolt_common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
-use jolt_core::jolt::vm::{
-    read_write_memory::{ReadWriteMemoryPolynomials, ReadWriteMemoryProof},
-    timestamp_range_check::TimestampValidityProof,
-    JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep,
-};
+use crate::poly::commitment::Rep3CommitmentScheme;
+use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryProof;
 use jolt_core::utils::transcript::Transcript;
-use jolt_core::{
-    poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math},
-};
+use jolt_core::utils::math::Math;
 
-use crate::jolt::vm::witness::Rep3JoltPolynomials;
 
 pub trait Rep3ReadWriteMemoryCoordinator<F, PCS, ProofTranscript, Network>:
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>

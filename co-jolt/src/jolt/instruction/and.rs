@@ -4,7 +4,6 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
-    self,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };

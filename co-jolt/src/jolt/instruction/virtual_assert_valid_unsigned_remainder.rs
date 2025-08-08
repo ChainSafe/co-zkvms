@@ -1,5 +1,4 @@
 use itertools::{multizip, Itertools};
-use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -7,14 +6,12 @@ use serde::{Deserialize, Serialize};
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
 use jolt_core::{
-    field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable, utils::uninterleave_bits,
+    field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable,
 };
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::{
-    chunks_take_nth, rep3_chunk_and_concatenate_operands, transpose,
-};
+use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 

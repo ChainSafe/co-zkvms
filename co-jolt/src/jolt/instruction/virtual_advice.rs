@@ -1,5 +1,4 @@
 use ark_std::log2;
-use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

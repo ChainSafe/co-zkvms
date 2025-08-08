@@ -1,4 +1,3 @@
-use std::iter;
 
 use itertools::{chain, izip, multizip, Itertools};
 use jolt_core::field::JoltField;
@@ -10,14 +9,11 @@ use jolt_core::jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
     ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
 };
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
+use mpc_core::protocols::rep3::{
         self,
         network::{IoContext, Rep3Network},
         Rep3PrimeFieldShare,
-    },
-};
+    };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::{

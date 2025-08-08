@@ -1,32 +1,24 @@
-use ark_std::cfg_iter;
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::Itertools;
 use jolt_core::{
     field::JoltField,
-    jolt::vm::{JoltPolynomials, JoltStuff},
+    jolt::vm::JoltStuff,
     lasso::memory_checking::{
-        ExogenousOpenings, Initializable, MemoryCheckingProver, MultisetHashes,
+        ExogenousOpenings, Initializable, MemoryCheckingProver,
         StructuredPolynomialData,
     },
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
 };
-use mpc_core::protocols::rep3::{
-    network::{IoContext, IoContextPool, Rep3NetworkWorker},
-    PartyID,
-};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
-        Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3PolysConversion,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3MultilinearPolynomial,
     },
     subprotocols::grand_product::Rep3BatchedGrandProductWorker,
-    utils,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

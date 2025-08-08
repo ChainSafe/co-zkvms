@@ -4,7 +4,7 @@ use strum::IntoEnumIterator;
 use jolt_core::{
     field::JoltField,
     r1cs::{
-        builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder},
+        builder::{OffsetEqConstraint, R1CSBuilder},
         constraints::{R1CSConstraints, LOG_M, OPERAND_SIZE, PC_NOOP_SHIFT, PC_START_ADDRESS},
         inputs::{AuxVariable, ConstraintInput},
         ops::Variable,

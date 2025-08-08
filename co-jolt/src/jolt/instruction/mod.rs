@@ -8,12 +8,10 @@ use mpc_core::protocols::rep3::{
     Rep3BigUintShare,
 };
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use paste::paste;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
-use strum_macros::{AsRefStr, EnumCount, EnumIter};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
 use jolt_core::jolt::subtable::LassoSubtable;
@@ -148,7 +146,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         id: PartyID,
     ) {
-        ops.filter_map(|mut op| op.as_mut()).for_each(|op| {
+        ops.filter_map(|op| op.as_mut()).for_each(|op| {
             let (op1, op2) = op.operands_mut();
             match (&op1, &op2) {
                 (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {

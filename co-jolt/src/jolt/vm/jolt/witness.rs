@@ -1,32 +1,26 @@
-use std::marker::PhantomData;
 
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
-use crate::poly::{Rep3MultilinearPolynomial, Rep3PolysConversion};
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::r1cs::inputs::Rep3R1CSPolynomials;
 use crate::utils::element::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::field::JoltField;
-use jolt_core::join_conditional;
-use jolt_core::jolt::vm::instruction_lookups::{
-    InstructionLookupCommitments, InstructionLookupStuff, InstructionLookupsPreprocessing,
-};
+use jolt_core::jolt::vm::instruction_lookups::InstructionLookupStuff;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use jolt_core::jolt::vm::timestamp_range_check::{
     TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
 };
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
 use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::r1cs::inputs::ConstraintInput;
-use jolt_core::utils::transcript::{KeccakTranscript, Transcript};
-use jolt_tracer::JoltDevice;
+use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{
     IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };

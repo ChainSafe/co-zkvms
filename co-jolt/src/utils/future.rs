@@ -1,4 +1,4 @@
-use itertools::{izip, multizip, Itertools};
+use itertools::Itertools;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,

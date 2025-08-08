@@ -1,10 +1,6 @@
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{
-    ProverOpeningAccumulator, Rep3ProverOpeningAccumulator, VerifierOpeningAccumulator,
-};
 use crate::poly::sparse_interleaved_poly::Rep3SparseInterleavedPolynomial;
-use crate::poly::Rep3DensePolynomial;
 use crate::subprotocols::grand_product::{
     Rep3BatchedGrandProduct, Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker,
     Rep3BatchedGrandProductWorker,
@@ -17,20 +13,14 @@ use crate::utils::thread::drop_in_background_thread;
 use itertools::Itertools;
 #[cfg(test)]
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::poly::sparse_interleaved_poly::SparseInterleavedPolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::grand_product::{
-    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductLayerProof,
-    BatchedGrandProductProof,
-};
-use jolt_core::subprotocols::grand_product_quarks::QuarkGrandProductBase;
-use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, Bindable};
-use jolt_core::subprotocols::QuarkHybridLayerDepth;
+use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
+use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;

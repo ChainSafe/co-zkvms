@@ -6,7 +6,7 @@ use jolt_core::poly::multilinear_polynomial::{
 pub use jolt_core::poly::opening_proof::*;
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
-use jolt_core::utils::transcript::{AppendToTranscript, KeccakTranscript};
+use jolt_core::utils::transcript::AppendToTranscript;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::{
@@ -19,7 +19,7 @@ use mpc_core::protocols::{
 
 use crate::{
     field::JoltField,
-    poly::{commitment::Rep3CommitmentScheme, Rep3DensePolynomial, Rep3MultilinearPolynomial},
+    poly::{commitment::Rep3CommitmentScheme, Rep3MultilinearPolynomial},
     utils::transcript::Transcript,
 };
 

@@ -7,7 +7,7 @@ use mpc_core::protocols::rep3;
 
 use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
 
-pub type Rep3TimestampRangeCheckPolynomials<F: JoltField> =
+pub type Rep3TimestampRangeCheckPolynomials<F> =
     TimestampRangeCheckStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeCheckPolynomials<F> {

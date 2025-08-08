@@ -1,18 +1,12 @@
 use std::ops::Index;
 
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::PolyDegree;
 use crate::utils::element::SharedOrPublic;
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
-use jolt_core::{field::JoltField, poly::compact_polynomial::CompactPolynomial};
-use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::iter::IntoParallelIterator;
+use jolt_core::field::JoltField;
+use mpc_core::protocols::rep3::PartyID;
 use snarks_core::math::Math;
 
 pub struct MixedPolynomial<F: JoltField> {

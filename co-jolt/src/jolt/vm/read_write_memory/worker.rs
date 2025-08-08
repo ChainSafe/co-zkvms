@@ -20,29 +20,22 @@ use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::constants::{
-    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
+    MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS,
 };
-use jolt_common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
-use jolt_core::jolt::vm::{
-    read_write_memory::{ReadWriteMemoryPolynomials, ReadWriteMemoryProof},
-    timestamp_range_check::TimestampValidityProof,
-    JoltCommitments, JoltPolynomials, JoltStuff, JoltTraceStep,
-};
+use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{errors::ProofVerifyError, math::Math},
+    utils::math::Math,
 };
 
 use super::witness::Rep3ReadWriteMemoryPolynomials;

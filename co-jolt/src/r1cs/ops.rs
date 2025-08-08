@@ -1,7 +1,5 @@
 use jolt_core::field::JoltField;
-use jolt_core::r1cs::builder::{Constraint, OffsetEqConstraint};
-use jolt_core::r1cs::ops::*;
-use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::element::{SharedOrPublic, SharedOrPublicIter};

@@ -9,7 +9,6 @@ use jolt_core::subprotocols::sparse_grand_product::ToggledBatchedGrandProduct;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
-use jolt_core::utils::mul_0_1_optimized;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -18,7 +17,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::lasso::{
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    memory_checking::{MultisetHashes, StructuredPolynomialData, VerifierComputedOpening},
+    memory_checking::MultisetHashes,
 };
 use jolt_core::field::JoltField;
 use jolt_core::jolt::subtable::JoltSubtableSet;

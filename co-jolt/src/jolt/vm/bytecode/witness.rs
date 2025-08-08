@@ -8,7 +8,7 @@ use jolt_core::{
 };
 use rand::Rng;
 
-pub type Rep3BytecodePolynomials<F: JoltField> = BytecodeStuff<Rep3MultilinearPolynomial<F>>;
+pub type Rep3BytecodePolynomials<F> = BytecodeStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3BytecodePolynomials<F> {
     type PublicPolynomials = BytecodePolynomials<F>;

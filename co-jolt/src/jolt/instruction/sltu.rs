@@ -5,14 +5,11 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
+use mpc_core::protocols::rep3::{
         self,
         network::{IoContext, Rep3Network},
         Rep3PrimeFieldShare,
-    },
-};
+    };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{
@@ -150,7 +147,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTUInstruction<F> {
         let batch_size = vals_many[0].len();
         let mut batched_vals_by_subtable = self.slice_values(vals_many, C, M);
 
-        let mut ltu = std::mem::take(&mut batched_vals_by_subtable[0]);
+        let ltu = std::mem::take(&mut batched_vals_by_subtable[0]);
         #[cfg(not(feature = "public-eq"))]
         let mut eq = std::mem::take(&mut batched_vals_by_subtable[1]);
         #[cfg(feature = "public-eq")]

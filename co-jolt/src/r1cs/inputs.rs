@@ -4,18 +4,14 @@
     clippy::too_many_arguments
 )]
 
-use jolt_core::jolt::vm::{JoltCommitments, JoltStuff};
-use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing, StructuredPolynomialData};
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::jolt::vm::JoltStuff;
+use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_core::poly::opening_proof::VerifierOpeningAccumulator;
 use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
 use jolt_core::utils::transcript::Transcript;
 
-use jolt_core::r1cs::key::UniformSpartanKey;
-use jolt_core::r1cs::spartan::{SpartanError, UniformSpartanProof};
 use mpc_core::protocols::rep3::network::IoContext;
 
 use crate::field::JoltField;
@@ -31,11 +27,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use jolt_common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub type Rep3R1CSPolynomials<F: JoltField> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
+pub type Rep3R1CSPolynomials<F> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F> Rep3Polynomials<F, NoPreprocessing> for Rep3R1CSPolynomials<F>
 where

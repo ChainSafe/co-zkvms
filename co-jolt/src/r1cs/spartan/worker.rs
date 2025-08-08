@@ -1,42 +1,25 @@
 use ark_ff::BigInteger;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
-use jolt_core::r1cs::builder::AuxComputation;
-use jolt_core::r1cs::spartan::UniformSpartanProof;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3;
-use mpc_core::protocols::rep3::network::IoContext;
 use mpc_core::protocols::rep3::network::IoContextPool;
-use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
 use std::marker::PhantomData;
 use tracing::{span, Level};
 
 use jolt_core::field::JoltField;
-use jolt_core::jolt::vm::JoltCommitments;
-use jolt_core::jolt::vm::JoltPolynomials;
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
-use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
-use jolt_core::poly::opening_proof::VerifierOpeningAccumulator;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::thread::drop_in_background_thread;
 
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
 use jolt_core::utils::transcript::Transcript;
 
-use jolt_core::{
-    poly::{
+use jolt_core::poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::small_value::NUM_SVO_ROUNDS,
-};
+    };
 
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
 use crate::poly::commitment::Rep3CommitmentScheme;

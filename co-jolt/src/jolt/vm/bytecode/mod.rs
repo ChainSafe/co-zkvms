@@ -9,7 +9,6 @@ use jolt_core::field::JoltField;
 pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 
 use jolt_tracer::RV32IM;
-use rayon::prelude::*;
 
 pub trait BytecodeRowExt {
     fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64

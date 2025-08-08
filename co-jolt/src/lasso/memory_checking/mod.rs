@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
@@ -10,7 +9,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::{
     additive,
-    rep3::{self, network::Rep3NetworkCoordinator},
+    rep3::network::Rep3NetworkCoordinator,
 };
 
 use crate::{

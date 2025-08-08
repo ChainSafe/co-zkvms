@@ -1,7 +1,4 @@
-use std::marker::PhantomData;
 
-use ark_serialize::*;
-use eyre::Context;
 use jolt_core::{
     field::JoltField,
     poly::dense_mlpoly::DensePolynomial,
@@ -20,7 +17,7 @@ use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
-        network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker},
+        network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
     },
 };
 

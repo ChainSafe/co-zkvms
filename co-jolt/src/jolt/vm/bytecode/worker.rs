@@ -9,7 +9,7 @@ use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::utils::transcript::Transcript;
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 

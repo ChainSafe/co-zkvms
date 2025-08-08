@@ -31,7 +31,6 @@ use jolt_core::jolt::subtable::LassoSubtable;
 use jolt_core::jolt::vm::rv32i_vm::RV32ISubtables;
 use paste::paste;
 
-use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{
     network::{IoContext, Rep3Network},
     Rep3BigUintShare, Rep3PrimeFieldShare,

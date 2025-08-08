@@ -5,8 +5,8 @@ use ark_poly_commit::multilinear_pc::{
     MultilinearPC,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter_mut, test_rng};
-use jolt_core::msm::{use_icicle, GpuBaseType, Icicle, VariableBaseMSM};
+use ark_std::test_rng;
+use jolt_core::msm::{use_icicle, Icicle, VariableBaseMSM};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
     field::JoltField,

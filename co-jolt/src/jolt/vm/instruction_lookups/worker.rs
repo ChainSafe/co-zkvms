@@ -20,7 +20,7 @@ use itertools::{chain, Itertools};
 use jolt_core::{
     field::JoltField,
     jolt::{
-        instruction::sltu::SLTUInstruction, subtable::JoltSubtableSet,
+        subtable::JoltSubtableSet,
         vm::instruction_lookups::InstructionLookupStuff,
     },
     lasso::memory_checking::NoExogenousOpenings,
@@ -31,29 +31,25 @@ use jolt_core::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        unipoly::UniPoly,
     },
-    utils::{math::Math, mul_0_1_optimized, thread::drop_in_background_thread},
+    utils::{math::Math, thread::drop_in_background_thread},
 };
-use mpc_core::protocols::{
-    additive,
-    rep3::{
+use mpc_core::protocols::rep3::{
         network::{IoContextPool, WorkerIoContext},
         Rep3PrimeFieldShare,
-    },
-};
+    };
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
-        network::{IoContext, Rep3Network, Rep3NetworkWorker},
+        network::{Rep3Network, Rep3NetworkWorker},
         PartyID,
     },
 };
 use mpc_net::mpc_star::MpcStarNetWorker;
 use std::{
     collections::HashMap,
-    iter::{self, once},
+    iter::once,
     marker::PhantomData,
     sync::Arc,
 };
@@ -63,7 +59,7 @@ use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreproc
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
     vm::{
-        instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials, JoltPolynomials,
+        instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials,
     },
 };
 

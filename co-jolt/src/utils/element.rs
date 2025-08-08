@@ -4,7 +4,7 @@ use mpc_core::protocols::{
     additive::{self, AdditiveShare},
     rep3::{
         self,
-        network::{IoContext, Rep3Network, Rep3NetworkWorker},
+        network::{IoContext, Rep3Network},
         PartyID, Rep3PrimeFieldShare,
     },
 };

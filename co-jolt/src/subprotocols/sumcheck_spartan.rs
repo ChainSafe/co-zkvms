@@ -3,22 +3,13 @@
 
 use crate::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use itertools::multizip;
-use jolt_core::poly::{
-    dense_mlpoly::DensePolynomial,
-    multilinear_polynomial::{BindingOrder, PolynomialBinding},
-};
+use jolt_core::poly::multilinear_polynomial::PolynomialBinding;
 use jolt_core::subprotocols::sumcheck::Bindable;
-use jolt_core::utils::thread::drop_in_background_thread;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{self, PartyID};
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
+use mpc_core::protocols::additive;
 use mpc_net::mpc_star::MpcStarNetWorker;
-use rayon::prelude::*;
-use tracing::trace_span;
 
-use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use jolt_core::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
 pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;

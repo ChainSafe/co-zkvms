@@ -12,16 +12,13 @@ use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
 };
 use jolt_core::{
-    field::{JoltField, OptimizedMul},
-    subprotocols::{
-        grand_product::BatchedGrandProductLayer,
-        sumcheck::{BatchedCubicSumcheck, Bindable},
-    },
+    field::JoltField,
+    subprotocols::sumcheck::Bindable,
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;

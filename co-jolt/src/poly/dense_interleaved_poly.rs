@@ -1,26 +1,20 @@
 use std::slice::Chunks;
 
 use crate::{
-    poly::Rep3DensePolynomial,
     subprotocols::{
         grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
         sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker, Rep3Bindable},
     },
-    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    utils::transcript::Transcript,
 };
 use eyre::Context;
-use itertools::izip;
 use jolt_core::field::JoltField;
-use jolt_core::subprotocols::{
-    grand_product::BatchedGrandProductLayer,
-    sumcheck::{BatchedCubicSumcheck, Bindable},
-};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
         network::{
-            IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+            IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
         },
         PartyID, Rep3PrimeFieldShare,
     },

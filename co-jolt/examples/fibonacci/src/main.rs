@@ -1,4 +1,3 @@
-use std::time::Instant;
 
 pub fn main() {
     // let target_dir = "/tmp/jolt-guest-targets";

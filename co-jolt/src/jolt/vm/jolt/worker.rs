@@ -7,50 +7,38 @@ use crate::{
             worker::Rep3ReadWriteMemoryProver,
         },
     },
-    lasso::memory_checking::{worker::MemoryCheckingProverRep3Worker, StructuredPolynomialData},
+    lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
-        opening_proof::{
-            ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
-        },
+        opening_proof::Rep3ProverOpeningAccumulator,
     },
     r1cs::spartan::worker::Rep3UniformSpartanProver,
-    utils::{
-        thread::drop_in_background_thread,
-        transcript::{Transcript, TranscriptExt},
-    },
+    utils::transcript::{Transcript, TranscriptExt},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
-use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
-    network::{IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
+    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
     PartyID,
 };
 use snarks_core::math::Math;
-use strum::EnumCount;
 
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
     vm::{
-        instruction_lookups::{worker::Rep3InstructionLookupsProver, InstructionLookupsProof},
-        rv32i_vm::{RV32IJoltVM, RV32I},
+        instruction_lookups::worker::Rep3InstructionLookupsProver,
         witness::{Rep3JoltPolynomials, Rep3JoltPolynomialsExt, Rep3Polynomials},
-        Jolt, JoltCommitments, JoltPolynomials, JoltProof, JoltTraceStep,
+        Jolt, JoltTraceStep,
     },
 };
 use jolt_core::{
     field::JoltField,
     jolt::subtable::JoltSubtableSet,
-    jolt::vm::rv32i_vm::RV32ISubtables,
-    jolt::vm::{JoltProverPreprocessing, JoltStuff, ProverDebugInfo},
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    jolt::vm::JoltProverPreprocessing,
     r1cs::{
-        builder::CombinedUniformBuilder, constraints::JoltRV32IMConstraints,
-        inputs::ConstraintInput, key::UniformSpartanKey,
+        builder::CombinedUniformBuilder, key::UniformSpartanKey,
     },
 };
-use jolt_core::{r1cs::constraints::R1CSConstraints, utils::transcript::AppendToTranscript};
+use jolt_core::r1cs::constraints::R1CSConstraints;
 
 pub struct JoltRep3Prover<
     F,

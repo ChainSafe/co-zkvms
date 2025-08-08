@@ -8,48 +8,36 @@ use crate::{
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme},
-        opening_proof::{
-            ProverOpeningAccumulator, ReducedOpeningProof, Rep3ProverOpeningAccumulator,
-        },
+        opening_proof::Rep3ProverOpeningAccumulator,
     },
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     utils::transcript::TranscriptExt,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
 use jolt_core::{
-    jolt::{
-        subtable::JoltSubtableSet,
-        vm::{
+    jolt::vm::{
             bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof,
             JoltVerifierPreprocessing,
         },
-    },
     r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
-    utils::{thread::drop_in_background_thread, transcript::Transcript},
+    utils::transcript::Transcript,
 };
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
-use strum::EnumCount;
 
 use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomialsExt};
 use crate::jolt::{
-    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    instruction::Rep3JoltInstructionSet,
     vm::{
         instruction_lookups::InstructionLookupsProof,
-        rv32i_vm::{RV32IJoltVM, RV32I},
+        rv32i_vm::RV32IJoltVM,
         witness::Rep3JoltPolynomials,
-        Jolt, JoltCommitments, JoltPolynomials, JoltProof, JoltTraceStep,
+        Jolt, JoltCommitments, JoltProof, JoltTraceStep,
     },
 };
 use jolt_core::utils::transcript::AppendToTranscript;
-use jolt_core::{
-    field::JoltField,
-    jolt::vm::{JoltProverPreprocessing, JoltStuff, ProverDebugInfo},
-    poly::multilinear_polynomial::MultilinearPolynomial,
-    r1cs::inputs::ConstraintInput,
-};
+use jolt_core::field::JoltField;
 
 pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
     Jolt<F, PCS, C, M, ProofTranscript>

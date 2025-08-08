@@ -1,44 +1,36 @@
 use crate::{
-    lasso::memory_checking::StructuredPolynomialData,
     poly::{
-        combine_poly_shares_rep3, commitment::Rep3CommitmentScheme, generate_poly_shares_rep3,
-        generate_poly_shares_rep3_vec, Rep3DensePolynomial, Rep3MultilinearPolynomial,
+        combine_poly_shares_rep3, generate_poly_shares_rep3,
+        generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
     },
     utils::{
         self,
-        transcript::{KeccakTranscript, Transcript},
+        transcript::Transcript,
         Forkable,
     },
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_into_iter, cfg_iter};
-use color_eyre::eyre::Context;
-use itertools::{chain, multizip, Itertools};
+use ark_std::cfg_into_iter;
+use itertools::{multizip, Itertools};
 use jolt_core::{
     field::JoltField,
-    jolt::vm::instruction_lookups::{InstructionLookupCommitments, InstructionLookupPolynomials},
-    lasso::memory_checking::Initializable,
-    poly::dense_mlpoly::DensePolynomial,
+    jolt::vm::instruction_lookups::InstructionLookupPolynomials,
     utils::math::Math,
 };
 use jolt_core::{
-    jolt::subtable::JoltSubtableSet, jolt::vm::instruction_lookups::InstructionLookupStuff,
-    poly::commitment::commitment_scheme::CommitmentScheme,
+    jolt::vm::instruction_lookups::InstructionLookupStuff,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
 use mpc_core::protocols::{
     rep3::{
         self, arithmetic,
-        network::{IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker},
+        network::{IoContext, Rep3Network},
         PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
 };
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use mpc_net::mpc_star::MpcStarNetCoordinator;
 use rand::Rng;
-use std::{iter, marker::PhantomData};
 
-use super::InstructionLookupsProof;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -51,7 +43,7 @@ use crate::jolt::{
     },
 };
 
-pub type Rep3InstructionLookupPolynomials<F: JoltField> =
+pub type Rep3InstructionLookupPolynomials<F> =
     InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>

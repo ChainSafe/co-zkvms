@@ -1,31 +1,26 @@
-use core::num;
 
 use ark_ff::Zero;
 use itertools::Itertools;
 use jolt_core::poly::{
-    eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial,
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
-    unipoly::CompressedUniPoly,
 };
 use jolt_core::r1cs::builder::OffsetLC;
-use jolt_core::subprotocols::sumcheck::process_eq_sumcheck_round;
 use jolt_core::{
-    field::{JoltField, OptimizedMul, OptimizedMulI128},
-    r1cs::builder::{eval_offset_lc, Constraint, OffsetEqConstraint},
+    field::JoltField,
+    r1cs::builder::{Constraint, OffsetEqConstraint},
     utils::{
         math::Math,
-        small_value::{svo_helpers, NUM_SVO_ROUNDS},
         transcript::Transcript,
     },
 };
-use mpc_core::protocols::additive::{self, AdditiveShare};
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::r1cs::ops::LinearCombinationExt;
 use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
 use crate::utils::element::{SharedOrPublic, SharedOrPublicIter as _, SharedOrPublicParIter};
-use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 
 #[derive(Clone, Debug)]

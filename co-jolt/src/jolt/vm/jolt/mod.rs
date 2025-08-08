@@ -2,7 +2,7 @@ pub mod coordinator;
 pub mod witness;
 pub mod worker;
 
-use std::{collections::BTreeMap, iter, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
     jolt::vm::bytecode::BytecodeRowExt,
@@ -15,7 +15,6 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -29,7 +28,7 @@ use strum::EnumCount;
 use super::bytecode::BytecodeRow;
 use crate::jolt::{
     instruction::JoltInstructionSet,
-    vm::{instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32I},
+    vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
 use jolt_core::{
@@ -139,7 +138,7 @@ pub struct JoltProof<
     _marker: PhantomData<I>,
 }
 
-pub type JoltPolynomials<F: JoltField> = JoltStuff<MultilinearPolynomial<F>>;
+pub type JoltPolynomials<F> = JoltStuff<MultilinearPolynomial<F>>;
 
 pub type JoltCommitments<PCS: CommitmentScheme<ProofTranscript>, ProofTranscript: Transcript> =
     JoltStuff<PCS::Commitment>;

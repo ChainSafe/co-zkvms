@@ -1,6 +1,6 @@
-use crate::jolt::vm::witness::{Rep3JoltPolynomials, Rep3Polynomials};
+use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::poly::{
-    generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
+    generate_poly_shares_rep3, Rep3MultilinearPolynomial,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::rv_trace::MemoryLayout;
@@ -9,15 +9,13 @@ use jolt_core::jolt::vm::read_write_memory::{
     ReadWriteMemoryStuff,
 };
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_core::{
-    field::JoltField, jolt::vm::timestamp_range_check::TimestampRangeCheckPolynomials,
-};
+use jolt_core::field::JoltField;
 
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, PartyID, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
-pub type Rep3ReadWriteMemoryPolynomials<F: JoltField> =
+pub type Rep3ReadWriteMemoryPolynomials<F> =
     ReadWriteMemoryStuff<Rep3MultilinearPolynomial<F>>;
 
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]

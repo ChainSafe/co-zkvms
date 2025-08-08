@@ -1,6 +1,6 @@
 use std::mem;
 
-use itertools::{chain, Itertools};
+use itertools::Itertools;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -10,23 +10,15 @@ use jolt_core::{
     jolt::subtable::LassoSubtable,
     jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
-    utils::uninterleave_bits,
 };
-use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
-use mpc_core::protocols::{
-    additive::AdditiveShare,
-    rep3::{
+use mpc_core::protocols::rep3::{
         self,
         network::{IoContext, Rep3Network},
-    },
-};
+    };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
-    rep3_chunk_and_concatenate_operands,
-};
+use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (divisor, quotient)

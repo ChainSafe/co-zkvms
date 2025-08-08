@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use jolt_core::field::JoltField;
 use jolt_core::jolt::subtable::LassoSubtable;
-use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 

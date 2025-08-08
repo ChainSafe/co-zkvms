@@ -1,4 +1,4 @@
-use itertools::{izip, Itertools};
+use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 
 use jolt_core::field::JoltField;
@@ -6,7 +6,6 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
 use std::{collections::HashMap, ops::Shr};
 
-use crate::jolt::instruction::JoltInstruction;
 
 pub fn concatenate_lookups_rep3<F: JoltField>(
     vals: &[Rep3PrimeFieldShare<F>],

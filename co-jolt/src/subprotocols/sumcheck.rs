@@ -6,20 +6,17 @@ use crate::utils::element::SharedOrPublic;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
-use jolt_core::poly::{
-    dense_mlpoly::DensePolynomial,
-    unipoly::{CompressedUniPoly, UniPoly},
-};
+use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID};
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use crate::poly::{PolyDegree, Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use jolt_core::poly::split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial};
+use crate::poly::PolyDegree;
+use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
 pub use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;

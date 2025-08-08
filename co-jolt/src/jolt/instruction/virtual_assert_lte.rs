@@ -1,6 +1,5 @@
 #[cfg(feature = "public-eq")]
 use mpc_core::protocols::additive;
-use mpc_core::protocols::additive::AdditiveShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,7 +8,7 @@ use itertools::multizip;
 use jolt_core::field::JoltField;
 use jolt_core::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
-    utils::{instruction_utils::chunk_and_concatenate_operands, uninterleave_bits},
+    utils::instruction_utils::chunk_and_concatenate_operands,
 };
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
@@ -151,7 +150,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         let batch_size = vals_many[0].len();
         let mut batched_vals_by_subtable = self.slice_values(vals_many, C, M);
-        let mut ltu = std::mem::take(&mut batched_vals_by_subtable[0]);
+        let ltu = std::mem::take(&mut batched_vals_by_subtable[0]);
         #[cfg(not(feature = "public-eq"))]
         let mut eq = std::mem::take(&mut batched_vals_by_subtable[1]);
         #[cfg(feature = "public-eq")]

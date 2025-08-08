@@ -31,7 +31,7 @@ use crate::jolt::vm::{
 // use self::analyze::ProgramSummary;
 use jolt_core::{
     field::JoltField,
-    host::toolchain::{install_no_std_toolchain, install_toolchain},
+    host::toolchain::install_toolchain,
     jolt::instruction::{
         div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,
         lh::LHInstruction, lhu::LHUInstruction, mulh::MULHInstruction, mulhsu::MULHSUInstruction,
