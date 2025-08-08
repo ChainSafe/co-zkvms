@@ -411,7 +411,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     }
 
     pub fn clone_with_bound_coeffs_vec(polys: &[Self]) -> Vec<Self> {
-        polys.par_iter().map(|poly| poly.clone_with_bound_coeffs()).collect()
+        polys
+            .par_iter()
+            .map(|poly| poly.clone_with_bound_coeffs())
+            .collect()
     }
 }
 
@@ -457,7 +460,6 @@ pub fn split_public_poly<F: JoltField>(
 
     res
 }
-
 
 impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for Rep3MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {

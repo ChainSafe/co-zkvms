@@ -11,11 +11,11 @@ use jolt_core::{
     jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-    };
+    self,
+    network::{IoContext, Rep3Network},
+};
+use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;

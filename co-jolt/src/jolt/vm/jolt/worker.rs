@@ -30,15 +30,13 @@ use crate::jolt::{
         Jolt, JoltTraceStep,
     },
 };
+use jolt_core::r1cs::constraints::R1CSConstraints;
 use jolt_core::{
     field::JoltField,
     jolt::subtable::JoltSubtableSet,
     jolt::vm::JoltProverPreprocessing,
-    r1cs::{
-        builder::CombinedUniformBuilder, key::UniformSpartanKey,
-    },
+    r1cs::{builder::CombinedUniformBuilder, key::UniformSpartanKey},
 };
-use jolt_core::r1cs::constraints::R1CSConstraints;
 
 pub struct JoltRep3Prover<
     F,

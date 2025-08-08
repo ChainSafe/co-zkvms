@@ -2,10 +2,10 @@ use std::ops::Index;
 
 use crate::poly::PolyDegree;
 use crate::utils::element::SharedOrPublic;
+use jolt_core::field::JoltField;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
-use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::PartyID;
 use snarks_core::math::Math;
 

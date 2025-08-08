@@ -19,22 +19,16 @@ use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkWorker,
-};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use jolt_common::constants::{
-    MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS,
-};
+use jolt_common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS};
 use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::utils::transcript::Transcript;
 use jolt_core::{
-    poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
-    },
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
 

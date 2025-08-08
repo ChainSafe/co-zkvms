@@ -1,19 +1,14 @@
 use crate::{
     poly::{
-        combine_poly_shares_rep3, generate_poly_shares_rep3,
-        generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
+        combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
+        Rep3MultilinearPolynomial,
     },
-    utils::{
-        self,
-        transcript::Transcript,
-        Forkable,
-    },
+    utils::{self, transcript::Transcript, Forkable},
 };
 use ark_std::cfg_into_iter;
 use itertools::{multizip, Itertools};
 use jolt_core::{
-    field::JoltField,
-    jolt::vm::instruction_lookups::InstructionLookupPolynomials,
+    field::JoltField, jolt::vm::instruction_lookups::InstructionLookupPolynomials,
     utils::math::Math,
 };
 use jolt_core::{
@@ -31,7 +26,6 @@ use mpc_core::protocols::{
 use mpc_net::mpc_star::MpcStarNetCoordinator;
 use rand::Rng;
 
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -43,8 +37,7 @@ use crate::jolt::{
     },
 };
 
-pub type Rep3InstructionLookupPolynomials<F> =
-    InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
+pub type Rep3InstructionLookupPolynomials<F> = InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>
     for Rep3InstructionLookupPolynomials<F>

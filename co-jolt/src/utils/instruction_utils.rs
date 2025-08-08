@@ -6,7 +6,6 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 use num_bigint::BigUint;
 use std::{collections::HashMap, ops::Shr};
 
-
 pub fn concatenate_lookups_rep3<F: JoltField>(
     vals: &[Rep3PrimeFieldShare<F>],
     C: usize,

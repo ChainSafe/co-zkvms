@@ -354,7 +354,12 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let claims: Vec<_> = self
             .openings
             .iter()
-            .map(|opening| opening.polynomial.get_bound_coeff(0).into_additive(io_ctx.id))
+            .map(|opening| {
+                opening
+                    .polynomial
+                    .get_bound_coeff(0)
+                    .into_additive(io_ctx.id)
+            })
             .collect();
 
         Ok((r, claims))

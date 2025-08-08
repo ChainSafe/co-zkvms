@@ -7,10 +7,7 @@ use jolt_core::{
     lasso::memory_checking::{ExogenousOpenings, Initializable},
     subprotocols::grand_product::BatchedGrandProductProof,
 };
-use mpc_core::protocols::{
-    additive,
-    rep3::network::Rep3NetworkCoordinator,
-};
+use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
 
 use crate::{
     poly::commitment::Rep3CommitmentScheme,

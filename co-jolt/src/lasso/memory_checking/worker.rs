@@ -4,8 +4,7 @@ use jolt_core::{
     field::JoltField,
     jolt::vm::JoltStuff,
     lasso::memory_checking::{
-        ExogenousOpenings, Initializable, MemoryCheckingProver,
-        StructuredPolynomialData,
+        ExogenousOpenings, Initializable, MemoryCheckingProver, StructuredPolynomialData,
     },
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
@@ -15,7 +14,8 @@ use mpc_net::mpc_star::MpcStarNetWorker;
 
 use crate::{
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3MultilinearPolynomial,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        Rep3MultilinearPolynomial,
     },
     subprotocols::grand_product::Rep3BatchedGrandProductWorker,
 };

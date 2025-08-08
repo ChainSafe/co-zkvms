@@ -1,4 +1,3 @@
-
 use jolt_core::{
     field::JoltField,
     poly::dense_mlpoly::DensePolynomial,

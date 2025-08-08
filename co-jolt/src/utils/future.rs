@@ -63,7 +63,7 @@ where
             .multiunzip();
 
         let c = if !a.is_empty() && !b.is_empty() {
-           rep3::arithmetic::mul_vec(&a, &b, io_ctx)?
+            rep3::arithmetic::mul_vec(&a, &b, io_ctx)?
         } else {
             vec![]
         };
@@ -78,14 +78,13 @@ where
                 _ => unreachable!(),
             });
 
-        Ok(
-            self.into_par_iter()
-                .map(|f| match f {
-                    FutureVal::Ready(t) => t,
-                    _ => unreachable!(),
-                })
-                .collect()
-        )
+        Ok(self
+            .into_par_iter()
+            .map(|f| match f {
+                FutureVal::Ready(t) => t,
+                _ => unreachable!(),
+            })
+            .collect())
     }
 }
 

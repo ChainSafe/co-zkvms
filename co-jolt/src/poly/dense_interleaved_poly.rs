@@ -13,9 +13,7 @@ use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
         self,
-        network::{
-            IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
-        },
+        network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
         PartyID, Rep3PrimeFieldShare,
     },
 };
@@ -133,8 +131,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
             left.into_par_iter().zip(right.into_par_iter()),
             None,
             |chunk, io_ctx| {
-                let (left, right): (Vec<_>, Vec<_>) =
-                    chunk.into_iter().unzip();
+                let (left, right): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
                 rep3::arithmetic::mul_vec(&left, &right, io_ctx).context("while multiplying left")
             },
         )?;

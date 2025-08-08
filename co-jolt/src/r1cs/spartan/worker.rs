@@ -17,9 +17,9 @@ use jolt_core::utils::thread::drop_in_background_thread;
 use jolt_core::utils::transcript::Transcript;
 
 use jolt_core::poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-    };
+    dense_mlpoly::DensePolynomial,
+    eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+};
 
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
 use crate::poly::commitment::Rep3CommitmentScheme;

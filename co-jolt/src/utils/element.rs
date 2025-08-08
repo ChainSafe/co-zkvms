@@ -197,9 +197,13 @@ impl<F: JoltField> SharedOrPublic<F> {
 
     pub fn sub_public(&self, other: &F, party_id: PartyID) -> Self {
         match self {
-            SharedOrPublic::Shared(x) => SharedOrPublic::Shared(rep3::arithmetic::sub_shared_by_public(*x, *other, party_id)),
+            SharedOrPublic::Shared(x) => {
+                SharedOrPublic::Shared(rep3::arithmetic::sub_shared_by_public(*x, *other, party_id))
+            }
             SharedOrPublic::Public(x) => SharedOrPublic::Public(*x - *other),
-            SharedOrPublic::Additive(x) => SharedOrPublic::Additive(additive::sub_public_by_shared(*x, *other, party_id)),
+            SharedOrPublic::Additive(x) => {
+                SharedOrPublic::Additive(additive::sub_public_by_shared(*x, *other, party_id))
+            }
         }
     }
 

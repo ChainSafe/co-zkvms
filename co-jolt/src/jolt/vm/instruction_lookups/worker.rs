@@ -19,10 +19,7 @@ use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
     field::JoltField,
-    jolt::{
-        subtable::JoltSubtableSet,
-        vm::instruction_lookups::InstructionLookupStuff,
-    },
+    jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
         compact_polynomial::SmallScalar,
@@ -35,9 +32,9 @@ use jolt_core::{
     utils::{math::Math, thread::drop_in_background_thread},
 };
 use mpc_core::protocols::rep3::{
-        network::{IoContextPool, WorkerIoContext},
-        Rep3PrimeFieldShare,
-    };
+    network::{IoContextPool, WorkerIoContext},
+    Rep3PrimeFieldShare,
+};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -47,20 +44,13 @@ use mpc_core::protocols::{
     },
 };
 use mpc_net::mpc_star::MpcStarNetWorker;
-use std::{
-    collections::HashMap,
-    iter::once,
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{collections::HashMap, iter::once, marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
 use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
-    vm::{
-        instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials,
-    },
+    vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
 };
 
 use rayon::{prelude::*, ThreadPoolBuilder};

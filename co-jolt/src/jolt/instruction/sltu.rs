@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-        Rep3PrimeFieldShare,
-    };
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
+};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::{

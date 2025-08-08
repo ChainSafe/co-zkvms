@@ -16,9 +16,8 @@ use crate::{
 use ark_std::test_rng;
 use jolt_core::{
     jolt::vm::{
-            bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof,
-            JoltVerifierPreprocessing,
-        },
+        bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof, JoltVerifierPreprocessing,
+    },
     r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
     utils::transcript::Transcript,
 };
@@ -30,14 +29,12 @@ use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomia
 use crate::jolt::{
     instruction::Rep3JoltInstructionSet,
     vm::{
-        instruction_lookups::InstructionLookupsProof,
-        rv32i_vm::RV32IJoltVM,
-        witness::Rep3JoltPolynomials,
-        Jolt, JoltCommitments, JoltProof, JoltTraceStep,
+        instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32IJoltVM,
+        witness::Rep3JoltPolynomials, Jolt, JoltCommitments, JoltProof, JoltTraceStep,
     },
 };
-use jolt_core::utils::transcript::AppendToTranscript;
 use jolt_core::field::JoltField;
+use jolt_core::utils::transcript::AppendToTranscript;
 
 pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
     Jolt<F, PCS, C, M, ProofTranscript>
@@ -92,7 +89,8 @@ where
                     .map(|(polynomials, program_io)| (polynomials, program_io, trace_length))
                     .collect();
 
-                tracing::trace_span!("send_witness_shares").in_scope(|| network.send_requests_blocking(witness_shares))?;
+                tracing::trace_span!("send_witness_shares")
+                    .in_scope(|| network.send_requests_blocking(witness_shares))?;
                 (
                     spartan_key,
                     JoltWitnessMeta {

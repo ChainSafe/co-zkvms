@@ -1,4 +1,3 @@
-
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;

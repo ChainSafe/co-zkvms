@@ -12,9 +12,8 @@ use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryProof;
-use jolt_core::utils::transcript::Transcript;
 use jolt_core::utils::math::Math;
-
+use jolt_core::utils::transcript::Transcript;
 
 pub trait Rep3ReadWriteMemoryCoordinator<F, PCS, ProofTranscript, Network>:
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>

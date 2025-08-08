@@ -1,4 +1,3 @@
-
 use ark_ff::Zero;
 use itertools::Itertools;
 use jolt_core::poly::{
@@ -8,10 +7,7 @@ use jolt_core::r1cs::builder::OffsetLC;
 use jolt_core::{
     field::JoltField,
     r1cs::builder::{Constraint, OffsetEqConstraint},
-    utils::{
-        math::Math,
-        transcript::Transcript,
-    },
+    utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};

@@ -16,8 +16,8 @@ use tracing::trace_span;
 
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::lasso::{
-    memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     memory_checking::MultisetHashes,
+    memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
 };
 use jolt_core::field::JoltField;
 use jolt_core::jolt::subtable::JoltSubtableSet;

@@ -241,7 +241,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
 dependencies = [
- "winapi 0.3.9",
+ "winapi",
 ]
 
 [[package]]
@@ -1288,31 +1288,22 @@ name = "co-jolt"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
- "ark-crypto-primitives",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
- "ark-linear-sumcheck",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-poly-commit",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "ark-std 0.5.0",
- "bincode",
- "bytesize",
  "clap",
  "color-eyre",
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
- "core_affinity",
- "crossbeam",
  "enum_dispatch",
  "eyre",
- "fixedbitset 0.5.7",
- "futures",
  "icicle-bn254",
  "icicle-core",
  "icicle-runtime",
  "itertools 0.12.1",
  "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
- "mimalloc",
  "mpc-core 0.1.0",
  "mpc-net",
  "num-bigint 0.4.6",
@@ -1483,7 +1474,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+source = "git+https://github.com/a16z/jolt.git#1c669b0edea32fde173a972f4338cc3cd81e9389"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "derive_more 2.0.1",
@@ -1592,18 +1583,6 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
-
-[[package]]
-name = "core_affinity"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f8a03115cc34fb0d7c321dd154a3914b3ca082ccc5c11d91bf7117dbbe7171f"
-dependencies = [
- "kernel32-sys",
- "libc",
- "num_cpus",
- "winapi 0.2.8",
-]
 
 [[package]]
 name = "cpufeatures"
@@ -3345,7 +3324,7 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+source = "git+https://github.com/a16z/jolt.git#1c669b0edea32fde173a972f4338cc3cd81e9389"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3460,7 +3439,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+source = "git+https://github.com/a16z/jolt.git#1c669b0edea32fde173a972f4338cc3cd81e9389"
 dependencies = [
  "ark-bn254",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
@@ -3506,7 +3485,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+source = "git+https://github.com/a16z/jolt.git#1c669b0edea32fde173a972f4338cc3cd81e9389"
 dependencies = [
  "common 0.2.0 (git+https://github.com/a16z/jolt.git)",
  "proc-macro2",
@@ -3566,16 +3545,6 @@ checksum = "505d1856a39b200489082f90d897c3f07c455563880bc5952e38eabf731c83b6"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
-]
-
-[[package]]
-name = "kernel32-sys"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
-dependencies = [
- "winapi 0.2.8",
- "winapi-build",
 ]
 
 [[package]]
@@ -4156,7 +4125,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77a8165726e8236064dbb45459242600304b42a5ea24ee2948e18e023bf7ba84"
 dependencies = [
  "overload",
- "winapi 0.3.9",
+ "winapi",
 ]
 
 [[package]]
@@ -6508,7 +6477,7 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt.git#083460f8128e4f206cb67af523cad0bd51ec476d"
+source = "git+https://github.com/a16z/jolt.git#1c669b0edea32fde173a972f4338cc3cd81e9389"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=v0.5.0-optimize-mul-u64)",
  "clap",
@@ -6957,12 +6926,6 @@ dependencies = [
 
 [[package]]
 name = "winapi"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "167dc9d6949a9b857f3451275e911c3f44255842c1f7a76f33c55103a909087a"
-
-[[package]]
-name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
@@ -6970,12 +6933,6 @@ dependencies = [
  "winapi-i686-pc-windows-gnu",
  "winapi-x86_64-pc-windows-gnu",
 ]
-
-[[package]]
-name = "winapi-build"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d315eee3b34aca4797b2da6b13ed88266e6d612562a0c46390af8299fc699bc"
 
 [[package]]
 name = "winapi-i686-pc-windows-gnu"

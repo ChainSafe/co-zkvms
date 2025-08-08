@@ -27,8 +27,7 @@ use strum::EnumCount;
 
 use super::bytecode::BytecodeRow;
 use crate::jolt::{
-    instruction::JoltInstructionSet,
-    vm::instruction_lookups::InstructionLookupsProof,
+    instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
 use jolt_core::{
