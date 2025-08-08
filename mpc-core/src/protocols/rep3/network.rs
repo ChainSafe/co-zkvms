@@ -31,6 +31,7 @@ pub struct WorkerIoContext<Network: Rep3NetworkWorker> {
     pub worker_id: usize,
     main: IoContext<Network>,
     forks: Vec<IoContext<Network>>,
+    num_workers: usize,
 }
 
 impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
@@ -56,6 +57,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
 
     pub fn worker_idx(&self) -> usize {
         self.worker_id
+    }
+
+    pub fn total_num_workers(&self) -> usize {
+        self.num_workers
     }
 
     /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
@@ -217,6 +222,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
                     worker_id,
                     main: worker,
                     forks,
+                    num_workers,
                 })
             })
             .collect::<eyre::Result<Vec<_>>>()?;

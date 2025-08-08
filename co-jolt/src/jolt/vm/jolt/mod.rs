@@ -2,7 +2,7 @@ pub mod coordinator;
 pub mod witness;
 pub mod worker;
 
-use std::{collections::BTreeMap, iter, marker::PhantomData};
+use std::{collections::BTreeMap, iter, marker::PhantomData, sync::Arc};
 
 use crate::{
     jolt::vm::bytecode::BytecodeRowExt,
@@ -216,7 +216,7 @@ where
         JoltVerifierPreprocessing {
             generators,
             memory_layout,
-            instruction_lookups: instruction_lookups_preprocessing,
+            instruction_lookups: Arc::new(instruction_lookups_preprocessing),
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
         }

@@ -13,7 +13,6 @@ use jolt_core::{
     field::{JoltField, OptimizedMul},
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
 };
-use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
 use rayon::prelude::*;
@@ -367,8 +366,52 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                     poly.bound_coeffs[index] = coeff.as_public()
                 }
             },
-            Rep3MultilinearPolynomial::Shared(poly) => poly.set_bound_coeff(index, coeff.as_shared()),
+            Rep3MultilinearPolynomial::Shared(poly) => {
+                poly.set_bound_coeff(index, coeff.as_shared())
+            }
         }
+    }
+
+    pub fn clone_with_bound_coeffs(&self) -> Self {
+        if !self.is_bound() {
+            return self.clone();
+        }
+
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                MultilinearPolynomial::U8Scalars(poly) => {
+                    let mut cloned = poly.clone();
+                    cloned.bound_coeffs = poly.bound_coeffs.clone();
+                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U8Scalars(cloned))
+                }
+                MultilinearPolynomial::U16Scalars(poly) => {
+                    let mut cloned = poly.clone();
+                    cloned.bound_coeffs = poly.bound_coeffs.clone();
+                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U16Scalars(cloned))
+                }
+                MultilinearPolynomial::U32Scalars(poly) => {
+                    let mut cloned = poly.clone();
+                    cloned.bound_coeffs = poly.bound_coeffs.clone();
+                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U32Scalars(cloned))
+                }
+                MultilinearPolynomial::U64Scalars(poly) => {
+                    let mut cloned = poly.clone();
+                    cloned.bound_coeffs = poly.bound_coeffs.clone();
+                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U64Scalars(cloned))
+                }
+                MultilinearPolynomial::I64Scalars(poly) => {
+                    let mut cloned = poly.clone();
+                    cloned.bound_coeffs = poly.bound_coeffs.clone();
+                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::I64Scalars(cloned))
+                }
+                _ => self.clone(),
+            },
+            _ => self.clone(),
+        }
+    }
+
+    pub fn clone_with_bound_coeffs_vec(polys: &[Self]) -> Vec<Self> {
+        polys.par_iter().map(|poly| poly.clone_with_bound_coeffs()).collect()
     }
 }
 
@@ -414,6 +457,7 @@ pub fn split_public_poly<F: JoltField>(
 
     res
 }
+
 
 impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for Rep3MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
