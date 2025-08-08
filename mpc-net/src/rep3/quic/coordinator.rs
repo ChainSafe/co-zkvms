@@ -177,9 +177,37 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
                     })
                     .context("while serializing data")?;
-                std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
+                std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
                 Ok(())
             })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+
+    fn send_requests_blocking<
+        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
+    >(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()> {
+        let resvs = self
+            .channels_par()
+            .map(|(i, channel)| {
+                let size = data[*i].uncompressed_size();
+                let mut ser_data = Vec::with_capacity(size);
+                data[*i]
+                    .serialize_uncompressed(&mut ser_data)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
+                    .context("while serializing data")?;
+                Ok(channel.blocking_send(Bytes::from(ser_data)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        drop(data);
+        resvs
+            .into_iter()
+            .map(|resv| resv.blocking_recv().context("while sending request"))
             .collect::<Result<Vec<_>>>()?;
         Ok(())
     }
@@ -230,9 +258,6 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
     }
 
     fn reset_stats(&mut self) {
-        // hack: wait arbitrary time for all send/recv tasks till now to complete
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
         let net_handler = self.net_handler.inner.lock().unwrap();
         for (i, conn) in &net_handler.connections {
             let stats = conn.stats();

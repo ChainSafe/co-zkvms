@@ -104,7 +104,7 @@ where
                     .map(|(polynomials, program_io)| (polynomials, program_io, trace_length))
                     .collect();
 
-                tracing::trace_span!("send_witness_shares").in_scope(|| network.send_requests(witness_shares))?;
+                tracing::trace_span!("send_witness_shares").in_scope(|| network.send_requests_blocking(witness_shares))?;
                 (
                     spartan_key,
                     JoltWitnessMeta {
@@ -133,7 +133,6 @@ where
     #[tracing::instrument(skip_all, name = "Rep3Jolt::prove")]
     fn prove_rep3<Network: Rep3NetworkCoordinator>(
         meta: JoltWitnessMeta,
-        program_io: &JoltDevice,
         spartan_key: &UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,

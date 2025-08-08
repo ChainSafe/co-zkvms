@@ -22,6 +22,11 @@ pub trait MpcStarNetCoordinator: Sized {
         data: Vec<T>,
     ) -> Result<()>;
 
+    fn send_requests_blocking<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()>;
+
     fn send_request<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,

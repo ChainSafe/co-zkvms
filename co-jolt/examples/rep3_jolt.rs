@@ -53,8 +53,8 @@ const C: usize = co_jolt::jolt::vm::rv32i_vm::C;
 type F = ark_bn254::Fr;
 type E = ark_bn254::Bn254;
 
-// type CommitmentScheme = PST13<E>;
-type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
+type CommitmentScheme = PST13<E>;
+// type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -250,26 +250,26 @@ pub fn run_coordinator(
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
         RV32IJoltVM::prover_preprocess(
             bytecode,
-            program_io.memory_layout.clone(),
+            program_io.memory_layout,
             memory_init,
             max_bytecode_size,
             num_inputs.next_power_of_two(),
             num_inputs.next_power_of_two(),
         );
 
-    if args.debug {
-        let (proof_check, commitments_check) =
-            RV32IJoltVM::prove(program_io.clone(), trace.clone(), preprocessing.clone());
+    // if args.debug {
+    //     let (proof_check, commitments_check) =
+    //         RV32IJoltVM::prove(program_io.clone(), trace.clone(), preprocessing.clone());
 
-        RV32IJoltVM::verify(
-            preprocessing.shared.clone(),
-            proof_check,
-            commitments_check,
-            program_io.clone(),
-        )
-        .context("while verifying Lasso proof")?;
-        return Ok(());
-    }
+    //     RV32IJoltVM::verify(
+    //         preprocessing.shared.clone(),
+    //         proof_check,
+    //         commitments_check,
+    //         program_io.clone(),
+    //     )
+    //     .context("while verifying Lasso proof")?;
+    //     return Ok(());
+    // }
 
     let mut network = Rep3QuicNetCoordinator::new(
         config.extend_with_workers(args.num_workers_per_party),
@@ -279,7 +279,7 @@ pub fn run_coordinator(
     network.trim_subnets(1).unwrap();
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
-        Some((trace.clone(), program_io.clone())),
+        Some((trace, program_io.clone())),
         &mut network,
     )?;
 
@@ -288,7 +288,7 @@ pub fn run_coordinator(
 
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
         meta,
-        &program_io,
+        // &program_io,
         &spartan_key,
         &preprocessing.shared,
         &mut network,

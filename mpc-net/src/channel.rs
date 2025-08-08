@@ -1,4 +1,5 @@
 //! A channel abstraction for sending and receiving messages.
+use bytes::BytesMut;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{io, marker::Unpin, pin::Pin};
 use tokio::{
@@ -169,6 +170,9 @@ where
 
         let (mut write, mut read) = chan.split();
 
+        const RESET_LIMIT: usize = 1 << 30; // 1 GiB
+        const BASE_CAP: usize = 8 * 1024;
+
         tokio::spawn(async move {
             while let Some(frame) = read.next().await {
                 let job = read_recv.recv().await;
@@ -176,6 +180,11 @@ where
                     Some(job) => {
                         if job.ret.send(frame).is_err() {
                             tracing::warn!("Warning: Read Job finished but receiver is gone!");
+                        }
+
+                        // free capacity after receiving large frames (witness shares)
+                        if read.read_buffer().is_empty() && read.read_buffer().capacity() > RESET_LIMIT {
+                            *read.read_buffer_mut() = BytesMut::with_capacity(BASE_CAP);
                         }
                     }
                     None => {
@@ -195,6 +204,11 @@ where
                         // therefore we only emit a trace message
                         if write_job.ret.send(Ok(())).is_err() {
                             tracing::trace!("Debug: Write Job finished but receiver is gone!");
+                        }
+                        // workaround to free capacity after sending large frames (witness shares)
+                        let buf = write.write_buffer();
+                        if buf.is_empty() && buf.capacity() > RESET_LIMIT {
+                            *write.write_buffer_mut() = BytesMut::with_capacity(BASE_CAP);
                         }
                     }
                     Err(err) => {
