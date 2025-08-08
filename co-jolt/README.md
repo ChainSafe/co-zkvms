@@ -19,6 +19,10 @@ export RUST_LOG=trace
 bash ./examples/run_3_party_jolt.sh
 ```
 
+## Benchmarks
+
+`tracing_chrome` trace logs are stored in `traces/` directory and can be viewed in `chrome://tracing` or [ui.perfetto.dev](https://ui.perfetto.dev/).
+
 ## Acknowledgements
 
 This ongoing work builds up on the following projects:

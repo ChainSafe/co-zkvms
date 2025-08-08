@@ -21,3 +21,6 @@ target/
 #.idea/
 
 artifacts/**/*
+
+
+.vscode/
