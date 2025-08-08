@@ -27,6 +27,7 @@ description = "Co-Spartan implementation for Noir circuits"
 license = "MIT"
 
 [workspace.dependencies]
+# ark-linear-sumcheck = {version = "0.5.0", features = ["parallel"]}
 ark-linear-sumcheck = { git = "https://github.com/nulltea/sumcheck", features = [
     "parallel",
 ] }
@@ -104,3 +105,4 @@ debug = false
 
 [profile.release]
 debug = true
+
