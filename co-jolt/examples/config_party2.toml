@@ -1,19 +1,19 @@
 my_id = 1
 worker = 0
-bind_addr = "0.0.0.0:80"
+bind_addr = "0.0.0.0:10001"
 key_path = "data/key1.der"
 [[parties]]
 id = 0
-dns_name = "ec2-18-222-169-228.us-east-2.compute.amazonaws.com:80"
+dns_name = "localhost:10000"
 cert_path = "data/cert0.der"
 [[parties]]
 id = 1
-dns_name = "ec2-3-15-170-134.us-east-2.compute.amazonaws.com:80"
+dns_name = "localhost:10001"
 cert_path = "data/cert1.der"
 [[parties]]
 id = 2
-dns_name = "ec2-18-221-34-219.us-east-2.compute.amazonaws.com:80"
+dns_name = "localhost:10002"
 cert_path = "data/cert2.der"
 [coordinator]
-dns_name = "ec2-18-221-225-225.us-east-2.compute.amazonaws.com:80"
+dns_name = "localhost:11000"
 cert_path = "data/cert_coordinator.der"
