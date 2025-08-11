@@ -26,9 +26,8 @@ use color_eyre::{
     Result,
 };
 use itertools::Itertools;
-use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing, msm::icicle_init};
-use jolt_tracer::{ELFInstruction, JoltDevice};
+use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -132,7 +131,6 @@ fn main() -> Result<()> {
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
 
-
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
     } else {
@@ -148,7 +146,7 @@ pub fn run_party(
     mut program: host::Program,
     inputs: Vec<u8>,
 ) -> Result<()> {
-    let (_bytecode, memory_init) = program.decode();
+    let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
 
     let my_id = config.my_id;
@@ -187,17 +185,14 @@ pub fn run_party(
     }
     icicle_init();
 
-    let mut network =
+    let network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
-    let (bytecode_serde, memory_layout, memory_init) = network.receive_request::<(Vec<u8>, MemoryLayout, Vec<_>)>()?;
-    let bytecode: Vec<ELFInstruction> = serde_json::from_slice(&bytecode_serde).unwrap();
-    // assert_eq!(bytecode, _bytecode);
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
-        memory_layout,
+        program_io.memory_layout,
         memory_init,
         max_bytecode_size,
         trace.len().next_power_of_two(),
@@ -257,9 +252,9 @@ pub fn run_coordinator(
 
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
         RV32IJoltVM::prover_preprocess(
-            bytecode.clone(),
+            bytecode,
             program_io.memory_layout,
-            memory_init.clone(),
+            memory_init,
             max_bytecode_size,
             num_inputs.next_power_of_two(),
             num_inputs.next_power_of_two(),
@@ -285,8 +280,6 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
-    let bytecode_serde = serde_json::to_vec(&bytecode).unwrap();
-    network.broadcast_request((bytecode_serde, program_io.memory_layout, memory_init))?;
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
         Some((trace, program_io.clone())),
@@ -350,7 +343,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
                 .with(chrome_layer)
                 .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
         );
-        tracing::info!("tracing_chrome writes to file:{}", file);
+        tracing::info!("tracing_chrome writes to file: {}", file);
         Some(TracingGuard {
             _guard: Some(_guard),
             file: file.to_string(),
