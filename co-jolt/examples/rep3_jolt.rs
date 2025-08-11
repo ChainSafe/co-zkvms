@@ -26,8 +26,9 @@ use color_eyre::{
     Result,
 };
 use itertools::Itertools;
+use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing, msm::icicle_init};
-use jolt_tracer::JoltDevice;
+use jolt_tracer::{ELFInstruction, JoltDevice};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -146,7 +147,7 @@ pub fn run_party(
     mut program: host::Program,
     inputs: Vec<u8>,
 ) -> Result<()> {
-    let (bytecode, memory_init) = program.decode();
+    let (_bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
 
     let my_id = config.my_id;
@@ -185,14 +186,17 @@ pub fn run_party(
     }
     icicle_init();
 
-    let network =
+    let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
+    let (bytecode_serde, memory_layout, memory_init) = network.receive_request::<(Vec<u8>, MemoryLayout, Vec<_>)>()?;
+    let bytecode: Vec<ELFInstruction> = serde_json::from_slice(&bytecode_serde).unwrap();
+    assert_eq!(bytecode, _bytecode);
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
         bytecode,
-        program_io.memory_layout,
+        memory_layout,
         memory_init,
         max_bytecode_size,
         trace.len().next_power_of_two(),
@@ -252,9 +256,9 @@ pub fn run_coordinator(
 
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
         RV32IJoltVM::prover_preprocess(
-            bytecode,
+            bytecode.clone(),
             program_io.memory_layout,
-            memory_init,
+            memory_init.clone(),
             max_bytecode_size,
             num_inputs.next_power_of_two(),
             num_inputs.next_power_of_two(),
@@ -280,6 +284,8 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
+    let bytecode_serde = serde_json::to_vec(&bytecode).unwrap();
+    network.broadcast_request((bytecode_serde, program_io.memory_layout, memory_init))?;
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
         Some((trace, program_io.clone())),

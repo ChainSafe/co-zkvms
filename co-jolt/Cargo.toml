@@ -57,6 +57,8 @@ mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
 
+serde_json = "1.0.130"
+
 
 [build-dependencies]
 jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
