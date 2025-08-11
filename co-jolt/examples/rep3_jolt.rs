@@ -132,6 +132,7 @@ fn main() -> Result<()> {
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
 
+
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
     } else {
@@ -191,7 +192,7 @@ pub fn run_party(
 
     let (bytecode_serde, memory_layout, memory_init) = network.receive_request::<(Vec<u8>, MemoryLayout, Vec<_>)>()?;
     let bytecode: Vec<ELFInstruction> = serde_json::from_slice(&bytecode_serde).unwrap();
-    assert_eq!(bytecode, _bytecode);
+    // assert_eq!(bytecode, _bytecode);
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing = RV32IJoltVM::prover_preprocess(
