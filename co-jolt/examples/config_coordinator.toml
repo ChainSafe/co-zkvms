@@ -2,22 +2,22 @@ bind_addr = "0.0.0.0:80"
 key_path = "data/key_coordinator.der"
 is_coordinator = true
 [coordinator]
-dns_name = "18.221.225.225:80"
+dns_name = "ec2-18-221-225-225.us-east-2.compute.amazonaws.com:80"
 cert_path = "data/cert_coordinator.der"
 [[parties]]
 id = 0
 worker = 0
-dns_name = "18.222.169.228:80"
+dns_name = "ec2-18-222-169-228.us-east-2.compute.amazonaws.com:80"
 cert_path = "data/cert0.der"
 [[parties]]
 id = 1
 worker = 0
-dns_name = "3.15.170.134:80"
+dns_name = "ec2-3-15-170-134.us-east-2.compute.amazonaws.com:80"
 cert_path = "data/cert1.der"
 [[parties]]
 id = 2
 worker = 0
-dns_name = "18.221.34.219:80"
+dns_name = "ec2-18-221-34-219.us-east-2.compute.amazonaws.com:80"
 cert_path = "data/cert2.der"
 
 # [[parties]]
