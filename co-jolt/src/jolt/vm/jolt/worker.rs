@@ -141,8 +141,12 @@ where
 
                 (polynomials, program_io, trace_length)
             }
-            None => tracing::trace_span!("recieve_witness_polys")
-                .in_scope(|| io_ctx.network().receive_request())?,
+            None => {
+                let polynomials =
+                    Rep3JoltPolynomials::receive_witness_share(&preprocessing.shared, &mut io_ctx)?;
+                let (program_io, trace_length) = io_ctx.network().receive_request()?;
+                (polynomials, program_io, trace_length)
+            }
         };
         let r1cs_builder = Constraints::construct_constraints(
             trace_length.next_power_of_two(),

@@ -10,7 +10,7 @@ use jolt_core::jolt::vm::read_write_memory::{
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 
 use jolt_tracer::JoltDevice;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{IoContext, Rep3Network, Rep3NetworkCoordinator};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 pub type Rep3ReadWriteMemoryPolynomials<F> = ReadWriteMemoryStuff<Rep3MultilinearPolynomial<F>>;
@@ -26,37 +26,22 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
 {
     type PublicPolynomials = ReadWriteMemoryPolynomials<F>;
 
-    fn generate_secret_shares<R: rand::Rng>(
+    fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _: &ReadWriteMemoryPreprocessing,
         polynomials: Self::PublicPolynomials,
         rng: &mut R,
-    ) -> Vec<Self> {
-        let mut v_read_rd_shares = generate_poly_shares_rep3(&polynomials.v_read_rd, rng);
-        let mut v_read_rs1_shares = generate_poly_shares_rep3(&polynomials.v_read_rs1, rng);
-        let mut v_read_rs2_shares = generate_poly_shares_rep3(&polynomials.v_read_rs2, rng);
-        let mut v_read_ram_shares = generate_poly_shares_rep3(&polynomials.v_read_ram, rng);
-        let mut v_write_rd_shares = generate_poly_shares_rep3(&polynomials.v_write_rd, rng);
-        let mut v_write_ram_shares = generate_poly_shares_rep3(&polynomials.v_write_ram, rng);
-        let mut v_final_shares = generate_poly_shares_rep3(&polynomials.v_final, rng);
-        let mut v_init_shares: Vec<_> = if let Some(v_init) = polynomials.v_init {
-            generate_poly_shares_rep3(&v_init, rng)
-                .into_iter()
-                .map(Some)
-                .collect()
-        } else {
-            panic!("v_init is not set");
-        };
-
-        (0..3)
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        let public_polynomials = (0..3)
             .map(|i| Rep3ReadWriteMemoryPolynomials {
                 a_ram: Rep3MultilinearPolynomial::public(polynomials.a_ram.clone()),
-                v_read_rd: std::mem::take(&mut v_read_rd_shares[i]),
-                v_read_rs1: std::mem::take(&mut v_read_rs1_shares[i]),
-                v_read_rs2: std::mem::take(&mut v_read_rs2_shares[i]),
-                v_read_ram: std::mem::take(&mut v_read_ram_shares[i]),
-                v_write_rd: std::mem::take(&mut v_write_rd_shares[i]),
-                v_write_ram: std::mem::take(&mut v_write_ram_shares[i]),
-                v_final: std::mem::take(&mut v_final_shares[i]),
+                v_read_rd: Default::default(),
+                v_read_rs1: Default::default(),
+                v_read_rs2: Default::default(),
+                v_read_ram: Default::default(),
+                v_write_rd: Default::default(),
+                v_write_ram: Default::default(),
+                v_final: Default::default(),
                 t_read_rd: Rep3MultilinearPolynomial::public(polynomials.t_read_rd.clone()),
                 t_read_rs1: Rep3MultilinearPolynomial::public(polynomials.t_read_rs1.clone()),
                 t_read_rs2: Rep3MultilinearPolynomial::public(polynomials.t_read_rs2.clone()),
@@ -66,13 +51,56 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
                     .a_init_final
                     .as_ref()
                     .map(|poly| Rep3MultilinearPolynomial::public(poly.clone())),
-                v_init: std::mem::take(&mut v_init_shares[i]),
+                v_init: Default::default(),
                 identity: polynomials
                     .identity
                     .as_ref()
                     .map(|poly| Rep3MultilinearPolynomial::public(poly.clone())),
             })
-            .collect()
+            .collect();
+        network.send_requests_blocking(public_polynomials)?;
+
+        let v_read_rd_shares = generate_poly_shares_rep3(&polynomials.v_read_rd, rng);
+        network.send_requests_blocking(v_read_rd_shares)?;
+        let v_read_rs1_shares = generate_poly_shares_rep3(&polynomials.v_read_rs1, rng);
+        network.send_requests_blocking(v_read_rs1_shares)?;
+        let v_read_rs2_shares = generate_poly_shares_rep3(&polynomials.v_read_rs2, rng);
+        network.send_requests_blocking(v_read_rs2_shares)?;
+        let v_read_ram_shares = generate_poly_shares_rep3(&polynomials.v_read_ram, rng);
+        network.send_requests_blocking(v_read_ram_shares)?;
+        let v_write_rd_shares = generate_poly_shares_rep3(&polynomials.v_write_rd, rng);
+        network.send_requests_blocking(v_write_rd_shares)?;
+        let v_write_ram_shares = generate_poly_shares_rep3(&polynomials.v_write_ram, rng);
+        network.send_requests_blocking(v_write_ram_shares)?;
+        let v_final_shares = generate_poly_shares_rep3(&polynomials.v_final, rng);
+        network.send_requests_blocking(v_final_shares)?;
+        let v_init_shares: Vec<_> = if let Some(v_init) = polynomials.v_init {
+            generate_poly_shares_rep3(&v_init, rng)
+                .into_iter()
+                .map(Some)
+                .collect()
+        } else {
+            panic!("v_init is not set");
+        };
+        network.send_requests_blocking(v_init_shares)?;
+
+        Ok(())
+    }
+
+    fn receive_witness_share<Network: rep3::network::Rep3NetworkWorker>(
+        _: &ReadWriteMemoryPreprocessing,
+        io_ctx: &mut rep3::network::IoContextPool<Network>,
+    ) -> eyre::Result<Self> {
+        let mut partial: Self = io_ctx.network().receive_request()?;
+        partial.v_read_rd = io_ctx.network().receive_request()?;
+        partial.v_read_rs1 = io_ctx.network().receive_request()?;
+        partial.v_read_rs2 = io_ctx.network().receive_request()?;
+        partial.v_read_ram = io_ctx.network().receive_request()?;
+        partial.v_write_rd = io_ctx.network().receive_request()?;
+        partial.v_write_ram = io_ctx.network().receive_request()?;
+        partial.v_final = io_ctx.network().receive_request()?;
+        partial.v_init = io_ctx.network().receive_request()?;
+        Ok(partial)
     }
 
     fn generate_witness_rep3<Instructions, Network>(

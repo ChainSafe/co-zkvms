@@ -3,7 +3,10 @@ use jolt_core::{
     jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff},
     lasso::memory_checking::NoPreprocessing,
 };
-use mpc_core::protocols::rep3;
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
+};
 
 use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
 
@@ -13,12 +16,13 @@ pub type Rep3TimestampRangeCheckPolynomials<F> =
 impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeCheckPolynomials<F> {
     type PublicPolynomials = TimestampRangeCheckPolynomials<F>;
 
-    fn generate_secret_shares<R: rand::Rng>(
+    fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _: &NoPreprocessing,
         polynomials: Self::PublicPolynomials,
         _: &mut R,
-    ) -> Vec<Self> {
-        (0..3)
+        network: &mut Network,
+    ) -> eyre::Result<()> {
+        let polys = (0..3)
             .map(|_| Self {
                 read_cts_read_timestamp: Rep3MultilinearPolynomial::public_vec(
                     polynomials.read_cts_read_timestamp.to_vec(),
@@ -45,7 +49,19 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
                     .as_ref()
                     .map(|poly| Rep3MultilinearPolynomial::public(poly.clone())),
             })
-            .collect()
+            .collect();
+
+        network.send_requests(polys)?;
+
+        Ok(())
+    }
+
+    fn receive_witness_share<Network: Rep3NetworkWorker>(
+        _: &NoPreprocessing,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<Self> {
+        let polys = io_ctx.network().receive_request()?;
+        Ok(polys)
     }
 
     fn generate_witness_rep3<Instructions, Network>(

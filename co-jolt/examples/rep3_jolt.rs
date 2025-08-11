@@ -86,6 +86,9 @@ pub struct Args {
     )]
     pub trace_parties: TraceParties,
 
+    #[clap(short, long, value_name = "TRACE_DIR", env = "TRACE_DIR", default_value = "./traces")]
+    pub trace_dir: PathBuf,
+
     #[clap(
         short,
         long,
@@ -159,10 +162,10 @@ pub fn run_party(
     );
 
     let tracing_guard = match args.trace_parties {
-        TraceParties::All(true) => init_tracing(&file),
+        TraceParties::All(true) => init_tracing(&file, &args.trace_dir),
         TraceParties::Party(parties) => {
             if parties.contains(&my_id) {
-                init_tracing(&file)
+                init_tracing(&file, &args.trace_dir)
             } else {
                 None
             }
@@ -227,7 +230,7 @@ pub fn run_coordinator(
         //     .as_secs()
     );
 
-    let _tracing_guard = init_tracing(&file);
+    let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace::<F>(&inputs);
@@ -319,9 +322,9 @@ fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
     tracing::info!("opcodes_used: {:?}", opcodes_used);
 }
 
-pub fn init_tracing(file: &str) -> Option<TracingGuard> {
-    std::fs::create_dir_all("./traces").unwrap();
-    let trace_path = Path::new("./traces").join(file);
+pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
+    std::fs::create_dir_all(trace_dir).unwrap();
+    let trace_path = trace_dir.join(file);
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()

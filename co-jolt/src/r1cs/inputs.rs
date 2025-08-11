@@ -11,7 +11,9 @@ use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
 
-use mpc_core::protocols::rep3::network::IoContext;
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 
 use crate::field::JoltField;
 use crate::impl_r1cs_input_lc_conversions;
@@ -37,13 +39,12 @@ where
 {
     type PublicPolynomials = R1CSPolynomials<F>;
 
-    fn generate_secret_shares<R: rand::Rng>(
+    fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _preprocessing: &NoPreprocessing,
         polynomials: Self::PublicPolynomials,
         rng: &mut R,
-    ) -> Vec<Self> {
-        let mut chunks_x_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_x, rng);
-        let mut chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
+        network: &mut Network,
+    ) -> eyre::Result<()> {
         let AuxVariableStuff {
             left_lookup_operand,
             right_lookup_operand,
@@ -56,14 +57,10 @@ where
             next_pc,
         } = polynomials.aux;
 
-        let mut relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
-        let mut next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
-        let mut should_branch_shares = generate_poly_shares_rep3(&should_branch, rng);
-        let mut next_pc_shares = generate_poly_shares_rep3(&next_pc, rng);
-        (0..3)
+        let public_polys = (0..3)
             .map(|i| Rep3R1CSPolynomials {
-                chunks_x: std::mem::take(&mut chunks_x_shares[i]),
-                chunks_y: std::mem::take(&mut chunks_y_shares[i]),
+                chunks_x: Default::default(),
+                chunks_y: Default::default(),
                 circuit_flags: Rep3MultilinearPolynomial::public_vec(
                     polynomials.circuit_flags.to_vec(),
                 )
@@ -77,17 +74,47 @@ where
                         right_lookup_operand.clone(),
                     ),
                     product: Rep3MultilinearPolynomial::public(product.clone()),
-                    relevant_y_chunks: std::mem::take(&mut relevant_y_chunks_shares[i]),
+                    relevant_y_chunks: Default::default(),
                     write_lookup_output_to_rd: Rep3MultilinearPolynomial::public(
                         write_lookup_output_to_rd.clone(),
                     ),
                     write_pc_to_rd: Rep3MultilinearPolynomial::public(write_pc_to_rd.clone()),
-                    next_pc_jump: std::mem::take(&mut next_pc_jump_shares[i]),
-                    should_branch: std::mem::take(&mut should_branch_shares[i]),
-                    next_pc: std::mem::take(&mut next_pc_shares[i]),
+                    next_pc_jump: Default::default(),
+                    should_branch: Default::default(),
+                    next_pc: Default::default(),
                 },
             })
-            .collect()
+            .collect();
+        network.send_requests(public_polys)?;
+        let chunks_x_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_x, rng);
+        network.send_requests(chunks_x_shares)?;
+        let chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
+        network.send_requests(chunks_y_shares)?;
+        let relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
+        network.send_requests(relevant_y_chunks_shares)?;
+        let next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
+        network.send_requests(next_pc_jump_shares)?;
+        let should_branch_shares = generate_poly_shares_rep3(&should_branch, rng);
+        network.send_requests(should_branch_shares)?;
+        let next_pc_shares = generate_poly_shares_rep3(&next_pc, rng);
+        network.send_requests(next_pc_shares)?;
+
+        Ok(())
+    }
+
+    fn receive_witness_share<Network: Rep3NetworkWorker>(
+        _: &NoPreprocessing,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<Self> {
+        let mut partial_polys: Self = io_ctx.network().receive_request()?;
+        partial_polys.chunks_x = io_ctx.network().receive_request()?;
+        partial_polys.chunks_y = io_ctx.network().receive_request()?;
+        partial_polys.aux.relevant_y_chunks = io_ctx.network().receive_request()?;
+        partial_polys.aux.next_pc_jump = io_ctx.network().receive_request()?;
+        partial_polys.aux.should_branch = io_ctx.network().receive_request()?;
+        partial_polys.aux.next_pc = io_ctx.network().receive_request()?;
+
+        Ok(partial_polys)
     }
 
     fn generate_witness_rep3<Instructions, Network>(

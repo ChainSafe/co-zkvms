@@ -69,24 +69,26 @@ where
                 assert_eq!(polynomials.read_write_memory.a_ram.len(), num_ops);
                 assert_eq!(polynomials.bytecode.a_read_write.len(), num_ops);
 
-                let polynomials_shares = Rep3JoltPolynomials::generate_secret_shares(
+                Rep3JoltPolynomials::stream_secret_shares(
                     &preprocessing,
                     polynomials,
                     &mut rng,
-                );
+                    network,
+                )?;
+
                 let program_io_shares = Rep3ProgramIO::<F>::generate_secret_shares(
                     program_io,
                     read_write_memory_size,
                     &mut rng,
                 );
-                let witness_shares: Vec<_> = polynomials_shares
+
+                let remaining_shares: Vec<_> = program_io_shares
                     .into_iter()
-                    .zip(program_io_shares)
-                    .map(|(polynomials, program_io)| (polynomials, program_io, trace_length))
+                    .map(|program_io| (program_io, trace_length))
                     .collect();
 
                 tracing::trace_span!("send_witness_shares")
-                    .in_scope(|| network.send_requests_blocking(witness_shares))?;
+                    .in_scope(|| network.send_requests_blocking(remaining_shares))?;
                 (
                     spartan_key,
                     JoltWitnessMeta {

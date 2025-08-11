@@ -18,7 +18,9 @@ use jolt_core::{
 use mpc_core::protocols::{
     rep3::{
         self, arithmetic,
-        network::{IoContext, Rep3Network},
+        network::{
+            IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+        },
         PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
     rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
@@ -270,11 +272,12 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         })
     }
 
-    fn generate_secret_shares<R: Rng>(
+    fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials: InstructionLookupPolynomials<F>,
         rng: &mut R,
-    ) -> Vec<Self> {
+        network: &mut Network,
+    ) -> eyre::Result<()> {
         let InstructionLookupStuff {
             dim,
             read_cts,
@@ -285,36 +288,49 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             ..
         } = polynomials;
 
-        let mut dim_shares = generate_poly_shares_rep3_vec(&dim, rng);
+        let dim_shares = generate_poly_shares_rep3_vec(&dim, rng);
+        network.send_requests_blocking(dim_shares)?;
 
-        let mut read_cts_shares = generate_poly_shares_rep3_vec(&read_cts, rng);
+        let read_cts_shares = generate_poly_shares_rep3_vec(&read_cts, rng);
+        network.send_requests_blocking(read_cts_shares)?;
 
-        let mut final_cts_shares = generate_poly_shares_rep3_vec(&final_cts, rng);
+        let final_cts_shares = generate_poly_shares_rep3_vec(&final_cts, rng);
+        network.send_requests_blocking(final_cts_shares)?;
 
-        let mut e_polys_shares = generate_poly_shares_rep3_vec(&E_polys, rng);
+        let e_polys_shares = generate_poly_shares_rep3_vec(&E_polys, rng);
+        network.send_requests_blocking(e_polys_shares)?;
 
-        let mut lookup_outputs_shares = generate_poly_shares_rep3(&lookup_outputs, rng);
+        let lookup_outputs_shares = generate_poly_shares_rep3(&lookup_outputs, rng);
+        network.send_requests_blocking(lookup_outputs_shares)?;
 
-        let party_ids = [PartyID::ID0, PartyID::ID1, PartyID::ID2];
-        (0..3)
-            .map(|i| Self {
-                dim: std::mem::take(&mut dim_shares[i]),
-                read_cts: std::mem::take(&mut read_cts_shares[i]),
-                final_cts: std::mem::take(&mut final_cts_shares[i]),
-                E_polys: std::mem::take(&mut e_polys_shares[i]),
-                // E_polys: Rep3MultilinearPolynomial::public_with_trivial_share_vec(
-                //     E_polys.clone(),
-                //     party_ids[i],
-                // ),
-                lookup_outputs: std::mem::take(&mut lookup_outputs_shares[i]),
-                instruction_flags: Rep3MultilinearPolynomial::public_with_trivial_share_vec(
-                    instruction_flags.clone(),
-                    party_ids[i],
-                ),
-                a_init_final: None,
-                v_init_final: None,
-            })
-            .collect()
+        let instruction_flags_shares = [PartyID::ID0, PartyID::ID1, PartyID::ID2].map(|id| {
+            Rep3MultilinearPolynomial::public_with_trivial_share_vec(instruction_flags.clone(), id)
+        });
+        network.send_requests_blocking(instruction_flags_shares.to_vec())?;
+
+        Ok(())
+    }
+
+    fn receive_witness_share<Network: Rep3NetworkWorker>(
+        _: &InstructionLookupsPreprocessing<C, F>,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<Self> {
+        let dim = io_ctx.network().receive_request()?;
+        let read_cts = io_ctx.network().receive_request()?;
+        let final_cts = io_ctx.network().receive_request()?;
+        let E_polys = io_ctx.network().receive_request()?;
+        let lookup_outputs = io_ctx.network().receive_request()?;
+        let instruction_flags = io_ctx.network().receive_request()?;
+        Ok(Self {
+            dim,
+            read_cts,
+            final_cts,
+            E_polys,
+            lookup_outputs,
+            instruction_flags,
+            a_init_final: None,
+            v_init_final: None,
+        })
     }
 }
 
