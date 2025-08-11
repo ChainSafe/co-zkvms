@@ -364,7 +364,7 @@ impl MpcNetworkCoordinatorHandler {
 
         let mut transport_config = TransportConfig::default();
         transport_config.max_idle_timeout(Some(
-            IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
+            IdleTimeout::try_from(Duration::from_secs(5 * 60)).unwrap(),
         ));
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 

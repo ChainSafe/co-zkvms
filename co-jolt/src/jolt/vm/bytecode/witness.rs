@@ -16,6 +16,11 @@ pub type Rep3BytecodePolynomials<F> = BytecodeStuff<Rep3MultilinearPolynomial<F>
 impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3BytecodePolynomials<F> {
     type PublicPolynomials = BytecodePolynomials<F>;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3BytecodePolynomials::stream_secret_shares",
+        level = "trace"
+    )]
     fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
         _preprocessing: &BytecodePreprocessing<F>,
         polynomials: Self::PublicPolynomials,
@@ -50,6 +55,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3BytecodePolynomials::receive_witness_share", level = "trace")]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _: &BytecodePreprocessing<F>,
         io_ctx: &mut IoContextPool<Network>,

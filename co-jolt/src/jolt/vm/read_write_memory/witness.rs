@@ -26,6 +26,11 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
 {
     type PublicPolynomials = ReadWriteMemoryPolynomials<F>;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3ReadWriteMemoryPolynomials::stream_secret_shares",
+        level = "trace"
+    )]
     fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _: &ReadWriteMemoryPreprocessing,
         polynomials: Self::PublicPolynomials,
@@ -87,6 +92,11 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         Ok(())
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3ReadWriteMemoryPolynomials::receive_witness_share",
+        level = "trace"
+    )]
     fn receive_witness_share<Network: rep3::network::Rep3NetworkWorker>(
         _: &ReadWriteMemoryPreprocessing,
         io_ctx: &mut rep3::network::IoContextPool<Network>,

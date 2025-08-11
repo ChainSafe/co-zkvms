@@ -272,6 +272,11 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         })
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3InstructionLookupPolynomials::stream_secret_shares",
+        level = "trace"
+    )]
     fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials: InstructionLookupPolynomials<F>,
@@ -311,6 +316,11 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Ok(())
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3InstructionLookupPolynomials::receive_witness_share",
+        level = "trace"
+    )]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _: &InstructionLookupsPreprocessing<C, F>,
         io_ctx: &mut IoContextPool<Network>,

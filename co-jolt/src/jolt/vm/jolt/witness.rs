@@ -78,7 +78,7 @@ where
 {
     type PublicPolynomials = JoltPolynomials<F>;
 
-    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_secret_shares")]
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::stream_secret_shares")]
     fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         polynomials: Self::PublicPolynomials,
@@ -126,6 +126,7 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::receive_witness_share")]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         io_ctx: &mut IoContextPool<Network>,
