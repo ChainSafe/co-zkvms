@@ -343,7 +343,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
                 .with(chrome_layer)
                 .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
         );
-        tracing::info!("tracing_chrome writes to file:{}", file);
+        tracing::info!("tracing_chrome writes to file: {}", file);
         Some(TracingGuard {
             _guard: Some(_guard),
             file: file.to_string(),
