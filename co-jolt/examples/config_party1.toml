@@ -1,19 +1,19 @@
 my_id = 0
 worker = 0
-bind_addr = "0.0.0.0:10000"
+bind_addr = "0.0.0.0:80"
 key_path = "data/key0.der"
 [[parties]]
 id = 0
-dns_name = "localhost:10000"
+dns_name = "18.222.169.228:80"
 cert_path = "data/cert0.der"
 [[parties]]
 id = 1
-dns_name = "localhost:10001"
+dns_name = "3.15.170.134:80"
 cert_path = "data/cert1.der"
 [[parties]]
 id = 2
-dns_name = "localhost:10002"
+dns_name = "18.221.34.219:80"
 cert_path = "data/cert2.der"
 [coordinator]
-dns_name = "localhost:11000"
+dns_name = "18.221.225.225:80"
 cert_path = "data/cert_coordinator.der"
