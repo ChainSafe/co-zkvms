@@ -28,8 +28,8 @@ use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck;
-use crate::utils::element::SharedOrPublic;
-use crate::utils::element::SharedOrPublicIter;
+use crate::utils::shared_or_public::SharedOrPublic;
+use crate::utils::shared_or_public::SharedOrPublicIter;
 use jolt_core::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::r1cs::inputs::ConstraintInput;
 
@@ -72,6 +72,8 @@ where
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
+
+        tracing::info!("flattened_polys: {:?}", flattened_polys.len());
 
         let num_rounds_x = key.num_rows_bits();
 

@@ -5,7 +5,7 @@ use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::r1cs::inputs::Rep3R1CSPolynomials;
-use crate::utils::element::MaybeShared;
+use crate::utils::shared_or_public::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;

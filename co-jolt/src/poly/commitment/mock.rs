@@ -24,7 +24,7 @@ use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
 use crate::poly::{combine_poly_shares_rep3, Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use crate::utils::element::MaybeShared;
+use crate::utils::shared_or_public::MaybeShared;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {

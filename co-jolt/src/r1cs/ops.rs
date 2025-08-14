@@ -2,7 +2,7 @@ use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::utils::element::{SharedOrPublic, SharedOrPublicIter};
+use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicIter};
 
 pub use jolt_core::r1cs::ops::*;
 

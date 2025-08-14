@@ -8,7 +8,7 @@ use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
-use crate::utils::element::SharedOrPublic;
+use crate::utils::shared_or_public::SharedOrPublic;
 use crate::utils::transcript::TranscriptExt;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{

@@ -1,6 +1,6 @@
 use crate::{
     poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial},
-    utils::element::MaybeShared,
+    utils::shared_or_public::MaybeShared,
 };
 use jolt_core::utils::transcript::KeccakTranscript;
 use jolt_core::{

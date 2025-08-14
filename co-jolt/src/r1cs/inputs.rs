@@ -68,13 +68,9 @@ where
                 .try_into()
                 .unwrap(),
                 aux: AuxVariableStuff {
-                    left_lookup_operand: Rep3MultilinearPolynomial::public(
-                        left_lookup_operand.clone(),
-                    ),
-                    right_lookup_operand: Rep3MultilinearPolynomial::public(
-                        right_lookup_operand.clone(),
-                    ),
-                    product: Rep3MultilinearPolynomial::public(product.clone()),
+                    left_lookup_operand: Default::default(),
+                    right_lookup_operand: Default::default(),
+                    product: Default::default(),
                     relevant_y_chunks: Default::default(),
                     write_lookup_output_to_rd: Rep3MultilinearPolynomial::public(
                         write_lookup_output_to_rd.clone(),
@@ -91,6 +87,12 @@ where
         network.send_requests(chunks_x_shares)?;
         let chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
         network.send_requests(chunks_y_shares)?;
+        let left_lookup_operand_shares = generate_poly_shares_rep3(&left_lookup_operand, rng);
+        network.send_requests(left_lookup_operand_shares)?;
+        let right_lookup_operand_shares = generate_poly_shares_rep3(&right_lookup_operand, rng);
+        network.send_requests(right_lookup_operand_shares)?;
+        let product_shares = generate_poly_shares_rep3(&product, rng);
+        network.send_requests(product_shares)?;
         let relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
         network.send_requests(relevant_y_chunks_shares)?;
         let next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
@@ -111,6 +113,9 @@ where
         let mut partial_polys: Self = io_ctx.network().receive_request()?;
         partial_polys.chunks_x = io_ctx.network().receive_request()?;
         partial_polys.chunks_y = io_ctx.network().receive_request()?;
+        partial_polys.aux.left_lookup_operand = io_ctx.network().receive_request()?;
+        partial_polys.aux.right_lookup_operand = io_ctx.network().receive_request()?;
+        partial_polys.aux.product = io_ctx.network().receive_request()?;
         partial_polys.aux.relevant_y_chunks = io_ctx.network().receive_request()?;
         partial_polys.aux.next_pc_jump = io_ctx.network().receive_request()?;
         partial_polys.aux.should_branch = io_ctx.network().receive_request()?;

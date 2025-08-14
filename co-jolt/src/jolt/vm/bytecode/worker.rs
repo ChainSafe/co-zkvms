@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
-use crate::utils::element::SharedOrPublic;
+use crate::utils::shared_or_public::SharedOrPublic;
 use jolt_core::field::JoltField;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;

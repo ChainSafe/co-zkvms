@@ -2,7 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::utils::element::SharedOrPublic;
+use crate::utils::shared_or_public::SharedOrPublic;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };

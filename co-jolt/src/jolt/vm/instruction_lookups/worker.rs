@@ -9,7 +9,7 @@ use crate::{
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
     utils::{
-        element::SharedOrPublic,
+        shared_or_public::SharedOrPublic,
         instruction_utils::{transpose_flatten, transpose_hashmap},
         transcript::Transcript,
     },

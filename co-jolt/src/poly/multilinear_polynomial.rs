@@ -1,6 +1,6 @@
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::PolyDegree;
-use crate::utils::element::SharedOrPublic;
+use crate::utils::shared_or_public::SharedOrPublic;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };

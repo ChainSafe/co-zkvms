@@ -14,7 +14,7 @@ use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::r1cs::ops::LinearCombinationExt;
 use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
-use crate::utils::element::{SharedOrPublic, SharedOrPublicParIter};
+use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicParIter};
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 

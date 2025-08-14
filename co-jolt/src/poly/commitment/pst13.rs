@@ -28,7 +28,7 @@ use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
 use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use crate::utils::element::MaybeShared;
+use crate::utils::shared_or_public::MaybeShared;
 
 #[derive(Clone)]
 pub struct PST13<E: Pairing> {
