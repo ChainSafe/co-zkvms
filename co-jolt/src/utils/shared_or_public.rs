@@ -10,6 +10,7 @@ use mpc_core::protocols::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+/// Stores and implements interation between different value types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SharedOrPublic<F: JoltField> {
     Public(F),

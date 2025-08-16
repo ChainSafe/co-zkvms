@@ -2,14 +2,12 @@
 
 Private collaborative zkVM proof delegation based on [Jolt](https://github.com/a16z/jolt).
 
+See the design document: [Private Collaborative zkVM](https://hackmd.io/@timofey/SJ7OU5dugg)
+
 ## Requirements
 
 - Rust `nightly`
 - Misc packages: `build-essential libssl-dev pkg-config`
-
-## Documentation
-
-Coming soon.
 
 ## Demo (SHA2 chain)
 
