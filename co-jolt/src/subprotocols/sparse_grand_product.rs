@@ -332,29 +332,23 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
                         let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                        let t0 = flags[0].mul_0_optimized(eq_evals.0);
-                        let t1 = flag_eval_2.mul_0_optimized(eq_evals.1);
-                        let t2 = flag_eval_3.mul_0_optimized(eq_evals.2);
-
-                        let e0 = additive::add_public(
-                            rep3::arithmetic::mul_public(fingerprints[0], t0).into_additive(),
-                            eq_evals.0 - t0,
-                            party_id,
-                        );
-
-                        let e1 = additive::add_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
-                            eq_evals.1 - t1,
-                            party_id,
-                        );
-
-                        let e2 = additive::add_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
-                            eq_evals.2 - t2,
-                            party_id,
-                        );
-
-                        (e0, e1, e2)
+                        (
+                            additive::add_public(
+                                fingerprints[0].into_additive() * flags[0],
+                                F::one() - flags[0],
+                                party_id,
+                            ) * eq_evals.0,
+                            additive::add_public(
+                                fingerprint_eval_2.into_additive() * flag_eval_2,
+                                F::one() - flag_eval_2,
+                                party_id,
+                            ) * eq_evals.1,
+                            additive::add_public(
+                                fingerprint_eval_3.into_additive() * flag_eval_3,
+                                F::one() - flag_eval_3,
+                                party_id,
+                            ) * eq_evals.2,
+                        )
                     })
                     .reduce(
                         || {
@@ -408,37 +402,28 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             let fingerprint_eval_2 = fingerprint_chunk[1] + m_fingerprint;
                             let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                            let t0_0 = E1_evals.0 * *E2_eval;
-                            let t0_1 = E1_evals.1 * *E2_eval;
-                            let t0_2 = E1_evals.2 * *E2_eval;
-
-                            let t0 = flag_chunk[0].mul_0_optimized(t0_0);
-                            let t1 = flag_eval_2.mul_0_optimized(t0_1);
-                            let t2 = flag_eval_3.mul_0_optimized(t0_2);
-
                             inner_sum.0 += additive::add_public(
-                                rep3::arithmetic::mul_public(fingerprint_chunk[0], t0)
-                                    .into_additive(),
-                                t0_0 - t0,
+                                fingerprint_chunk[0].into_additive() * flag_chunk[0],
+                                F::one() - flag_chunk[0],
                                 party_id,
-                            );
-
+                            ) * E1_evals.0;
                             inner_sum.1 += additive::add_public(
-                                rep3::arithmetic::mul_public(fingerprint_eval_2, t1)
-                                    .into_additive(),
-                                t0_1 - t1,
+                                fingerprint_eval_2.into_additive() * flag_eval_2,
+                                F::one() - flag_eval_2,
                                 party_id,
-                            );
-
+                            ) * E1_evals.1;
                             inner_sum.2 += additive::add_public(
-                                rep3::arithmetic::mul_public(fingerprint_eval_3, t2)
-                                    .into_additive(),
-                                t0_2 - t2,
+                                fingerprint_eval_3.into_additive() * flag_eval_3,
+                                F::one() - flag_eval_3,
                                 party_id,
-                            );
+                            ) * E1_evals.2;
                         }
 
-                        (inner_sum.0, inner_sum.1, inner_sum.2)
+                        (
+                            inner_sum.0 * *E2_eval,
+                            inner_sum.1 * *E2_eval,
+                            inner_sum.2 * *E2_eval,
+                        )
                     })
                     .reduce(
                         || {
@@ -564,34 +549,23 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
                         let eq_evals = eq_evals[block_index];
 
-                        let t0 = flags.0.mul_0_optimized(eq_evals.0);
-                        let t1 = flag_eval_2.mul_01_optimized(eq_evals.1);
-                        let t2 = flag_eval_3.mul_01_optimized(eq_evals.2);
-
                         delta.0 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprints.0, t0).into_additive(),
-                            t0,
+                            fingerprints.0.into_additive().mul_public_01_optimized(flags.0),
+                            flags.0,
                             party_id,
-                        );
-
-                        // delta.1 += eq_evals.1.mul_0_optimized(
-                        //     flag_eval_2.mul_01_optimized(fingerprint_eval_2) - flag_eval_2,
-                        // );
-
+                        ) * eq_evals.0;
                         delta.1 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
-                            t1,
+                            fingerprint_eval_2.into_additive()
+                                .mul_public_01_optimized(flag_eval_2),
+                            flag_eval_2,
                             party_id,
-                        );
-
-                        // delta.2 += eq_evals.2.mul_0_optimized(
-                        //     flag_eval_3.mul_01_optimized(fingerprint_eval_3) - flag_eval_3,
-                        // );
+                        ) * eq_evals.1;
                         delta.2 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
-                            t2,
+                            fingerprint_eval_3.into_additive()
+                                .mul_public_01_optimized(flag_eval_3),
+                            flag_eval_3,
                             party_id,
-                        );
+                        ) * eq_evals.2;
                     }
 
                     (delta.0, delta.1, delta.2)
@@ -657,6 +631,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         AdditiveShare::<F>::zero(),
                         AdditiveShare::<F>::zero(),
                     );
+                    let mut inner_sum = (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                    );
+
+                    let mut prev_x2: usize = 0;
 
                     let mut next_index_to_process = 0usize;
                     for (j, index) in flag_indices.iter().enumerate() {
@@ -716,31 +697,40 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
                         let x2 = block_index >> num_x1_bits;
+                        if x2 != prev_x2 {
+                            delta.0 += inner_sum.0 * eq_poly.E2[prev_x2];
+                            delta.1 += inner_sum.1 * eq_poly.E2[prev_x2];
+                            delta.2 += inner_sum.2 * eq_poly.E2[prev_x2];
+                            inner_sum = (
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                            );
+                            prev_x2 = x2;
+                        }
 
                         let x1 = block_index & x1_bitmask;
 
-                        let t0 = flags.0.mul_0_optimized(E1_evals[x1].0 * eq_poly.E2[x2]);
-                        let t1 = flag_eval_2.mul_0_optimized(E1_evals[x1].1 * eq_poly.E2[x2]);
-                        let t2 = flag_eval_3.mul_0_optimized(E1_evals[x1].2 * eq_poly.E2[x2]);
-
-                        delta.0 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprints.0, t0).into_additive(),
-                            t0,
+                        inner_sum.0 += additive::sub_shared_by_public(
+                            fingerprints.0.into_additive().mul_public_01_optimized(flags.0),
+                            flags.0,
                             party_id,
-                        );
-
-                        delta.1 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_2, t1).into_additive(),
-                            t1,
+                        ) * E1_evals[x1].0;
+                        inner_sum.1 += additive::sub_shared_by_public(
+                            fingerprint_eval_2.into_additive().mul_public_01_optimized(flag_eval_2),
+                            flag_eval_2,
                             party_id,
-                        );
-
-                        delta.2 += additive::sub_shared_by_public(
-                            rep3::arithmetic::mul_public(fingerprint_eval_3, t2).into_additive(),
-                            t2,
+                        ) * E1_evals[x1].1;
+                        inner_sum.2 += additive::sub_shared_by_public(
+                            fingerprint_eval_3.into_additive().mul_public_01_optimized(flag_eval_3),
+                            flag_eval_3,
                             party_id,
-                        );
+                        ) * E1_evals[x1].2;
                     }
+
+                    delta.0 += inner_sum.0 * eq_poly.E2[prev_x2];
+                    delta.1 += inner_sum.1 * eq_poly.E2[prev_x2];
+                    delta.2 += inner_sum.2 * eq_poly.E2[prev_x2];
 
                     delta
                 })

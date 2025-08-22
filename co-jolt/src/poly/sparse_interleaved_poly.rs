@@ -579,7 +579,6 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 AdditiveShare::<F>::zero(),
                                 AdditiveShare::<F>::zero(),
                             );
-                            let x2 = (chunk[0].index / 4) >> num_x1_bits;
 
                             for sparse_block in chunk.chunk_by(|x, y| x.index / 4 == y.index / 4) {
                                 let block_index = sparse_block[0].index / 4;
@@ -603,33 +602,33 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 let x1 = block_index & x1_bitmask;
                                 let delta = (
                                     additive::sub_shared_by_public(
-                                        left.0 * right.0 * E1_evals[x1].0 * eq_poly.E2[x2],
-                                        E1_evals[x1].0 * eq_poly.E2[x2],
+                                        left.0 * right.0,
+                                        F::one(),
                                         party_id,
-                                    ),
+                                    ) * E1_evals[x1].0,
                                     additive::sub_shared_by_public(
-                                        left_eval_2
-                                            * right_eval_2
-                                            * E1_evals[x1].1
-                                            * eq_poly.E2[x2],
-                                        E1_evals[x1].1 * eq_poly.E2[x2],
+                                        left_eval_2 * right_eval_2,
+                                        F::one(),
                                         party_id,
-                                    ),
+                                    ) * E1_evals[x1].1,
                                     additive::sub_shared_by_public(
-                                        left_eval_3
-                                            * right_eval_3
-                                            * E1_evals[x1].2
-                                            * eq_poly.E2[x2],
-                                        E1_evals[x1].2 * eq_poly.E2[x2],
+                                        left_eval_3 * right_eval_3,
+                                        F::one(),
                                         party_id,
-                                    ),
+                                    ) * E1_evals[x1].2,
                                 );
                                 inner_sum.0 += delta.0;
                                 inner_sum.1 += delta.1;
                                 inner_sum.2 += delta.2;
                             }
 
-                            (inner_sum.0, inner_sum.1, inner_sum.2)
+                            let x2 = (chunk[0].index / 4) >> num_x1_bits;
+
+                            (
+                                inner_sum.0 * eq_poly.E2[x2],
+                                inner_sum.1 * eq_poly.E2[x2],
+                                inner_sum.2 * eq_poly.E2[x2],
+                            )
                         })
                 })
                 .reduce(
