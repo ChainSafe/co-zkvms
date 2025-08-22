@@ -370,7 +370,9 @@ where
 pub type ZKMLUniversalParam<E, P> = (MLPCParam<E>, MaskParam<E, P>);
 pub type ZKMLCommitterKey<E, P> = (MLCommitterKey<E>, MaskCommitterKey<E, P>);
 pub type ZKMLVerifierKey<E> = (MLVerifierKey<E>, MaskVerifierKey<E>);
+#[allow(type_alias_bounds)]
 pub type ZKMLProof<E: Pairing> = (MLProof<E>, E::ScalarField);
+#[allow(type_alias_bounds)]
 pub type ZKMLCommitment<E: Pairing, P> = (MLCommitment<E>, LabeledPolynomial<E::ScalarField, P>);
 
 //todo: turn MLPCParam<E> to ZKMLUniversaalParam<E, P>

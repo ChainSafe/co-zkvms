@@ -42,7 +42,7 @@ use spartan::{
 
 use crate::{
     sumcheck::{
-        default_sumcheck_poly_list, merge_list_of_distributed_poly, poly_list_to_prover_state,
+        default_sumcheck_poly_list, merge_list_of_distributed_poly,
         ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg,
     },
     worker::PartialProof,
@@ -108,6 +108,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         vk: &IndexVerifierKey<E>,
         transcript: &mut T,
         network: &mut N,
+        log_num_pub_workers: usize,
     ) -> Result<(R1CSProof<E>, Duration)>
     where
         E: Pairing,
@@ -143,6 +144,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             &v_msg2.verifier_message,
             network,
             transcript,
+            log_num_pub_workers,
         )?;
 
         let v_msg4 = DFSVerifier::verifier_fourth_round(&mut verifier_state, transcript);
@@ -154,6 +156,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             v_msg4.verifier_message[0],
             network,
             transcript,
+            log_num_pub_workers,
         )?;
         transcript.append_serializable(b"lookup_proof", &lookup_proof);
 
@@ -341,6 +344,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         v_msg: &Vec<E::ScalarField>,
         network: &mut N,
         transcript: &mut T,
+        log_num_pub_workers: usize,
     ) -> Result<()> {
         network.broadcast_request(v_msg.clone())?;
         let num_variables = index.padded_num_var;
@@ -429,7 +433,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         let mut val_a = E::ScalarField::zero();
         let mut val_b = E::ScalarField::zero();
         let mut val_c = E::ScalarField::zero();
-        for i in 0..1 << network.log_num_pub_workers() {
+        for i in 0..1 << log_num_pub_workers {
             val_a = val_a + responses_chunked[i].0;
             val_b = val_b + responses_chunked[i].1;
             val_c = val_c + responses_chunked[i].2;
@@ -442,7 +446,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             2,
             pub_index.ck_index.g,
             network,
-            Some(network.log_num_pub_workers()),
+            Some(log_num_pub_workers),
         )?;
         let [eq_tilde_rx_comm, eq_tilde_ry_comm] = comms.try_into().unwrap();
         transcript.append_serializable(b"eq_tilde_rx_comm", &eq_tilde_rx_comm);
@@ -458,6 +462,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             &index.ck_w,
             &state.witness_mask,
             network,
+            log_num_pub_workers,
         )?;
         transcript.append_serializable(b"w_proof", &zk_open_pf);
         state.zk_open_pf = Some(zk_open_pf);
@@ -474,6 +479,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         v_msg: E::ScalarField,
         network: &mut N,
         transcript: &mut impl Transcript,
+        log_num_pub_workers: usize,
     ) -> Result<LogLookupProof<E>> {
         network.broadcast_request(v_msg.clone())?;
 
@@ -505,7 +511,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             4,
             pub_index.ck_index.g,
             network,
-            Some(network.log_num_pub_workers()),
+            Some(log_num_pub_workers),
         )?;
 
         state.time_elapsed += time;
@@ -543,7 +549,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
         };
 
         let (prover_msgs, final_point, time) =
-            distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript)?;
+            distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript, log_num_pub_workers)?;
 
         state.time_elapsed += time;
         let eta: E::ScalarField = transcript.challenge_scalar(b"eta");
@@ -568,6 +574,7 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             pub_index.ck_index.g,
             network,
             false,
+            log_num_pub_workers,
         )?;
 
         state.time_elapsed += time;
@@ -685,11 +692,11 @@ pub fn rep3_zk_sumcheck_coordinator<
 
     let mut prover_state = IPForMLSumcheck::prover_init(&sumcheck_polys);
     let mut verifier_msg = None;
+
     for _ in poly_info.num_variables - network.log_num_workers_per_party()..poly_info.num_variables
     {
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
         let mask = IPForMLSumcheck::mask_round(&mut prover_zk_state, &v_msg);
-
         let final_msg = ProverMsg {
             evaluations: prover_message
                 .evaluations
@@ -740,12 +747,12 @@ pub fn rep3_zk_sumcheck_coordinator<
 #[tracing::instrument(skip_all, name = "distributed_sumcheck_coordinator")]
 pub fn distributed_sumcheck_coordinator<F: Field, N: MpcStarNetCoordinator>(
     poly_info: &PolynomialInfo,
-    q_polys: &ListOfProductsOfPolynomials<F>,
+    _q_polys: &ListOfProductsOfPolynomials<F>,
     network: &mut N,
     transcript: &mut impl Transcript,
+    log_num_workers: usize,
 ) -> Result<(Vec<ProverMsg<F>>, Vec<F>, Duration)> {
     let time = Instant::now();
-    let log_num_workers = network.log_num_pub_workers();
 
     let mut prover_msgs = Vec::new();
     let mut final_point = Vec::new();
@@ -777,7 +784,9 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: MpcStarNetCoordinator>(
         network.broadcast_request(r)?;
     }
 
-    let responses_chunked: Vec<_> = network.receive_responses()?;
+    let responses_chunked: Vec<_> = network
+        .receive_responses()
+        .context("while receiving remaining responses")?;
 
     let time = Instant::now();
 
@@ -803,7 +812,7 @@ pub fn distributed_sumcheck_coordinator<F: Field, N: MpcStarNetCoordinator>(
 #[tracing::instrument(skip_all, name = "rep3_poly_commit_coordinator")]
 fn rep3_poly_commit_coordinator<E: Pairing, N: MpcStarNetCoordinator>(
     num_comms: usize,
-    g: E::G1Affine,
+    _g: E::G1Affine,
     network: &mut N,
     log_num_workers: Option<usize>,
 ) -> Result<(Vec<Commitment<E>>, Duration)> {
@@ -863,14 +872,15 @@ pub fn batch_open_poly_coordinator<'a, E: Pairing, N: MpcStarNetCoordinator>(
     merge_ck: &CommitterKey<E>,
     comms: &[Commitment<E>],
     final_point: &[E::ScalarField],
-    g: E::G1Affine,
+    _g: E::G1Affine,
     network: &mut N,
     rep3: bool,
+    log_num_pub_workers: usize,
 ) -> Result<(BatchOracleEval<E>, Duration)> {
     let log_num_workers = if rep3 {
         network.log_num_workers_per_party()
     } else {
-        network.log_num_pub_workers()
+        log_num_pub_workers
     };
     let responses_chunked: Vec<PartialProof<E>> = network.receive_responses()?;
 
@@ -938,6 +948,7 @@ pub fn rep3_zk_open_poly_coordinator<'a, E: Pairing, N: MpcStarNetCoordinator>(
     ck: &ZKMLCommitterKey<E, SparsePolynomial<E::ScalarField, SparseTerm>>,
     p_hat: &LabeledPolynomial<E::ScalarField, SparsePolynomial<E::ScalarField, SparseTerm>>,
     network: &mut N,
+    log_num_pub_workers: usize,
 ) -> Result<(ZKMLProof<E>, Duration)> {
     let (batch_oracle, tot_time) = batch_open_poly_coordinator(
         num_var,
@@ -948,6 +959,7 @@ pub fn rep3_zk_open_poly_coordinator<'a, E: Pairing, N: MpcStarNetCoordinator>(
         ck.0.g,
         network,
         true,
+        log_num_pub_workers,
     )?;
 
     let time = Instant::now();

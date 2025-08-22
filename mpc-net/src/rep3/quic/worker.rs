@@ -218,10 +218,6 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         Ok(ret)
     }
 
-    fn log_num_pub_workers(&self) -> usize {
-        std::cmp::min(self.log_num_workers_per_party - 1, 1)
-    }
-
     fn log_num_workers_per_party(&self) -> usize {
         self.log_num_workers_per_party
     }

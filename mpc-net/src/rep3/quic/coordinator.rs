@@ -65,7 +65,7 @@ impl Rep3QuicNetCoordinator {
             log_num_workers_per_party,
             stats_checkpoints: vec![(0, 0); num_parties * (1 << log_num_workers_per_party)],
             config,
-            current_num_workers: 1,
+            current_num_workers: num_parties / 3,
         })
     }
 
@@ -247,10 +247,6 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         T::deserialize_uncompressed_unchecked(&response[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while deserializing response")
-    }
-
-    fn log_num_pub_workers(&self) -> usize {
-        std::cmp::min(self.log_num_workers_per_party - 1, 1)
     }
 
     fn log_num_workers_per_party(&self) -> usize {

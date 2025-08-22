@@ -32,11 +32,12 @@ use clap::{Parser, Subcommand};
 use co_spartan::setup::CoordinatorKey;
 use crossbeam::thread;
 use itertools::{merge, Itertools};
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker, WorkerIoContext};
 use mpc_core::protocols::rep3::{
     arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
 };
 use mpc_net::config::NetworkConfig;
+use mpc_net::rep3::PartyWorkerID;
 use mpc_net::{
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
@@ -55,8 +56,6 @@ pub fn work<E: Pairing>(
     r1cs_input_path: PathBuf,
     log_num_workers_per_party: usize,
     log_num_public_workers: Option<usize>,
-    local: bool,
-    worker_id: Option<usize>,
 ) -> eyre::Result<()>
 where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
@@ -80,11 +79,7 @@ where
     let is_coordinator = config.is_coordinator;
 
     if is_coordinator {
-        let mut network = Rep3QuicNetCoordinator::new(
-            config.extend_with_workers(log_num_workers_per_party),
-            log_num_workers_per_party,
-        )
-        .unwrap();
+        let mut network = Rep3QuicNetCoordinator::new(config, log_num_workers_per_party).unwrap();
         coordinator_work::<E, _>(
             keys_dir,
             r1cs_noir_scheme_path,
@@ -94,14 +89,16 @@ where
             &mut network,
         )
     } else {
+        let worker_id = config.worker;
         let network = Rep3QuicMpcNetWorker::new(config, log_num_workers_per_party)?;
-        let mut io_ctx = IoContextPool::init(network, 0)?;
+        let mut io_ctx = IoContext::init(network)?;
 
         worker_work::<E, _>(
             keys_dir,
             log_num_workers_per_party,
             log_num_public_workers,
             &mut io_ctx,
+            worker_id,
         )
     }
 }
@@ -112,7 +109,7 @@ fn coordinator_work<E: Pairing, N: MpcStarNetCoordinator>(
     r1cs_noir_scheme_path: PathBuf,
     r1cs_input_path: PathBuf,
     log_num_workers_per_party: usize,
-    log_num_public_workers: usize,
+    log_num_pub_workers: usize,
     network: &mut N,
 ) -> eyre::Result<()>
 where
@@ -158,7 +155,6 @@ where
         .map(|(_, z)| z)
         .collect();
 
-    // todo: send witness shares to workers
     network.send_requests(witness_shares);
     let (send_bytes, _) = network.total_bandwidth_used();
     tracing::info!(
@@ -174,6 +170,7 @@ where
         &pk.ivk,
         &mut transcript,
         network,
+        log_num_pub_workers,
     )
     .unwrap();
 
@@ -199,69 +196,67 @@ where
     Ok(())
 }
 
-#[tracing::instrument(skip_all, name = "worker_work", fields(party_id = %io_ctx.party_id()))]
+#[tracing::instrument(skip_all, name = "worker_work", fields(party_id = %io_ctx.id))]
 fn worker_work<E: Pairing, N: Rep3NetworkWorker>(
     keys_dir: PathBuf,
     log_num_workers_per_party: usize,
-    log_num_public_workers: usize,
-    io_ctx: &mut IoContextPool<N>,
+    log_num_pub_workers: usize,
+    io_ctx: &mut IoContext<N>,
+    worker_id: usize,
 ) -> eyre::Result<()>
 where
     E::ScalarField: PrimeField<BigInt = BigInt<4>>,
 {
-    // let pk = {
-    //     let mut buf = Vec::new();
+    let global_worker_id = PartyWorkerID::new(io_ctx.id as usize, worker_id).global_worker_id();
+    let pk = {
+        let mut buf = Vec::new();
 
-    //     let mut file_name = keys_dir.join(format!("worker_{}.key", network.party_id()));
+        let mut file_name = keys_dir.join(format!("worker_{}.key", global_worker_id));
 
-    //     let mut f = File::open(&file_name).expect(&format!("couldn't open file {:?}", file_name));
-    //     let _ = f.read_to_end(&mut buf);
-    //     let buf_slice = buf.as_slice();
+        let mut f = File::open(&file_name).expect(&format!("couldn't open file {:?}", file_name));
+        let _ = f.read_to_end(&mut buf);
+        let buf_slice = buf.as_slice();
 
-    //     co_spartan::Rep3ProverKey::<E>::deserialize_uncompressed_unchecked(buf_slice).unwrap()
-    // };
+        co_spartan::Rep3ProverKey::<E>::deserialize_uncompressed_unchecked(buf_slice).unwrap()
+    };
 
-    // let current_num_threads = current_num_threads();
-    // tracing::info!(
-    //     "Rayon num threads in worker {worker_id}: {}",
-    //     current_num_threads
-    // );
+    let current_num_threads = current_num_threads();
+    tracing::info!("Rayon num threads in worker {worker_id}: {current_num_threads}",);
 
-    // let log_chunk_size = pk.num_variables - log_num_workers_per_party;
-    // let start_eq = (1 << log_chunk_size) * (worker_id / 3);
+    let log_chunk_size = pk.num_variables - log_num_workers_per_party;
+    let start_eq = (1 << log_chunk_size) * (global_worker_id / 3);
 
-    // let pub_log_chunk_size = pk.num_variables - log_num_public_workers;
+    let pub_log_chunk_size = pk.num_variables - log_num_pub_workers;
 
-    // let pub_start_eq = (1 << pub_log_chunk_size) * worker_id;
-    // let active = (worker_id < (1 << log_num_public_workers));
+    let pub_start_eq = (1 << pub_log_chunk_size) * global_worker_id;
+    let active = (global_worker_id < (1 << log_num_pub_workers));
 
-    // let mut seed_0 = Blake2s512Rng::setup();
-    // seed_0.feed(&pk.seed_0.as_bytes());
-    // let mut seed_1 = Blake2s512Rng::setup();
-    // seed_1.feed(&pk.seed_1.as_bytes());
-    // let mut random = SSRandom::<Blake2s512Rng>::new(seed_0, seed_1);
+    let mut seed_0 = Blake2s512Rng::setup();
+    seed_0.feed(&pk.seed_0.as_bytes());
+    let mut seed_1 = Blake2s512Rng::setup();
+    seed_1.feed(&pk.seed_1.as_bytes());
+    let mut random = SSRandom::<Blake2s512Rng>::new(seed_0, seed_1);
 
-    // network.send_response("ready".to_string());
+    io_ctx.network.send_response("ready".to_string());
 
-    // let witness_share = network.receive_request().unwrap();
+    let witness_share = io_ctx.network.receive_request().unwrap();
 
-    // co_spartan::SpartanProverWorker::new(
-    //     log_chunk_size,
-    //     start_eq,
-    //     pub_log_chunk_size,
-    //     pub_start_eq,
-    // )
-    // .prove(&pk, witness_share, &mut random, active, network)
-    // .unwrap();
+    co_spartan::SpartanProverWorker::new(
+        log_chunk_size,
+        start_eq,
+        pub_log_chunk_size,
+        pub_start_eq,
+        log_num_pub_workers,
+    )
+    .prove(&pk, witness_share, &mut random, active, &mut io_ctx.network)
+    .unwrap();
 
-    // let (send_bytes, recv_bytes) = network.total_bandwidth_used();
-    // tracing::info!(
-    //     "bandwidth used: send {}, recv {}",
-    //     ByteSize(send_bytes as u64),
-    //     ByteSize(recv_bytes as u64)
-    // );
-
-    todo!();
+    let (send_bytes, recv_bytes) = io_ctx.network.total_bandwidth_used();
+    tracing::info!(
+        "bandwidth used: send {}, recv {}",
+        ByteSize(send_bytes as u64),
+        ByteSize(recv_bytes as u64)
+    );
 
     Ok(())
 }

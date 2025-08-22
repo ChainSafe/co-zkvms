@@ -39,35 +39,33 @@ enum Command {
     },
 
     Work {
-        #[clap(long, value_name = "FILE")]
+        #[clap(long, short = 'c', value_name = "FILE")]
         config_file: PathBuf,
 
-        #[clap(long, value_name = "DIR")]
+        #[clap(long, value_name = "DIR", env = "R1CS_NOIR_SCHEME_PATH")]
         r1cs_noir_scheme_path: PathBuf,
 
-        #[clap(long, value_name = "DIR")]
+        #[clap(long, value_name = "DIR", env = "R1CS_INPUT_PATH")]
         r1cs_input_path: PathBuf,
 
         /// The number of workers who will do the committing and proving. Each worker has 1 core.
-        #[clap(long, value_name = "NUM")]
+        #[clap(long, value_name = "NUM", env = "LOG_NUM_WORKERS_PER_PARTY")]
         log_num_workers_per_party: usize,
 
-        #[clap(long, value_name = "NUM")]
+        #[clap(long, value_name = "NUM", env = "LOG_NUM_PUBLIC_WORKERS")]
         log_num_public_workers: Option<usize>,
 
-        #[clap(long, value_name = "NUM")]
-        worker_id: Option<usize>,
-
-        #[clap(long, value_name = "NUM", default_value = "true")]
-        local: bool,
-
-        #[clap(long, value_name = "DIR", default_value = "./artifacts")]
+        #[clap(long, short = 'a', value_name = "DIR", default_value = "./artifacts", env = "ARTIFACTS_DIR")]
         artifacts_dir: PathBuf,
     },
 }
 
 fn main() {
     init_tracing();
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
+
     let args = Args::parse();
 
     match args.command {
@@ -89,8 +87,6 @@ fn main() {
             artifacts_dir,
             log_num_workers_per_party,
             log_num_public_workers,
-            worker_id,
-            local,
         } => {
             let config: NetworkConfigFile = toml::from_str(
                 &std::fs::read_to_string(&config_file)
@@ -110,8 +106,6 @@ fn main() {
                 r1cs_input_path,
                 log_num_workers_per_party,
                 log_num_public_workers,
-                local,
-                worker_id,
             )
             .unwrap();
         }

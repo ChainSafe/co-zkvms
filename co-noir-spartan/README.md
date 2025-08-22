@@ -13,7 +13,7 @@ MPC based on Replicated Secret Sharing (RSS).
 ## Demo
 
 ```bash
-bash ./demo.sh
+bash ./examples/demo.sh
 ```
 
 ## Acknowledgements

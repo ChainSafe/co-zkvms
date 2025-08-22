@@ -34,6 +34,7 @@ eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+rustls.workspace = true
 
 mpc-core = { path = "../../mpc-core" }
 snarks-core = { path = "../../snarks-core" }

@@ -1,8 +1,3 @@
-use ark_ec::pairing::Pairing;
-use ark_ff::{Field, PrimeField};
-use ark_poly::multivariate::{SparsePolynomial, SparseTerm};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
 pub trait Math {
     fn square_root(self) -> usize;
     fn exp2(self) -> usize;

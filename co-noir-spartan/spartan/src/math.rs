@@ -3,6 +3,7 @@ use ark_ff::{Field, PrimeField};
 use ark_poly::multivariate::{SparsePolynomial, SparseTerm};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+#[allow(type_alias_bounds)]
 pub type MaskPolynomial<E: Pairing> = SparsePolynomial<E::ScalarField, SparseTerm>;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize, Clone)]

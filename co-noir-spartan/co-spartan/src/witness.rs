@@ -6,6 +6,7 @@ use rand::RngCore;
 
 use crate::utils::{pad_to_power_of_two, split_vec};
 
+#[allow(type_alias_bounds)]
 pub type Rep3WitnessShare<F: PrimeField> = Rep3DensePolynomial<F>;
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]

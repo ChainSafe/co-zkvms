@@ -62,6 +62,7 @@ pub struct SpartanProverWorker<E: Pairing, N: MpcStarNetWorker> {
     pub start_eq: usize,
     pub pub_log_chunk_size: usize,
     pub pub_start_eq: usize,
+    pub log_num_pub_workers: usize,
     _network: PhantomData<N>,
     _pairing: PhantomData<E>,
 }
@@ -101,12 +102,14 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         start_eq: usize,
         pub_log_chunk_size: usize,
         pub_start_eq: usize,
+        log_num_pub_workers: usize,
     ) -> Self {
         Self {
             log_chunk_size,
             start_eq,
             pub_log_chunk_size,
             pub_start_eq,
+            log_num_pub_workers,
             _network: PhantomData,
             _pairing: PhantomData,
         }
@@ -203,7 +206,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         let num_variables = pk.ipk.padded_num_var;
 
         let eq_func = partial_generate_eq(&v_msg, self.start_eq, self.log_chunk_size);
-
+        
         let final_point = rep3_first_sumcheck_worker(
             &witness_share.za,
             &witness_share.zb,
@@ -500,7 +503,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             lookup_pf_col.1[1].clone(),
         ];
 
-        network.send_response(responses);
+        network.send_response(responses)?;
 
         let (z, lambda) = network
             .receive_request()
@@ -562,7 +565,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             eta,
             9,
             pk.num_variables,
-            network.log_num_pub_workers(),
+            self.log_num_pub_workers,
             network,
         )
         .context("while batch opening polynomials")?;
@@ -696,6 +699,7 @@ pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
     let mut verifier_msg = None;
     let mut final_point = Vec::new();
 
+    tracing::info!("distributed_q_polys: {:?}", distributed_q_polys.num_variables);
     for _round in 0..distributed_q_polys.num_variables {
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
         network
@@ -852,13 +856,13 @@ fn dummy_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
             evaluations: vec![F::zero(); max_multiplicands + 1],
         };
 
-        network.send_response(default_response);
+        network.send_response(default_response).unwrap();
 
         let _: F = network.receive_request().unwrap();
     }
 
     let default_response = default_last_sumcheck_state;
-    network.send_response(default_response);
+    network.send_response(default_response).unwrap();
 
     let _: Vec<F> = network.receive_request().unwrap();
 }
@@ -876,7 +880,7 @@ fn dummy_batch_open_poly_worker<'a, E: Pairing, N: MpcStarNetWorker>(
         val: E::ScalarField::zero(),
         evals: vec![E::ScalarField::one(); num_poly],
     };
-    network.send_response(default_response);
+    network.send_response(default_response).unwrap();
 }
 
 fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(
@@ -895,7 +899,7 @@ fn dummy_fourth_round<'a, E: Pairing, N: MpcStarNetWorker>(
         4
     ];
 
-    network.send_response(default_response);
+    network.send_response(default_response).unwrap();
 
     let (_z, _lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request().unwrap();
     let (_z, lambda): (Vec<E::ScalarField>, E::ScalarField) = network.receive_request().unwrap();

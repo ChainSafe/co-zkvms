@@ -38,7 +38,8 @@ impl<H: MpcNetworkHandlerShutdown> Drop for MpcNetworkHandlerWrapper<H> {
     }
 }
 
-pub(crate) trait MpcNetworkHandlerShutdown: Send + Sync {
+#[allow(async_fn_in_trait)]
+pub trait MpcNetworkHandlerShutdown: Send + Sync {
     async fn shutdown(&self) -> std::io::Result<()>;
 }
 

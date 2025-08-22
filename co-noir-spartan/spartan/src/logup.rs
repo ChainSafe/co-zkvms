@@ -16,6 +16,7 @@ use crate::{
     verifier::{batch_verify_poly, BatchOracleEval, VerificationResult},
 };
 
+#[allow(type_alias_bounds)]
 type SumcheckProof<E: Pairing> = ark_linear_sumcheck::ml_sumcheck::Proof<E::ScalarField>;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]

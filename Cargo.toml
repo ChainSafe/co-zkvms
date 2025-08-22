@@ -78,6 +78,8 @@ color-eyre = "0.6.3"
 bytesize = "2.0.1"
 rand_chacha = "0.3.0"
 toml = "0.9.5"
+rustls = "0.23.15"
+
 
 # Additional dependencies for co-spartan
 clap = { version = "4.5", features = ["derive", "env"] }
