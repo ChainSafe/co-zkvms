@@ -190,7 +190,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         r: &mut Vec<F>,
-        claim: &mut F,
+        claim: &mut AdditiveShare<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.id;
@@ -262,7 +262,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         drop(_span_enter);
 
         let r_i = process_eq_sumcheck_round_worker(
-            (F::zero(), quadratic_eval_at_infty.as_additive()),
+            (AdditiveShare::zero(), quadratic_eval_at_infty.as_additive()),
             eq_poly,
             r,
             claim,
@@ -381,7 +381,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         r: &mut Vec<F>,
-        claim: &mut F,
+        claim: &mut AdditiveShare<F>,
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.id;
@@ -449,8 +449,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             let evals = chunks
                 .par_iter()
                 .map(|chunk| {
-                    let mut eval_point_0 = F::zero();
-                    let mut eval_point_infty = F::zero();
+                    let mut eval_point_0 = AdditiveShare::zero();
+                    let mut eval_point_infty = AdditiveShare::zero();
 
                     // let mut inner_sums = (F::zero(), F::zero());
                     // let mut prev_x_out = 0;
@@ -496,7 +496,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     (eval_point_0, eval_point_infty)
                 })
                 .reduce(
-                    || (F::zero(), F::zero()),
+                    || (AdditiveShare::zero(), AdditiveShare::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
             drop(_span_enter);

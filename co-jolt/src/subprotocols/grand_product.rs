@@ -61,7 +61,7 @@ where
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        let outputs = additive::combine_field_element_vec::<F>(network.receive_responses()?);
+        let outputs = additive::combine_additive_vec::<F>(network.receive_responses()?);
         transcript.append_scalars(&outputs);
         let output_mle = DensePolynomial::new_padded(outputs);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
@@ -97,7 +97,7 @@ where
     fn num_layers(&self) -> usize;
 
     /// The claimed outputs of the grand products.
-    fn claimed_outputs(&self) -> Vec<F>;
+    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>>;
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
@@ -119,9 +119,9 @@ where
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
         let outputs = self.claimed_outputs();
-        io_ctx.network().send_response(outputs.clone())?;
-        let (mut r, mut claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
-        claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
+        io_ctx.network().send_response(outputs)?;
+        let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
+        let mut claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
         }
@@ -263,7 +263,7 @@ where
         name = "Rep3BatchedDenseGrandProduct::claimed_outputs",
         level = "trace"
     )]
-    fn claimed_outputs(&self) -> Vec<F> {
+    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>> {
         let last_layer = &self.layers[self.layers.len() - 1];
         last_layer
             .par_chunks(2)

@@ -39,7 +39,11 @@ where
 {
     type PublicPolynomials = R1CSPolynomials<F>;
 
-    #[tracing::instrument(skip_all, name = "Rep3R1CSPolynomials::stream_secret_shares", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3R1CSPolynomials::stream_secret_shares",
+        level = "trace"
+    )]
     fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _preprocessing: &NoPreprocessing,
         polynomials: Self::PublicPolynomials,
@@ -105,7 +109,11 @@ where
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3R1CSPolynomials::receive_witness_share", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3R1CSPolynomials::receive_witness_share",
+        level = "trace"
+    )]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _: &NoPreprocessing,
         io_ctx: &mut IoContextPool<Network>,

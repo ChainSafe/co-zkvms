@@ -2,6 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
+use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::shared_or_public::SharedOrPublic;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
@@ -81,9 +82,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: F,
+        previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<F>;
+    ) -> UniPoly<AdditiveShare<F>>;
 
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
 
@@ -94,7 +95,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     )]
     fn prove_sumcheck(
         &mut self,
-        claim: &F,
+        claim: &AdditiveShare<F>,
         eq_poly: &mut SplitEqPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(Vec<F>, (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>))> {
@@ -106,7 +107,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, previous_claim, party_id);
             // append the prover's message to the transcript
-            io_ctx.network().send_response(cubic_poly.as_vec())?;
+            io_ctx.network().send_response(cubic_poly.coeffs)?;
             let (r_j, next_claim) = io_ctx.network().receive_request()?;
 
             r.push(r_j);
@@ -143,9 +144,8 @@ where
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _round in 0..num_rounds {
-        let round_poly = UniPoly::<F>::from_coeff(additive::combine_field_element_vec(
-            network.receive_responses()?,
-        ));
+        let round_poly =
+            UniPoly::<F>::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
         let compressed_poly = round_poly.compress();
 
         // append the prover's message to the transcript
@@ -172,7 +172,7 @@ pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
     comb_func: Func,
     combined_degree: usize,
     io_ctx: &mut IoContextPool<Network>,
-) -> eyre::Result<(Vec<F>, Vec<F>)>
+) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)>
 where
     F: JoltField,
     Poly: PolynomialBinding<F, SharedOrPublic<F>>
@@ -189,15 +189,15 @@ where
     for _round in 0..num_rounds {
         // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
         // for points {0, ..., |g(x)|}
-        let mut eval_points = vec![F::zero(); combined_degree];
+        let mut eval_points = vec![AdditiveShare::<F>::zero(); combined_degree];
 
         let mle_half = polys[0].len() / 2;
 
-        let accum: Vec<Vec<F>> = (0..mle_half)
+        let accum: Vec<Vec<AdditiveShare<F>>> = (0..mle_half)
             .into_par_iter()
             .map(|poly_term_i| {
-                let mut accum = vec![F::zero(); combined_degree];
-                // TODO(moodlezoup): Optimize
+                let mut accum = vec![AdditiveShare::<F>::zero(); combined_degree];
+                // TODO Optimize
                 let evals: Vec<_> = polys
                     .iter()
                     .map(|poly| {
@@ -217,16 +217,12 @@ where
             .par_iter_mut()
             .enumerate()
             .for_each(|(poly_i, eval_point)| {
-                *eval_point = accum
-                    .par_iter()
-                    .take(mle_half)
-                    .map(|mle| mle[poly_i])
-                    .sum::<F>();
+                *eval_point = accum.par_iter().take(mle_half).map(|mle| mle[poly_i]).sum();
             });
 
         eval_points.insert(1, previous_claim - eval_points[0]);
-        let univariate_poly = UniPoly::from_evals(&eval_points);
-        io_ctx.network().send_response(univariate_poly.as_vec())?;
+        let univariate_poly = unipoly_from_additive_evals(&eval_points);
+        io_ctx.network().send_response(univariate_poly.coeffs)?;
 
         // append the prover's message to the transcript
         // compressed_poly.append_to_transcript(transcript);
@@ -243,11 +239,7 @@ where
 
     let final_evals = polys
         .iter()
-        .map(|poly| match poly.final_sumcheck_claim() {
-            SharedOrPublic::Public(x) => x,
-            SharedOrPublic::Shared(x) => x.into_additive(),
-            SharedOrPublic::Additive(x) => x,
-        })
+        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
         .collect();
 
     Ok((r, final_evals))

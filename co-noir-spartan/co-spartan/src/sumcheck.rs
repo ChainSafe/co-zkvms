@@ -230,7 +230,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
                 let step_pub1 = prover_state.pub_polys[0][(b << 1) + 1] - start_pub1;
 
                 for p in product.iter_mut() {
-                    *p = (&start_a * &start_b) * &start_pub1;
+                    *p = (&start_a * &start_b).into_fe() * &start_pub1;
                     start_a += step_a;
                     start_b += step_b;
                     start_pub1 += step_pub1;
@@ -242,7 +242,7 @@ impl<F: PrimeField> Rep3Sumcheck<F> {
                 let step_pub1 = prover_state.pub_polys[0][(b << 1) + 1] - start_pub1;
 
                 for p in product.iter_mut() {
-                    *p -= (start_c * start_pub1).into_additive();
+                    *p -= (start_c * start_pub1).into_additive().into_fe();
                     start_c += step_c;
                     start_pub1 += step_pub1;
                 }

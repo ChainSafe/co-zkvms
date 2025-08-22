@@ -235,7 +235,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             &sums
                 .iter()
                 .zip_eq(ltu_sum_eq_prod.iter())
-                .map(|(sum, ltu_sum_eq_prod)| *sum + ltu_sum_eq_prod)
+                .map(|(sum, ltu_sum_eq_prod)| *sum + *ltu_sum_eq_prod)
                 .collect::<Vec<_>>(),
             io_ctx,
         )?

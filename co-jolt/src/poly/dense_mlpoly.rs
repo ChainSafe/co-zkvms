@@ -4,8 +4,8 @@ use jolt_core::{
     poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     utils,
 };
-use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::{additive::AdditiveShare, rep3};
 use rand::{Rng, SeedableRng};
 use std::ops::Index;
 use std::sync::Arc;
@@ -146,7 +146,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         evals
     }
 
-    pub fn evaluate(&self, r: &[F]) -> F {
+    pub fn evaluate(&self, r: &[F]) -> AdditiveShare<F> {
         let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.coeffs_ref().len());
         self.evaluate_at_chi_optimized(&chis)
@@ -157,7 +157,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         name = "Rep3DensePolynomial::evaluate_at_chi",
         level = "trace"
     )]
-    pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
+    pub fn evaluate_at_chi(&self, chis: &[F]) -> AdditiveShare<F> {
         self.coeffs_ref()
             .par_iter()
             .zip_eq(chis.par_iter())
@@ -170,7 +170,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         name = "Rep3DensePolynomial::evaluate_at_chi",
         level = "trace"
     )]
-    pub fn evaluate_at_chi_optimized(&self, chis: &[F]) -> F {
+    pub fn evaluate_at_chi_optimized(&self, chis: &[F]) -> AdditiveShare<F> {
         self.coeffs_ref()
             .par_iter()
             .zip_eq(chis.par_iter())
@@ -181,10 +181,10 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Rep3DensePolynomial::batch_evaluate")]
-    pub fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<F>, Vec<F>) {
+    pub fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<AdditiveShare<F>>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
 
-        let evals: Vec<F> = polys
+        let evals: Vec<_> = polys
             .into_par_iter()
             .map(|&poly| poly.evaluate_at_chi_optimized(&eq))
             .collect();

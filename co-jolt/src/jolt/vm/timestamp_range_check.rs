@@ -16,7 +16,11 @@ pub type Rep3TimestampRangeCheckPolynomials<F> =
 impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeCheckPolynomials<F> {
     type PublicPolynomials = TimestampRangeCheckPolynomials<F>;
 
-    #[tracing::instrument(skip_all, name = "Rep3TimestampRangeCheckPolynomials::stream_secret_shares", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3TimestampRangeCheckPolynomials::stream_secret_shares",
+        level = "trace"
+    )]
     fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
         _: &NoPreprocessing,
         polynomials: Self::PublicPolynomials,
@@ -57,7 +61,11 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3TimestampRangeCheckPolynomials::receive_witness_share", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3TimestampRangeCheckPolynomials::receive_witness_share",
+        level = "trace"
+    )]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _: &NoPreprocessing,
         io_ctx: &mut IoContextPool<Network>,

@@ -5,24 +5,23 @@ use mpc_core::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };
+use mpc_types::protocols::additive::AdditivePrimeFieldShare;
 use rand::RngCore;
 
 use crate::protocols::rep3::rngs::SSRandom;
 
-pub type AdditiveShare<F> = F;
+pub type AdditiveShare<F> = AdditivePrimeFieldShare<F>;
 
 pub fn add_public<F: PrimeField>(
     shared: AdditiveShare<F>,
     public: F,
     id: PartyID,
 ) -> AdditiveShare<F> {
-    let mut res = shared;
     match id {
-        PartyID::ID0 => res += public,
-        PartyID::ID1 => {}
-        PartyID::ID2 => {}
+        PartyID::ID0 => AdditiveShare::from_fe(shared.into_fe() + public),
+        PartyID::ID1 => shared,
+        PartyID::ID2 => shared,
     }
-    res
 }
 
 pub fn sub_shared_by_public<F: PrimeField>(
@@ -61,14 +60,14 @@ pub fn promote_to_trivial_shares<F: PrimeField>(
 }
 
 pub fn promote_to_trivial_share<F: PrimeField>(public_value: F, id: PartyID) -> AdditiveShare<F> {
-    match id {
-        PartyID::ID0 => public_value,
-        PartyID::ID1 => F::zero(),
-        PartyID::ID2 => F::zero(),
-    }
+    AdditiveShare::promote_from_trivial(public_value, id)
 }
 
-pub fn combine_field_elements<F: PrimeField>(share1: &[F], share2: &[F], share3: &[F]) -> Vec<F> {
+fn combine_field_elements<F: PrimeField>(
+    share1: &[F],
+    share2: &[F],
+    share3: &[F],
+) -> Vec<F> {
     assert_eq!(share1.len(), share2.len());
     assert_eq!(share2.len(), share3.len());
 
@@ -77,15 +76,32 @@ pub fn combine_field_elements<F: PrimeField>(share1: &[F], share2: &[F], share3:
         .collect::<Vec<_>>()
 }
 
+pub fn combine_additive_shares<F: PrimeField>(
+    share1: &[AdditiveShare<F>],
+    share2: &[AdditiveShare<F>],
+    share3: &[AdditiveShare<F>],
+) -> Vec<F> {
+    assert_eq!(share1.len(), share2.len());
+    assert_eq!(share2.len(), share3.len());
+
+    itertools::multizip((share1, share2, share3))
+        .map(|(&x1, &x2, &x3)| combine_field_element(&x1.into_fe(), &x2.into_fe(), &x3.into_fe()))
+        .collect::<Vec<_>>()
+}
+
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.
-pub fn combine_field_element_vec<F: PrimeField>(shares: Vec<Vec<F>>) -> Vec<F> {
-    let [s0, s1, s2]: [Vec<F>; 3] = shares.try_into().unwrap();
-    combine_field_elements(&s0, &s1, &s2)
+pub fn combine_additive_vec<F: PrimeField>(shares: Vec<Vec<AdditiveShare<F>>>) -> Vec<F> {
+    let [s0, s1, s2]: [Vec<AdditiveShare<F>>; 3] = shares.try_into().unwrap();
+    combine_additive_shares(
+        &s0,
+        &s1,
+        &s2,
+    )
 }
 
-pub fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F {
+fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F {
     *share1 + *share2 + *share3
 }
 

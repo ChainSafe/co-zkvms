@@ -3,7 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use mpc_core::protocols::additive;
+use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker};
 
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
@@ -23,9 +23,8 @@ pub fn coordinate_eq_sumcheck_round<
     transcript: &mut ProofTranscript,
     network: &mut Network,
 ) -> eyre::Result<()> {
-    let cubic_poly = UniPoly::from_coeff(additive::combine_field_element_vec(
-        network.receive_responses()?,
-    ));
+    let cubic_poly =
+        UniPoly::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
 
     // Compress and add to transcript
     let compressed_poly = cubic_poly.compress();
@@ -46,10 +45,10 @@ pub fn coordinate_eq_sumcheck_round<
 #[inline]
 #[tracing::instrument(skip_all, name = "process_eq_sumcheck_round_worker", level = "trace")]
 pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker>(
-    quadratic_evals: (F, F), // (t_i(0), t_i(infty))
+    quadratic_evals: (AdditiveShare<F>, AdditiveShare<F>), // (t_i(0), t_i(infty))
     eq_poly: &mut GruenSplitEqPolynomial<F>,
     r: &mut Vec<F>,
-    claim: &mut F,
+    claim: &mut AdditiveShare<F>,
     io_ctx: &mut IoContext<Network>,
 ) -> eyre::Result<F> {
     let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
@@ -60,9 +59,9 @@ pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker
             eq_poly.current_scalar - scalar_times_w_i,
             scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
         ],
-        quadratic_evals.0,
-        quadratic_evals.1,
-        *claim,
+        quadratic_evals.0.into_fe(),
+        quadratic_evals.1.into_fe(),
+        claim.into_fe(),
     );
 
     // Send cubic poly to coordinator

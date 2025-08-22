@@ -3464,7 +3464,7 @@ dependencies = [
 [[package]]
 name = "mpc-core"
 version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#3f84417fc08120f604fec2d7f0cfb281416c518d"
+source = "git+https://github.com/nulltea/co-snarks#a2a09e74954e9bbe6b3a38f85dc01928b72c2b0a"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3523,7 +3523,7 @@ dependencies = [
 [[package]]
 name = "mpc-types"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/co-snarks#3f84417fc08120f604fec2d7f0cfb281416c518d"
+source = "git+https://github.com/nulltea/co-snarks#a2a09e74954e9bbe6b3a38f85dc01928b72c2b0a"
 dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",

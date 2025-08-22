@@ -1,3 +1,4 @@
+use ark_ff::Zero;
 use eyre::Context;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::{
@@ -28,7 +29,7 @@ impl<F: JoltField> SharedOrPublic<F> {
     }
 
     pub fn zero_additive() -> Self {
-        SharedOrPublic::Additive(F::ZERO)
+        SharedOrPublic::Additive(AdditiveShare::<F>::zero())
     }
 
     pub fn try_into_public(self) -> eyre::Result<F> {
@@ -203,7 +204,7 @@ impl<F: JoltField> SharedOrPublic<F> {
             }
             SharedOrPublic::Public(x) => SharedOrPublic::Public(*x - *other),
             SharedOrPublic::Additive(x) => {
-                SharedOrPublic::Additive(additive::sub_public_by_shared(*x, *other, party_id))
+                SharedOrPublic::Additive(additive::sub_public_by_shared(*other, *x, party_id))
             }
         }
     }
@@ -240,6 +241,12 @@ impl<F: JoltField> SharedOrPublic<F> {
                 tracing::warn!("mul_shared");
                 SharedOrPublic::Additive(x * y)
             }
+            (SharedOrPublic::Additive(x), SharedOrPublic::Public(y)) => {
+                SharedOrPublic::Additive(*x * *y)
+            }
+            (SharedOrPublic::Public(x), SharedOrPublic::Additive(y)) => {
+                SharedOrPublic::Additive(*y * *x)
+            }
             _ => panic!("Multiplication of additive shares are not allowed"),
         }
     }
@@ -251,7 +258,7 @@ impl<F: JoltField> SharedOrPublic<F> {
     pub fn mul_mul_public(&self, other: &Self, public: F) -> Self {
         match (self, other) {
             (SharedOrPublic::Shared(x), SharedOrPublic::Shared(y)) => {
-                SharedOrPublic::Additive(rep3::arithmetic::mul_mul_public(*x, *y, public))
+                SharedOrPublic::Additive(*x * *y * public)
             }
             _ => self.mul(&other.mul(&public.into())),
         }
@@ -301,6 +308,12 @@ where
 impl<F: JoltField> From<F> for SharedOrPublic<F> {
     fn from(value: F) -> Self {
         SharedOrPublic::Public(value)
+    }
+}
+
+impl<F: JoltField> From<AdditiveShare<F>> for SharedOrPublic<F> {
+    fn from(value: AdditiveShare<F>) -> Self {
+        SharedOrPublic::Additive(value)
     }
 }
 

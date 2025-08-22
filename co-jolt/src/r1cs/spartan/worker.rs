@@ -220,7 +220,7 @@ where
                     let params: Vec<_> = shift_sumcheck_polys.iter().map(|poly| poly[i]).collect();
                     comb_func(&params)
                 })
-                .reduce(|| F::zero(), |acc, x| acc + x)
+                .reduce(|| AdditiveShare::<F>::zero(), |acc, x| acc + x)
         });
 
         io_ctx.network().send_response(shift_sumcheck_claim)?;
@@ -281,7 +281,7 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
     io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<(Vec<F>, [AdditiveShare<F>; 3])> {
     let mut r: Vec<F> = Vec::new();
-    let mut claim = F::zero();
+    let mut claim = AdditiveShare::<F>::zero();
 
     // TODO: parallelize into subnets
     for round in 0..num_rounds {

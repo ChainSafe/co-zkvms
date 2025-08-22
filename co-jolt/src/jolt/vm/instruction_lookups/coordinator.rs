@@ -16,7 +16,7 @@ use jolt_core::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::math::Math,
 };
-use mpc_core::protocols::additive;
+use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use std::marker::PhantomData;
 
@@ -116,13 +116,14 @@ where
                 if log_num_workers > 0 && round == num_rounds - log_num_workers {
                     network.trim_subnets(1)?;
                 }
-                additive::combine_field_element_vec(network.receive_responses()?)
+                additive::combine_additive_vec(network.receive_responses()?)
             } else {
-                let subnet_responces = network.receive_responses_from_subnets::<Vec<F>>()?;
+                let subnet_responces =
+                    network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
                 let degree = subnet_responces[0][0].len();
                 subnet_responces
                     .into_iter()
-                    .map(|shares| additive::combine_field_element_vec::<F>(shares))
+                    .map(|shares| additive::combine_additive_vec(shares))
                     .fold(vec![F::zero(); degree], |mut acc, coeff| {
                         acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
                             *acc += coeff;

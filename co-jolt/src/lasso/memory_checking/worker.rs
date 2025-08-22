@@ -7,6 +7,7 @@ use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
 };
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::{
@@ -209,7 +210,7 @@ where
             Network,
         >>::Leaves,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> Result<(Self::ReadWriteGrandProduct, Vec<F>)> {
+    ) -> Result<(Self::ReadWriteGrandProduct, Vec<AdditiveShare<F>>)> {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves, io_ctx)?;
         let claims = batched_circuit.claimed_outputs();
         Ok((batched_circuit, claims))
@@ -228,7 +229,7 @@ where
             Network,
         >>::Leaves,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> Result<(Self::InitFinalGrandProduct, Vec<F>)> {
+    ) -> Result<(Self::InitFinalGrandProduct, Vec<AdditiveShare<F>>)> {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves, io_ctx)?;
         let claims = batched_circuit.claimed_outputs();
         Ok((batched_circuit, claims))

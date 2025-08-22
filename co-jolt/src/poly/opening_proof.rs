@@ -110,7 +110,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        let claims = additive::combine_field_element_vec(network.receive_responses()?);
+        let claims = additive::combine_additive_vec(network.receive_responses()?);
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
         for i in 1..claims.len() {
@@ -198,9 +198,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _round in 0..max_num_vars {
-            let uni_poly = UniPoly::from_coeff(additive::combine_field_element_vec(
-                network.receive_responses()?,
-            ));
+            let uni_poly =
+                UniPoly::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
             let compressed_poly = uni_poly.compress();
 
             // append the prover's message to the transcript
@@ -216,7 +215,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
         let sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
-        let sumcheck_claims = additive::combine_field_element_vec(network.receive_responses()?);
+        let sumcheck_claims = additive::combine_additive_vec(network.receive_responses()?);
 
         transcript.append_scalars(&sumcheck_claims);
 
@@ -297,7 +296,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         &mut self,
         coeffs: &[F],
         io_ctx: &mut IoContext<Network>,
-    ) -> eyre::Result<(Vec<F>, Vec<F>)> {
+    ) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)> {
         let max_num_vars = self
             .openings
             .iter()
@@ -311,7 +310,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
         // Compute random linear combination of the claims, accounting for the fact that the
         // polynomials may be of different sizes
-        let mut e: F = coeffs
+        let mut e: AdditiveShare<F> = coeffs
             .par_iter()
             .zip(self.openings.par_iter_mut())
             .map(|(coeff, opening)| {
@@ -376,10 +375,10 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
-        previous_round_claim: F,
+        previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
     ) -> UniPoly<F> {
-        let evals: Vec<(F, F)> = self
+        let evals: Vec<(AdditiveShare<F>, AdditiveShare<F>)> = self
             .openings
             .par_iter()
             .zip(coeffs.par_iter())
@@ -425,11 +424,11 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             })
             .collect();
 
-        let evals_combined_0: F = (0..evals.len()).map(|i| evals[i].0).sum();
-        let evals_combined_2: F = (0..evals.len()).map(|i| evals[i].1).sum();
+        let evals_combined_0: F = (0..evals.len()).map(|i| evals[i].0.into_fe()).sum();
+        let evals_combined_2: F = (0..evals.len()).map(|i| evals[i].1.into_fe()).sum();
         let evals = vec![
             evals_combined_0,
-            previous_round_claim - evals_combined_0,
+            previous_round_claim.into_fe() - evals_combined_0,
             evals_combined_2,
         ];
 

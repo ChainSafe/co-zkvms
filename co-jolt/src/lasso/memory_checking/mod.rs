@@ -94,12 +94,12 @@ where
         assert_eq!(read_write_hashes_shares.len(), 3);
         assert_eq!(init_final_hashes_shares.len(), 3);
 
-        let read_write_hashes = additive::combine_field_elements(
+        let read_write_hashes = additive::combine_additive_shares(
             &read_write_hashes_shares[0],
             &read_write_hashes_shares[1],
             &read_write_hashes_shares[2],
         );
-        let init_final_hashes = additive::combine_field_elements(
+        let init_final_hashes = additive::combine_additive_shares(
             &init_final_hashes_shares[0],
             &init_final_hashes_shares[1],
             &init_final_hashes_shares[2],

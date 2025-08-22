@@ -86,7 +86,13 @@ pub struct Args {
     )]
     pub trace_parties: TraceParties,
 
-    #[clap(short, long, value_name = "TRACE_DIR", env = "TRACE_DIR", default_value = "./traces")]
+    #[clap(
+        short,
+        long,
+        value_name = "TRACE_DIR",
+        env = "TRACE_DIR",
+        default_value = "./traces"
+    )]
     pub trace_dir: PathBuf,
 
     #[clap(

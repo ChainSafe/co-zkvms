@@ -1,6 +1,7 @@
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::sparse_interleaved_poly::Rep3SparseInterleavedPolynomial;
+use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::subprotocols::grand_product::{
     Rep3BatchedGrandProduct, Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker,
     Rep3BatchedGrandProductWorker,
@@ -10,6 +11,7 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use ark_ff::Zero;
 #[cfg(test)]
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
@@ -300,9 +302,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: F,
+        previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<F> {
+    ) -> UniPoly<AdditiveShare<F>> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
@@ -355,7 +357,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         (e0, e1, e2)
                     })
                     .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
+                        || {
+                            (
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                            )
+                        },
                         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     )
             } else {
@@ -381,7 +389,11 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     .zip(coalesced_flags.par_chunks(flag_chunk_size))
                     .zip(coalesced_fingerprints.par_chunks(fingerprint_chunk_size))
                     .map(|((E2_eval, flag_x2), fingerprint_x2)| {
-                        let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                        let mut inner_sum = (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        );
                         for ((E1_evals, flag_chunk), fingerprint_chunk) in E1_evals
                             .iter()
                             .zip(flag_x2.chunks(2))
@@ -429,18 +441,24 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         (inner_sum.0, inner_sum.1, inner_sum.2)
                     })
                     .reduce(
-                        || (F::zero(), F::zero(), F::zero()),
+                        || {
+                            (
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                            )
+                        },
                         |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                     )
             };
 
             let cubic_evals = [
                 cubic_evals.0,
-                previous_round_claim - cubic_evals.0,
+                (previous_round_claim - cubic_evals.0),
                 cubic_evals.1,
                 cubic_evals.2,
             ];
-            return UniPoly::from_evals(&cubic_evals);
+            return unipoly_from_additive_evals(&cubic_evals);
         }
 
         let cubic_evals = if eq_poly.E1_len == 1 {
@@ -468,7 +486,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
-            let deltas: (F, F, F) = (0..self.fingerprints.len())
+            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) = (0..self
+                .fingerprints
+                .len())
                 .into_par_iter()
                 .map(|batch_index| {
                     // Computes:
@@ -479,7 +499,11 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let flag_indices = &self.flag_indices[batch_index / 2];
 
                     let unbound = self.flag_values.is_empty();
-                    let mut delta = (F::zero(), F::zero(), F::zero());
+                    let mut delta = (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                    );
 
                     let mut next_index_to_process = 0usize;
                     for (j, index) in flag_indices.iter().enumerate() {
@@ -573,7 +597,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     (delta.0, delta.1, delta.2)
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
+                    || {
+                        (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        )
+                    },
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
@@ -622,7 +652,11 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
                     let unbound = self.flag_values.is_empty();
                     // let mut delta = (F::zero(), F::zero(), F::zero());
-                    let mut delta = (F::zero(), F::zero(), F::zero());
+                    let mut delta = (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                    );
 
                     let mut next_index_to_process = 0usize;
                     for (j, index) in flag_indices.iter().enumerate() {
@@ -711,7 +745,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     delta
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
+                    || {
+                        (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        )
+                    },
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
@@ -787,12 +827,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
         let cubic_evals = [
             cubic_evals.0,
-            previous_round_claim - cubic_evals.0,
+            (previous_round_claim - cubic_evals.0),
             cubic_evals.1,
             cubic_evals.2,
         ];
 
-        UniPoly::from_evals(&cubic_evals)
+        unipoly_from_additive_evals(&cubic_evals)
     }
 
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
@@ -930,7 +970,7 @@ where
         self.sparse_layers.len() + 1
     }
 
-    fn claimed_outputs(&self) -> Vec<F> {
+    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>> {
         // If there's a quark poly, then that's the claimed output
         let last_layer = self.sparse_layers.last().unwrap();
         let (left, right) = last_layer.uninterleave();

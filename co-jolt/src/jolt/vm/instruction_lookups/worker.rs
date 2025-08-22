@@ -9,8 +9,8 @@ use crate::{
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
     utils::{
-        shared_or_public::SharedOrPublic,
         instruction_utils::{transpose_flatten, transpose_hashmap},
+        shared_or_public::SharedOrPublic,
         transcript::Transcript,
     },
 };
@@ -132,7 +132,7 @@ where
             .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
             .collect::<Vec<_>>();
 
-        let primary_sumcheck_openings: Vec<F> =
+        let primary_sumcheck_openings: Vec<_> =
             chain![E_evals, flag_evals, once(outputs_eval)].collect();
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
@@ -186,7 +186,7 @@ where
         lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
-        Vec<AdditiveShare<F>>,
+        Vec<F>,
         Vec<AdditiveShare<F>>,
         Vec<AdditiveShare<F>>,
         AdditiveShare<F>,
@@ -458,7 +458,7 @@ where
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
         lookup_outputs_poly: &Rep3MultilinearPolynomial<F>,
         io_ctx: &mut WorkerIoContext<Network>,
-    ) -> eyre::Result<Vec<F>> {
+    ) -> eyre::Result<Vec<AdditiveShare<F>>> {
         let party_id = io_ctx.party_id();
         let degree = Self::sumcheck_poly_degree();
         let mle_len = eq_poly.len();
@@ -522,8 +522,7 @@ where
                 let mut subtable_eval_batches_per_mem_batches_by_instr =
                     transpose_hashmap(subtable_eval_batches_per_mem_by_instr);
 
-                let mut inner_sums =
-                    vec![vec![Rep3PrimeFieldShare::zero_share(); degree]; chunk_size];
+                let mut inner_sums = vec![vec![AdditiveShare::<F>::zero(); degree]; chunk_size];
 
                 for (instruction_index, instruction) in InstructionSet::iter().enumerate() {
                     if let Some(subtable_eval_batches_per_mem_batches) =
@@ -551,11 +550,10 @@ where
                                     let degrees_used =
                                         used_flag_indices[i][instruction_index].len();
                                     if degrees_used > 0 {
-                                        inner_sums[i][degree_index] += rep3::arithmetic::mul_public(
-                                            instruction_collation_evals
-                                                [offset + index_in_terms_batch],
-                                            flag_evals[i][instruction_index][degree_index],
-                                        );
+                                        inner_sums[i][degree_index] += instruction_collation_evals
+                                            [offset + index_in_terms_batch]
+                                            .into_additive()
+                                            * flag_evals[i][instruction_index][degree_index];
                                     }
                                 });
                             offset += used_flag_indices[i][instruction_index].len();
@@ -563,15 +561,13 @@ where
                     }
                 }
 
-                let evaluations_in_chunk: Vec<Vec<F>> = (0..chunk_size)
+                let evaluations_in_chunk: Vec<Vec<_>> = (0..chunk_size)
                     .map(|i| {
                         (0..degree)
                             .map(|eval_index| {
-                                rep3::arithmetic::mul_public(
-                                    inner_sums[i][eval_index] - output_evals[i][eval_index],
-                                    eq_evals[i][eval_index],
-                                )
-                                .into_additive()
+                                (inner_sums[i][eval_index]
+                                    - output_evals[i][eval_index].into_additive())
+                                    * eq_evals[i][eval_index]
                             })
                             .collect()
                     })
@@ -584,9 +580,9 @@ where
                 a.iter()
                     .zip(b.iter())
                     .map(|(x, y)| *x + *y)
-                    .collect::<Vec<F>>()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or(vec![F::zero(); degree]);
+            .unwrap_or(vec![AdditiveShare::<F>::zero(); degree]);
 
         // subtracing privious claim for each party/worker will break reconstraction of round poly,
         // so we let coordinator do it instead of workers

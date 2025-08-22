@@ -58,8 +58,7 @@ where
         }
 
         let outer_sumcheck_proof = SumcheckInstanceProof::new(polys);
-        let outer_sumcheck_claims =
-            additive::combine_field_element_vec(network.receive_responses()?);
+        let outer_sumcheck_claims = additive::combine_additive_vec(network.receive_responses()?);
 
         transcript.append_scalars(&outer_sumcheck_claims);
 

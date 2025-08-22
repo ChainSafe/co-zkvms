@@ -1,12 +1,14 @@
 use std::slice::Chunks;
 
 use crate::{
+    poly::unipoly::unipoly_from_additive_evals,
     subprotocols::{
         grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
         sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker, Rep3Bindable},
     },
     utils::transcript::Transcript,
 };
+use ark_ff::Zero;
 use eyre::Context;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::{
@@ -210,7 +212,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         eq_poly: &SplitEqPolynomial<F>,
         previous_round_claim: AdditiveShare<F>,
         _: PartyID,
-    ) -> UniPoly<F> {
+    ) -> UniPoly<AdditiveShare<F>> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
@@ -254,13 +256,19 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let right_eval_3 = right_eval_2 + m_right;
 
                     (
-                        rep3::arithmetic::mul_mul_public(left.0, right.0, eq_evals.0),
-                        rep3::arithmetic::mul_mul_public(left_eval_2, right_eval_2, eq_evals.1),
-                        rep3::arithmetic::mul_mul_public(left_eval_3, right_eval_3, eq_evals.2),
+                        left.0 * right.0 * eq_evals.0,
+                        left_eval_2 * right_eval_2 * eq_evals.1,
+                        left_eval_3 * right_eval_3 * eq_evals.2,
                     )
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
+                    || {
+                        (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        )
+                    },
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         } else {
@@ -298,7 +306,11 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 .map(|(E2_eval, P_x2)| {
                     // The for-loop below corresponds to the inner sum:
                     // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
-                    let mut inner_sum = (F::zero(), F::zero(), F::zero());
+                    let mut inner_sum = (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                    );
                     for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
                         let left = (
                             *P_chunk
@@ -319,23 +331,26 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let right_eval_2 = right.1 + m_right;
                         let right_eval_3 = right_eval_2 + m_right;
 
-                        inner_sum.0 +=
-                            rep3::arithmetic::mul_mul_public(left.0, right.0, E1_evals.0);
-                        inner_sum.1 +=
-                            rep3::arithmetic::mul_mul_public(left_eval_2, right_eval_2, E1_evals.1);
-                        inner_sum.2 +=
-                            rep3::arithmetic::mul_mul_public(left_eval_3, right_eval_3, E1_evals.2);
+                        inner_sum.0 += left.0 * right.0 * E1_evals.0;
+                        inner_sum.1 += left_eval_2 * right_eval_2 * E1_evals.1;
+                        inner_sum.2 += left_eval_3 * right_eval_3 * E1_evals.2;
                     }
 
                     // Multiply the inner sum by E2[x2]
                     (
-                        *E2_eval * inner_sum.0,
-                        *E2_eval * inner_sum.1,
-                        *E2_eval * inner_sum.2,
+                        inner_sum.0 * *E2_eval,
+                        inner_sum.1 * *E2_eval,
+                        inner_sum.2 * *E2_eval,
                     )
                 })
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
+                    || {
+                        (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        )
+                    },
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 )
         };
@@ -346,7 +361,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             cubic_evals.1,
             cubic_evals.2,
         ];
-        UniPoly::from_evals(&cubic_evals)
+        unipoly_from_additive_evals(&cubic_evals)
     }
 
     fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {

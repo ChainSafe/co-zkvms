@@ -144,19 +144,19 @@ pub fn reshare_additive<F: PrimeField, N: Rep3Network>(
     additive: AdditiveShare<F>,
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-    let prev_share: F = io_ctx.network.reshare(additive)?;
-    Ok(Rep3PrimeFieldShare::new(additive, prev_share))
+    let prev_share: F = io_ctx.network.reshare(additive.into_fe())?;
+    Ok(Rep3PrimeFieldShare::new(additive.into_fe(), prev_share))
 }
 
 pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
     additive_shares: &[AdditiveShare<F>],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let b_shares: Vec<F> = io_ctx.network.reshare_many(additive_shares)?;
+    let b_shares: Vec<F> = io_ctx.network.reshare_many(&additive_shares.iter().map(|x| x.into_fe()).collect_vec())?;
     Ok(additive_shares
         .into_par_iter()
         .zip(b_shares.into_par_iter())
-        .map(|(a, b)| Rep3PrimeFieldShare::new(*a, b))
+        .map(|(a, b)| Rep3PrimeFieldShare::new(a.into_fe(), b))
         .collect())
 }
 
@@ -176,9 +176,9 @@ pub fn mul_public_0_1_optimized<F: PrimeField>(shared: FieldShare<F>, public: F)
 }
 
 /// Convenience method for \[a\] * (\[b\] * c)
-pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
-    a * mul_public(b, c)
-}
+// pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
+//     a * mul_public(b, c)
+// }
 
 pub fn sum_batched<F: PrimeField>(
     vals: &[Vec<Rep3PrimeFieldShare<F>>],

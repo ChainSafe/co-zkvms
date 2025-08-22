@@ -6,9 +6,10 @@ pub mod multilinear_polynomial;
 pub mod opening_proof;
 pub mod sparse_interleaved_poly;
 pub mod spartan_interleaved_poly;
+pub mod unipoly;
 
 pub use dense_mlpoly::*;
-pub use jolt_core::poly::{eq_poly, identity_poly, unipoly};
+pub use jolt_core::poly::{eq_poly, identity_poly};
 pub use multilinear_polynomial::*;
 
 pub trait PolyDegree {

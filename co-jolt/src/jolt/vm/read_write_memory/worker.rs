@@ -156,7 +156,7 @@ where
         };
 
         let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker(
-            &F::zero(),
+            &AdditiveShare::<F>::zero(),
             num_rounds,
             &mut sumcheck_polys,
             output_check_fn,

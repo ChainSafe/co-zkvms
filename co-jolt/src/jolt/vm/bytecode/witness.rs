@@ -55,7 +55,11 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3BytecodePolynomials::receive_witness_share", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3BytecodePolynomials::receive_witness_share",
+        level = "trace"
+    )]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
         _: &BytecodePreprocessing<F>,
         io_ctx: &mut IoContextPool<Network>,

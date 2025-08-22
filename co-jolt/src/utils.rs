@@ -1,6 +1,6 @@
-pub mod shared_or_public;
 pub mod future;
 pub mod instruction_utils;
+pub mod shared_or_public;
 pub mod transcript;
 
 pub use jolt_core::{
