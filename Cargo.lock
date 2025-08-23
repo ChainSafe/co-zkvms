@@ -1220,6 +1220,7 @@ dependencies = [
  "rayon",
  "rustls",
  "serde",
+ "serde_json",
  "snarks-core",
  "strum 0.26.3",
  "strum_macros 0.26.4",

@@ -52,6 +52,7 @@ jolt-tracer = { git = "https://github.com/nulltea/jolt.git", package = "tracer",
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
+serde_json = "1.0.130"
 
 mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
