@@ -542,6 +542,8 @@ where
 
                         let mut offset = 0;
 
+                        let span = tracing::trace_span!("inner_sums");
+                        let _span_enter = span.enter();
                         mle_indices.iter().enumerate().for_each(|(i, _)| {
                             used_flag_indices[i][instruction_index]
                                 .iter()
@@ -558,9 +560,12 @@ where
                                 });
                             offset += used_flag_indices[i][instruction_index].len();
                         });
+                        drop(_span_enter);
                     }
                 }
 
+                let span = tracing::trace_span!("evaluations_in_chunk");
+                let _span_enter = span.enter();
                 let evaluations_in_chunk: Vec<Vec<_>> = (0..chunk_size)
                     .map(|i| {
                         (0..degree)
@@ -572,6 +577,7 @@ where
                             .collect()
                     })
                     .collect();
+                drop(_span_enter);
 
                 Ok(evaluations_in_chunk)
             })?
@@ -591,6 +597,7 @@ where
         Ok(evaluations)
     }
 
+    #[tracing::instrument(skip_all, name = "precompute_evals", level = "trace")]
     fn precompute_evals(
         mle_half: usize,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
