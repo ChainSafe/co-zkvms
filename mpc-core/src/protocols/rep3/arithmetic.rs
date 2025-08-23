@@ -175,10 +175,6 @@ pub fn mul_public_0_1_optimized<F: PrimeField>(shared: FieldShare<F>, public: F)
     }
 }
 
-/// Convenience method for \[a\] * (\[b\] * c)
-// pub fn mul_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> F {
-//     a * mul_public(b, c)
-// }
 
 pub fn sum_batched<F: PrimeField>(
     vals: &[Vec<Rep3PrimeFieldShare<F>>],

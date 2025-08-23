@@ -201,7 +201,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             }
             #[cfg(feature = "public-eq")]
             {
-                ltu_sum += rep3::arithmetic::mul_public(*ltu, eq_prod).into_additive();
+                ltu_sum += ltu.into_additive() * eq_prod;
                 eq_prod *= eq;
             }
         }
@@ -270,16 +270,6 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         todo!()
     }
-
-    // fn combine_lookups_rep3_batched<N: Rep3Network>(
-    //     &self,
-    //     vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-    //     C: usize,
-    //     M: usize,
-    //     io_ctx: &mut IoContext<N>,
-    // ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-
-    // }
 
     fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(

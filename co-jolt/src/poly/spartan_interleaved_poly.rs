@@ -8,7 +8,7 @@ use jolt_core::{
     r1cs::builder::{Constraint, OffsetEqConstraint},
     utils::math::Math,
 };
-use mpc_core::protocols::additive::AdditiveShare;
+use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
@@ -209,22 +209,24 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .map(|shard_coeffs| {
                 let mut shard_eval_point_infty = SharedOrPublic::zero_additive();
 
-                // let mut current_shard_inner_sums = SharedOrPublic::zero_additive();
-                // let mut current_shard_prev_x_out = 0;
+                let mut current_shard_inner_sums = SharedOrPublic::zero_additive();
+                let mut current_shard_prev_x_out = 0;
 
                 for sparse_block in shard_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = sparse_block[0].index / 6;
                     let x_in = block_index & x_in_bitmask;
                     let x_out = block_index >> num_x_in_bits;
 
-                    let E_in_evals = eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out];
+                    let E_in_evals = eq_poly.E_in_current()[x_in];
 
-                    // if x_out != current_shard_prev_x_out {
-                    //     shard_eval_point_infty += eq_poly.E_out_current()[current_shard_prev_x_out]
-                    //         * current_shard_inner_sums;
-                    //     current_shard_inner_sums = SharedOrPublic::zero_additive();
-                    //     current_shard_prev_x_out = x_out;
-                    // }
+                    if x_out != current_shard_prev_x_out {
+                        shard_eval_point_infty.add_assign(
+                            &current_shard_inner_sums.mul_public(eq_poly.E_out_current()[current_shard_prev_x_out]),
+                            party_id,
+                        );
+                        current_shard_inner_sums = SharedOrPublic::zero_additive();
+                        current_shard_prev_x_out = x_out;
+                    }
 
                     // This holds the az0, az1, bz0, bz1 evals. No need for cz0, cz1 since we only need
                     // the eval at infinity.
@@ -251,11 +253,15 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         continue;
                     }
 
-                    shard_eval_point_infty.add_assign(
+                    current_shard_inner_sums.add_assign(
                         &az_infty.mul_mul_public(&bz_infty, E_in_evals),
                         party_id,
                     );
                 }
+                shard_eval_point_infty.add_assign(
+                    &current_shard_inner_sums.mul_public(eq_poly.E_out_current()[current_shard_prev_x_out]),
+                    party_id,
+                );
                 shard_eval_point_infty
             })
             .sum_for(party_id);
@@ -426,12 +432,10 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                             let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
-                                az.0.mul_mul_public(&bz.0, eq_evals).into_additive(party_id)
-                                    - cz0.mul_public(eq_evals).into_additive(party_id),
-                                az_eval_infty
-                                    .mul_mul_public(&bz_eval_infty, eq_evals)
-                                    .into_additive(party_id),
+                                (az.0.mul(&bz.0).into_additive(party_id) - cz0.into_additive(party_id)) * eq_evals,
+                                az_eval_infty.mul(&bz_eval_infty).into_additive(party_id) * eq_evals,
                             )
+                            
                         })
                 })
                 .reduce(
@@ -452,25 +456,24 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     let mut eval_point_0 = AdditiveShare::zero();
                     let mut eval_point_infty = AdditiveShare::zero();
 
-                    // let mut inner_sums = (F::zero(), F::zero());
-                    // let mut prev_x_out = 0;
+                    let mut inner_sums = (AdditiveShare::zero(), AdditiveShare::zero());
+                    let mut prev_x_out = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                         let block_index = sparse_block[0].index / 6;
                         let x_in = block_index & x_bitmask;
                         let x_out = block_index >> num_x_in_bits;
 
-                        let E_in_eval =
-                            eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out];
+                        let E_in_eval = eq_poly.E_in_current()[x_in];
 
-                        // if x_out != prev_x_out {
-                        //     let E_out_eval = eq_poly.E_out_current()[prev_x_out];
-                        //     eval_point_0 += E_out_eval * inner_sums.0;
-                        //     eval_point_infty += E_out_eval * inner_sums.1;
+                        if x_out != prev_x_out {
+                            let E_out_eval = eq_poly.E_out_current()[prev_x_out];
+                            eval_point_0 += inner_sums.0 * E_out_eval;
+                            eval_point_infty += inner_sums.1 * E_out_eval;
 
-                        //     inner_sums = (F::zero(), F::zero());
-                        //     prev_x_out = x_out;
-                        // }
+                            inner_sums = (AdditiveShare::zero(), AdditiveShare::zero());
+                            prev_x_out = x_out;
+                        }
 
                         let mut block = [SharedOrPublic::zero_public(); 6];
                         for coeff in sparse_block {
@@ -484,14 +487,15 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         let az_eval_infty = az.1.sub(&az.0, party_id);
                         let bz_eval_infty = bz.1.sub(&bz.0, party_id);
 
-                        eval_point_0 +=
-                            az.0.mul_mul_public(&bz.0, E_in_eval)
-                                .into_additive(party_id)
-                                - cz0.mul_public(E_in_eval).into_additive(party_id);
-                        eval_point_infty += az_eval_infty
-                            .mul_mul_public(&bz_eval_infty, E_in_eval)
-                            .into_additive(party_id);
+                        inner_sums.0 += (az.0.mul(&bz.0).into_additive(party_id)
+                            - cz0.into_additive(party_id))
+                            * E_in_eval;
+                        inner_sums.1 +=
+                            az_eval_infty.mul(&bz_eval_infty).into_additive(party_id) * E_in_eval;
                     }
+
+                    eval_point_0 += inner_sums.0 * eq_poly.E_out_current()[prev_x_out];
+                    eval_point_infty += inner_sums.1 * eq_poly.E_out_current()[prev_x_out];
 
                     (eval_point_0, eval_point_infty)
                 })

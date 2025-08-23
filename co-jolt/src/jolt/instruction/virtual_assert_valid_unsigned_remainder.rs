@@ -133,14 +133,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             }
             #[cfg(feature = "public-eq")]
             {
-                sum += rep3::arithmetic::mul_public(ltu[i], eq_prod).into_additive();
+                sum += ltu[i].into_additive() * eq_prod;
                 eq_prod *= eq[i];
             }
         }
         #[cfg(not(feature = "public-eq"))]
         let ltu_sum_eq_prod = ltu[C - 1] * eq_prod;
         #[cfg(feature = "public-eq")]
-        let ltu_sum_eq_prod = rep3::arithmetic::mul_public(ltu[C - 1], eq_prod).into_additive();
+        let ltu_sum_eq_prod = ltu[C - 1].into_additive() * eq_prod;
 
         Ok(rep3::arithmetic::reshare_additive(sum + ltu_sum_eq_prod, io_ctx)? + divisor_is_zero)
     }
@@ -206,7 +206,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             {
                 multizip((sums.iter_mut(), ltu[i].iter(), eq_prods.iter())).for_each(
                     |(sum, ltu_i, eq_prod)| {
-                        *sum += rep3::arithmetic::mul_public(*ltu_i, *eq_prod).into_additive();
+                        *sum += ltu_i.into_additive() * *eq_prod;
                     },
                 );
                 eq_prods
@@ -228,7 +228,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         let ltu_sum_eq_prod = ltu[C - 1]
             .iter()
             .zip(eq_prods.into_iter())
-            .map(|(ltu, eq_prod)| rep3::arithmetic::mul_public(*ltu, eq_prod).into_additive())
+            .map(|(ltu, eq_prod)| ltu.into_additive() * eq_prod)
             .collect::<Vec<_>>();
 
         let res = rep3::arithmetic::reshare_additive_many(

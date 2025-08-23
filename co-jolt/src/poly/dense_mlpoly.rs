@@ -161,7 +161,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.coeffs_ref()
             .par_iter()
             .zip_eq(chis.par_iter())
-            .map(|(&eval, &chi)| rep3::arithmetic::mul_public(eval, chi).into_additive())
+            .map(|(&eval, &chi)| eval.into_additive() * chi)
             .sum()
     }
 
@@ -175,7 +175,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .par_iter()
             .zip_eq(chis.par_iter())
             .map(|(&eval, &chi)| {
-                rep3::arithmetic::mul_public_0_1_optimized(eval, chi).into_additive()
+                eval.into_additive().mul_public_01_optimized(chi)
             })
             .sum()
     }

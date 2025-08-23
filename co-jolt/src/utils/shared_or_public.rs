@@ -238,8 +238,7 @@ impl<F: JoltField> SharedOrPublic<F> {
                 SharedOrPublic::Shared(rep3::arithmetic::mul_public(*y, *x))
             }
             (SharedOrPublic::Shared(x), SharedOrPublic::Shared(y)) => {
-                tracing::warn!("mul_shared");
-                SharedOrPublic::Additive(x * y)
+                SharedOrPublic::Additive(*x * *y)
             }
             (SharedOrPublic::Additive(x), SharedOrPublic::Public(y)) => {
                 SharedOrPublic::Additive(*x * *y)
@@ -259,6 +258,18 @@ impl<F: JoltField> SharedOrPublic<F> {
         match (self, other) {
             (SharedOrPublic::Shared(x), SharedOrPublic::Shared(y)) => {
                 SharedOrPublic::Additive(*x * *y * public)
+            }
+            (SharedOrPublic::Additive(x), SharedOrPublic::Public(y)) => {
+                SharedOrPublic::Additive(*x * (*y * public))
+            }
+            (SharedOrPublic::Public(x), SharedOrPublic::Additive(y)) => {
+                SharedOrPublic::Additive(*y * (*x * public))
+            }
+            (SharedOrPublic::Shared(x), SharedOrPublic::Public(y)) => {
+                SharedOrPublic::Additive(x.into_additive() * (*y * public))
+            }
+            (SharedOrPublic::Public(x), SharedOrPublic::Shared(y)) => {
+                SharedOrPublic::Additive(y.into_additive() * (*x * public))
             }
             _ => self.mul(&other.mul(&public.into())),
         }

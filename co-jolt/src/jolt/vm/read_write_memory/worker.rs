@@ -150,8 +150,7 @@ where
         let output_check_fn = |vals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
             vals[2]
                 .sub(&vals[3], party_id)
-                .mul_public(vals[0].as_public())
-                .mul_public(vals[1].as_public())
+                .mul_public(vals[0].as_public() * vals[1].as_public())
                 .into_additive(party_id)
         };
 

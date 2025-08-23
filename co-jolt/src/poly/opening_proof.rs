@@ -324,7 +324,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                 } else {
                     opening.claim
                 };
-                rep3::arithmetic::mul_public(scaled_claim, *coeff).into_additive()
+                scaled_claim.into_additive() * *coeff
             })
             .sum();
 
@@ -390,7 +390,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                             opening
                                 .polynomial
                                 .get_bound_coeff(i)
-                                .mul_public(opening.eq_poly.get_bound_coeff(i) * coeff)
+                                .mul_public(opening.eq_poly.get_bound_coeff(i))
                                 .into_additive(party_id)
                         })
                         .sum();
@@ -405,7 +405,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                                 + opening.eq_poly.get_bound_coeff(i + mle_half)
                                 - opening.eq_poly.get_bound_coeff(i);
                             poly_bound_point
-                                .mul_public(eq_bound_point * coeff)
+                                .mul_public(eq_bound_point)
                                 .into_additive(party_id)
                         })
                         .sum();
@@ -414,18 +414,19 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                     // debug_assert!(!opening.polynomial.is_bound());
                     let remaining_variables =
                         remaining_sumcheck_rounds - opening.opening_point.len() - 1;
-                    let scaled_claim = rep3::arithmetic::mul_public(
-                        opening.claim,
-                        F::from_u64_unchecked(1 << remaining_variables) * coeff,
-                    )
-                    .into_additive();
+                    let scaled_claim = opening.claim.into_additive()
+                        * F::from_u64_unchecked(1 << remaining_variables);
                     (scaled_claim, scaled_claim)
                 }
             })
             .collect();
 
-        let evals_combined_0: F = (0..evals.len()).map(|i| evals[i].0.into_fe()).sum();
-        let evals_combined_2: F = (0..evals.len()).map(|i| evals[i].1.into_fe()).sum();
+        let evals_combined_0: F = (0..evals.len())
+            .map(|i| evals[i].0.into_fe() * coeffs[i])
+            .sum();
+        let evals_combined_2: F = (0..evals.len())
+            .map(|i| evals[i].1.into_fe() * coeffs[i])
+            .sum();
         let evals = vec![
             evals_combined_0,
             previous_round_claim.into_fe() - evals_combined_0,
