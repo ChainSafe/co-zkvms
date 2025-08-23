@@ -1,6 +1,7 @@
-use ark_ff::UniformRand;
+use ark_ff::{Field, UniformRand};
 use ark_std::test_rng;
 use clap::Parser;
+use co_jolt::field::JoltField;
 use co_jolt::utils::math::Math;
 use co_jolt::{
     host,
@@ -26,7 +27,7 @@ use color_eyre::{
     Result,
 };
 use itertools::Itertools;
-use jolt_core::{field::JoltField, jolt::vm::JoltProverPreprocessing, msm::icicle_init};
+use jolt_core::{jolt::vm::JoltProverPreprocessing, msm::icicle_init};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{
     self,
@@ -136,6 +137,8 @@ fn main() -> Result<()> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+
+    // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
@@ -302,6 +305,8 @@ pub fn run_coordinator(
         &preprocessing.shared,
         &mut network,
     )?;
+
+    
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;

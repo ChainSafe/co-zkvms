@@ -1,4 +1,5 @@
 use crate::{
+    field::JoltField,
     poly::{
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3MultilinearPolynomial,
@@ -8,7 +9,7 @@ use crate::{
 use ark_std::cfg_into_iter;
 use itertools::{multizip, Itertools};
 use jolt_core::{
-    field::JoltField, jolt::vm::instruction_lookups::InstructionLookupPolynomials,
+    jolt::vm::instruction_lookups::InstructionLookupPolynomials,
     utils::math::Math,
 };
 use jolt_core::{

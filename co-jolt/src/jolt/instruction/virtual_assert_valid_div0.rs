@@ -4,8 +4,8 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
 use jolt_core::{
-    field::JoltField,
     jolt::subtable::LassoSubtable,
     jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,

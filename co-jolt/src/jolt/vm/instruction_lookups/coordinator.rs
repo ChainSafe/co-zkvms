@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
@@ -10,7 +11,6 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use jolt_core::{
-    field::JoltField,
     jolt::subtable::JoltSubtableSet,
     poly::unipoly::{CompressedUniPoly, UniPoly},
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -47,6 +47,7 @@ where
 
         let r_eq = transcript.challenge_vector::<F>(num_ops.log_2());
         network.broadcast_request(r_eq)?;
+
 
         let num_rounds = num_ops.log_2();
 

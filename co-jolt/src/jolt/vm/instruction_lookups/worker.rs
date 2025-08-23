@@ -18,7 +18,6 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
-    field::JoltField,
     jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
     lasso::memory_checking::NoExogenousOpenings,
     poly::{
@@ -47,6 +46,7 @@ use std::{collections::HashMap, iter::once, marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
 use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
+use crate::field::JoltField;
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
     vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},

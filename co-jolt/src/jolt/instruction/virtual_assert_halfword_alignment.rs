@@ -2,6 +2,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -10,7 +11,6 @@ use mpc_core::protocols::rep3::{
 
 use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
 use jolt_core::{
-    field::JoltField,
     utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters},
 };
 

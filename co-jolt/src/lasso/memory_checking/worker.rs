@@ -1,7 +1,6 @@
 use color_eyre::eyre::Result;
 use eyre::Context;
 use jolt_core::{
-    field::JoltField,
     jolt::vm::JoltStuff,
     lasso::memory_checking::{ExogenousOpenings, Initializable, StructuredPolynomialData},
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
@@ -10,6 +9,7 @@ use jolt_core::{
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
+use crate::field::JoltField;
 use crate::{
     poly::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,

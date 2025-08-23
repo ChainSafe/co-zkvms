@@ -29,7 +29,7 @@ use crate::jolt::{
         witness::Rep3JoltPolynomials, Jolt, JoltCommitments, JoltProof, JoltTraceStep,
     },
 };
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::utils::transcript::AppendToTranscript;
 
 pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
@@ -152,7 +152,6 @@ where
         // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
-        // TODO: why does this work different from jolt_core?
         // Self::fiat_shamir_preamble(
         //     &mut transcript,
         //     &program_io,

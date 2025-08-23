@@ -1,4 +1,5 @@
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::JoltField;
+
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::sparse_interleaved_poly::Rep3SparseInterleavedPolynomial;
 use crate::poly::unipoly::unipoly_from_additive_evals;
@@ -14,6 +15,7 @@ use crate::utils::thread::drop_in_background_thread;
 use ark_ff::Zero;
 #[cfg(test)]
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
+use jolt_core::field::OptimizedMul;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;

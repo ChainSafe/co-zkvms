@@ -26,7 +26,7 @@ use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
 use jolt_common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 
 impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
     type Error = &'static str;

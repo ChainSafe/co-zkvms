@@ -3,8 +3,9 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
+
 use jolt_core::{
-    field::JoltField,
     jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };

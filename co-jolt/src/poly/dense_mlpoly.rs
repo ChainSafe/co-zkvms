@@ -11,8 +11,8 @@ use std::ops::Index;
 use std::sync::Arc;
 
 use crate::poly::Rep3MultilinearPolynomial;
+use crate::field::JoltField;
 use jolt_core::{
-    field::JoltField,
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };

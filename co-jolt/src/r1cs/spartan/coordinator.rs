@@ -3,7 +3,7 @@ use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use std::marker::PhantomData;
 
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
@@ -106,7 +106,7 @@ where
         let _guard = span.enter();
         let num_rounds_shift_sumcheck = key.num_steps.log_2();
 
-        let shift_sumcheck_claim = network.receive_responses::<F>()?.into_iter().sum();
+        let shift_sumcheck_claim = additive::combine_additive_share(network.receive_responses()?);
 
         let (shift_sumcheck_proof, _) =
             sumcheck::coordinate_prove_arbitrary(num_rounds_shift_sumcheck, transcript, network)?;

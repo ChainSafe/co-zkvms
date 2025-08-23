@@ -5,7 +5,7 @@ use jolt_tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
 
 use crate::{
     jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-    poly::field::JoltField,
+    field::JoltField,
 };
 
 use jolt_common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};

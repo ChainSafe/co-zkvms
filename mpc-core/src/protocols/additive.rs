@@ -89,6 +89,14 @@ pub fn combine_additive_shares<F: PrimeField>(
         .collect::<Vec<_>>()
 }
 
+pub fn combine_additive_share<F: PrimeField>(
+    shares: Vec<AdditiveShare<F>>,
+) -> F {
+    assert_eq!(shares.len(), 3);
+
+    AdditiveShare::into_fe_vec(shares).iter().sum::<F>()
+}
+
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.

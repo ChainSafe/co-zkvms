@@ -22,6 +22,7 @@ use jolt_common::{
 };
 pub use jolt_tracer::{self as tracer, ELFInstruction};
 
+use crate::field::JoltField;
 use crate::jolt::vm::{
     bytecode::{BytecodeRow, BytecodeRowExt},
     rv32i_vm::RV32I,
@@ -30,7 +31,6 @@ use crate::jolt::vm::{
 
 // use self::analyze::ProgramSummary;
 use jolt_core::{
-    field::JoltField,
     host::toolchain::install_toolchain,
     jolt::instruction::{
         div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,

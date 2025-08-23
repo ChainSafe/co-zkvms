@@ -10,6 +10,7 @@ pub use mpc_core::protocols::rep3::{
     Rep3PrimeFieldShare,
     network::{IoContext, Rep3Network},
 };
+use snarks_core::field::FieldExt;
 
 use crate::protocols::additive::AdditiveShare;
 use crate::protocols::rep3::rngs::SSRandom;
@@ -58,7 +59,7 @@ pub fn product<F: PrimeField, N: Rep3Network>(
         .context("while computing product")
 }
 
-pub fn product_into_additive<F: PrimeField, N: Rep3Network>(
+pub fn product_into_additive<F: PrimeField + FieldExt, N: Rep3Network>(
     shares: &[Rep3PrimeFieldShare<F>],
     io_ctx: &mut IoContext<N>,
     public_extra: Option<F>,
@@ -103,7 +104,7 @@ where
         .context("while computing product")
 }
 
-pub fn product_many_into_additive<F: PrimeField, N: Rep3Network>(
+pub fn product_many_into_additive<F: PrimeField + FieldExt, N: Rep3Network>(
     shares: &[&[Rep3PrimeFieldShare<F>]],
     io_ctx: &mut IoContext<N>,
     public_extra: Option<F>,
@@ -144,19 +145,21 @@ pub fn reshare_additive<F: PrimeField, N: Rep3Network>(
     additive: AdditiveShare<F>,
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-    let prev_share: F = io_ctx.network.reshare(additive.into_fe())?;
-    Ok(Rep3PrimeFieldShare::new(additive.into_fe(), prev_share))
+    let additive_share: F = additive.into_fe();
+    let prev_share: F = io_ctx.network.reshare(additive_share)?;
+    Ok(Rep3PrimeFieldShare::new(additive_share, prev_share))
 }
 
 pub fn reshare_additive_many<F: PrimeField, N: Rep3Network>(
     additive_shares: &[AdditiveShare<F>],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let b_shares: Vec<F> = io_ctx.network.reshare_many(&additive_shares.iter().map(|x| x.into_fe()).collect_vec())?;
+    let additive_shares = AdditiveShare::as_fe_vec_ref(&additive_shares);
+    let b_shares: Vec<F> = io_ctx.network.reshare_many(additive_shares)?;
     Ok(additive_shares
         .into_par_iter()
         .zip(b_shares.into_par_iter())
-        .map(|(a, b)| Rep3PrimeFieldShare::new(a.into_fe(), b))
+        .map(|(a, b)| Rep3PrimeFieldShare::new(*a, b))
         .collect())
 }
 
@@ -174,7 +177,6 @@ pub fn mul_public_0_1_optimized<F: PrimeField>(shared: FieldShare<F>, public: F)
         )
     }
 }
-
 
 pub fn sum_batched<F: PrimeField>(
     vals: &[Vec<Rep3PrimeFieldShare<F>>],

@@ -2,7 +2,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
     ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,

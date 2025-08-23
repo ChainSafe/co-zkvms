@@ -13,7 +13,7 @@ use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
     concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
 };
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

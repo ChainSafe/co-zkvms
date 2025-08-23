@@ -3,9 +3,10 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
-use jolt_core::{field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable};
+use jolt_core::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 

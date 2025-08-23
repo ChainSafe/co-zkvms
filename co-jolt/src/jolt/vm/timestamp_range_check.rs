@@ -1,5 +1,6 @@
+use crate::field::JoltField;
+
 use jolt_core::{
-    field::JoltField,
     jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff},
     lasso::memory_checking::NoPreprocessing,
 };

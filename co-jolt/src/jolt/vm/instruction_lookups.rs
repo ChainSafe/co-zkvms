@@ -19,7 +19,7 @@ use crate::lasso::{
     memory_checking::MultisetHashes,
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
 };
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::JoltSubtableSet;
 pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,

@@ -8,6 +8,7 @@ members = [
     "co-noir-spartan/noir-r1cs",
     "mpc-net",
     "mpc-core",
+    "mpc-types",
     "snarks-core",
     "co-jolt/examples/fibonacci",
     "co-jolt/examples/fibonacci/guest",
@@ -88,7 +89,7 @@ crossbeam = "0.8.3"
 merlin = "3.0.0"
 blake2 = "0.9"
 
-mpc-types = { git = "https://github.com/nulltea/co-snarks" }
+mpc-types = { path = "./mpc-types" }
 anyhow = "1.0.93"
 argh = "0.1.12"
 
@@ -100,6 +101,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0
 
 [patch."https://github.com/nulltea/co-snarks"]
 mpc-net = { path = "./mpc-net" }
+mpc-types = { path = "./mpc-types" }
 
 [profile.guest]
 inherits = "release"

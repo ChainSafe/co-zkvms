@@ -4,7 +4,7 @@ pub mod worker;
 
 use crate::jolt::instruction::JoltInstructionSet;
 use jolt_common::rv_trace::ELFInstruction;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 
 pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 

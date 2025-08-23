@@ -2,7 +2,7 @@ use std::ops::Index;
 
 use crate::poly::PolyDegree;
 use crate::utils::shared_or_public::SharedOrPublic;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };

@@ -3,7 +3,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 
 use mpc_core::protocols::rep3::{

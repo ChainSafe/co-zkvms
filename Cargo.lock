@@ -858,7 +858,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "log",
@@ -3272,7 +3272,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.53.3",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -3458,13 +3458,14 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
+ "snarks-core",
  "tracing",
 ]
 
 [[package]]
 name = "mpc-core"
 version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#4cccd04e0a5d1533fe75b1b909fbd3726eb54d9e"
+source = "git+https://github.com/nulltea/co-snarks#8dccfe4a1a2c539eb80baf33dfe20bd508859b7d"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3523,18 +3524,19 @@ dependencies = [
 [[package]]
 name = "mpc-types"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/co-snarks#4cccd04e0a5d1533fe75b1b909fbd3726eb54d9e"
 dependencies = [
+ "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "eyre",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
+ "snarks-core",
 ]
 
 [[package]]
@@ -6628,7 +6630,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

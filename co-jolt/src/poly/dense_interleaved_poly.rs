@@ -10,7 +10,7 @@ use crate::{
 };
 use ark_ff::Zero;
 use eyre::Context;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{

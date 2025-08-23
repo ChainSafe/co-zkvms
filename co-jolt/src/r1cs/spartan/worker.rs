@@ -7,7 +7,7 @@ use mpc_core::protocols::rep3::PartyID;
 use std::marker::PhantomData;
 use tracing::{span, Level};
 
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::utils::math::Math;

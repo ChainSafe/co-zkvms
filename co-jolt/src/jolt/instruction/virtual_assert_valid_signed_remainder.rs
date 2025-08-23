@@ -2,8 +2,9 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
+
 use jolt_core::{
-    field::JoltField,
     jolt::subtable::right_is_zero::RightIsZeroSubtable,
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, left_is_zero::LeftIsZeroSubtable,

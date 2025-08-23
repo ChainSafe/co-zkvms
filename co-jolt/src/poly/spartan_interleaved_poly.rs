@@ -4,7 +4,6 @@ use jolt_core::poly::{
 };
 use jolt_core::r1cs::builder::OffsetLC;
 use jolt_core::{
-    field::JoltField,
     r1cs::builder::{Constraint, OffsetEqConstraint},
     utils::math::Math,
 };
@@ -12,6 +11,7 @@ use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
+use crate::field::JoltField;
 use crate::r1cs::ops::LinearCombinationExt;
 use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
 use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicParIter};

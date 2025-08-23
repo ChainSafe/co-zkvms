@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},

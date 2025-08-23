@@ -2,7 +2,7 @@ use crate::jolt::vm::worker::JoltRep3Prover;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::JoltR1CSInputs;
 use enum_dispatch::enum_dispatch;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::utils::transcript::Transcript;
 use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};

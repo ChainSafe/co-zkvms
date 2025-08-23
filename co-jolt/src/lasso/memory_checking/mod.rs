@@ -3,12 +3,12 @@ pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
 use jolt_core::{
-    field::JoltField,
     lasso::memory_checking::{ExogenousOpenings, Initializable},
     subprotocols::grand_product::BatchedGrandProductProof,
 };
 use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
 
+use crate::field::JoltField;
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
     poly::opening_proof::Rep3ProverOpeningAccumulator,

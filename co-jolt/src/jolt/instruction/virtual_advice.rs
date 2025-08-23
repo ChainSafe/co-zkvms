@@ -3,6 +3,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
@@ -13,7 +14,7 @@ use mpc_core::protocols::rep3::{
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::concatenate_lookups_rep3;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups_rep3_batched};
-use jolt_core::{field::JoltField, utils::instruction_utils::concatenate_lookups};
+use jolt_core::{utils::instruction_utils::concatenate_lookups};
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);

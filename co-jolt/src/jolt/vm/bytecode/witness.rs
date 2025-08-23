@@ -1,9 +1,9 @@
 use crate::{
+    field::JoltField,
     jolt::vm::witness::Rep3Polynomials,
     poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial},
 };
 use jolt_core::{
-    field::JoltField,
     jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff},
 };
 use mpc_core::protocols::rep3::network::{

@@ -7,6 +7,7 @@ use crate::subprotocols::{
     grand_product::Rep3BatchedGrandProductLayer, sumcheck::Rep3BatchedCubicSumcheck,
 };
 use crate::utils::future::{FutureExt, FutureVal};
+use crate::field::JoltField;
 
 use ark_ff::Zero;
 use eyre::Context;
@@ -14,7 +15,6 @@ use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
 };
 use jolt_core::{
-    field::JoltField,
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive::{self, AdditiveShare};

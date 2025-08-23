@@ -10,7 +10,7 @@ use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::shared_or_public::SharedOrPublic;
 use crate::utils::transcript::TranscriptExt;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     RegisterAddressOpenings,

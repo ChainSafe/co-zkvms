@@ -1,5 +1,5 @@
 use itertools::{chain, izip, multizip, Itertools};
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

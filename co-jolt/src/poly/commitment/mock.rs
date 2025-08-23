@@ -1,7 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
-    field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, mock::MockProof},
         multilinear_polynomial::PolynomialEvaluation,
@@ -24,6 +23,7 @@ use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
 use crate::poly::{combine_poly_shares_rep3, Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use crate::field::JoltField;
 use crate::utils::shared_or_public::MaybeShared;
 
 #[derive(Clone)]

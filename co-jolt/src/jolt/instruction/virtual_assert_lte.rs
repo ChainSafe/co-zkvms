@@ -5,7 +5,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use itertools::multizip;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,

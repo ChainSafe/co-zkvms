@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::PolyDegree;
 use crate::utils::shared_or_public::SharedOrPublic;
@@ -10,7 +11,7 @@ use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use jolt_core::{
-    field::{JoltField, OptimizedMul},
+    field::OptimizedMul,
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};

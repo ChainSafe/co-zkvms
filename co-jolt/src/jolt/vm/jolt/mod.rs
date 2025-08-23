@@ -26,12 +26,12 @@ use snarks_core::math::Math;
 use strum::EnumCount;
 
 use super::bytecode::BytecodeRow;
+use crate::field::JoltField;
 use crate::jolt::{
     instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
 use jolt_core::{
-    field::JoltField,
     jolt::{
         instruction::{
             div::DIVInstruction, divu::DIVUInstruction, lb::LBInstruction, lbu::LBUInstruction,

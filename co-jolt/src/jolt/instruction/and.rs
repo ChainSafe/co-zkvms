@@ -17,7 +17,7 @@ use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3,
 };
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

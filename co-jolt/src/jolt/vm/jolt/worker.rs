@@ -19,6 +19,7 @@ use mpc_core::protocols::rep3::{
 };
 use snarks_core::math::Math;
 
+use crate::field::JoltField;
 use crate::jolt::{
     instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
     vm::{
@@ -29,7 +30,6 @@ use crate::jolt::{
 };
 use jolt_core::r1cs::constraints::R1CSConstraints;
 use jolt_core::{
-    field::JoltField,
     jolt::subtable::JoltSubtableSet,
     jolt::vm::JoltProverPreprocessing,
     r1cs::{builder::CombinedUniformBuilder, key::UniformSpartanKey},

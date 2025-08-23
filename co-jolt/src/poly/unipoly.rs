@@ -1,4 +1,4 @@
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 pub use jolt_core::poly::unipoly::*;
 use mpc_core::protocols::additive::AdditiveShare;
 

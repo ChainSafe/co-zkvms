@@ -9,6 +9,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::field::JoltField;
 use crate::{
     jolt::instruction::Rep3JoltInstruction,
     utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched},
@@ -16,7 +17,6 @@ use crate::{
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
 use jolt_core::{
-    field::JoltField,
     utils::instruction_utils::{
         assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
     },

@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{One, Zero};
 use ark_poly_commit::multilinear_pc::{
@@ -9,7 +10,6 @@ use ark_std::test_rng;
 use jolt_core::msm::{use_icicle, Icicle, VariableBaseMSM};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
-    field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial},
     utils::{
         errors::ProofVerifyError,

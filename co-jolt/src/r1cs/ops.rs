@@ -1,4 +1,4 @@
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;

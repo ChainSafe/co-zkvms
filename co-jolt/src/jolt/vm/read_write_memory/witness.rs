@@ -2,7 +2,7 @@ use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::rv_trace::MemoryLayout;
-use jolt_core::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing,
     ReadWriteMemoryStuff,

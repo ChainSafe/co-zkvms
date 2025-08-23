@@ -1,5 +1,4 @@
 use jolt_core::{
-    field::JoltField,
     poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
 };
@@ -22,6 +21,7 @@ use mpc_core::protocols::{
 
 use rayon::prelude::*;
 
+use crate::field::JoltField;
 use crate::{
     poly::{
         dense_interleaved_poly::Rep3DenseInterleavedPolynomial,

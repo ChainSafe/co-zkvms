@@ -1,8 +1,9 @@
 use jolt_common::{constants::REGISTER_COUNT, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
 
+use crate::field::JoltField;
+
 use jolt_core::{
-    field::JoltField,
     r1cs::{
         builder::{OffsetEqConstraint, R1CSBuilder},
         constraints::{R1CSConstraints, LOG_M, OPERAND_SIZE, PC_NOOP_SHIFT, PC_START_ADDRESS},
