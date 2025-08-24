@@ -248,7 +248,12 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(res)
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(
             self.0.as_binary_share(),
             self.1.as_binary_share(),

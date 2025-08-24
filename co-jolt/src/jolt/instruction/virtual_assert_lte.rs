@@ -1,11 +1,13 @@
+use eyre::Context;
 #[cfg(feature = "public-eq")]
 use mpc_core::protocols::additive;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use itertools::multizip;
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
+use itertools::multizip;
 use jolt_core::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
@@ -208,7 +210,12 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             .collect::<Vec<_>>())
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
         rep3_chunk_and_concatenate_operands(
             self.0.as_binary_share(),
             self.1.as_binary_share(),
@@ -221,6 +228,23 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        todo!()
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (a, b): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share()))
+            .unzip();
+
+        Ok(rep3::arithmetic::lt_many(&a, &b, io_ctx)
+            .context("ASSERTLTEInstruction::output_batched")?
+            .into_iter()
+            .map(FutureVal::Ready)
+            .collect())
     }
 }

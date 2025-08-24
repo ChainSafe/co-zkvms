@@ -4,6 +4,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 
 use jolt_core::{
     jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
@@ -12,7 +13,9 @@ use jolt_core::{
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched};
+use crate::utils::instruction_utils::{
+    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand_usize,
+};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
@@ -89,14 +92,13 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(concatenate_lookups_rep3_batched(vals, C, log2(M) as usize))
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
-        // chunk_operand_usize_rep3(
-        //     self.0.as_binary_share(),
-        //     Rep3Operand::zero().as_binary_share(),
-        //     C,
-        //     log_M,
-        // )
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
     }
 
     fn output<N: Rep3Network>(
@@ -104,5 +106,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(self.0.as_arithmetic_share())
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        Ok(steps
+            .iter()
+            .map(|step| FutureVal::Ready(step.0.as_arithmetic_share()))
+            .collect())
     }
 }

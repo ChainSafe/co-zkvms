@@ -80,6 +80,9 @@ bytesize = "2.0.1"
 rand_chacha = "0.3.0"
 toml = "0.9.5"
 rustls = "0.23.15"
+num-traits = { version = "0.2.18", default-features = false }
+async-trait = "0.1.89"
+thiserror = "2"
 
 
 # Additional dependencies for co-spartan
@@ -99,9 +102,9 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-op
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
 
-[patch."https://github.com/nulltea/co-snarks"]
-mpc-net = { path = "./mpc-net" }
-mpc-types = { path = "./mpc-types" }
+# [patch."https://github.com/nulltea/co-snarks"]
+# mpc-net = { path = "./mpc-net" }
+# mpc-types = { path = "./mpc-types" }
 
 [profile.guest]
 inherits = "release"

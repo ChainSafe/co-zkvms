@@ -1,14 +1,18 @@
 use ark_std::log2;
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::{
+    self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, SubtableIndices};
+use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3_batched,
     rep3_chunk_and_concatenate_operands,
@@ -17,7 +21,6 @@ use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3,
 };
-use crate::field::JoltField;
 use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -102,30 +105,39 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
 
     fn to_indices_rep3(
         &self,
+        _: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
-    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
-            }
-            _ => panic!("ANDInstruction::to_indices called with non-binary operands"),
-        }
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(
         &self,
         _io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(_), Rep3Operand::Binary(_)) => {
-                // Ok(rep3::arithmetic::promote_to_trivial_share(
-                //     io_ctx.network.get_id(),
-                //     (x.clone() & y.clone()).into(),
-                // ))
-                unimplemented!()
-            }
-            _ => panic!("ANDInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (x, y): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share()))
+            .unzip();
+
+        Ok(rep3::binary::and_vec(&x, &y, io_ctx)
+            .context("AND")?
+            .into_iter()
+            .map(FutureVal::b2a)
+            .collect())
     }
 }

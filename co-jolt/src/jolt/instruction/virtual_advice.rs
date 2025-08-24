@@ -8,13 +8,16 @@ use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::concatenate_lookups_rep3;
-use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups_rep3_batched};
-use jolt_core::{utils::instruction_utils::concatenate_lookups};
+use crate::utils::future::FutureVal;
+use crate::utils::instruction_utils::{
+    chunk_operand_usize, concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
+    rep3_chunk_operand_usize,
+};
+use jolt_core::utils::instruction_utils::concatenate_lookups;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
@@ -105,19 +108,28 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         ))
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<rep3::Rep3BigUintShare<F>> {
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<rep3::Rep3BigUintShare<F>> {
+        rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
     }
 
-    fn output<N: Rep3Network>(
+    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        Ok(self.0.as_arithmetic_share())
+    }
+
+    fn output_batched<N: Rep3Network>(
         &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match &self.0 {
-            Rep3Operand::Arithmetic(x) => Ok(*x),
-            _ => Err(eyre::eyre!(
-                "ADVICEInstruction::output called with non-arithmetic operand"
-            )),
-        }
+        steps: &[Self],
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let z = steps
+            .into_iter()
+            .map(|step| FutureVal::Ready(step.0.as_arithmetic_share()))
+            .collect::<Vec<_>>();
+        Ok(z)
     }
 }

@@ -1,3 +1,4 @@
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -6,13 +7,12 @@ use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
+use crate::utils::future::FutureVal;
 use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
-use jolt_core::{
-    utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters},
-};
+use jolt_core::utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
@@ -124,15 +124,42 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             .collect::<Vec<_>>())
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<rep3::Rep3BigUintShare<F>> {
-        // add_and_chunk_operands_rep3(self.0, self.1, C, log_M)
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<rep3::Rep3BigUintShare<F>> {
+        unimplemented!()
+        // rep3_add_and_chunk_operands(self.0.as_binary_share(), C, log2(M) as usize)
     }
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        todo!()
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        // (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
+        //         as u64)
+        //         .into()
+
+        let (x, y): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|step| (step.0.as_binary_share(), step.1.as_binary_share()))
+            .unzip();
+        let z = rep3::binary::add_many(&x, &y, 32, io_ctx)?; // TODO: % 2
+        let is_zero = rep3::binary::is_zero_many(z, io_ctx)?;
+        Ok(rep3::conversion::bit_inject_many(&is_zero, io_ctx)
+            .context("Failed to inject bits")?
+            .into_iter()
+            .map(FutureVal::Ready)
+            .collect())
     }
 }

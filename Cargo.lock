@@ -725,9 +725,9 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "async-trait"
-version = "0.1.88"
+version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e539d3fca749fcee5236ab05e93a52867dd549cc157c8cb7f99595f3cedffdb5"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -858,7 +858,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1208,7 +1208,7 @@ dependencies = [
  "icicle-runtime",
  "itertools 0.12.1",
  "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
- "mpc-core 0.1.0",
+ "mpc-core",
  "mpc-net",
  "num-bigint 0.4.6",
  "num_cpus",
@@ -1253,7 +1253,7 @@ dependencies = [
  "eyre",
  "itertools 0.12.1",
  "mimalloc",
- "mpc-core 0.1.0",
+ "mpc-core",
  "mpc-net",
  "noir-r1cs",
  "num-bigint 0.4.6",
@@ -2953,15 +2953,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3273,7 +3264,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.53.3",
 ]
 
 [[package]]
@@ -3450,35 +3441,11 @@ dependencies = [
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "eyre",
- "itertools 0.12.1",
- "mpc-core 0.9.0",
- "mpc-net",
- "mpc-types",
- "num-bigint 0.4.6",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rayon",
- "snarks-core",
- "tracing",
-]
-
-[[package]]
-name = "mpc-core"
-version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#8dccfe4a1a2c539eb80baf33dfe20bd508859b7d"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-grumpkin",
- "ark-serialize 0.5.0",
  "async-trait",
  "bytes",
  "eyre",
  "fancy-garbling",
- "hex",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "mpc-net",
  "mpc-types",
  "nom",
@@ -3490,9 +3457,9 @@ dependencies = [
  "scuttlebutt",
  "serde",
  "sha3",
+ "snarks-core",
  "subtle",
  "thiserror 2.0.12",
- "tokio",
  "tracing",
 ]
 
@@ -6631,7 +6598,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

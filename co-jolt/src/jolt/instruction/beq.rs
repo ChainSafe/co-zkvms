@@ -1,13 +1,15 @@
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use eyre::Context;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 
 use mpc_core::protocols::rep3::{
-    self,
+    self, Rep3BigUintShare,
     network::{IoContext, Rep3Network},
     Rep3PrimeFieldShare,
 };
@@ -131,23 +133,36 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
 
     fn to_indices_rep3(
         &self,
+        _: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
-    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
-            }
-            _ => panic!("BEQInstruction::to_indices called with non-binary operands"),
-        }
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(_), Rep3Operand::Binary(_)) => {
-                unimplemented!()
-            }
-            _ => panic!("BEQInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (a, b): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_arithmetic_share(), y.as_arithmetic_share()))
+            .unzip();
+
+        Ok(rep3::arithmetic::eq_many(&a, &b, io_ctx)
+            .context("BEQInstruction::output_batched")?
+            .into_iter()
+            .map(FutureVal::Ready)
+            .collect())
     }
 }

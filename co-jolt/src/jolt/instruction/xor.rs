@@ -1,6 +1,6 @@
+use crate::field::JoltField;
 use ark_std::log2;
 use eyre::Context;
-use crate::field::JoltField;
 use jolt_core::jolt::instruction::SubtableIndices;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
@@ -9,6 +9,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
+use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, rep3_chunk_and_concatenate_operands,
@@ -21,14 +22,6 @@ pub struct XORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 impl<F: JoltField> XORInstruction<F> {
     pub fn public(x: u64, y: u64) -> Self {
         Self(Rep3Operand::Public(x), Rep3Operand::Public(y))
-    }
-
-    pub fn shared_binary(x: Rep3BigUintShare<F>, y: Rep3BigUintShare<F>) -> Self {
-        Self(Rep3Operand::Binary(x), Rep3Operand::Binary(y))
-    }
-
-    pub fn shared(x: Rep3PrimeFieldShare<F>, y: Rep3PrimeFieldShare<F>) -> Self {
-        Self(Rep3Operand::Arithmetic(x), Rep3Operand::Arithmetic(y))
     }
 }
 
@@ -111,27 +104,34 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
 
     fn to_indices_rep3(
         &self,
+        _: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
-    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
-            }
-            _ => panic!("XORInstruction::to_indices called with non-binary operands"),
-        }
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3::conversion::b2a_selector(&(x.clone() ^ y.clone()), io_ctx)
-                    .context("while evaluating XORInstruction")
-            }
-            _ => panic!("XORInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let z = steps
+            .into_iter()
+            .map(|step| FutureVal::b2a(step.0.as_binary_share() ^ step.1.as_binary_share()))
+            .collect::<Vec<_>>();
+        Ok(z)
     }
 }

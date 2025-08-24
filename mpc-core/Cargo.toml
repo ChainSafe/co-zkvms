@@ -18,9 +18,18 @@ eyre.workspace = true
 rayon = { version = "1.10.0", optional = true }
 rand_chacha.workspace = true
 tracing.workspace = true
+num-traits = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+nom = "7"
+sha3 = "0.10.8"
+fancy-garbling = { git = "https://github.com/GaloisInc/swanky", rev = "5ff648457218b74da9d8323b7ca47166ff5be4b3" }
+scuttlebutt = { git = "https://github.com/GaloisInc/swanky", rev = "5ff648457218b74da9d8323b7ca47166ff5be4b3" }
 
 mpc-types.workspace = true
-mpc-core = { git = "https://github.com/nulltea/co-snarks" }
 mpc-net = { path = "../mpc-net" }
 snarks-core = { path = "../snarks-core" }
 

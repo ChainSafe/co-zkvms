@@ -1,9 +1,12 @@
 use ark_std::log2;
+use eyre::Context;
+use num_bigint::BigUint;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 
 use jolt_core::{
     jolt::{
@@ -13,9 +16,11 @@ use jolt_core::{
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
-use crate::utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched};
+use crate::utils::instruction_utils::{
+    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand_usize,
+};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 
@@ -138,14 +143,44 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         ))
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
     }
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        todo!()
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let t: Vec<_> = steps
+            .into_iter()
+            .map(|step| step.0.as_binary_share() & BigUint::from(SIGN_BIT_32))
+            .collect();
+
+        let zeros = vec![Rep3BigUintShare::zero_share(); t.len()];
+        let all_ones =
+            vec![
+                rep3::binary::promote_to_trivial_share(io_ctx.id, &BigUint::from(ALL_ONES_32));
+                t.len()
+            ];
+
+        let cond = rep3::binary::is_zero_many(t, io_ctx)?;
+        Ok(rep3::binary::cmux_many(&cond, &zeros, &all_ones, io_ctx)
+            .context("Failed to cmux")?
+            .into_iter()
+            .map(FutureVal::b2a)
+            .collect())
     }
 }

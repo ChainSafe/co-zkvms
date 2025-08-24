@@ -3,9 +3,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 use jolt_core::jolt::subtable::LassoSubtable;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
@@ -81,7 +82,12 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(vec![Rep3PrimeFieldShare::zero_share(); vals[0].len()])
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
+    fn to_indices_rep3(
+        &self,
+        _: &Rep3BigUintShare<F>,
+        C: usize,
+        _: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
         vec![Rep3BigUintShare::zero_share(); C]
     }
 
@@ -89,6 +95,33 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        todo!()
+        let shift = self.0.as_public() % WORD_SIZE as u64;
+        let ones = (1 << shift) - 1;
+        Ok(rep3::arithmetic::promote_to_trivial_share(
+            io_ctx.id,
+            F::from(ones << (WORD_SIZE as u64 - shift)),
+        )
+        .into())
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        steps
+            .into_iter()
+            .map(|step| {
+                let shift = step.0.as_public() % WORD_SIZE as u64;
+                let ones = (1 << shift) - 1;
+                Ok(FutureVal::Ready(
+                    rep3::arithmetic::promote_to_trivial_share(
+                        io_ctx.id,
+                        F::from(ones << (WORD_SIZE as u64 - shift)),
+                    )
+                    .into(),
+                ))
+            })
+            .collect()
     }
 }

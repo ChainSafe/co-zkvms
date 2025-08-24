@@ -131,12 +131,14 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    let mut program = host::Program::new("sha2-chain-guest");
+    let mut program = host::Program::new("fibonacci-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    let mut inputs = vec![];
-    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+    // let mut inputs = vec![];
+    // inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+    let inputs = postcard::to_stdvec(&9u32).unwrap();
+
 
     // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
 

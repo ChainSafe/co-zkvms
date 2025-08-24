@@ -164,7 +164,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                                 .unwrap_or((coeff.index + 1, one_share).into());
                             if right.index == coeff.index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_segment.push(FutureVal::pending_mul_args(
+                                output_segment.push(FutureVal::mul_args(
                                     right.value,
                                     coeff.value,
                                     coeff.index / 2,

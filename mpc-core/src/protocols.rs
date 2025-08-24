@@ -4,4 +4,4 @@
 
 pub mod additive;
 pub mod rep3;
-pub use mpc_core::protocols::rep3_ring;
+pub mod rep3_ring;

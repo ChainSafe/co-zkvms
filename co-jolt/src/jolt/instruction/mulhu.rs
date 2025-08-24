@@ -1,6 +1,7 @@
 use ark_std::log2;
+use eyre::Context;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self,Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,9 +10,10 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
-    concatenate_lookups_rep3_batched, multiply_and_chunk_operands,
+    concatenate_lookups_rep3_batched, multiply_and_chunk_operands, rep3_multiply_and_chunk_operands,
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::utils::future::FutureVal;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULHUInstruction<const WORD_SIZE: usize, F: JoltField>(
@@ -111,14 +113,35 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         Ok(concatenate_lookups_rep3_batched(vals, C, log2(M) as usize))
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        z: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_multiply_and_chunk_operands(z, C, log_M)
     }
 
-    fn output<N: Rep3Network>(
+    fn output<N: mpc_core::protocols::rep3::network::Rep3Network>(
         &self,
-        io_ctx: &mut IoContext<N>,
+        _: &mut mpc_core::protocols::rep3::network::IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        todo!()
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (a, b): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_arithmetic_share(), y.as_arithmetic_share()))
+            .unzip();
+
+        Ok(rep3::arithmetic::mul_vec(&a, &b, io_ctx).context("MULInstruction::output_batched")?
+            .into_iter()
+            .map(FutureVal::Ready)
+            .collect())
     }
 }

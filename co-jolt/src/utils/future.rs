@@ -3,14 +3,14 @@ use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3PrimeFieldShare, Rep3BigUintShare,
 };
 
 use rayon::prelude::*;
 
 pub enum FutureVal<F: JoltField, T, Args = ()> {
     Ready(T),
-    Pending(ArithmeticOp<F>, Args),
+    Pending(FutureOp<F>, Args),
 }
 
 impl<F: JoltField, T, Extra> FutureVal<F, T, Extra> {
@@ -21,12 +21,18 @@ impl<F: JoltField, T, Extra> FutureVal<F, T, Extra> {
         }
     }
 
-    pub fn pending_mul_args(
+    pub fn mul_args(
         a: Rep3PrimeFieldShare<F>,
         b: Rep3PrimeFieldShare<F>,
         args: Extra,
     ) -> Self {
-        FutureVal::Pending(ArithmeticOp::Mul(a, b), args)
+        FutureVal::Pending(FutureOp::Mul(a, b), args)
+    }
+}
+
+impl<F: JoltField> FutureVal<F, Rep3PrimeFieldShare<F>> {
+    pub fn b2a(a: Rep3BigUintShare<F>) -> Self {
+        FutureVal::Pending(FutureOp::B2A(a), ())
     }
 }
 
@@ -57,7 +63,7 @@ where
         let (a, b, futures): (Vec<_>, Vec<_>, Vec<&mut FutureVal<F, T, Args>>) = self
             .iter_mut()
             .filter_map(|f| match f {
-                FutureVal::Pending(ArithmeticOp::Mul(a, b), _) => Some((*a, *b, f)),
+                FutureVal::Pending(FutureOp::Mul(a, b), _) => Some((*a, *b, f)),
                 _ => None,
             })
             .multiunzip();
@@ -72,7 +78,7 @@ where
             .into_par_iter()
             .zip(c.into_par_iter())
             .for_each(|(f, c)| match f {
-                FutureVal::Pending(ArithmeticOp::Mul(..), args) => {
+                FutureVal::Pending(FutureOp::Mul(..), args) => {
                     *f = FutureVal::Ready(map(c, *args));
                 }
                 _ => unreachable!(),
@@ -88,6 +94,7 @@ where
     }
 }
 
-pub enum ArithmeticOp<F: JoltField> {
+pub enum FutureOp<F: JoltField> {
     Mul(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
+    B2A(Rep3BigUintShare<F>),
 }

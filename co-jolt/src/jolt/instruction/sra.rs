@@ -1,6 +1,6 @@
 use std::iter::Sum;
+use std::ops::Shr;
 
-use crate::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -8,11 +8,15 @@ use serde::{Deserialize, Serialize};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
+use crate::field::JoltField;
+use crate::utils::future::FutureVal;
+use crate::utils::instruction_utils::{
+    assert_valid_parameters, chunk_and_concatenate_for_shift, rep3_chunk_and_concatenate_for_shift,
+};
 use jolt_core::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -133,26 +137,39 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
 
     fn to_indices_rep3(
         &self,
+        _: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
     ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SRAInstruction::to_indices called with non-binary operands"),
-        }
+        rep3_chunk_and_concatenate_for_shift(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SRAInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let z = steps
+            .into_iter()
+            .map(|Self(x, y)| {
+                FutureVal::b2a(
+                x.as_binary_share() // TODO: as i32
+                    .shr((y.as_public() as u32 % WORD_SIZE as u32) as usize),
+            )
+            })
+            .collect::<Vec<_>>();
+        Ok(z)
     }
 }

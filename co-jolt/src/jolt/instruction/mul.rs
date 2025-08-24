@@ -1,4 +1,5 @@
 use ark_std::log2;
+use eyre::Context;
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
@@ -10,16 +11,18 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 use crate::{
     jolt::instruction::Rep3JoltInstruction,
-    utils::instruction_utils::{concatenate_lookups_rep3, concatenate_lookups_rep3_batched},
+    utils::instruction_utils::{
+        concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
+        rep3_multiply_and_chunk_operands,
+    },
 };
 
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
-use jolt_core::{
-    utils::instruction_utils::{
-        assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
-    },
+use jolt_core::utils::instruction_utils::{
+    assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -148,21 +151,36 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
         ))
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
-        todo!()
+    fn to_indices_rep3(
+        &self,
+        z: &Rep3BigUintShare<F>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_multiply_and_chunk_operands(z, C, log_M)
     }
 
     fn output<N: mpc_core::protocols::rep3::network::Rep3Network>(
         &self,
-        io_ctx: &mut mpc_core::protocols::rep3::network::IoContext<N>,
-    ) -> eyre::Result<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Arithmetic(x), Rep3Operand::Arithmetic(y)) => {
-                rep3::arithmetic::mul(*x, *y, io_ctx).map_err(|e| eyre::eyre!(e))
-            }
-            _ => Err(eyre::eyre!(
-                "MULInstruction::output called with shared operands"
-            )),
-        }
+        _: &mut mpc_core::protocols::rep3::network::IoContext<N>,
+    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (a, b): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_arithmetic_share(), y.as_arithmetic_share()))
+            .unzip();
+
+        Ok(rep3::arithmetic::mul_vec(&a, &b, io_ctx)
+            .context("MULInstruction::output_batched")?
+            .into_iter()
+            .map(FutureVal::Ready)
+            .collect())
     }
 }

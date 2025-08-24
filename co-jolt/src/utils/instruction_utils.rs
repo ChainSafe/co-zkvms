@@ -1,3 +1,4 @@
+use ark_ff::{One, Zero};
 use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 
@@ -54,7 +55,7 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
 ) -> Vec<Rep3BigUintShare<F>> {
     let operand_bits: usize = log_M / 2;
 
-    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as u64);
+    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as usize);
     (0..C)
         .map(|i| {
             let shift = (C - i - 1) * operand_bits;
@@ -63,6 +64,82 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
             // (left << operand_bits) | right
             // since we performed left shift the right part are all zero bits so we can do XOR instead of OR
             (left << operand_bits) ^ right
+        })
+        .collect()
+}
+
+/// z = x + y (mod 2^{C*log_M}), then split z into C chunks of `log_M` bits (MSB-first).
+pub fn rep3_add_and_chunk_operands<F: JoltField>(
+    z: &Rep3BigUintShare<F>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3BigUintShare<F>> {
+    let sum_chunk_bits: usize = log_M;
+    let sum_chunk_bit_mask = BigUint::from(((1 << sum_chunk_bits) - 1) as usize);
+
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * sum_chunk_bits) as u32 as usize;
+
+            (z >> shift) & sum_chunk_bit_mask.clone()
+        })
+        .collect()
+}
+
+/// Chunks `z` into `C` chunks bitwise where `z = x * y`.
+/// `log_M` is the number of bits for each of the `C` chunks of `z`.
+pub fn rep3_multiply_and_chunk_operands<F: JoltField>(
+    z: &Rep3BigUintShare<F>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3BigUintShare<F>> {
+    let product_chunk_bits: usize = log_M;
+    let product_chunk_bit_mask = BigUint::from(((1 << product_chunk_bits) - 1) as u64);
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * product_chunk_bits) as u32 as usize;
+            (z >> shift) & product_chunk_bit_mask.clone()
+        })
+        .collect()
+}
+
+/// Chunks and concatenates two 64-bit unsigned integers `x` and `y` into a vector of concatenated chunks,
+/// where the second half of each concatenated chunk is always `y_0`, the last chunk of `y` (from left to right).
+pub fn rep3_chunk_and_concatenate_for_shift<F: JoltField>(
+    x: Rep3BigUintShare<F>,
+    y: Rep3BigUintShare<F>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3BigUintShare<F>> {
+    let operand_bits: usize = log_M / 2;
+    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as usize);
+
+    let y_lowest_chunk = y & operand_bit_mask.clone();
+
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * operand_bits) as u32 as usize;
+            let left = x.clone().shr(shift) & operand_bit_mask.clone();
+            // (left << operand_bits) | y_lowest_chunk
+            // since we performed left shift the right part are all zero bits so we can do XOR instead of OR
+            (left << operand_bits) ^ y_lowest_chunk.clone()
+        })
+        .collect()
+}
+
+/// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `usize`, each representing a
+/// `chunk_len`-bit chunk. Only different from `chunk_operand` in that it returns `usize` instead of
+/// `u64`.
+pub fn rep3_chunk_operand_usize<F: JoltField>(
+    x: Rep3BigUintShare<F>,
+    C: usize,
+    chunk_len: usize,
+) -> Vec<Rep3BigUintShare<F>> {
+    let bit_mask = BigUint::from(((1 << chunk_len) - 1) as u64);
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * chunk_len) as u32 as usize;
+            x.shr(shift) & bit_mask
         })
         .collect()
 }
@@ -158,6 +235,31 @@ mod test {
     type F = ark_bn254::Fr;
 
     #[test]
+    fn test_chunk_and_concatenate_operands() {
+        let x = 0b10101010101010;
+        let y = 0b11001100110011;
+        let C = 4;
+        let log_M = 8;
+        let indices = chunk_and_concatenate_operands(x, y, C, log_M);
+        let indices_alt = chunk_and_concatenate_operands_alt(x, y, C, log_M);
+        assert_eq!(indices, indices_alt);
+        println!("{:?}", indices);
+    }
+
+    #[test]
+    fn test_transpose() {
+        let matrix = vec![
+            vec![vec![1; 4], vec![2; 4]],
+            vec![vec![3; 4], vec![4; 4]],
+            vec![vec![5; 4], vec![6; 4]],
+        ];
+        let transposed = transpose(matrix);
+        println!("{:?}", transposed);
+        let x = transpose(transposed[1].clone());
+        println!("\n{:?}", x);
+    }
+
+    #[test]
     fn test_transpose_flatten() {
         let matrix = vec![vec![vec![(); 8]; 4], vec![vec![(); 8]; 4]];
         let transposed = transpose_flatten(matrix);
@@ -172,18 +274,6 @@ mod test {
             transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
             vec![15; 4]
         );
-    }
-
-    #[test]
-    fn test_chunk_and_concatenate_operands() {
-        let x = 0b10101010101010;
-        let y = 0b11001100110011;
-        let C = 4;
-        let log_M = 8;
-        let indices = chunk_and_concatenate_operands(x, y, C, log_M);
-        let indices_alt = chunk_and_concatenate_operands_alt(x, y, C, log_M);
-        assert_eq!(indices, indices_alt);
-        println!("{:?}", indices);
     }
 
     fn chunk_and_concatenate_operands_alt(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
@@ -210,18 +300,5 @@ mod test {
                 ((left << operand_bits) ^ right) as usize
             })
             .collect()
-    }
-
-    #[test]
-    fn test_transpose() {
-        let matrix = vec![
-            vec![vec![1; 4], vec![2; 4]],
-            vec![vec![3; 4], vec![4; 4]],
-            vec![vec![5; 4], vec![6; 4]],
-        ];
-        let transposed = transpose(matrix);
-        println!("{:?}", transposed);
-        let x = transpose(transposed[1].clone());
-        println!("\n{:?}", x);
     }
 }

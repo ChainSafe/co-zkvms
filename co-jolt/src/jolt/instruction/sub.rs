@@ -1,16 +1,17 @@
-use ark_std::log2;
 use crate::field::JoltField;
+use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
+use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
-    concatenate_lookups_rep3_batched,
+    concatenate_lookups_rep3_batched, rep3_add_and_chunk_operands,
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
@@ -111,23 +112,27 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
 
     fn to_indices_rep3(
         &self,
+        z: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
     ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SUBInstruction::to_indices called with non-binary operands"),
-        }
+        // add_and_chunk_operands(*x as u128, (1u128 << WORD_SIZE) - *y as u128, C, log_M)
+        rep3_add_and_chunk_operands(z, C, log_M)
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SUBInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        _: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let z = steps
+            .into_iter()
+            .map(|Self(x, y)| FutureVal::Ready(x.as_arithmetic_share() - y.as_arithmetic_share()))
+            .collect::<Vec<_>>();
+        Ok(z)
     }
 }

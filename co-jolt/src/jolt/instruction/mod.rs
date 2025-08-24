@@ -1,6 +1,7 @@
-use crate::utils::instruction_utils::chunk_operand;
-use enum_dispatch::enum_dispatch;
 use crate::field::JoltField;
+use crate::utils::instruction_utils::chunk_operand;
+use crate::utils::future::FutureVal;
+use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{
     self,
@@ -94,12 +95,20 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>;
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
+    fn to_indices_rep3(&self, output: &Rep3BigUintShare<F>, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F>>> {
+        Err(eyre::eyre!("output_batched not implemented for instruction"))
+    }
 }
 
 pub trait JoltInstructionSet<F: JoltField>:
@@ -137,23 +146,23 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
             let (op1, op2) = op.operands_mut();
             match (&op1, &op2) {
                 (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {
-                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                    *op1 = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
                         id,
                         &(*x).into(),
                     ));
-                    *op2.unwrap() = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                    *op2.unwrap() = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
                         id,
                         &(*y).into(),
                     ));
                 }
                 (Rep3Operand::Public(x), _) => {
-                    *op1 = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                    *op1 = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
                         id,
                         &(*x).into(),
                     ));
                 }
                 (_, Some(Rep3Operand::Public(y))) => {
-                    *op2.unwrap() = Rep3Operand::Binary(rep3::binary::promote_to_trivial_share(
+                    *op2.unwrap() = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
                         id,
                         &(*y).into(),
                     ));
@@ -200,7 +209,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
             rep3::conversion::a2b_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
         for operands in field_operands.into_iter() {
             for (output, operand) in outputs.drain(..operands.len()).zip(operands) {
-                *operand = Rep3Operand::Binary(output);
+                *operand = Rep3Operand::Shared(output);
             }
         }
         Ok(())
@@ -214,8 +223,10 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "u64", into = "u64")]
 pub enum Rep3Operand<F: JoltField> {
-    Arithmetic(Rep3PrimeFieldShare<F>),
-    Binary(Rep3BigUintShare<F>),
+    Shared {
+        binary: Rep3BigUintShare<F>,
+        arithmetic: Option<Rep3PrimeFieldShare<F>>,
+    },
     Public(u64),
 }
 
@@ -229,14 +240,14 @@ impl<F: JoltField> Rep3Operand<F> {
 
     pub fn as_arithmetic_share(&self) -> Rep3PrimeFieldShare<F> {
         match self {
-            Rep3Operand::Arithmetic(x) => *x,
+            Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             _ => panic!("Not an arithmetic operand"),
         }
     }
 
     pub fn as_binary_share(&self) -> Rep3BigUintShare<F> {
         match self {
-            Rep3Operand::Binary(x) => x.clone(),
+            Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),
         }
     }
@@ -248,15 +259,9 @@ impl<F: JoltField> Default for Rep3Operand<F> {
     }
 }
 
-impl<F: JoltField> From<Rep3PrimeFieldShare<F>> for Rep3Operand<F> {
-    fn from(value: Rep3PrimeFieldShare<F>) -> Self {
-        Rep3Operand::Arithmetic(value)
-    }
-}
-
 impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand<F> {
     fn from(value: Rep3BigUintShare<F>) -> Self {
-        Rep3Operand::Binary(value)
+        Rep3Operand::Shared(value)
     }
 }
 

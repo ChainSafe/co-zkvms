@@ -1,5 +1,5 @@
-use itertools::{chain, izip, multizip, Itertools};
 use crate::field::JoltField;
+use itertools::{chain, izip, multizip, Itertools};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -11,10 +11,11 @@ use jolt_core::jolt::subtable::{
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
+use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
@@ -303,23 +304,43 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
 
     fn to_indices_rep3(
         &self,
+        _: &Rep3BigUintShare<F>,
         C: usize,
         log_M: usize,
-    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                rep3_chunk_and_concatenate_operands(x.clone(), y.clone(), C, log_M)
-            }
-            _ => panic!("SLTInstruction::to_indices called with non-binary operands"),
-        }
+    ) -> Vec<Rep3BigUintShare<F>> {
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SLTInstruction::output called with non-binary operands"),
-        }
+        unimplemented!()
+    }
+
+    fn output_batched<N: Rep3Network>(
+        &self,
+        steps: &[Self],
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        let (a, b): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share())) // TODO: as i32
+            .unzip();
+
+        // a < b is equivalent to !(a >= b)
+        let tmp = rep3::arithmetic::ge_many(&a, &b, io_ctx)?;
+        Ok(tmp
+            .into_iter()
+            .map(|x| {
+                FutureVal::Ready(rep3::arithmetic::sub_public_by_shared(
+                    F::one(),
+                    x,
+                    io_ctx.id,
+                ))
+            })
+            .collect())
     }
 }
