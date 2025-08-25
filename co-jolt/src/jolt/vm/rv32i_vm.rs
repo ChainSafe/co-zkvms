@@ -113,68 +113,76 @@ impl<F: JoltField> CanonicalSerialize for RV32I<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        JoltInstructionSet::enum_index(self).serialize_with_mode(&mut writer, compress)?;
+        (JoltInstructionSet::enum_index(self) as u8).serialize_with_mode(&mut writer, compress)?;
         match self {
-            RV32I::ADD(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SUB(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::AND(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::OR(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::XOR(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BEQ(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BGE(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BGEU(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BNE(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLT(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLTU(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLL(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SRA(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SRL(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MOVSIGN(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MUL(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MULU(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MULHU(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ADVICE(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_MOVE(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_LTE(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_VALID_DIV0(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_POW2(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_SRA_PADDING(instruction) => instruction.serialize_with_mode(&mut writer, compress)?,
+            RV32I::ADD(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SUB(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::AND(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::OR(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::XOR(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::BEQ(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::BGE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::BGEU(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::BNE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SLT(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SLTU(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SLL(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SRA(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::SRL(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::MOVSIGN(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::MUL(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::MULU(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::MULHU(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_ADVICE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_MOVE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_ASSERT_LTE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(op) => {
+                op.serialize_with_mode(&mut writer, compress)?
+            }
+            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(op) => {
+                op.serialize_with_mode(&mut writer, compress)?
+            }
+            RV32I::VIRTUAL_ASSERT_VALID_DIV0(op) => {
+                op.serialize_with_mode(&mut writer, compress)?
+            }
+            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(op) => {
+                op.serialize_with_mode(&mut writer, compress)?
+            }
+            RV32I::VIRTUAL_POW2(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_SRA_PADDING(op) => op.serialize_with_mode(&mut writer, compress)?,
         };
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-       let size = match self {
-            RV32I::ADD(instruction) => instruction.serialized_size(compress),
-            RV32I::SUB(instruction) => instruction.serialized_size(compress),
-            RV32I::AND(instruction) => instruction.serialized_size(compress),
-            RV32I::OR(instruction) => instruction.serialized_size(compress),
-            RV32I::XOR(instruction) => instruction.serialized_size(compress),
-            RV32I::BEQ(instruction) => instruction.serialized_size(compress),
-            RV32I::BGE(instruction) => instruction.serialized_size(compress),
-            RV32I::BGEU(instruction) => instruction.serialized_size(compress),
-            RV32I::BNE(instruction) => instruction.serialized_size(compress),
-            RV32I::SLT(instruction) => instruction.serialized_size(compress),
-            RV32I::SLTU(instruction) => instruction.serialized_size(compress),
-            RV32I::SLL(instruction) => instruction.serialized_size(compress),
-            RV32I::SRA(instruction) => instruction.serialized_size(compress),
-            RV32I::SRL(instruction) => instruction.serialized_size(compress),
-            RV32I::MOVSIGN(instruction) => instruction.serialized_size(compress),
-            RV32I::MUL(instruction) => instruction.serialized_size(compress),
-            RV32I::MULU(instruction) => instruction.serialized_size(compress),
-            RV32I::MULHU(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ADVICE(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_MOVE(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ASSERT_LTE(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ASSERT_VALID_DIV0(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_POW2(instruction) => instruction.serialized_size(compress),
-            RV32I::VIRTUAL_SRA_PADDING(instruction) => instruction.serialized_size(compress),
+        let size = match self {
+            RV32I::ADD(op) => op.serialized_size(compress),
+            RV32I::SUB(op) => op.serialized_size(compress),
+            RV32I::AND(op) => op.serialized_size(compress),
+            RV32I::OR(op) => op.serialized_size(compress),
+            RV32I::XOR(op) => op.serialized_size(compress),
+            RV32I::BEQ(op) => op.serialized_size(compress),
+            RV32I::BGE(op) => op.serialized_size(compress),
+            RV32I::BGEU(op) => op.serialized_size(compress),
+            RV32I::BNE(op) => op.serialized_size(compress),
+            RV32I::SLT(op) => op.serialized_size(compress),
+            RV32I::SLTU(op) => op.serialized_size(compress),
+            RV32I::SLL(op) => op.serialized_size(compress),
+            RV32I::SRA(op) => op.serialized_size(compress),
+            RV32I::SRL(op) => op.serialized_size(compress),
+            RV32I::MOVSIGN(op) => op.serialized_size(compress),
+            RV32I::MUL(op) => op.serialized_size(compress),
+            RV32I::MULU(op) => op.serialized_size(compress),
+            RV32I::MULHU(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ADVICE(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_MOVE(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ASSERT_LTE(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ASSERT_VALID_DIV0(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_POW2(op) => op.serialized_size(compress),
+            RV32I::VIRTUAL_SRA_PADDING(op) => op.serialized_size(compress),
         };
         JoltInstructionSet::enum_index(self).serialized_size(compress) + size
     }
@@ -186,16 +194,8 @@ impl<F: JoltField> CanonicalDeserialize for RV32I<F> {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        // TODO(protoben) Can we use strum for this?
+        // TODO: Can we use strum for this?
         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        // let res = match discriminant {
-        //     0 => MemoryOp::Read(u64::deserialize_with_mode(&mut reader, compress, validate)?),
-        //     1 => MemoryOp::Write(
-        //         u64::deserialize_with_mode(&mut reader, compress, validate)?,
-        //         u64::deserialize_with_mode(&mut reader, compress, validate)?,
-        //     ),
-        //     _ => Err(SerializationError::InvalidData)?,
-        // };
         let res = match discriminant {
             0 => RV32I::ADD(ADDInstruction::<WORD_SIZE, F>::deserialize_with_mode(
                 reader, compress, validate,
@@ -283,16 +283,10 @@ impl<F: JoltField> CanonicalDeserialize for RV32I<F> {
             >::deserialize_with_mode(
                 reader, compress, validate
             )?),
-            25 => RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(AssertHalfwordAlignmentInstruction::<
-                WORD_SIZE,
-                F,
-            >::deserialize_with_mode(
-                reader, compress, validate
-            )?),
-            26 => RV32I::VIRTUAL_POW2(POW2Instruction::<WORD_SIZE, F>::deserialize_with_mode(
+            25 => RV32I::VIRTUAL_POW2(POW2Instruction::<WORD_SIZE, F>::deserialize_with_mode(
                 reader, compress, validate,
             )?),
-            27 => RV32I::VIRTUAL_SRA_PADDING(
+            26 => RV32I::VIRTUAL_SRA_PADDING(
                 RightShiftPaddingInstruction::<WORD_SIZE, F>::deserialize_with_mode(
                     reader, compress, validate,
                 )?,

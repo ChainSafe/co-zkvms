@@ -45,6 +45,7 @@ use mpc_net::{
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
 use std::env;
+use std::iter::Inspect;
 use std::path::{Path, PathBuf};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_forest::util::LevelFilter;
@@ -186,13 +187,15 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     if args.debug {
         return Ok(());
     }
-    icicle_init();
+    // icicle_init();
 
     let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
-    let (program_io, trace): (JoltDevice, Vec<JoltTraceStep<F, RV32I<F>>>) =
-        network.receive_request()?;
+    let program_io: JoltDevice = network.receive_request()?;
+    println!("received program_io");
+    let trace: Vec<JoltTraceStep<F, RV32I<F>>> = network.receive_request()?;
+    println!("received trace");
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -294,27 +297,37 @@ pub fn run_coordinator(
     .unwrap();
     network.trim_subnets(1).unwrap();
 
-    network.broadcast_request((program_io.clone(), trace.clone()))?;
+    use strum::IntoEnumIterator;
+    RV32I::<F>::iter().for_each(|ins| {
+        println!(
+            "index: {} name: {}",
+            <RV32I::<F> as JoltInstructionSet::<F>>::enum_index(&ins),
+            ins.as_ref().to_string()
+        )
+    });
+
+    network.broadcast_request(program_io.clone())?;
+    network.broadcast_request(trace.clone())?;
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
-        Some((trace, program_io.clone())),
+        None, // Some((trace, program_io.clone())),
         &mut network,
     )?;
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
 
-    let (proof, commitments) = RV32IJoltVM::prove_rep3(
-        meta,
-        // &program_io,
-        &spartan_key,
-        &preprocessing.shared,
-        &mut network,
-    )?;
+    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
+    //     meta,
+    //     // &program_io,
+    //     &spartan_key,
+    //     &preprocessing.shared,
+    //     &mut network,
+    // )?;
 
-    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
-        .context("while verifying Lasso (rep3) proof")?;
+    // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+    //     .context("while verifying Lasso (rep3) proof")?;
 
     network.log_connection_stats(None);
 
