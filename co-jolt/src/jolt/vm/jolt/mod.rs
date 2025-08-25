@@ -15,6 +15,7 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -31,6 +32,11 @@ use crate::jolt::{
     instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
+use jolt_core::{
+    jolt::subtable::JoltSubtableSet,
+    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
+    utils::transcript::AppendToTranscript,
+};
 use jolt_core::{
     jolt::{
         instruction::{
@@ -55,13 +61,8 @@ use jolt_core::{
         spartan::{self, UniformSpartanProof},
     },
 };
-use jolt_core::{
-    jolt::subtable::JoltSubtableSet,
-    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
-    utils::transcript::AppendToTranscript,
-};
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,

@@ -1,10 +1,15 @@
 use eyre::Context;
+use jolt_core::jolt::instruction::SubtableIndices;
+use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::field::JoltField;
+use crate::jolt::instruction::{JoltInstruction, Rep3JoltInstruction};
 use crate::utils::future::FutureVal;
+use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
+use crate::{field::JoltField, jolt::instruction::Rep3Operand};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
@@ -12,16 +17,16 @@ use mpc_core::protocols::rep3::{
     Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
-use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-
-use crate::{
-    jolt::instruction::SubtableIndices,
-    utils::instruction_utils::{
-        chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
-    },
-};
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct BNEInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for BNEInstruction<F> {

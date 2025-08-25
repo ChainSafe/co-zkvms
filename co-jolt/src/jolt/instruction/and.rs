@@ -1,5 +1,5 @@
 use ark_std::log2;
-use eyre::{Context, Ok};
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -21,9 +21,19 @@ use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct ANDInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for ANDInstruction<F> {

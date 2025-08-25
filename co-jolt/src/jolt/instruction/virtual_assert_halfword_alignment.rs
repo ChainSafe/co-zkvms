@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -17,7 +18,16 @@ use jolt_core::utils::instruction_utils::{add_and_chunk_operands, assert_valid_p
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
 /// (address, offset)
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 pub struct AssertHalfwordAlignmentInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

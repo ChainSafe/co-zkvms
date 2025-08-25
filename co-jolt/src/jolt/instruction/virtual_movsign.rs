@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use num_bigint::BigUint;
@@ -24,7 +25,16 @@ use crate::utils::instruction_utils::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 pub struct MOVSIGNInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
 
 // Constants for 32-bit and 64-bit word sizes

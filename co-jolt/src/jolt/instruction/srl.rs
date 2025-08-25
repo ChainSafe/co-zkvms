@@ -3,6 +3,7 @@ use std::iter::Sum;
 use std::ops::Shr;
 
 use crate::field::JoltField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -23,7 +24,16 @@ use crate::utils::{
 };
 use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct SRLInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

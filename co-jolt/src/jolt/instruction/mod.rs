@@ -1,6 +1,9 @@
 use crate::field::JoltField;
 use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::chunk_operand;
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
 use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{
@@ -137,6 +140,8 @@ pub trait JoltInstructionSet<F: JoltField>:
     + AsRef<str>
     + Send
     + Sync
+    + CanonicalSerialize
+    + CanonicalDeserialize
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -318,6 +323,80 @@ impl<F: JoltField> Into<u64> for Rep3Operand<F> {
         match self {
             Rep3Operand::Public(x) => x,
             _ => panic!("Cannot convert Rep3Operand to u64"),
+        }
+    }
+}
+
+impl<F: JoltField> CanonicalSerialize for Rep3Operand<F> {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Rep3Operand::Public(x) => {
+                (0_u8).serialize_with_mode(&mut writer, compress)?;
+                x.serialize_with_mode(&mut writer, compress)?;
+            }
+            Rep3Operand::Shared { binary, arithmetic } => {
+                (1_u8).serialize_with_mode(&mut writer, compress)?;
+                binary.serialize_with_mode(&mut writer, compress)?;
+                arithmetic.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Rep3Operand::Public(x) => {
+                (0_u8).serialized_size(compress) + x.serialized_size(compress)
+            }
+            Rep3Operand::Shared { binary, arithmetic } => {
+                (1_u8).serialized_size(compress)
+                    + binary.serialized_size(compress)
+                    + arithmetic.serialized_size(compress)
+            }
+        }
+    }
+}
+
+impl<F: JoltField> CanonicalDeserialize for Rep3Operand<F> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let res = match discriminant {
+            0 => Rep3Operand::Public(u64::deserialize_with_mode(&mut reader, compress, validate)?),
+            1 => Rep3Operand::Shared {
+                binary: Rep3BigUintShare::<F>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
+                arithmetic: Option::<Rep3PrimeFieldShare<F>>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
+            },
+            _ => Err(SerializationError::InvalidData)?,
+        };
+        Ok(res)
+    }
+}
+
+impl<F: JoltField> Valid for Rep3Operand<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Rep3Operand::Public(value) => value.check(),
+            Rep3Operand::Shared { binary, arithmetic } => {
+                binary.check()?;
+                arithmetic.check()?;
+                Ok(())
+            }
         }
     }
 }

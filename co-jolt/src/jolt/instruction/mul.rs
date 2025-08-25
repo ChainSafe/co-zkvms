@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
@@ -25,7 +26,16 @@ use jolt_core::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, multiply_and_chunk_operands,
 };
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct MULInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

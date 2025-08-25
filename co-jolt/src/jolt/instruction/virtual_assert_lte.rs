@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 #[cfg(feature = "public-eq")]
 use mpc_core::protocols::additive;
@@ -19,7 +20,16 @@ use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 pub struct ASSERTLTEInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

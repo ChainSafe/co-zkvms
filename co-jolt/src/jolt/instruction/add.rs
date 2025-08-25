@@ -14,9 +14,19 @@ use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, rep3_add_and_chunk_operands,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct ADDInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

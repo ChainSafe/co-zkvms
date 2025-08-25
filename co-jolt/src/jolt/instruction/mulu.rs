@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use rand::prelude::StdRng;
@@ -17,7 +18,16 @@ use crate::utils::instruction_utils::{
     rep3_multiply_and_chunk_operands,
 };
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct MULUInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

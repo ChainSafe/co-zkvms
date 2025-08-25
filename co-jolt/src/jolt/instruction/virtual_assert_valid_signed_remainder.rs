@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -23,7 +24,16 @@ use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 /// (remainder, divisor)
 pub struct AssertValidSignedRemainderInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,

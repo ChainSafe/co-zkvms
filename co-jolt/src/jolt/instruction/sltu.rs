@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::multizip;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -20,7 +21,16 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct SLTUInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for SLTUInstruction<F> {

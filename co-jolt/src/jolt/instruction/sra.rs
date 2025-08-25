@@ -2,6 +2,7 @@ use itertools::izip;
 use std::iter::Sum;
 use std::ops::Shr;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,16 @@ use crate::utils::instruction_utils::{
 };
 use jolt_core::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct SRAInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,

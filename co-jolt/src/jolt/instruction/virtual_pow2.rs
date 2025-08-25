@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -11,7 +12,16 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 pub struct POW2Instruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
 
 impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for POW2Instruction<WORD_SIZE, F> {

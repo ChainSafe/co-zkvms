@@ -8,7 +8,10 @@ use crate::{
         },
     },
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
+    poly::{
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        Rep3MultilinearPolynomial,
+    },
     r1cs::spartan::worker::Rep3UniformSpartanProver,
     utils::transcript::{Transcript, TranscriptExt},
 };
@@ -111,11 +114,11 @@ where
                     io_ctx.worker(0),
                 )?;
 
-                let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
-                    &preprocessing.shared.read_write_memory,
-                    program_io,
-                    io_ctx.main(),
-                )?;
+                // let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
+                //     &preprocessing.shared.read_write_memory,
+                //     program_io,
+                //     io_ctx.main(),
+                // )?;
 
                 let trace_length = trace.len();
                 let padded_trace_length = trace_length.next_power_of_two();
@@ -138,6 +141,11 @@ where
 
                     io_ctx.network().send_response(meta)?;
                 }
+
+                let program_io = Rep3ProgramIO {
+                    v_io: Rep3MultilinearPolynomial::public_zero(1),
+                    memory_layout,
+                };
 
                 (polynomials, program_io, trace_length)
             }

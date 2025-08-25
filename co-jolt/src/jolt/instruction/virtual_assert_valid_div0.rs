@@ -1,5 +1,6 @@
 use std::mem;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,16 @@ use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 /// (divisor, quotient)
 pub struct AssertValidDiv0Instruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,

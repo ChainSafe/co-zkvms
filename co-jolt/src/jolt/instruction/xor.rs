@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use itertools::izip;
@@ -17,7 +18,16 @@ use crate::utils::instruction_utils::{
 };
 use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct XORInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> XORInstruction<F> {

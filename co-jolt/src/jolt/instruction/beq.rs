@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::field::JoltField;
 use crate::utils::future::FutureVal;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 
 use mpc_core::protocols::rep3::{
@@ -23,7 +24,16 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct BEQInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for BEQInstruction<F> {

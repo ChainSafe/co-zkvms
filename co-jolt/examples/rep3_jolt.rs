@@ -2,6 +2,8 @@ use ark_ff::{Field, UniformRand};
 use ark_std::test_rng;
 use clap::Parser;
 use co_jolt::field::JoltField;
+use co_jolt::jolt::instruction::Rep3JoltInstructionSet;
+use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
 use co_jolt::utils::math::Math;
 use co_jolt::{
     host,
@@ -29,6 +31,7 @@ use color_eyre::{
 use itertools::Itertools;
 use jolt_core::{jolt::vm::JoltProverPreprocessing, msm::icicle_init};
 use jolt_tracer::JoltDevice;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -139,26 +142,19 @@ fn main() -> Result<()> {
     // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     let inputs = postcard::to_stdvec(&9u32).unwrap();
 
-
     // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
     } else {
-        run_party(args, config, program, inputs)?;
+        run_party(args, config, program)?;
     }
 
     Ok(())
 }
 
-pub fn run_party(
-    args: Args,
-    config: NetworkConfig,
-    mut program: host::Program,
-    inputs: Vec<u8>,
-) -> Result<()> {
+pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace::<F>(&inputs);
 
     let my_id = config.my_id;
     let file = format!(
@@ -166,10 +162,6 @@ pub fn run_party(
         my_id,
         args.num_iterations,
         num_cpus::get(),
-        // std::time::SystemTime::now()
-        //     .duration_since(std::time::UNIX_EPOCH)
-        //     .unwrap()
-        //     .as_secs()
     );
 
     let tracing_guard = match args.trace_parties {
@@ -196,8 +188,11 @@ pub fn run_party(
     }
     icicle_init();
 
-    let network =
+    let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
+
+    let (program_io, trace): (JoltDevice, Vec<JoltTraceStep<F, RV32I<F>>>) =
+        network.receive_request()?;
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -210,13 +205,20 @@ pub fn run_party(
         trace.len().next_power_of_two(),
     );
 
+    let program_io = Rep3ProgramIOInput::<F> {
+        input: vec![],
+        output: vec![],
+        panic: Rep3PrimeFieldShare::zero_share(),
+        memory_layout: program_io.memory_layout,
+    };
+
     let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
-        None,
+        Some((trace, program_io)),
         preprocessing,
         network,
     )?;
 
-    prover.prove()?;
+    // prover.prove()?;
 
     prover.io_ctx.network().log_connection_stats();
     // drop(_enter);
@@ -291,6 +293,9 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
+
+    network.broadcast_request((program_io.clone(), trace.clone()))?;
+
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
         Some((trace, program_io.clone())),
@@ -307,8 +312,6 @@ pub fn run_coordinator(
         &preprocessing.shared,
         &mut network,
     )?;
-
-    
 
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;

@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use itertools::izip;
 use rand::prelude::StdRng;
@@ -20,7 +21,16 @@ use crate::utils::instruction_utils::{
 };
 use jolt_core::utils::instruction_utils::concatenate_lookups;
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    PartialEq,
+)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
 
 impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADVICEInstruction<WORD_SIZE, F> {

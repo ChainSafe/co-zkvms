@@ -1198,6 +1198,7 @@ dependencies = [
  "ark-poly-commit",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
+ "bincode",
  "clap",
  "color-eyre",
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
@@ -1346,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#5e3982ed56efa1401725e3ff2dfd9589e5c25c28"
 dependencies = [
  "ark-serialize 0.5.0",
  "serde",
@@ -2993,7 +2994,7 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#5e3982ed56efa1401725e3ff2dfd9589e5c25c28"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3104,7 +3105,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#5e3982ed56efa1401725e3ff2dfd9589e5c25c28"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3132,7 +3133,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#5e3982ed56efa1401725e3ff2dfd9589e5c25c28"
 dependencies = [
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "proc-macro2",
@@ -6125,7 +6126,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#5e3982ed56efa1401725e3ff2dfd9589e5c25c28"
 dependencies = [
  "clap",
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",

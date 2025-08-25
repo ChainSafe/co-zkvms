@@ -1,2 +1,3 @@
-pub trait JoltField = jolt_core::field::JoltField + snarks_core::field::FieldExt;
+use serde::{de::DeserializeOwned, Serialize};
 
+pub trait JoltField = jolt_core::field::JoltField + snarks_core::field::FieldExt;

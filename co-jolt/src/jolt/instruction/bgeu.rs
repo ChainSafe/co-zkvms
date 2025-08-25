@@ -18,8 +18,18 @@ use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct BGEUInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
 
 impl<F: JoltField> JoltInstruction<F> for BGEUInstruction<F> {

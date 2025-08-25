@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
@@ -16,7 +17,16 @@ use crate::utils::instruction_utils::{
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+)]
 pub struct MULHUInstruction<const WORD_SIZE: usize, F: JoltField>(
     pub Rep3Operand<F>,
     pub Rep3Operand<F>,
