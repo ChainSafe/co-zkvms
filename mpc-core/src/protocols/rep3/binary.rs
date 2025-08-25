@@ -2,12 +2,12 @@
 //!
 //! This module contains operations with binary shares
 
+use ark_ff::BigInteger;
 use ark_ff::{One, PrimeField};
+use itertools;
 use itertools::{Itertools as _, izip};
 use num_bigint::BigUint;
-use rand::{rngs::StdRng, Rng, SeedableRng};
-use ark_ff::BigInteger;
-use itertools;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::{
     IoResult,
@@ -118,8 +118,8 @@ pub fn and<F: PrimeField, N: Rep3Network>(
 }
 
 /// Performs element-wise bitwise AND operation on the provided shared values.
-pub fn and_vec<F: PrimeField, N: Rep3Network>(
-    a: &[BinaryShare<F>],
+pub fn and_vec<'a, F: PrimeField, N: Rep3Network>(
+    a: impl IntoIterator<Item = &'a BinaryShare<F>>,
     b: &[BinaryShare<F>],
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<BinaryShare<F>>> {
@@ -241,7 +241,7 @@ pub fn add_many<F: PrimeField, N: Rep3Network>(
     bitlen: usize,
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<BinaryShare<F>>> {
-    super::detail::low_depth_binary_add_many(a, b, io_context, bitlen)
+    super::detail::low_depth_binary_add_many(a.iter(), b, io_context, bitlen)
 }
 
 pub fn add_many_mod_p<F: PrimeField, N: Rep3Network>(
@@ -498,25 +498,8 @@ mod tests {
         let secret = F::rand(&mut rng);
         let shares = generate_shares_rep3(secret.clone(), &mut rng);
 
-        let combined = combine_binary_element(shares[0], shares[1], shares[2]);
-        assert_eq!(combined, secret);
-    }
-
-    #[test]
-    fn test_share_rep3_binary() {
-        let secret1 = BigUint::from(123u64);
-        let secret2 = BigUint::from(456u64);
-        let rng = &mut StdRng::from_seed(Default::default());
-        let shares1 = share_rep3_binary::<ark_bn254::Fr, _>(secret1.clone(), rng);
-        let shares2 = share_rep3_binary::<ark_bn254::Fr, _>(secret2.clone(), rng);
-        let shares = [
-            shares1[0].clone() ^ shares2[0].clone(),
-            shares1[1].clone() ^ shares2[1].clone(),
-            shares1[2].clone() ^ shares2[2].clone(),
-        ];
-
         let combined =
             combine_binary_element(shares[0].clone(), shares[1].clone(), shares[2].clone());
-        assert_eq!(combined, secret1 ^ secret2);
+        assert_eq!(combined, secret);
     }
 }

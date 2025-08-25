@@ -1,6 +1,6 @@
 use crate::field::JoltField;
-use crate::utils::instruction_utils::chunk_operand;
 use crate::utils::future::FutureVal;
+use crate::utils::instruction_utils::chunk_operand;
 use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{
@@ -77,6 +77,9 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
 
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
 
+    fn lhs_ref(&self) -> &Rep3Operand<F>;
+    fn rhs(&self) -> Option<&Rep3Operand<F>>;
+
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
@@ -95,19 +98,34 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>;
 
-    fn to_indices_rep3(&self, output: &Rep3BigUintShare<F>, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>>;
+    fn to_indices_intermediate(
+        &self,
+        z: &Rep3PrimeFieldShare<F>,
+    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+        FutureVal::Ready(None)
+    }
+
+    fn to_indices_rep3(
+        &self,
+        z: Option<Rep3BigUintShare<F>>,
+        C: usize,
+        log_M: usize,
+    ) -> Vec<Rep3BigUintShare<F>>;
 
     fn output<N: Rep3Network>(
         &self,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F>>> {
-        Err(eyre::eyre!("output_batched not implemented for instruction"))
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        Err(eyre::eyre!(
+            "output_batched not implemented for instruction"
+        ))
     }
 }
 
@@ -138,63 +156,73 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
         byte as usize
     }
 
-    fn promote_public_operands_to_binary<'a>(
+    fn promote_public_operands_to_shared<'a>(
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         id: PartyID,
     ) {
         ops.filter_map(|op| op.as_mut()).for_each(|op| {
             let (op1, op2) = op.operands_mut();
-            match (&op1, &op2) {
-                (Rep3Operand::Public(x), Some(Rep3Operand::Public(y))) => {
-                    *op1 = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*x).into(),
-                    ));
-                    *op2.unwrap() = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*y).into(),
-                    ));
-                }
-                (Rep3Operand::Public(x), _) => {
-                    *op1 = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*x).into(),
-                    ));
-                }
-                (_, Some(Rep3Operand::Public(y))) => {
-                    *op2.unwrap() = Rep3Operand::Shared(rep3::binary::promote_to_trivial_share(
-                        id,
-                        &(*y).into(),
-                    ));
-                }
-                _ => {}
+
+            if let Rep3Operand::Public(x) = op1 {
+                *op1 = Rep3Operand::Shared {
+                    binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
+                    arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                };
+            }
+
+            if let Some(Rep3Operand::Public(x)) = op2 {
+                *op2.unwrap() = Rep3Operand::Shared {
+                    binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
+                    arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                };
             }
         });
     }
 
     #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::operands_to_binary")]
-    fn operands_a2b_many<'a, N: Rep3Network>(
+    fn operands_b2a_many<'a, N: Rep3Network>(
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
         let (inputs, field_operands): (
-            Vec<Vec<Rep3PrimeFieldShare<F>>>,
+            Vec<Vec<Rep3BigUintShare<F>>>,
             Vec<Vec<&mut Rep3Operand<F>>>,
         ) = ops
             .filter_map(|op| op.as_mut())
             .map(|op| {
                 let (op1, op2) = op.operands_mut();
                 match (&op1, &op2) {
-                    (Rep3Operand::Arithmetic(x), Some(Rep3Operand::Arithmetic(y))) => {
-                        let res = vec![*x, *y];
+                    (
+                        Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: x,
+                        },
+                        Some(Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: y,
+                        }),
+                    ) => {
+                        let res = vec![x.clone(), y.clone()];
                         (res, vec![op1, op2.unwrap()])
                     }
-                    (Rep3Operand::Arithmetic(x), _) => {
-                        let res = vec![*x];
+                    (
+                        Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: x,
+                        },
+                        _,
+                    ) => {
+                        let res = vec![x.clone()];
                         (res, vec![op1])
                     }
-                    (_, Some(Rep3Operand::Arithmetic(y))) => {
-                        let res = vec![*y];
+                    (
+                        _,
+                        Some(Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: y,
+                        }),
+                    ) => {
+                        let res = vec![y.clone()];
                         (res, vec![op2.unwrap()])
                     }
                     _ => (vec![], vec![]),
@@ -206,10 +234,21 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
             return Ok(());
         }
         let mut outputs =
-            rep3::conversion::a2b_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
+            rep3::conversion::b2a_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
         for operands in field_operands.into_iter() {
             for (output, operand) in outputs.drain(..operands.len()).zip(operands) {
-                *operand = Rep3Operand::Shared(output);
+                match operand {
+                    Rep3Operand::Shared {
+                        arithmetic: None,
+                        binary,
+                    } => {
+                        *operand = Rep3Operand::Shared {
+                            binary: std::mem::take(binary),
+                            arithmetic: Some(output),
+                        };
+                    }
+                    _ => panic!("Expected shared operand"),
+                }
             }
         }
         Ok(())
@@ -261,7 +300,10 @@ impl<F: JoltField> Default for Rep3Operand<F> {
 
 impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand<F> {
     fn from(value: Rep3BigUintShare<F>) -> Self {
-        Rep3Operand::Shared(value)
+        Rep3Operand::Shared {
+            binary: value,
+            arithmetic: None,
+        }
     }
 }
 

@@ -461,7 +461,7 @@ pub fn lt<F: PrimeField, N: Rep3Network>(
 pub fn lt_many<F: PrimeField, N: Rep3Network>(
     lhs: &[BinaryShare<F>],
     rhs: &[BinaryShare<F>],
-    io_context: &mut IoContext<N>,xz
+    io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<FieldShare<F>>> {
     // a < b is equivalent to !(a >= b)
     let res = ge_many(lhs, rhs, io_context)?;

@@ -567,7 +567,7 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
     ) -> eyre::Result<Vec<R>>
     where
         MapFn: Fn(Vec<T>, &mut IoContext<Network>) -> eyre::Result<Vec<R>> + Sync + Send,
-        T: Sized + Send + Clone,
+        T: Sized + Send,
         R: Sync + Send,
     {
         let inputs_iter = inputs.into_par_iter();

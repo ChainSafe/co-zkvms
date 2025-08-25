@@ -139,7 +139,7 @@ pub fn rep3_chunk_operand_usize<F: JoltField>(
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * chunk_len) as u32 as usize;
-            x.shr(shift) & bit_mask
+            x.clone().shr(shift) & bit_mask.clone()
         })
         .collect()
 }

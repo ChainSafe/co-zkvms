@@ -111,6 +111,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, None)
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        None
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -145,7 +153,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -159,14 +167,15 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let t: Vec<_> = steps
             .into_iter()
-            .map(|step| step.0.as_binary_share() & BigUint::from(SIGN_BIT_32))
+            .map(|step| step.lhs_ref().as_binary_share() & BigUint::from(SIGN_BIT_32))
             .collect();
 
         let zeros = vec![Rep3BigUintShare::zero_share(); t.len()];
@@ -177,10 +186,13 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             ];
 
         let cond = rep3::binary::is_zero_many(t, io_ctx)?;
-        Ok(rep3::binary::cmux_many(&cond, &zeros, &all_ones, io_ctx)
+        rep3::binary::cmux_many(&cond, &zeros, &all_ones, io_ctx)
             .context("Failed to cmux")?
             .into_iter()
-            .map(FutureVal::b2a)
-            .collect())
+            .zip(out)
+            .for_each(|(ready, out)| {
+                *out = FutureVal::b2a(ready);
+            });
+        Ok(())
     }
 }

@@ -3,11 +3,9 @@ use crate::{
     jolt::vm::witness::Rep3Polynomials,
     poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial},
 };
-use jolt_core::{
-    jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff},
-};
+use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff};
 use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
 use rand::Rng;
 
@@ -72,12 +70,12 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut [crate::jolt::vm::JoltTraceStep<F, Instructions>],
         M: usize,
-        network: mpc_core::protocols::rep3::network::IoContext<Network>,
+        network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: crate::jolt::instruction::JoltInstructionSet<F>
             + crate::jolt::instruction::Rep3JoltInstructionSet<F>,
-        Network: mpc_core::protocols::rep3::network::Rep3Network,
+        Network: Rep3NetworkWorker,
     {
         todo!()
     }

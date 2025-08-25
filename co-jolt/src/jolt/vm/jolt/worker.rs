@@ -108,7 +108,7 @@ where
                     &preprocessing.shared,
                     &mut trace,
                     M,
-                    io_ctx.fork().context("failed to fork io context")?,
+                    io_ctx.worker(0),
                 )?;
 
                 let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(

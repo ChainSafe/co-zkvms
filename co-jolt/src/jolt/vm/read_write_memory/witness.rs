@@ -1,8 +1,8 @@
+use crate::field::JoltField;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::rv_trace::MemoryLayout;
-use crate::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing,
     ReadWriteMemoryStuff,
@@ -10,7 +10,9 @@ use jolt_core::jolt::vm::read_write_memory::{
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 
 use jolt_tracer::JoltDevice;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network, Rep3NetworkCoordinator};
+use mpc_core::protocols::rep3::network::{
+    IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
+};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 pub type Rep3ReadWriteMemoryPolynomials<F> = ReadWriteMemoryStuff<Rep3MultilinearPolynomial<F>>;
@@ -117,12 +119,12 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         preprocessing: &ReadWriteMemoryPreprocessing,
         ops: &mut [crate::jolt::vm::JoltTraceStep<F, Instructions>],
         M: usize,
-        network: rep3::network::IoContext<Network>,
+        network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: crate::jolt::instruction::JoltInstructionSet<F>
             + crate::jolt::instruction::Rep3JoltInstructionSet<F>,
-        Network: rep3::network::Rep3Network,
+        Network: Rep3NetworkWorker,
     {
         todo!()
     }

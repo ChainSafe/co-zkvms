@@ -1,5 +1,5 @@
 use ark_std::log2;
-use eyre::Context;
+use eyre::{Context, Ok};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -105,7 +113,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -124,20 +132,27 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (x, y): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_binary_share(),
+                    st.rhs().unwrap().as_binary_share(),
+                )
+            })
             .unzip();
 
-        Ok(rep3::binary::and_vec(&x, &y, io_ctx)
+        rep3::binary::and_vec(&x, &y, io_ctx)
             .context("AND")?
             .into_iter()
-            .map(FutureVal::b2a)
-            .collect())
+            .zip(out)
+            .for_each(|(z, out)| *out = FutureVal::b2a(z));
+        Ok(())
     }
 }

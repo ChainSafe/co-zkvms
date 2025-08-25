@@ -1,7 +1,7 @@
+use eyre::Context;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use eyre::Context;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::field::JoltField;
@@ -9,9 +9,9 @@ use crate::utils::future::FutureVal;
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 
 use mpc_core::protocols::rep3::{
-    self, Rep3BigUintShare,
+    self,
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 #[cfg(feature = "public-eq")]
@@ -79,6 +79,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     #[tracing::instrument(skip_all, name = "BEQInstruction::combine_lookups", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
@@ -133,7 +141,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -149,20 +157,28 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BEQInstruction<F> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_arithmetic_share(), y.as_arithmetic_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_arithmetic_share(),
+                    st.rhs().unwrap().as_arithmetic_share(),
+                )
+            })
             .unzip();
 
-        Ok(rep3::arithmetic::eq_many(&a, &b, io_ctx)
+        rep3::arithmetic::eq_many(&a, &b, io_ctx)
             .context("BEQInstruction::output_batched")?
             .into_iter()
-            .map(FutureVal::Ready)
-            .collect())
+            .zip(out)
+            .for_each(|(z, out)| *out = FutureVal::Ready(z));
+
+        Ok(())
     }
 }

@@ -107,6 +107,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     #[tracing::instrument(skip_all, name = "SLTInstruction::combine_lookups", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
@@ -304,7 +312,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -320,27 +328,31 @@ impl<F: JoltField> Rep3JoltInstruction<F> for SLTInstruction<F> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share())) // TODO: as i32
+            .map(|st| {
+                (
+                    st.lhs_ref().as_binary_share(),
+                    st.rhs().unwrap().as_binary_share(),
+                )
+            }) // TODO: as i32
             .unzip();
 
         // a < b is equivalent to !(a >= b)
         let tmp = rep3::arithmetic::ge_many(&a, &b, io_ctx)?;
-        Ok(tmp
-            .into_iter()
-            .map(|x| {
-                FutureVal::Ready(rep3::arithmetic::sub_public_by_shared(
-                    F::one(),
-                    x,
-                    io_ctx.id,
-                ))
-            })
-            .collect())
+        tmp.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureVal::Ready(rep3::arithmetic::sub_public_by_shared(
+                F::one(),
+                x,
+                io_ctx.id,
+            ))
+        });
+        Ok(())
     }
 }

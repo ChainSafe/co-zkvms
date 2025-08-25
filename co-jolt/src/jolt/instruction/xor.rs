@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use ark_std::log2;
 use eyre::Context;
+use itertools::izip;
 use jolt_core::jolt::instruction::SubtableIndices;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
@@ -78,6 +79,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -104,7 +113,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -123,15 +132,17 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction<F> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
-        let z = steps
-            .into_iter()
-            .map(|step| FutureVal::b2a(step.0.as_binary_share() ^ step.1.as_binary_share()))
-            .collect::<Vec<_>>();
-        Ok(z)
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(step, out)| {
+            *out = FutureVal::b2a(
+                step.lhs_ref().as_binary_share() ^ step.rhs().unwrap().as_binary_share(),
+            )
+        });
+        Ok(())
     }
 }

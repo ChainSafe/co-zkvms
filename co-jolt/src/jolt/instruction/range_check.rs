@@ -112,7 +112,15 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
     }
 
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
-        (&mut self.0, None)
+        (&mut self.0, Some(&mut self.1))
+    }
+
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs_ref(&self) -> Option<&Rep3Operand<F>> {
+        None
     }
 
     fn combine_lookups_rep3<N: Rep3Network>(

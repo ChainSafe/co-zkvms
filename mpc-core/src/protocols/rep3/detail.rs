@@ -14,8 +14,8 @@ use itertools::izip;
 use num_bigint::BigUint;
 use std::any::TypeId;
 
-pub(crate) fn low_depth_binary_add_mod_p_many<F: PrimeField, N: Rep3Network>(
-    x1: &[BinaryShare<F>],
+pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>(
+    x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
     io_context: &mut IoContext<N>,
     bitlen: usize,
@@ -24,15 +24,16 @@ pub(crate) fn low_depth_binary_add_mod_p_many<F: PrimeField, N: Rep3Network>(
     low_depth_sub_p_cmux_many::<F, N>(&x, io_context, bitlen + 1)
 }
 
-pub(crate) fn low_depth_binary_add_many<F: PrimeField, N: Rep3Network>(
-    x1: &[BinaryShare<F>],
+pub(crate) fn low_depth_binary_add_many<'a, F: PrimeField, N: Rep3Network>(
+    x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
     io_context: &mut IoContext<N>,
     bitlen: usize,
 ) -> IoResult<Vec<Rep3BigUintShare<F>>> {
     // Add x1 + x2 via a packed Kogge-Stone adder
+    let (x1, x1_) = x1.into_iter().tee();
     let mut p = izip!(x1, x2).map(|(x1, x2)| x1 ^ x2).collect_vec();
-    let mut g = binary::and_vec(x1, x2, io_context)?;
+    let mut g = binary::and_vec(x1_, x2, io_context)?;
     kogge_stone_inner_many(&mut p, &mut g, io_context, bitlen)?;
     Ok(g)
 }
@@ -217,15 +218,28 @@ fn low_depth_binary_sub_many<F: PrimeField, N: Rep3Network>(
     // This is equivalent to x1 - x2 = x1 + two's complement of x2
     let mask = (BigUint::from(1u64) << bitlen) - BigUint::one();
     // bitnot of x2
-    let x2 = x2.iter().map(|x| binary::xor_public(x, &mask, io_context.id)).collect_vec();
+    let x2 = x2
+        .iter()
+        .map(|x| binary::xor_public(x, &mask, io_context.id))
+        .collect_vec();
     // Now start the Kogge-Stone adder
-    let mut p = x1.iter().zip(x2.iter()).map(|(x1, x2)| x1 ^ x2).collect_vec();
+    let mut p = x1
+        .iter()
+        .zip(x2.iter())
+        .map(|(x1, x2)| x1 ^ x2)
+        .collect_vec();
     let mut g = binary::and_vec(x1, &x2, io_context)?;
     // Since carry_in = 1, we need to XOR the LSB of x1 and x2 to g (i.e., xor the LSB of p)
-    g = g.iter().zip(p.iter()).map(|(g, p)| g ^ &(p & &BigUint::one())).collect_vec();
+    g = g
+        .iter()
+        .zip(p.iter())
+        .map(|(g, p)| g ^ &(p & &BigUint::one()))
+        .collect_vec();
 
     kogge_stone_inner_many(&mut p, &mut g, io_context, bitlen)?;
-    let res = g.into_iter().map(|r| binary::xor_public(&r, &BigUint::one(), io_context.id)); // cin=1
+    let res = g
+        .into_iter()
+        .map(|r| binary::xor_public(&r, &BigUint::one(), io_context.id)); // cin=1
     Ok(res)
 }
 
@@ -356,7 +370,9 @@ pub(crate) fn unsigned_ge_many<F: PrimeField, N: Rep3Network>(
 ) -> IoResult<Vec<Rep3BigUintShare<F>>> {
     let diff = low_depth_binary_sub_many(x, y, io_context, F::MODULUS_BIT_SIZE as usize)?;
 
-    Ok(diff.map(|r| &(&r >> F::MODULUS_BIT_SIZE as usize) & &BigUint::one()).collect_vec())
+    Ok(diff
+        .map(|r| &(&r >> F::MODULUS_BIT_SIZE as usize) & &BigUint::one())
+        .collect_vec())
 }
 
 /// Computes a binary circuit to compare the shared value y to the public value x, i.e., x > \[y\]. Thus, the input y is transformed from arithmetic to binary sharings using [Rep3Protocol::a2b] first. The output is a binary sharing of one bit.

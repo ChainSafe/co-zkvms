@@ -6,7 +6,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker},
+    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext},
 };
 
 use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
@@ -79,12 +79,12 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
         preprocessing: &NoPreprocessing,
         ops: &mut [crate::jolt::vm::JoltTraceStep<F, Instructions>],
         M: usize,
-        network: rep3::network::IoContext<Network>,
+        network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: crate::jolt::instruction::JoltInstructionSet<F>
             + crate::jolt::instruction::Rep3JoltInstructionSet<F>,
-        Network: rep3::network::Rep3Network,
+        Network: Rep3NetworkWorker,
     {
         unimplemented!()
     }

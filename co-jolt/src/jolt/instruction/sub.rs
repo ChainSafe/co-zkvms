@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use ark_std::log2;
+use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -110,29 +119,38 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         ))
     }
 
+    fn to_indices_intermediate(
+        &self,
+        z: &Rep3PrimeFieldShare<F>,
+    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+        FutureVal::a2b(*z)
+    }
+
     fn to_indices_rep3(
         &self,
-        z: &Rep3BigUintShare<F>,
+        z: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
         // add_and_chunk_operands(*x as u128, (1u128 << WORD_SIZE) - *y as u128, C, log_M)
-        rep3_add_and_chunk_operands(z, C, log_M)
+        rep3_add_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
-        let z = steps
-            .into_iter()
-            .map(|Self(x, y)| FutureVal::Ready(x.as_arithmetic_share() - y.as_arithmetic_share()))
-            .collect::<Vec<_>>();
-        Ok(z)
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(st, out)| {
+            *out = FutureVal::Ready(
+                st.lhs_ref().as_arithmetic_share() - st.rhs().unwrap().as_arithmetic_share(),
+            );
+        });
+        Ok(())
     }
 }

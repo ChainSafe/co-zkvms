@@ -4,21 +4,23 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{self,
-    network::{IoContext, Rep3Network}, Rep3BigUintShare, Rep3PrimeFieldShare
+use mpc_core::protocols::rep3::{
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{JoltInstruction, SubtableIndices};
+use crate::field::JoltField;
+use crate::utils::future::FutureVal;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     rep3_chunk_and_concatenate_operands,
 };
-use crate::utils::future::FutureVal;
 use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3_batched,
 };
-use crate::field::JoltField;
 use jolt_core::jolt::subtable::{or::OrSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -77,6 +79,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -103,28 +113,43 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ORInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
-        rep3_chunk_and_concatenate_operands(self.0.as_binary_share(), self.1.as_binary_share(), C, log_M)
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-       unimplemented!()
+        unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_binary_share(),
+                    st.rhs().unwrap().as_binary_share(),
+                )
+            })
             .unzip();
 
         let z = rep3::binary::or_vec(&a, &b, io_ctx).context("ORInstruction::output_batched")?;
-        Ok(z.into_iter().map(FutureVal::b2a).collect())
+        z.into_iter().zip(out).for_each(|(ready, out)| {
+            *out = FutureVal::b2a(ready);
+        });
+
+        Ok(())
     }
 }

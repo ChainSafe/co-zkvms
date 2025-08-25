@@ -25,6 +25,7 @@ use crate::jolt::instruction::{
     xor::XORInstruction, JoltInstruction, JoltInstructionSet, Rep3JoltInstruction,
     Rep3JoltInstructionSet, Rep3Operand, SubtableIndices,
 };
+use crate::utils::future::FutureVal;
 use crate::jolt::vm::{Jolt, JoltProof};
 use crate::r1cs::constraints::JoltRV32IMConstraints;
 use jolt_core::jolt::subtable::LassoSubtable;

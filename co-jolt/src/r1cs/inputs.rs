@@ -12,7 +12,7 @@ use jolt_core::r1cs::inputs::{
 };
 
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
 
 use crate::field::JoltField;
@@ -136,11 +136,11 @@ where
         _preprocessing: &NoPreprocessing,
         trace: &mut [JoltTraceStep<F, Instructions>],
         M: usize,
-        network: IoContext<Network>,
+        network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
-        Network: mpc_core::protocols::rep3::network::Rep3Network,
+        Network: Rep3NetworkWorker,
     {
         todo!()
     }

@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
@@ -9,7 +10,6 @@ use crate::utils::shared_or_public::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
-use crate::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use jolt_core::jolt::vm::timestamp_range_check::{
     TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
@@ -21,6 +21,7 @@ use jolt_core::r1cs::inputs::ConstraintInput;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{
     IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    WorkerIoContext,
 };
 use mpc_core::protocols::rep3::PartyID;
 use rand::Rng;
@@ -57,11 +58,11 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
         preprocessing: &Preprocessing,
         trace: &mut [JoltTraceStep<F, Instructions>],
         M: usize,
-        network: IoContext<Network>,
+        network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
-        Network: Rep3Network;
+        Network: Rep3NetworkWorker;
 
     fn combine_polynomials(
         preprocessing: &Preprocessing,
@@ -159,13 +160,13 @@ where
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         ops: &mut [JoltTraceStep<F, Instructions>],
         M: usize,
-        io_ctx: IoContext<Network>,
+        io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
-        Network: Rep3Network,
+        Network: Rep3NetworkWorker,
     {
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(
             &preprocessing.instruction_lookups,

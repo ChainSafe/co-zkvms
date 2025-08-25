@@ -1,3 +1,4 @@
+use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, None)
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        None
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         _: &[Rep3PrimeFieldShare<F>],
@@ -80,7 +89,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         _: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -98,22 +107,21 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         .into())
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
-        steps
-            .into_iter()
-            .map(|step| {
-                Ok(FutureVal::Ready(
-                    rep3::arithmetic::promote_to_trivial_share(
-                        io_ctx.id,
-                        F::from(1 << (step.0.as_public() % WORD_SIZE as u64)),
-                    )
-                    .into(),
-                ))
-            })
-            .collect()
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(step, out)| {
+            *out = FutureVal::Ready(
+                rep3::arithmetic::promote_to_trivial_share(
+                    io_ctx.id,
+                    F::from(1 << (step.lhs_ref().as_public() % WORD_SIZE as u64)),
+                )
+                .into(),
+            )
+        });
+        Ok(())
     }
 }

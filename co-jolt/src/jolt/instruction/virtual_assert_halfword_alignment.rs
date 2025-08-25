@@ -3,7 +3,7 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::field::JoltField;
+use crate::{field::JoltField, utils::instruction_utils::rep3_add_and_chunk_operands};
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -92,6 +92,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -124,14 +132,20 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             .collect::<Vec<_>>())
     }
 
+    fn to_indices_intermediate(
+        &self,
+        _: &Rep3PrimeFieldShare<F>,
+    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+        FutureVal::a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
+    }
+
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        z: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<rep3::Rep3BigUintShare<F>> {
-        unimplemented!()
-        // rep3_add_and_chunk_operands(self.0.as_binary_share(), C, log2(M) as usize)
+        rep3_add_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
     fn output<N: Rep3Network>(
@@ -141,25 +155,34 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         // (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
         //         as u64)
         //         .into()
 
         let (x, y): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|step| (step.0.as_binary_share(), step.1.as_binary_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_binary_share(),
+                    st.rhs().unwrap().as_binary_share(),
+                )
+            })
             .unzip();
         let z = rep3::binary::add_many(&x, &y, 32, io_ctx)?; // TODO: % 2
         let is_zero = rep3::binary::is_zero_many(z, io_ctx)?;
-        Ok(rep3::conversion::bit_inject_many(&is_zero, io_ctx)
+        rep3::conversion::bit_inject_many(&is_zero, io_ctx)
             .context("Failed to inject bits")?
             .into_iter()
-            .map(FutureVal::Ready)
-            .collect())
+            .zip(out)
+            .for_each(|(ready, out)| {
+                *out = FutureVal::Ready(ready);
+            });
+        Ok(())
     }
 }

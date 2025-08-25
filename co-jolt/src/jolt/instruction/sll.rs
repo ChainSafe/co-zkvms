@@ -1,4 +1,5 @@
 use ark_std::log2;
+use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -134,7 +143,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
@@ -150,20 +159,19 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
-        let z = steps
-            .into_iter()
-            .map(|Self(x, y)| {
-                FutureVal::b2a(
-                    x.as_binary_share()
-                        .shl((y.as_public() as u32 % WORD_SIZE as u32) as usize),
-                )
-            })
-            .collect::<Vec<_>>();
-        Ok(z)
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(st, out)| {
+            *out = FutureVal::b2a(
+                st.lhs_ref()
+                    .as_binary_share()
+                    .shl((st.rhs().unwrap().as_public() as u32 % WORD_SIZE as u32) as usize),
+            )
+        });
+        Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use ark_std::log2;
+use itertools::izip;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use rand::prelude::StdRng;
@@ -86,6 +87,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -111,30 +120,37 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
         ))
     }
 
+    fn to_indices_intermediate(
+        &self,
+        _: &Rep3PrimeFieldShare<F>,
+    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+        FutureVal::a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
+    }
+
     fn to_indices_rep3(
         &self,
-        output: &Rep3BigUintShare<F>,
+        z: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
-        rep3_add_and_chunk_operands(output, C, log_M)
+        rep3_add_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         Ok(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         _: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
-        let z = steps
-            .into_iter()
-            .map(|step| {
-                FutureVal::Ready(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
-            })
-            .collect::<Vec<_>>();
-        Ok(z)
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(step, out)| {
+            *out = FutureVal::Ready(
+                step.lhs_ref().as_arithmetic_share() + step.rhs().unwrap().as_arithmetic_share(),
+            )
+        });
+        Ok(())
     }
 }

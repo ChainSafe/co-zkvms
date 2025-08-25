@@ -126,6 +126,14 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
         vals: &[Rep3PrimeFieldShare<F>],
@@ -151,13 +159,20 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
         ))
     }
 
+    fn to_indices_intermediate(
+        &self,
+        z: &Rep3PrimeFieldShare<F>,
+    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+        FutureVal::a2b(*z)
+    }
+
     fn to_indices_rep3(
         &self,
-        z: &Rep3BigUintShare<F>,
+        z: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
-        rep3_multiply_and_chunk_operands(z, C, log_M)
+        rep3_multiply_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
     fn output<N: mpc_core::protocols::rep3::network::Rep3Network>(
@@ -167,20 +182,30 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for MULInstruc
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_arithmetic_share(), y.as_arithmetic_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_arithmetic_share(),
+                    st.rhs().unwrap().as_arithmetic_share(),
+                )
+            })
             .unzip();
 
-        Ok(rep3::arithmetic::mul_vec(&a, &b, io_ctx)
+        rep3::arithmetic::mul_vec(&a, &b, io_ctx)
             .context("MULInstruction::output_batched")?
             .into_iter()
-            .map(FutureVal::Ready)
-            .collect())
+            .zip(out)
+            .for_each(|(ready, out)| {
+                *out = FutureVal::Ready(ready);
+            });
+
+        Ok(())
     }
 }

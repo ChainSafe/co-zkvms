@@ -9,7 +9,9 @@ use jolt_core::jolt::subtable::{
     ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
 };
 use mpc_core::protocols::rep3::{
-    self, network::{IoContext, Rep3Network}, Rep3BigUintShare, Rep3PrimeFieldShare
+    self,
+    network::{IoContext, Rep3Network},
+    Rep3BigUintShare, Rep3PrimeFieldShare,
 };
 
 use super::{
@@ -90,6 +92,14 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
         (&mut self.0, Some(&mut self.1))
     }
 
+    fn lhs_ref(&self) -> &Rep3Operand<F> {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+        Some(&self.1)
+    }
+
     #[tracing::instrument(skip_all, name = "BGEInstruction::combine_lookups", level = "trace")]
     fn combine_lookups_rep3<N: Rep3Network>(
         &self,
@@ -141,31 +151,45 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: &Rep3BigUintShare<F>,
+        _: Option<Rep3BigUintShare<F>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3BigUintShare<F>> {
-        rep3_chunk_and_concatenate_operands(self.0.as_binary_share(), self.1.as_binary_share(), C, log_M)
+        rep3_chunk_and_concatenate_operands(
+            self.0.as_binary_share(),
+            self.1.as_binary_share(),
+            C,
+            log_M,
+        )
     }
 
     fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         unimplemented!()
     }
 
-    fn output_batched<N: Rep3Network>(
+    fn output_batched<'a, N: Rep3Network>(
         &self,
-        steps: &[Self],
+        steps: &[&impl Rep3JoltInstruction<F>],
         io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Vec<FutureVal<F, Rep3PrimeFieldShare<F>>>> {
+        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|Self(x, y)| (x.as_binary_share(), y.as_binary_share()))
+            .map(|st| {
+                (
+                    st.lhs_ref().as_binary_share(),
+                    st.rhs().unwrap().as_binary_share(),
+                )
+            })
             .unzip();
 
-        Ok(rep3::arithmetic::ge_many(&a, &b, io_ctx)
+        rep3::arithmetic::ge_many(&a, &b, io_ctx)
             .context("BGEInstruction::output_batched")?
             .into_iter()
-            .map(FutureVal::Ready)
-            .collect())
+            .zip(out)
+            .for_each(|(ge, out)| {
+                *out = FutureVal::Ready(ge);
+            });
+        Ok(())
     }
 }
