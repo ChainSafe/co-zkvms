@@ -3,11 +3,13 @@
 //! This module contains some algorithms to create a random one-hot encoded vector for the Rep3 protocol.
 
 use ark_ff::{One, Zero};
+use itertools::{Itertools, izip};
 use mpc_types::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
 use rand::{distributions::Standard, prelude::Distribution};
+use rayon::prelude::*;
 
 use crate::{
     IoResult,
@@ -74,6 +76,46 @@ pub fn ohv<T: IntRing2k, N: Rep3Network>(
     Ok(f)
 }
 
+/// Generates a one-hot-encoded vector of size k bits from a given secret shared index which is already decomposed into shared bits.
+/// The output is (r, e), where r is a binary sharing of the index of the set bit, wheras e is a vector of size 2^k with all bits zero except at index r.
+/// The algorithm is a rewrite of Protocol 5 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.
+pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
+    k: usize,
+    bits: impl IntoIterator<Item = Rep3RingShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
+    debug_assert!(k > 0);
+    debug_assert!(k <= T::K); // Make sure datatype is large enough for bitsize
+
+    let (bits, bits_vk) = bits.into_iter().tee();
+
+    let new_k = k - 1;
+    let vks = bits_vk.map(|bit| bit.get_bit(new_k)).collect::<Vec<_>>();
+
+    if new_k == 0 {
+        return Ok(vks.into_iter().map(|vk| vec![!vk, vk]).collect());
+    }
+
+    let mask = (RingElement::one() << new_k) - RingElement::one();
+    let bits = bits.map(|bit| bit & mask); // Remove the vk
+
+    let mut f = ohv_many(new_k, bits, io_context)?; // ohv is recursively called k - 1 times
+    let e = pack_and_many(&f[..f.len() - 1], &vks, io_context)?; // This has communication (2^new_k - 1 bits)
+    e.into_par_iter()
+        .zip_eq(vks)
+        .map(|(mut e, vk)| {
+            e.push(e.iter().fold(vk, |a, b| &a ^ b));
+            e
+        })
+        .zip_eq(f.par_iter_mut())
+        .for_each(|(e, f)| {
+            izip!(e.iter(), f.iter_mut()).for_each(|(e, f)| *f ^= e);
+            f.extend(e);
+        });
+
+    Ok(f)
+}
+
 fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
     let mut share_a = RingElement::<T>::zero();
     let mut share_b = RingElement::<T>::zero();
@@ -84,6 +126,10 @@ fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
     Rep3RingShare::new_ring(share_a, share_b)
 }
 
+fn pack_many<T: IntRing2k>(inputs: &[Vec<Rep3RingShare<Bit>>]) -> Vec<Rep3RingShare<T>> {
+    inputs.into_par_iter().map(|input| pack(input)).collect()
+}
+
 fn unpack<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShare<Bit>> {
     debug_assert!(len <= T::K);
     let mut res = Vec::with_capacity(len);
@@ -91,6 +137,19 @@ fn unpack<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShar
         res.push(input.get_bit(i));
     }
     res
+}
+
+fn unpack_many<T: IntRing2k>(
+    input_a: Vec<RingElement<T>>,
+    input_b: Vec<RingElement<T>>,
+    len: usize,
+) -> Vec<Vec<Rep3RingShare<Bit>>> {
+    debug_assert!(len <= T::K);
+    input_a
+        .into_par_iter()
+        .zip(input_b.into_par_iter())
+        .map(|(a, b)| unpack(Rep3RingShare::new_ring(a, b), len))
+        .collect()
 }
 
 fn and_pre_bit<T: IntRing2k, N: Rep3Network>(
@@ -111,6 +170,19 @@ where
         res ^= &a.a;
     }
     res
+}
+
+fn and_pre_bit_many<T: IntRing2k, N: Rep3Network>(
+    a: &[Rep3RingShare<T>],
+    b: &[Rep3RingShare<Bit>],
+    io_context: &mut IoContext<N>,
+) -> Vec<RingElement<T>>
+where
+    Standard: Distribution<T>,
+{
+    izip!(a, b)
+        .map(|(a, b)| and_pre_bit(a, b, io_context))
+        .collect()
 }
 
 fn pack_and<N: Rep3Network>(
@@ -183,5 +255,84 @@ fn pack_and<N: Rep3Network>(
         }
         debug_assert_eq!(remeining, 0);
         Ok(result)
+    }
+}
+
+fn pack_and_many<N: Rep3Network>(
+    inputs: &[Vec<Rep3RingShare<Bit>>],
+    rhs: &Vec<Rep3RingShare<Bit>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
+    let len = inputs.len();
+    debug_assert!(len >= 1);
+
+    if len <= 128 {
+        let padded_len = len.next_power_of_two();
+        let result = match padded_len {
+            1 => binary::and_many(&inputs[0], rhs, io_context)?
+                .into_iter()
+                .map(|x| vec![x])
+                .collect::<Vec<_>>(),
+            2 | 4 | 8 => {
+                let packed = pack_many::<u8>(inputs);
+                let local_a = and_pre_bit_many(&packed, rhs, io_context);
+                let local_b = io_context.network.reshare_many(&local_a)?;
+                unpack_many(local_a, local_b, len)
+            }
+            16 => {
+                // let packed = pack::<u16>(inputs);
+                // let local_a = and_pre_bit(&packed, rhs, io_context);
+                // let local_b = io_context.network.reshare(local_a)?;
+                // unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                let packed = pack_many::<u16>(inputs);
+                let local_a = and_pre_bit_many(&packed, rhs, io_context);
+                let local_b = io_context.network.reshare_many(&local_a)?;
+                unpack_many(local_a, local_b, len)
+            }
+            32 => {
+                let packed = pack_many::<u32>(inputs);
+                let local_a = and_pre_bit_many(&packed, rhs, io_context);
+                let local_b = io_context.network.reshare_many(&local_a)?;
+                unpack_many(local_a, local_b, len)
+            }
+            64 => {
+                let packed = pack_many::<u64>(inputs);
+                let local_a = and_pre_bit_many(&packed, rhs, io_context);
+                let local_b = io_context.network.reshare_many(&local_a)?;
+                unpack_many(local_a, local_b, len)
+            }
+            128 => {
+                let packed = pack_many::<u128>(inputs);
+                let local_a = and_pre_bit_many(&packed, rhs, io_context);
+                let local_b = io_context.network.reshare_many(&local_a)?;
+                unpack_many(local_a, local_b, len)
+            }
+            _ => {
+                unreachable!()
+            }
+        };
+        Ok(result)
+    } else {
+        // type Packtype = u64;
+        // const BITLEN: usize = std::mem::size_of::<Packtype>() * 8;
+
+        // let mut result = Vec::with_capacity(len);
+        // let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
+        // for els in input.chunks(BITLEN) {
+        //     let packed = pack::<Packtype>(els);
+        //     let u64_a = and_pre_bit(&packed, rhs, io_context);
+        //     to_send.push(u64_a);
+        // }
+        // let received = io_context.network.reshare(to_send.to_owned())?;
+
+        // let mut remeining = len;
+        // for (a, b) in to_send.into_iter().zip(received) {
+        //     let rcv = std::cmp::min(BITLEN, remeining);
+        //     result.extend(unpack(Rep3RingShare::new_ring(a, b), rcv));
+        //     remeining -= rcv;
+        // }
+        // debug_assert_eq!(remeining, 0);
+        // Ok(result)
+        unimplemented!()
     }
 }

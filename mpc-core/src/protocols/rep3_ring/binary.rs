@@ -76,6 +76,24 @@ where
     Ok(RingShare::new_ring(local_a, local_b))
 }
 
+/// Performs a bitwise AND operation on multiple shared values.
+pub fn and_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
+    mask ^= mask_b;
+    let local_a = izip!(a, b).map(|(a, b)| (a & b) ^ mask).collect::<Vec<_>>();
+    let local_b = io_context.network.reshare_many(&local_a)?;
+    Ok(izip!(local_a, local_b)
+        .map(|(a, b)| RingShare::new_ring(a, b))
+        .collect())
+}
+
 /// Performs a bitwise AND operation on a shared value and a public value.
 pub fn and_with_public<T: IntRing2k>(
     shared: &RingShare<T>,

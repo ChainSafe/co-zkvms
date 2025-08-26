@@ -16,6 +16,7 @@ use crate::{
     },
 };
 use ark_ff::PrimeField;
+use itertools::Itertools;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
@@ -296,6 +297,21 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         gadgets::ohv::ohv(k, bits, network0)
     }
 
+    fn ohv_from_index_internal_many<T: IntRing2k, F: PrimeField>(
+        index: impl IntoIterator<Item = Rep3BigUintShare<F>>,
+        k: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
+        let bits = index.into_iter().map(|index| {
+            Rep3RingShare::new(
+                T::cast_from_biguint(&index.a),
+                T::cast_from_biguint(&index.b),
+            )
+        });
+
+        gadgets::ohv::ohv_many(k, bits, io_ctx)
+    }
+
     /// Creates a shared one-hot-encoded vector from a given shared index
     pub fn ohv_from_index<F: PrimeField>(
         &mut self,
@@ -346,6 +362,43 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         };
 
         conversion::bit_inject_from_bits_to_field_many::<F, _>(&e, network0)
+    }
+
+    /// Creates a shared one-hot-encoded vector from a given shared index
+    #[tracing::instrument(skip_all, level = "trace")]
+    pub fn ohv_from_index_no_a2b_conversion_many<F: PrimeField>(
+        index: impl IntoIterator<Item = Rep3BigUintShare<F>>,
+        len: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> IoResult<Vec<Vec<Rep3PrimeFieldShare<F>>>> {
+        let bits = index;
+        let k = len.next_power_of_two().ilog2() as usize;
+
+        let e = if k == 1 {
+            Self::ohv_from_index_internal_many::<Bit, _>(bits, k, io_ctx)?
+        } else if k <= 8 {
+            Self::ohv_from_index_internal_many::<u8, _>(bits, k, io_ctx)?
+        } else if k <= 16 {
+            Self::ohv_from_index_internal_many::<u16, _>(bits, k, io_ctx)?
+        } else if k <= 32 {
+            Self::ohv_from_index_internal_many::<u32, _>(bits, k, io_ctx)?
+        } else {
+            panic!("Table is too large")
+        };
+
+        println!("e: {:?}", e.iter().map(|x| x.len()).collect::<Vec<_>>());
+
+        let res = conversion::bit_inject_from_bits_to_field_many::<F, _>(
+            &e.into_iter().flatten().collect::<Vec<_>>(),
+            io_ctx,
+        )?
+        .into_iter()
+        .chunks(1 << k)
+        .into_iter()
+        .map(|chunk| chunk.collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+        Ok(res)
     }
 
     /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector

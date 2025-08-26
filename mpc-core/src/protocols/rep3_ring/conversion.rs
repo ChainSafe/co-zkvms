@@ -32,6 +32,8 @@ use mpc_types::protocols::{
 use rand::{distributions::Standard, prelude::Distribution};
 use std::ops::Neg;
 
+use rayon::prelude::*;
+
 /// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the arithmetic-to-binary conversion.
 pub fn a2b_selector<T: IntRing2k, N: Rep3Network>(
     x: Rep3RingShare<T>,
@@ -355,6 +357,56 @@ pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
     let e = rep3::arithmetic::arithmetic_xor_many(&d, &b2, io_context)?;
     Ok(e)
 }
+
+// /// Translates a vector of shared bits into a vector of arithmetic sharings of the same bits. See [bit_inject] for details.
+// pub fn bit_inject_from_bits_to_field_many_batched<F: PrimeField, N: Rep3Network>(
+//     x: &[Vec<Rep3RingShare<Bit>>],
+//     io_context: &mut IoContext<N>,
+// ) -> IoResult<Vec<Vec<Rep3PrimeFieldShare<F>>>> {
+//     let mut b0 = vec![vec![Rep3PrimeFieldShare::default(); x[0].len()]; x.len()];
+//     let mut b1 = vec![vec![Rep3PrimeFieldShare::default(); x[0].len()]; x.len()];
+//     let mut b2 = vec![vec![Rep3PrimeFieldShare::default(); x[0].len()]; x.len()];
+
+//     match io_context.id {
+//         PartyID::ID0 => {
+//             b0.par_iter_mut()
+//                 .zip_eq(b1.par_iter_mut())
+//                 .zip_eq(b2.par_iter_mut())
+//                 .for_each(|((b0, b1), b2)| {
+//                     for (b0, b2, x) in izip!(&mut b0, &mut b2, x.iter().cloned()) {
+//                         b0.a = F::from(x.a.0.convert() as u64);
+//                         b2.b = F::from(x.b.0.convert() as u64);
+//                     }
+//                 });
+//         }
+//         PartyID::ID1 => {
+//             b0.par_iter_mut()
+//                 .zip_eq(b1.par_iter_mut())
+//                 .zip_eq(b2.par_iter_mut())
+//                 .for_each(|((b0, b1), b2)| {
+//                     for (b1, b0, x) in izip!(&mut b1, &mut b0, x.iter().cloned()) {
+//                         b1.a = F::from(x.a.0.convert() as u64);
+//                         b0.b = F::from(x.b.0.convert() as u64);
+//                     }
+//                 });
+//         }
+//         PartyID::ID2 => {
+//             b0.par_iter_mut()
+//                 .zip_eq(b1.par_iter_mut())
+//                 .zip_eq(b2.par_iter_mut())
+//                 .for_each(|((b0, b1), b2)| {
+//                     for (b2, b1, x) in izip!(&mut b2, &mut b1, x.iter().cloned()) {
+//                         b2.a = F::from(x.a.0.convert() as u64);
+//                         b1.b = F::from(x.b.0.convert() as u64);
+//                     }
+//                 });
+//         }
+//     };
+
+//     let d = rep3::arithmetic::arithmetic_xor_many(&b0, &b1, io_context)?;
+//     let e = rep3::arithmetic::arithmetic_xor_many(&d, &b2, io_context)?;
+//     Ok(e)
+// }
 
 /// Transforms the replicated shared value x from an arithmetic sharing to a yao sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x.
 pub fn a2y<T: IntRing2k, N: Rep3Network>(

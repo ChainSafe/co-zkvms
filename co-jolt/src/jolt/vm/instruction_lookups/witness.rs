@@ -88,14 +88,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             M,
         )?;
 
-        let dim: Vec<_> = rep3::conversion::b2a_many(
-            subtable_lookup_indices.iter().flatten().collect_vec(),
-            io_ctx.main(),
-        )?
-        .chunks_exact(ops.len())
-        .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
-        .collect();
-
         let materialized_subtable_luts = preprocessing
             .materialized_subtables
             .clone()
@@ -104,12 +96,53 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
             })
             .collect_vec();
+
+        let (instructions_used, access_sequences): (
+            Vec<Vec<usize>>,
+            Vec<Vec<Rep3BigUintShare<F>>>,
+        ) = (0..preprocessing.num_memories)
+            .into_par_iter()
+            .map(|memory_index| {
+                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                let access_sequence = &subtable_lookup_indices[dim_index];
+                ops.iter()
+                    .enumerate()
+                    .filter_map(|(j, op)| {
+                        if let Some(op) = &op.instruction_lookup {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
+                            if memories_used.contains(&memory_index) {
+                                Some((j, access_sequence[j].clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .unzip()
+            })
+            .unzip();
+
+        let mut ohvs = Rep3LookupTable::ohv_from_index_no_a2b_conversion_many(
+            access_sequences.into_iter().flatten(),
+            M,
+            io_ctx.main(),
+        )?;
+        let mut ohvs_by_memory = Vec::with_capacity(preprocessing.num_memories);
+        instructions_used
+            .iter()
+            .for_each(|js| ohvs_by_memory.push(ohvs.drain(..js.len()).collect_vec()));
+        assert!(ohvs.is_empty());
+
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_init(
-                0..preprocessing.num_memories,
+                (0..preprocessing.num_memories)
+                    .into_par_iter()
+                    .zip_eq(ohvs_by_memory),
                 None,
                 |ctx| ctx.fork().context("while forking worker fork ctx"),
-                |memory_index, mut io_ctx2, mut io_ctx| {
+                |(memory_index, ohvs), mut io_ctx2, mut io_ctx| {
                     let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                     let access_sequence = &subtable_lookup_indices[dim_index];
@@ -117,24 +150,20 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
+                    let mut ohvs = ohvs.into_iter();
 
-                    let span = tracing::info_span!("memory", memory_index, subtable_index);
-                    let _guard = span.enter();
-                    let mut ops_used = 0usize;
+                    // let span = tracing::info_span!("memory", memory_index, subtable_index);
+                    // let _guard = span.enter();
+                    // let mut ops_used = 0usize;
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = &op.instruction_lookup {
                             let memories_used = &preprocessing.instruction_to_memory_indices
                                 [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
-                                ops_used += 1;
+                                // ops_used += 1;
                                 let memory_address = &access_sequence[j];
 
-                                let ohv = Rep3LookupTable::ohv_from_index_no_a2b_conversion(
-                                    memory_address.clone(),
-                                    M,
-                                    &mut io_ctx,
-                                    &mut io_ctx2,
-                                )?;
+                                let ohv = ohvs.next().unwrap();
 
                                 let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
                                     &ohv,
@@ -168,8 +197,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             }
                         }
                     }
-                    drop(_guard);
-                    tracing::info!("ops used: {}", ops_used);
+                    // drop(_guard);
+                    // tracing::info!("ops used: {}", ops_used);
 
                     Ok((
                         Rep3MultilinearPolynomial::from(read_cts_i),
@@ -190,6 +219,17 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 (read_acc, final_acc, e_acc)
             },
         );
+
+        let span = tracing::info_span!("compute_dim");
+        let _guard = span.enter();
+        let dim: Vec<_> = rep3::conversion::b2a_many(
+            subtable_lookup_indices.iter().flatten().collect_vec(),
+            io_ctx.main(),
+        )?
+        .chunks_exact(ops.len())
+        .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
+        .collect();
+        drop(_guard);
 
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; num_reads]; Instructions::COUNT];

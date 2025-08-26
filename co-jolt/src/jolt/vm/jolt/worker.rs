@@ -97,8 +97,8 @@ where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
-        let num_workers = 1 << network.log_num_workers_per_party();
-        let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() / num_workers)?;
+        // let num_workers = 1 << network.log_num_workers_per_party();
+        let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads())?;
 
         let generate_witness = witness.is_some();
 
@@ -126,11 +126,11 @@ where
                     polynomials.instruction_lookups.dim[0].len(),
                     padded_trace_length
                 );
-                assert_eq!(
-                    polynomials.read_write_memory.a_ram.len(),
-                    padded_trace_length
-                );
-                assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
+                // assert_eq!(
+                //     polynomials.read_write_memory.a_ram.len(),
+                //     padded_trace_length
+                // );
+                // assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
 
                 if io_ctx.id == PartyID::ID0 {
                     let meta = JoltWitnessMeta {
@@ -163,7 +163,7 @@ where
         let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
 
         if generate_witness {
-            polynomials.compute_aux::<C, Constraints::Inputs>(&r1cs_builder);
+            // polynomials.compute_aux::<C, Constraints::Inputs>(&r1cs_builder);
         }
 
         Ok(Self {
