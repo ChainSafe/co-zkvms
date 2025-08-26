@@ -2,7 +2,7 @@ use std::iter;
 
 use crate::{
     field::JoltField,
-    jolt::trace,
+    jolt::{instruction::sub, trace},
     poly::{
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3MultilinearPolynomial,
@@ -88,21 +88,13 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             M,
         )?;
 
-        println!(
-            "subtable_lookup_indices: {:?} hint: {}",
-            subtable_lookup_indices
-                .iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .len(),
-            subtable_lookup_indices.iter().flatten().size_hint().0
-        );
-
-        let dim: Vec<_> =
-            rep3::conversion::b2a_many(subtable_lookup_indices.iter().flatten(), io_ctx.main())?
-                .chunks_exact(C)
-                .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
-                .collect();
+        let dim: Vec<_> = rep3::conversion::b2a_many(
+            subtable_lookup_indices.iter().flatten().collect_vec(),
+            io_ctx.main(),
+        )?
+        .chunks_exact(ops.len())
+        .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
+        .collect();
 
         let materialized_subtable_luts = preprocessing
             .materialized_subtables

@@ -220,16 +220,14 @@ pub fn b2a<F: PrimeField, N: Rep3Network>(
 /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
 /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
 pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
-    x: impl IntoIterator<Item = &'a Rep3BigUintShare<F>>,
+    x: impl IntoIterator<Item = &'a Rep3BigUintShare<F>, IntoIter: ExactSizeIterator>,
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
     let x = x.into_iter();
-    let (len, _) = x.size_hint();
-    println!("len: {}", len);
-    let mut res = vec![Rep3PrimeFieldShare::zero_share(); len];
+    let mut res = vec![Rep3PrimeFieldShare::zero_share(); x.len()];
 
-    let mut r_vec = Vec::with_capacity(len);
-    for _ in 0..len {
+    let mut r_vec = Vec::with_capacity(x.len());
+    for _ in 0..x.len() {
         let (mut r, r2) = io_context
             .rngs
             .rand
