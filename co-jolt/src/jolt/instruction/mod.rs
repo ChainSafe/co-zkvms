@@ -80,7 +80,7 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
 
     fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
 
-    fn lhs_ref(&self) -> &Rep3Operand<F>;
+    fn lhs(&self) -> &Rep3Operand<F>;
     fn rhs(&self) -> Option<&Rep3Operand<F>>;
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
@@ -172,6 +172,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                 *op1 = Rep3Operand::Shared {
                     binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
                     arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                    public: Some(*x),
                 };
             }
 
@@ -179,6 +180,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                 *op2.unwrap() = Rep3Operand::Shared {
                     binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
                     arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                    public: Some(*x),
                 };
             }
         });
@@ -201,10 +203,12 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                         Rep3Operand::Shared {
                             arithmetic: None,
                             binary: x,
+                            ..
                         },
                         Some(Rep3Operand::Shared {
                             arithmetic: None,
                             binary: y,
+                            ..
                         }),
                     ) => {
                         let res = vec![x.clone(), y.clone()];
@@ -214,6 +218,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                         Rep3Operand::Shared {
                             arithmetic: None,
                             binary: x,
+                            ..
                         },
                         _,
                     ) => {
@@ -225,6 +230,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                         Some(Rep3Operand::Shared {
                             arithmetic: None,
                             binary: y,
+                            ..
                         }),
                     ) => {
                         let res = vec![y.clone()];
@@ -246,10 +252,12 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                     Rep3Operand::Shared {
                         arithmetic: None,
                         binary,
+                        public,
                     } => {
                         *operand = Rep3Operand::Shared {
                             binary: std::mem::take(binary),
                             arithmetic: Some(output),
+                            public: std::mem::take(public),
                         };
                     }
                     _ => panic!("Expected shared operand"),
@@ -270,6 +278,7 @@ pub enum Rep3Operand<F: JoltField> {
     Shared {
         binary: Rep3BigUintShare<F>,
         arithmetic: Option<Rep3PrimeFieldShare<F>>,
+        public: Option<u64>, // Some for trivial shares
     },
     Public(u64),
 }
@@ -277,7 +286,10 @@ pub enum Rep3Operand<F: JoltField> {
 impl<F: JoltField> Rep3Operand<F> {
     pub fn as_public(&self) -> u64 {
         match self {
-            Rep3Operand::Public(x) => *x,
+            Rep3Operand::Public(x)
+            | Rep3Operand::Shared {
+                public: Some(x), ..
+            } => *x,
             _ => panic!("Not a public operand"),
         }
     }
@@ -308,6 +320,7 @@ impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand<F> {
         Rep3Operand::Shared {
             binary: value,
             arithmetic: None,
+            public: None,
         }
     }
 }
@@ -338,10 +351,15 @@ impl<F: JoltField> CanonicalSerialize for Rep3Operand<F> {
                 (0_u8).serialize_with_mode(&mut writer, compress)?;
                 x.serialize_with_mode(&mut writer, compress)?;
             }
-            Rep3Operand::Shared { binary, arithmetic } => {
+            Rep3Operand::Shared {
+                binary,
+                arithmetic,
+                public,
+            } => {
                 (1_u8).serialize_with_mode(&mut writer, compress)?;
                 binary.serialize_with_mode(&mut writer, compress)?;
                 arithmetic.serialize_with_mode(&mut writer, compress)?;
+                public.serialize_with_mode(&mut writer, compress)?;
             }
         }
         Ok(())
@@ -352,10 +370,15 @@ impl<F: JoltField> CanonicalSerialize for Rep3Operand<F> {
             Rep3Operand::Public(x) => {
                 (0_u8).serialized_size(compress) + x.serialized_size(compress)
             }
-            Rep3Operand::Shared { binary, arithmetic } => {
+            Rep3Operand::Shared {
+                binary,
+                arithmetic,
+                public,
+            } => {
                 (1_u8).serialized_size(compress)
                     + binary.serialized_size(compress)
                     + arithmetic.serialized_size(compress)
+                    + public.serialized_size(compress)
             }
         }
     }
@@ -381,6 +404,7 @@ impl<F: JoltField> CanonicalDeserialize for Rep3Operand<F> {
                     compress,
                     validate,
                 )?,
+                public: Option::<u64>::deserialize_with_mode(&mut reader, compress, validate)?,
             },
             _ => Err(SerializationError::InvalidData)?,
         };
@@ -392,9 +416,14 @@ impl<F: JoltField> Valid for Rep3Operand<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Rep3Operand::Public(value) => value.check(),
-            Rep3Operand::Shared { binary, arithmetic } => {
+            Rep3Operand::Shared {
+                binary,
+                arithmetic,
+                public,
+            } => {
                 binary.check()?;
                 arithmetic.check()?;
+                public.check()?;
                 Ok(())
             }
         }

@@ -110,46 +110,42 @@ pub type RV32IJoltRep3Prover<F, PCS, ProofTranscript, Network> = JoltRep3Prover<
 impl<F: JoltField> CanonicalSerialize for RV32I<F> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
-        mut writer: W,
-        compress: Compress,
+        mut w: W,
+        c: Compress,
     ) -> Result<(), SerializationError> {
-        (JoltInstructionSet::enum_index(self) as u8).serialize_with_mode(&mut writer, compress)?;
+        (JoltInstructionSet::enum_index(self) as u8).serialize_with_mode(&mut w, c)?;
         match self {
-            RV32I::ADD(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SUB(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::AND(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::OR(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::XOR(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BEQ(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BGE(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BGEU(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::BNE(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLT(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLTU(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SLL(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SRA(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::SRL(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MOVSIGN(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MUL(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MULU(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::MULHU(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ADVICE(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_MOVE(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_ASSERT_LTE(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::ADD(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SUB(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::AND(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::OR(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::XOR(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::BEQ(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::BGE(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::BGEU(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::BNE(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SLT(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SLTU(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SLL(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SRA(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::SRL(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::MOVSIGN(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::MUL(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::MULU(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::MULHU(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_ADVICE(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_MOVE(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_ASSERT_LTE(op) => op.serialize_with_mode(&mut w, c)?,
             RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(op) => {
-                op.serialize_with_mode(&mut writer, compress)?
+                op.serialize_with_mode(&mut w, c)?
             }
             RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(op) => {
-                op.serialize_with_mode(&mut writer, compress)?
+                op.serialize_with_mode(&mut w, c)?
             }
-            RV32I::VIRTUAL_ASSERT_VALID_DIV0(op) => {
-                op.serialize_with_mode(&mut writer, compress)?
-            }
-            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(op) => {
-                op.serialize_with_mode(&mut writer, compress)?
-            }
-            RV32I::VIRTUAL_POW2(op) => op.serialize_with_mode(&mut writer, compress)?,
-            RV32I::VIRTUAL_SRA_PADDING(op) => op.serialize_with_mode(&mut writer, compress)?,
+            RV32I::VIRTUAL_ASSERT_VALID_DIV0(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_POW2(op) => op.serialize_with_mode(&mut w, c)?,
+            RV32I::VIRTUAL_SRA_PADDING(op) => op.serialize_with_mode(&mut w, c)?,
         };
         Ok(())
     }
@@ -190,106 +186,82 @@ impl<F: JoltField> CanonicalSerialize for RV32I<F> {
 
 impl<F: JoltField> CanonicalDeserialize for RV32I<F> {
     fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
+        mut r: R,
+        c: Compress,
+        v: Validate,
     ) -> Result<Self, SerializationError> {
         // TODO: Can we use strum for this?
-        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        let discriminant = u8::deserialize_with_mode(&mut r, c, v)?;
         let res = match discriminant {
             0 => RV32I::ADD(ADDInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             1 => RV32I::SUB(SUBInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
-            2 => RV32I::AND(ANDInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            3 => RV32I::OR(ORInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            4 => RV32I::XOR(XORInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            5 => RV32I::BEQ(BEQInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            6 => RV32I::BGE(BGEInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            7 => RV32I::BGEU(BGEUInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            8 => RV32I::BNE(BNEInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            9 => RV32I::SLT(SLTInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
-            10 => RV32I::SLTU(SLTUInstruction::<F>::deserialize_with_mode(
-                reader, compress, validate,
-            )?),
+            2 => RV32I::AND(ANDInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            3 => RV32I::OR(ORInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            4 => RV32I::XOR(XORInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            5 => RV32I::BEQ(BEQInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            6 => RV32I::BGE(BGEInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            7 => RV32I::BGEU(BGEUInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            8 => RV32I::BNE(BNEInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            9 => RV32I::SLT(SLTInstruction::<F>::deserialize_with_mode(r, c, v)?),
+            10 => RV32I::SLTU(SLTUInstruction::<F>::deserialize_with_mode(r, c, v)?),
             11 => RV32I::SLL(SLLInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             12 => RV32I::SRA(SRAInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             13 => RV32I::SRL(SRLInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             14 => RV32I::MOVSIGN(MOVSIGNInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             15 => RV32I::MUL(MULInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             16 => RV32I::MULU(MULUInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             17 => RV32I::MULHU(MULHUInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             18 => RV32I::VIRTUAL_ADVICE(ADVICEInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             19 => RV32I::VIRTUAL_MOVE(MOVEInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             20 => RV32I::VIRTUAL_ASSERT_LTE(
-                ASSERTLTEInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                    reader, compress, validate,
-                )?,
+                ASSERTLTEInstruction::<WORD_SIZE, F>::deserialize_with_mode(r, c, v)?,
             ),
             21 => RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(
                 AssertValidSignedRemainderInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                    reader, compress, validate,
+                    r, c, v,
                 )?,
             ),
             22 => RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(
                 AssertValidUnsignedRemainderInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                    reader, compress, validate,
+                    r, c, v,
                 )?,
             ),
             23 => RV32I::VIRTUAL_ASSERT_VALID_DIV0(
-                AssertValidDiv0Instruction::<WORD_SIZE, F>::deserialize_with_mode(
-                    reader, compress, validate,
-                )?,
+                AssertValidDiv0Instruction::<WORD_SIZE, F>::deserialize_with_mode(r, c, v)?,
             ),
             24 => RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(AssertHalfwordAlignmentInstruction::<
                 WORD_SIZE,
                 F,
             >::deserialize_with_mode(
-                reader, compress, validate
+                r, c, v
             )?),
             25 => RV32I::VIRTUAL_POW2(POW2Instruction::<WORD_SIZE, F>::deserialize_with_mode(
-                reader, compress, validate,
+                r, c, v,
             )?),
             26 => RV32I::VIRTUAL_SRA_PADDING(
-                RightShiftPaddingInstruction::<WORD_SIZE, F>::deserialize_with_mode(
-                    reader, compress, validate,
-                )?,
+                RightShiftPaddingInstruction::<WORD_SIZE, F>::deserialize_with_mode(r, c, v)?,
             ),
             _ => Err(SerializationError::InvalidData)?,
         };
@@ -300,33 +272,33 @@ impl<F: JoltField> CanonicalDeserialize for RV32I<F> {
 impl<F: JoltField> Valid for RV32I<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
-            RV32I::ADD(instruction) => instruction.check(),
-            RV32I::SUB(instruction) => instruction.check(),
-            RV32I::AND(instruction) => instruction.check(),
-            RV32I::OR(instruction) => instruction.check(),
-            RV32I::XOR(instruction) => instruction.check(),
-            RV32I::BEQ(instruction) => instruction.check(),
-            RV32I::BGE(instruction) => instruction.check(),
-            RV32I::BGEU(instruction) => instruction.check(),
-            RV32I::BNE(instruction) => instruction.check(),
-            RV32I::SLT(instruction) => instruction.check(),
-            RV32I::SLTU(instruction) => instruction.check(),
-            RV32I::SLL(instruction) => instruction.check(),
-            RV32I::SRA(instruction) => instruction.check(),
-            RV32I::SRL(instruction) => instruction.check(),
-            RV32I::MOVSIGN(instruction) => instruction.check(),
-            RV32I::MUL(instruction) => instruction.check(),
-            RV32I::MULU(instruction) => instruction.check(),
-            RV32I::MULHU(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ADVICE(instruction) => instruction.check(),
-            RV32I::VIRTUAL_MOVE(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ASSERT_LTE(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ASSERT_VALID_DIV0(instruction) => instruction.check(),
-            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(instruction) => instruction.check(),
-            RV32I::VIRTUAL_POW2(instruction) => instruction.check(),
-            RV32I::VIRTUAL_SRA_PADDING(instruction) => instruction.check(),
+            RV32I::ADD(op) => op.check(),
+            RV32I::SUB(op) => op.check(),
+            RV32I::AND(op) => op.check(),
+            RV32I::OR(op) => op.check(),
+            RV32I::XOR(op) => op.check(),
+            RV32I::BEQ(op) => op.check(),
+            RV32I::BGE(op) => op.check(),
+            RV32I::BGEU(op) => op.check(),
+            RV32I::BNE(op) => op.check(),
+            RV32I::SLT(op) => op.check(),
+            RV32I::SLTU(op) => op.check(),
+            RV32I::SLL(op) => op.check(),
+            RV32I::SRA(op) => op.check(),
+            RV32I::SRL(op) => op.check(),
+            RV32I::MOVSIGN(op) => op.check(),
+            RV32I::MUL(op) => op.check(),
+            RV32I::MULU(op) => op.check(),
+            RV32I::MULHU(op) => op.check(),
+            RV32I::VIRTUAL_ADVICE(op) => op.check(),
+            RV32I::VIRTUAL_MOVE(op) => op.check(),
+            RV32I::VIRTUAL_ASSERT_LTE(op) => op.check(),
+            RV32I::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER(op) => op.check(),
+            RV32I::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER(op) => op.check(),
+            RV32I::VIRTUAL_ASSERT_VALID_DIV0(op) => op.check(),
+            RV32I::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT(op) => op.check(),
+            RV32I::VIRTUAL_POW2(op) => op.check(),
+            RV32I::VIRTUAL_SRA_PADDING(op) => op.check(),
         }
     }
 }

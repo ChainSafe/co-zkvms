@@ -103,7 +103,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 

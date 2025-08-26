@@ -1,6 +1,6 @@
+use crate::field::JoltField;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -115,11 +115,11 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
-    fn rhs_ref(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand<F>> {
         None
     }
 

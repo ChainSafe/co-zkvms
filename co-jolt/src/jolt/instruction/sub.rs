@@ -94,7 +94,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -158,7 +158,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SUBInstruc
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {
             *out = FutureVal::Ready(
-                st.lhs_ref().as_arithmetic_share() - st.rhs().unwrap().as_arithmetic_share(),
+                st.lhs().as_arithmetic_share() - st.rhs().unwrap().as_arithmetic_share(),
             );
         });
         Ok(())

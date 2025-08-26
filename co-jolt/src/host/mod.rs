@@ -4,13 +4,17 @@ use core::str::FromStr;
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
+    iter,
     marker::PhantomData,
     path::PathBuf,
     process::Command,
 };
 
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use jolt_tracer::{RVTraceRow, RV32IM};
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
+use rand::{RngCore, SeedableRng};
+use rand_chacha::{ChaCha12Core, ChaCha12Rng};
 use rayon::prelude::*;
 
 use jolt_common::{
@@ -22,11 +26,18 @@ use jolt_common::{
 };
 pub use jolt_tracer::{self as tracer, ELFInstruction};
 
-use crate::field::JoltField;
-use crate::jolt::vm::{
-    bytecode::{BytecodeRow, BytecodeRowExt},
-    rv32i_vm::RV32I,
-    JoltTraceStep,
+use crate::{field::JoltField, jolt::vm::read_write_memory::witness::Rep3ProgramIOInput};
+use crate::{
+    jolt::{
+        instruction::{Rep3JoltInstruction, Rep3Operand},
+        vm::{
+            bytecode::{BytecodeRow, BytecodeRowExt},
+            instruction_lookups,
+            rv32i_vm::RV32I,
+            JoltTraceStep,
+        },
+    },
+    utils::instruction_utils::transpose,
 };
 
 // use self::analyze::ProgramSummary;
@@ -254,6 +265,89 @@ impl Program {
             .collect();
 
         (io_device, trace)
+    }
+
+    pub fn generate_trace_shares<F: JoltField, R: RngCore>(
+        &mut self,
+        inputs: &[u8],
+        rng: &mut R,
+    ) -> Vec<(Rep3ProgramIOInput<F>, Vec<JoltTraceStep<F, RV32I<F>>>)> {
+        let (bytecode, memory_init) = self.decode();
+        let (program_io, trace) = self.trace::<F>(inputs);
+
+        let program_io = Rep3ProgramIOInput::<F> {
+            input: vec![],
+            output: vec![],
+            panic: Rep3PrimeFieldShare::zero_share(),
+            memory_layout: program_io.memory_layout,
+        };
+
+        let program_io_shares = vec![program_io; 3];
+
+        let root = rng.next_u64();
+        let trace_shares = trace
+            .into_par_iter()
+            .map_init(
+                move || {
+                    let tid = rayon::current_thread_index().unwrap_or(0) as u64;
+                    ChaCha12Rng::seed_from_u64(root ^ tid)
+                },
+                |rng, row| {
+                    let instruction_shares = if let Some(r) = row.instruction_lookup {
+                        let op1_shares =
+                            rep3::binary::generate_shares_rep3(r.lhs().as_public().into(), rng);
+                        let op2_shares = if let Some(op2) = r.rhs() {
+                            match r {
+                                RV32I::SLL(..)
+                                | RV32I::SRA(..)
+                                | RV32I::SRL(..)
+                                | RV32I::VIRTUAL_POW2(..)
+                                | RV32I::VIRTUAL_SRA_PADDING(..) => {
+                                    vec![Some(op2.clone()); 3]
+                                }
+                                _ => {
+                                    rep3::binary::generate_shares_rep3(op2.as_public().into(), rng)
+                                        .into_iter()
+                                        .map(|share| Some(Rep3Operand::from(share)))
+                                        .collect()
+                                }
+                            }
+                        } else {
+                            vec![None; 3]
+                        };
+                        let mut instruction_shares: Vec<Option<RV32I<F>>> =
+                            vec![Some(r.clone()); 3];
+                        izip!(instruction_shares.iter_mut(), op1_shares, op2_shares).for_each(
+                            |(r, op1_share, op2_share)| {
+                                let (op1, op2) = r.as_mut().unwrap().operands_mut();
+                                *op1 = op1_share.into();
+                                if let Some(op2) = op2 {
+                                    *op2 = op2_share.unwrap();
+                                }
+                            },
+                        );
+                        instruction_shares
+                    } else {
+                        vec![None; 3]
+                    };
+
+                    instruction_shares
+                        .into_iter()
+                        .map(|instruction_lookup| JoltTraceStep {
+                            instruction_lookup,
+                            bytecode_row: row.bytecode_row.clone(),
+                            memory_ops: row.memory_ops.clone(),
+                            circuit_flags: row.circuit_flags.clone(),
+                            _field: PhantomData,
+                        })
+                        .collect()
+                },
+            )
+            .collect::<Vec<_>>();
+
+        let trace_shares = transpose(trace_shares);
+
+        izip!(program_io_shares, trace_shares).collect()
     }
 
     // pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

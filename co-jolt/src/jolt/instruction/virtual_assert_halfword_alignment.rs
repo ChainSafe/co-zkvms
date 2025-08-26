@@ -102,7 +102,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -179,7 +179,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             .into_iter()
             .map(|st| {
                 (
-                    st.lhs_ref().as_binary_share(),
+                    st.lhs().as_binary_share(),
                     st.rhs().unwrap().as_binary_share(),
                 )
             })

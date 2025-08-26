@@ -192,10 +192,8 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
-    let program_io: JoltDevice = network.receive_request()?;
-    println!("received program_io");
-    let trace: Vec<JoltTraceStep<F, RV32I<F>>> = network.receive_request()?;
-    println!("received trace");
+    let (program_io, trace): (Rep3ProgramIOInput<F>, Vec<JoltTraceStep<F, RV32I<F>>>) =
+        network.receive_request()?;
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -207,13 +205,6 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         trace.len().next_power_of_two(),
         trace.len().next_power_of_two(),
     );
-
-    let program_io = Rep3ProgramIOInput::<F> {
-        input: vec![],
-        output: vec![],
-        panic: Rep3PrimeFieldShare::zero_share(),
-        memory_layout: program_io.memory_layout,
-    };
 
     let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
         Some((trace, program_io)),
@@ -289,6 +280,10 @@ pub fn run_coordinator(
     //     .context("while verifying Lasso proof")?;
     //     return Ok(());
     // }
+    //
+
+    let mut rng = test_rng();
+    let shares = program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
     let mut network = Rep3QuicNetCoordinator::new(
         config.extend_with_workers(args.num_workers_per_party),
@@ -296,18 +291,7 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
-
-    use strum::IntoEnumIterator;
-    RV32I::<F>::iter().for_each(|ins| {
-        println!(
-            "index: {} name: {}",
-            <RV32I::<F> as JoltInstructionSet::<F>>::enum_index(&ins),
-            ins.as_ref().to_string()
-        )
-    });
-
-    network.broadcast_request(program_io.clone())?;
-    network.broadcast_request(trace.clone())?;
+    network.send_requests(shares);
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,

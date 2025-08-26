@@ -83,7 +83,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, None)
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -134,7 +134,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
-            *out = FutureVal::Ready(step.lhs_ref().as_arithmetic_share());
+            *out = FutureVal::Ready(step.lhs().as_arithmetic_share());
         });
         Ok(())
     }

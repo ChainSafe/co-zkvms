@@ -121,7 +121,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, None)
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -185,7 +185,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     ) -> eyre::Result<()> {
         let t: Vec<_> = steps
             .into_iter()
-            .map(|step| step.lhs_ref().as_binary_share() & BigUint::from(SIGN_BIT_32))
+            .map(|step| step.lhs().as_binary_share() & BigUint::from(SIGN_BIT_32))
             .collect();
 
         let zeros = vec![Rep3BigUintShare::zero_share(); t.len()];

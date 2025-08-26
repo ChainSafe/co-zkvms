@@ -69,7 +69,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         (&mut self.0, None)
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -127,7 +127,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             *out = FutureVal::Ready(
                 rep3::arithmetic::promote_to_trivial_share(
                     io_ctx.id,
-                    F::from(1 << (step.lhs_ref().as_public() % WORD_SIZE as u64)),
+                    F::from(1 << (step.lhs().as_public() % WORD_SIZE as u64)),
                 )
                 .into(),
             )

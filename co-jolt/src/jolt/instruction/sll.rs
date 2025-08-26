@@ -117,7 +117,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs_ref(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand<F> {
         &self.0
     }
 
@@ -177,7 +177,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SLLInstruc
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {
             *out = FutureVal::b2a(
-                st.lhs_ref()
+                st.lhs()
                     .as_binary_share()
                     .shl((st.rhs().unwrap().as_public() as u32 % WORD_SIZE as u32) as usize),
             )
