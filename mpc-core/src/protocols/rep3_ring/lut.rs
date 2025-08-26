@@ -302,12 +302,15 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         k: usize,
         io_ctx: &mut IoContext<N>,
     ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
-        let bits = index.into_iter().map(|index| {
-            Rep3RingShare::new(
-                T::cast_from_biguint(&index.a),
-                T::cast_from_biguint(&index.b),
-            )
-        });
+        let bits = index
+            .into_iter()
+            .map(|index| {
+                Rep3RingShare::new(
+                    T::cast_from_biguint(&index.a),
+                    T::cast_from_biguint(&index.b),
+                )
+            })
+            .collect::<Vec<_>>();
 
         gadgets::ohv::ohv_many(k, bits, io_ctx)
     }

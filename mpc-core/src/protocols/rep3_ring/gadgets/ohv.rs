@@ -81,26 +81,36 @@ pub fn ohv<T: IntRing2k, N: Rep3Network>(
 /// The algorithm is a rewrite of Protocol 5 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.
 pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     k: usize,
-    bits: impl IntoIterator<Item = Rep3RingShare<T>>,
+    mut bits: Vec<Rep3RingShare<T>>,
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
     debug_assert!(k > 0);
     debug_assert!(k <= T::K); // Make sure datatype is large enough for bitsize
 
-    let (bits, bits_vk) = bits.into_iter().tee();
-
     let new_k = k - 1;
-    let vks = bits_vk.map(|bit| bit.get_bit(new_k)).collect::<Vec<_>>();
+    let vks = bits
+        .iter()
+        .map(|bit| bit.get_bit(new_k))
+        .collect::<Vec<_>>();
 
     if new_k == 0 {
         return Ok(vks.into_iter().map(|vk| vec![!vk, vk]).collect());
     }
 
     let mask = (RingElement::one() << new_k) - RingElement::one();
-    let bits = bits.map(|bit| bit & mask); // Remove the vk
+    for b in &mut bits {
+        *b &= mask;
+    }
 
     let mut f = ohv_many(new_k, bits, io_context)?; // ohv is recursively called k - 1 times
-    let e = pack_and_many(&f[..f.len() - 1], &vks, io_context)?; // This has communication (2^new_k - 1 bits)
+    let len = f[0].len();
+    assert!(!f.iter().any(|x| x.len() != len));
+    let e = pack_and_many(
+        f.par_iter().map(|f| &f[..f.len() - 1]),
+        &vks,
+        len,
+        io_context,
+    )?;
     e.into_par_iter()
         .zip_eq(vks)
         .map(|(mut e, vk)| {
@@ -114,20 +124,6 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
         });
 
     Ok(f)
-}
-
-fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
-    let mut share_a = RingElement::<T>::zero();
-    let mut share_b = RingElement::<T>::zero();
-    for (i, bit) in input.iter().enumerate() {
-        share_a |= RingElement(T::from(bit.a.convert().convert()) << i);
-        share_b |= RingElement(T::from(bit.b.convert().convert()) << i);
-    }
-    Rep3RingShare::new_ring(share_a, share_b)
-}
-
-fn pack_many<T: IntRing2k>(inputs: &[Vec<Rep3RingShare<Bit>>]) -> Vec<Rep3RingShare<T>> {
-    inputs.into_par_iter().map(|input| pack(input)).collect()
 }
 
 fn unpack<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShare<Bit>> {
@@ -170,19 +166,6 @@ where
         res ^= &a.a;
     }
     res
-}
-
-fn and_pre_bit_many<T: IntRing2k, N: Rep3Network>(
-    a: &[Rep3RingShare<T>],
-    b: &[Rep3RingShare<Bit>],
-    io_context: &mut IoContext<N>,
-) -> Vec<RingElement<T>>
-where
-    Standard: Distribution<T>,
-{
-    izip!(a, b)
-        .map(|(a, b)| and_pre_bit(a, b, io_context))
-        .collect()
 }
 
 fn pack_and<N: Rep3Network>(
@@ -258,21 +241,27 @@ fn pack_and<N: Rep3Network>(
     }
 }
 
-fn pack_and_many<N: Rep3Network>(
-    inputs: &[Vec<Rep3RingShare<Bit>>],
+fn pack_and_many<'a, N: Rep3Network>(
+    inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
     rhs: &Vec<Rep3RingShare<Bit>>,
+    len: usize,
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
-    let len = inputs.len();
     debug_assert!(len >= 1);
-
     if len <= 128 {
         let padded_len = len.next_power_of_two();
         let result = match padded_len {
-            1 => binary::and_many(&inputs[0], rhs, io_context)?
-                .into_iter()
-                .map(|x| vec![x])
-                .collect::<Vec<_>>(),
+            1 => binary::and_many(
+                &inputs
+                    .into_par_iter()
+                    .map(|x| x[0].clone())
+                    .collect::<Vec<_>>(),
+                rhs,
+                io_context,
+            )?
+            .into_iter()
+            .map(|x| vec![x])
+            .collect::<Vec<_>>(),
             2 | 4 | 8 => {
                 let packed = pack_many::<u8>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
@@ -335,4 +324,35 @@ fn pack_and_many<N: Rep3Network>(
         // Ok(result)
         unimplemented!()
     }
+}
+
+fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
+    let mut share_a = RingElement::<T>::zero();
+    let mut share_b = RingElement::<T>::zero();
+    for (i, bit) in input.iter().enumerate() {
+        share_a |= RingElement(T::from(bit.a.convert().convert()) << i);
+        share_b |= RingElement(T::from(bit.b.convert().convert()) << i);
+    }
+    Rep3RingShare::new_ring(share_a, share_b)
+}
+
+#[inline]
+fn pack_many<'a, T: IntRing2k>(
+    inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
+) -> Vec<Rep3RingShare<T>> {
+    inputs.into_par_iter().map(|input| pack(&input)).collect()
+}
+
+#[inline]
+fn and_pre_bit_many<T: IntRing2k, N: Rep3Network>(
+    a: &[Rep3RingShare<T>],
+    b: &[Rep3RingShare<Bit>],
+    io_context: &mut IoContext<N>,
+) -> Vec<RingElement<T>>
+where
+    Standard: Distribution<T>,
+{
+    izip!(a, b)
+        .map(|(a, b)| and_pre_bit(a, b, io_context))
+        .collect()
 }
