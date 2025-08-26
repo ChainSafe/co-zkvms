@@ -6,15 +6,15 @@ use super::yao::GCUtils;
 use crate::RngType;
 use ark_ec::CurveGroup;
 use ark_ff::{One, PrimeField};
+use ark_linear_sumcheck::rng::FeedableRNG;
 use fancy_garbling::WireMod2;
 use mpc_types::protocols::rep3::id::PartyID;
 use num_bigint::BigUint;
 use rand::{
     Rng, RngCore, SeedableRng, distributions::Standard, prelude::Distribution, seq::SliceRandom,
 };
-use std::ops::Add;
-use ark_linear_sumcheck::rng::FeedableRNG;
 use rayon::prelude::*;
+use std::ops::Add;
 
 #[derive(Debug)]
 /// A correlated rng for rep3
@@ -92,6 +92,7 @@ impl Rep3Rand {
     pub fn new(seed1: [u8; crate::SEED_SIZE], seed2: [u8; crate::SEED_SIZE]) -> Self {
         let rng1 = RngType::from_seed(seed1);
         let rng2 = RngType::from_seed(seed2);
+
         Self { rng1, rng2 }
     }
 

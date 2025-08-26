@@ -13,6 +13,7 @@ use num_traits::One;
 use num_traits::Zero;
 
 use crate::IoResult;
+use crate::protocols::rep3::rngs::Rep3Rand;
 use crate::protocols::rep3::{PartyID, detail, network::Rep3Network};
 use rayon::prelude::*;
 
@@ -799,24 +800,46 @@ pub(crate) fn arithmetic_xor<F: PrimeField, N: Rep3Network>(
 }
 
 pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
-    x: &[Rep3PrimeFieldShare<F>],
+    x: &[Rep3PrimeFieldShare<F>], // TODO: impl IntoParallelIterator
     y: &[Rep3PrimeFieldShare<F>],
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
     debug_assert_eq!(x.len(), y.len());
 
-    let mut a = Vec::with_capacity(x.len());
-    for (x, y) in x.iter().zip(y.iter()) {
-        let mut d = (x * y).into_fe() + io_context.rngs.rand.masking_field_element::<F>();
-        d.double_in_place();
-        let e = x.a + y.a;
-        let res_a = e - d;
-        a.push(res_a);
-    }
+    let mut a = vec![F::zero(); x.len()];
+    let random_seeds = io_context.rngs.rand.random_seeds();
+
+    //     let mut a = Vec::with_capacity(x.len());
+    //     for (x, y) in x.iter().zip(y.iter()) {
+    //         let mut d = (x * y).into_fe() + io_context.rngs.rand.masking_field_element::<F>();
+    //         d.double_in_place();
+    //         let e = x.a + y.a;
+    //         let res_a = e - d;
+    //         a.push(res_a);
+    //     }
+
+    x.par_iter()
+        .zip(y.par_iter())
+        .zip_eq(a.par_iter_mut())
+        .enumerate()
+        .for_each_init(
+            || random_seeds,
+            |(seed1, seed2), (i, ((x, y), a))| {
+                seed1[1] = seed1[1].wrapping_add(i as u8);
+                seed1[1] = seed1[1].wrapping_add(i as u8);
+                let mut rng = Rep3Rand::new(*seed1, *seed2);
+                let mut d = (x * y).into_fe() + rng.masking_field_element::<F>();
+                d.double_in_place();
+                let e = x.a + y.a;
+                let res_a = e - d;
+                *a = res_a;
+                // (*seed1, *seed2) = rng.random_seeds()
+            },
+        );
 
     let b = io_context.network.reshare_many(&a)?;
     let res = a
-        .into_iter()
+        .into_par_iter()
         .zip(b)
         .map(|(a, b)| FieldShare { a, b })
         .collect();

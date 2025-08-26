@@ -106,9 +106,9 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     let len = f[0].len();
     assert!(!f.iter().any(|x| x.len() != len));
     let e = pack_and_many(
-        f.par_iter().map(|f| &f[..f.len() - 1]),
+        f.par_iter().map(|f| &f[..len - 1]),
         &vks,
-        len,
+        len - 1,
         io_context,
     )?;
     e.into_par_iter()
@@ -302,28 +302,62 @@ fn pack_and_many<'a, N: Rep3Network>(
         };
         Ok(result)
     } else {
-        // type Packtype = u64;
-        // const BITLEN: usize = std::mem::size_of::<Packtype>() * 8;
+        type Packtype = u64;
+        const BITLEN: usize = std::mem::size_of::<Packtype>() * 8;
 
-        // let mut result = Vec::with_capacity(len);
-        // let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
-        // for els in input.chunks(BITLEN) {
-        //     let packed = pack::<Packtype>(els);
-        //     let u64_a = and_pre_bit(&packed, rhs, io_context);
-        //     to_send.push(u64_a);
-        // }
-        // let received = io_context.network.reshare(to_send.to_owned())?;
+        let mut result = Vec::with_capacity(len);
+        let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
+        let x = inputs
+            .into_par_iter()
+            .map(|input| input.chunks(BITLEN).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let input_chunks = transpose(x);
 
-        // let mut remeining = len;
-        // for (a, b) in to_send.into_iter().zip(received) {
-        //     let rcv = std::cmp::min(BITLEN, remeining);
-        //     result.extend(unpack(Rep3RingShare::new_ring(a, b), rcv));
-        //     remeining -= rcv;
-        // }
-        // debug_assert_eq!(remeining, 0);
-        // Ok(result)
-        unimplemented!()
+        for els in input_chunks {
+            let packed = pack_many::<Packtype>(els);
+            let u64_a = and_pre_bit_many(&packed, rhs, io_context);
+            to_send.push(u64_a);
+        }
+        let received = io_context.network.reshare_many(&to_send)?;
+
+        let mut remaining = len;
+        izip!(to_send, received).for_each(|(a, b)| {
+            let rcv = std::cmp::min(BITLEN, remaining);
+            let x = transpose(unpack_many(a, b, rcv));
+            result.extend(x);
+            remaining -= rcv;
+        });
+
+        debug_assert_eq!(remaining, 0);
+        Ok(transpose(result))
     }
+}
+
+pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
+where
+    I: IntoIterator<Item = Vec<T>>,
+{
+    let mut it = matrix.into_iter();
+    let first_row = match it.next() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+    let cols = first_row.len();
+    let (low, _) = it.size_hint();
+    let mut out: Vec<Vec<T>> = (0..cols).map(|_| Vec::with_capacity(low + 1)).collect();
+
+    // push first row
+    for (c, v) in first_row.into_iter().enumerate() {
+        out[c].push(v);
+    }
+    // push remaining rows
+    for row in it {
+        assert_eq!(row.len(), cols, "ragged matrix");
+        for (c, v) in row.into_iter().enumerate() {
+            out[c].push(v);
+        }
+    }
+    out
 }
 
 fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {

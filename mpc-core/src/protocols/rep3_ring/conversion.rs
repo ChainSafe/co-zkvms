@@ -325,7 +325,7 @@ where
 
 /// Translates a vector of shared bits into a vector of arithmetic sharings of the same bits. See [bit_inject] for details.
 pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
-    x: &[Rep3RingShare<Bit>],
+    x: &[Rep3RingShare<Bit>], // TODO: impl IntoParallelIterator
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
     let mut b0 = vec![Rep3PrimeFieldShare::default(); x.len()];
@@ -334,22 +334,31 @@ pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
 
     match io_context.id {
         PartyID::ID0 => {
-            for (b0, b2, x) in izip!(&mut b0, &mut b2, x.iter().cloned()) {
-                b0.a = F::from(x.a.0.convert() as u64);
-                b2.b = F::from(x.b.0.convert() as u64);
-            }
+            b0.par_iter_mut()
+                .zip_eq(b2.par_iter_mut())
+                .zip_eq(x.par_iter())
+                .for_each(|((b0, b2), x)| {
+                    b0.a = F::from(x.a.0.convert() as u64);
+                    b2.b = F::from(x.b.0.convert() as u64);
+                });
         }
         PartyID::ID1 => {
-            for (b1, b0, x) in izip!(&mut b1, &mut b0, x.iter().cloned()) {
-                b1.a = F::from(x.a.0.convert() as u64);
-                b0.b = F::from(x.b.0.convert() as u64);
-            }
+            b1.par_iter_mut()
+                .zip_eq(b0.par_iter_mut())
+                .zip_eq(x.par_iter())
+                .for_each(|((b1, b0), x)| {
+                    b1.a = F::from(x.a.0.convert() as u64);
+                    b0.b = F::from(x.b.0.convert() as u64);
+                });
         }
         PartyID::ID2 => {
-            for (b2, b1, x) in izip!(&mut b2, &mut b1, x.iter().cloned()) {
-                b2.a = F::from(x.a.0.convert() as u64);
-                b1.b = F::from(x.b.0.convert() as u64);
-            }
+            b2.par_iter_mut()
+                .zip_eq(b1.par_iter_mut())
+                .zip_eq(x.par_iter())
+                .for_each(|((b2, b1), x)| {
+                    b2.a = F::from(x.a.0.convert() as u64);
+                    b1.b = F::from(x.b.0.convert() as u64);
+                });
         }
     };
 

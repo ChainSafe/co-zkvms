@@ -26,6 +26,8 @@ use mpc_types::protocols::{
 };
 use rand::{distributions::Standard, prelude::Distribution};
 
+use rayon::prelude::*;
+
 /// Implements an enum which stores a lookup table, either consisting of public or private values.
 pub enum PublicPrivateLut<F: PrimeField> {
     /// The lookup table has public values
@@ -297,6 +299,7 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         gadgets::ohv::ohv(k, bits, network0)
     }
 
+    #[tracing::instrument(skip_all)]
     fn ohv_from_index_internal_many<T: IntRing2k, F: PrimeField>(
         index: impl IntoIterator<Item = Rep3BigUintShare<F>>,
         k: usize,
@@ -389,10 +392,11 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
             panic!("Table is too large")
         };
 
-        println!("e: {:?}", e.iter().map(|x| x.len()).collect::<Vec<_>>());
+        let span = tracing::info_span!("ohv_from_index_no_a2b_conversion_many");
+        let _enter = span.enter();
 
         let res = conversion::bit_inject_from_bits_to_field_many::<F, _>(
-            &e.into_iter().flatten().collect::<Vec<_>>(),
+            &e.into_par_iter().flatten().collect::<Vec<_>>(),
             io_ctx,
         )?
         .into_iter()
