@@ -49,6 +49,7 @@ use std::iter::Inspect;
 use std::path::{Path, PathBuf};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_forest::util::LevelFilter;
+use tracing_subscriber::fmt;
 
 use clap::Subcommand;
 use tracing_forest::ForestLayer;
@@ -363,6 +364,10 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         })
     } else {
         let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));
+        // let _ = tracing::subscriber::set_global_default(
+        //     subscriber.with(fmt::layer().with_writer(std::io::stderr)),
+        // );
+
         None
     }
 }
@@ -404,6 +409,7 @@ impl std::str::FromStr for TraceParties {
             .map(|n| n.parse::<usize>())
             .collect::<Result<Vec<_>, _>>()
         {
+            println!("trace parties: {:?}", nums);
             Ok(TraceParties::Party(nums))
         } else {
             Err(format!("Invalid trace parties: {}", s))

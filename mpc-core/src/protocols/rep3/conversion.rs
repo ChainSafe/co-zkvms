@@ -5,17 +5,12 @@
 use crate::{IoResult, protocols::rep3::arithmetic::BinaryShare};
 
 use super::{
-    PartyID,
-    Rep3BigUintShare,
-    Rep3PointShare,
-    Rep3PrimeFieldShare,
-    arithmetic,
-    detail,
+    PartyID, Rep3BigUintShare, Rep3PointShare, Rep3PrimeFieldShare, arithmetic, detail,
     network::{IoContext, Rep3Network},
-    // yao::{
-    //     self, GCUtils, circuits::GarbledCircuits, evaluator::Rep3Evaluator, garbler::Rep3Garbler,
-    //     streaming_evaluator::StreamingRep3Evaluator, streaming_garbler::StreamingRep3Garbler,
-    // },
+    yao::{
+        self, GCUtils, circuits::GarbledCircuits, evaluator::Rep3Evaluator, garbler::Rep3Garbler,
+        streaming_evaluator::StreamingRep3Evaluator, streaming_garbler::StreamingRep3Garbler,
+    },
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
@@ -43,7 +38,7 @@ pub fn a2b_selector<F: PrimeField, N: Rep3Network>(
 ) -> std::io::Result<Rep3BigUintShare<F>> {
     match io_context.a2b_type {
         A2BType::Direct => a2b(x, io_context),
-        A2BType::Yao => unimplemented!(), //a2y2b(x, io_context),
+        A2BType::Yao => a2y2b(x, io_context),
     }
 }
 
@@ -54,7 +49,7 @@ pub fn b2a_selector<F: PrimeField, N: Rep3Network>(
 ) -> std::io::Result<Rep3PrimeFieldShare<F>> {
     match io_context.a2b_type {
         A2BType::Direct => b2a(x, io_context),
-        A2BType::Yao => unimplemented!(), //b2y2a(x, io_context),
+        A2BType::Yao => b2y2a(x, io_context),
     }
 }
 
@@ -230,6 +225,7 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
 ) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
     let x = x.into_iter();
     let (len, _) = x.size_hint();
+    println!("len: {}", len);
     let mut res = vec![Rep3PrimeFieldShare::zero_share(); len];
 
     let mut r_vec = Vec::with_capacity(len);
@@ -384,375 +380,375 @@ pub fn bit_inject_many<F: PrimeField, N: Rep3Network>(
     Ok(e)
 }
 
-// /// Transforms the replicated shared value x from an arithmetic sharing to a yao sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x.
-// pub fn a2y<F: PrimeField, N: Rep3Network>(
-//     x: Rep3PrimeFieldShare<F>,
-//     delta: Option<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<BinaryBundle<WireMod2>> {
-//     let [x01, x2] = yao::joint_input_arithmetic_added(x, delta, io_context)?;
+/// Transforms the replicated shared value x from an arithmetic sharing to a yao sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x.
+pub fn a2y<F: PrimeField, N: Rep3Network>(
+    x: Rep3PrimeFieldShare<F>,
+    delta: Option<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<BinaryBundle<WireMod2>> {
+    let [x01, x2] = yao::joint_input_arithmetic_added(x, delta, io_context)?;
 
-//     let converted = match io_context.id {
-//         PartyID::ID0 => {
-//             let mut evaluator = Rep3Evaluator::new(io_context);
-//             evaluator.receive_circuit()?;
-//             let res = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x01, &x2);
-//             GCUtils::garbled_circuits_error(res)?
-//         }
-//         PartyID::ID1 | PartyID::ID2 => {
-//             let delta = match delta {
-//                 Some(delta) => delta,
-//                 None => Err(std::io::Error::new(
-//                     std::io::ErrorKind::InvalidInput,
-//                     "No delta provided",
-//                 ))?,
-//             };
-//             let mut garbler = Rep3Garbler::new_with_delta(io_context, delta);
-//             let res = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &x01, &x2);
-//             let res = GCUtils::garbled_circuits_error(res)?;
-//             garbler.send_circuit()?;
-//             res
-//         }
-//     };
+    let converted = match io_context.id {
+        PartyID::ID0 => {
+            let mut evaluator = Rep3Evaluator::new(io_context);
+            evaluator.receive_circuit()?;
+            let res = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x01, &x2);
+            GCUtils::garbled_circuits_error(res)?
+        }
+        PartyID::ID1 | PartyID::ID2 => {
+            let delta = match delta {
+                Some(delta) => delta,
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "No delta provided",
+                ))?,
+            };
+            let mut garbler = Rep3Garbler::new_with_delta(io_context, delta);
+            let res = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &x01, &x2);
+            let res = GCUtils::garbled_circuits_error(res)?;
+            garbler.send_circuit()?;
+            res
+        }
+    };
 
-//     Ok(converted)
-// }
+    Ok(converted)
+}
 
-// /// Transforms the replicated shared value x from an arithmetic sharing to a yao sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x. Uses the Streaming Garbler/Evaluator.
-// pub fn a2y_streaming<F: PrimeField, N: Rep3Network>(
-//     x: Rep3PrimeFieldShare<F>,
-//     delta: Option<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<BinaryBundle<WireMod2>> {
-//     let [x01, x2] = yao::joint_input_arithmetic_added(x, delta, io_context)?;
+/// Transforms the replicated shared value x from an arithmetic sharing to a yao sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x. Uses the Streaming Garbler/Evaluator.
+pub fn a2y_streaming<F: PrimeField, N: Rep3Network>(
+    x: Rep3PrimeFieldShare<F>,
+    delta: Option<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<BinaryBundle<WireMod2>> {
+    let [x01, x2] = yao::joint_input_arithmetic_added(x, delta, io_context)?;
 
-//     let converted = match io_context.id {
-//         PartyID::ID0 => {
-//             let mut evaluator = StreamingRep3Evaluator::new(io_context);
-//             let res = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x01, &x2);
-//             let res = GCUtils::garbled_circuits_error(res)?;
-//             evaluator.receive_hash()?;
-//             res
-//         }
-//         PartyID::ID1 | PartyID::ID2 => {
-//             let delta = match delta {
-//                 Some(delta) => delta,
-//                 None => Err(std::io::Error::new(
-//                     std::io::ErrorKind::InvalidInput,
-//                     "No delta provided",
-//                 ))?,
-//             };
-//             let mut garbler = StreamingRep3Garbler::new_with_delta(io_context, delta);
-//             let res = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &x01, &x2);
-//             let res = GCUtils::garbled_circuits_error(res)?;
-//             garbler.send_hash()?;
-//             res
-//         }
-//     };
+    let converted = match io_context.id {
+        PartyID::ID0 => {
+            let mut evaluator = StreamingRep3Evaluator::new(io_context);
+            let res = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x01, &x2);
+            let res = GCUtils::garbled_circuits_error(res)?;
+            evaluator.receive_hash()?;
+            res
+        }
+        PartyID::ID1 | PartyID::ID2 => {
+            let delta = match delta {
+                Some(delta) => delta,
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "No delta provided",
+                ))?,
+            };
+            let mut garbler = StreamingRep3Garbler::new_with_delta(io_context, delta);
+            let res = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &x01, &x2);
+            let res = GCUtils::garbled_circuits_error(res)?;
+            garbler.send_hash()?;
+            res
+        }
+    };
 
-//     Ok(converted)
-// }
+    Ok(converted)
+}
 
-// macro_rules! y2a_impl_p1 {
-//     ($garbler:ty,$x:expr,$delta:expr,$io_context:expr,$res:expr) => {{
-//         let delta = match $delta {
-//             Some(delta) => delta,
-//             None => Err(std::io::Error::new(
-//                 std::io::ErrorKind::InvalidInput,
-//                 "No delta provided",
-//             ))?,
-//         };
+macro_rules! y2a_impl_p1 {
+    ($garbler:ty,$x:expr,$delta:expr,$io_context:expr,$res:expr) => {{
+        let delta = match $delta {
+            Some(delta) => delta,
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No delta provided",
+            ))?,
+        };
 
-//         let k2 = $io_context.rngs.bitcomp1.random_fes_3keys::<F>();
-//         $res.a = (k2.0 + k2.1 + k2.2).neg();
-//         let x23 = yao::input_field_id2::<F, _>(None, None, $io_context)?;
+        let k2 = $io_context.rngs.bitcomp1.random_fes_3keys::<F>();
+        $res.a = (k2.0 + k2.1 + k2.2).neg();
+        let x23 = yao::input_field_id2::<F, _>(None, None, $io_context)?;
 
-//         let mut garbler = <$garbler>::new_with_delta($io_context, delta);
-//         let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &$x, &x23);
-//         let x1 = GCUtils::garbled_circuits_error(x1)?;
-//         let x1 = garbler.output_to_id0_and_id1(x1.wires())?;
-//         let x1 = match x1 {
-//             Some(x1) => x1,
-//             None => Err(std::io::Error::new(
-//                 std::io::ErrorKind::InvalidData,
-//                 "No output received",
-//             ))?,
-//         };
-//         $res.b = GCUtils::bits_to_field(&x1)?;
-//     }};
-// }
+        let mut garbler = <$garbler>::new_with_delta($io_context, delta);
+        let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &$x, &x23);
+        let x1 = GCUtils::garbled_circuits_error(x1)?;
+        let x1 = garbler.output_to_id0_and_id1(x1.wires())?;
+        let x1 = match x1 {
+            Some(x1) => x1,
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "No output received",
+            ))?,
+        };
+        $res.b = GCUtils::bits_to_field(&x1)?;
+    }};
+}
 
-// macro_rules! y2a_impl_p2 {
-//     ($garbler:ty,$x:expr,$delta:expr,$io_context:expr,$res:expr) => {{
-//         let delta = match $delta {
-//             Some(delta) => delta,
-//             None => Err(std::io::Error::new(
-//                 std::io::ErrorKind::InvalidInput,
-//                 "No delta provided",
-//             ))?,
-//         };
+macro_rules! y2a_impl_p2 {
+    ($garbler:ty,$x:expr,$delta:expr,$io_context:expr,$res:expr) => {{
+        let delta = match $delta {
+            Some(delta) => delta,
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No delta provided",
+            ))?,
+        };
 
-//         let k2 = $io_context.rngs.bitcomp1.random_fes_3keys::<F>();
-//         let k3 = $io_context.rngs.bitcomp2.random_fes_3keys::<F>();
-//         let k2_comp = k2.0 + k2.1 + k2.2;
-//         let k3_comp = k3.0 + k3.1 + k3.2;
-//         let x23 = Some(k2_comp + k3_comp);
-//         $res.a = k3_comp.neg();
-//         $res.b = k2_comp.neg();
-//         let x23 = yao::input_field_id2(x23, Some(delta), $io_context)?;
+        let k2 = $io_context.rngs.bitcomp1.random_fes_3keys::<F>();
+        let k3 = $io_context.rngs.bitcomp2.random_fes_3keys::<F>();
+        let k2_comp = k2.0 + k2.1 + k2.2;
+        let k3_comp = k3.0 + k3.1 + k3.2;
+        let x23 = Some(k2_comp + k3_comp);
+        $res.a = k3_comp.neg();
+        $res.b = k2_comp.neg();
+        let x23 = yao::input_field_id2(x23, Some(delta), $io_context)?;
 
-//         let mut garbler = <$garbler>::new_with_delta($io_context, delta);
-//         let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &$x, &x23);
-//         let x1 = GCUtils::garbled_circuits_error(x1)?;
-//         let x1 = garbler.output_to_id0_and_id1(x1.wires())?;
-//         if x1.is_some() {
-//             Err(std::io::Error::new(
-//                 std::io::ErrorKind::InvalidData,
-//                 "Unexpected output received",
-//             ))?;
-//         }
-//     }};
-// }
+        let mut garbler = <$garbler>::new_with_delta($io_context, delta);
+        let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut garbler, &$x, &x23);
+        let x1 = GCUtils::garbled_circuits_error(x1)?;
+        let x1 = garbler.output_to_id0_and_id1(x1.wires())?;
+        if x1.is_some() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Unexpected output received",
+            ))?;
+        }
+    }};
+}
 
-// /// Transforms the shared value x from a yao sharing to an arithmetic sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 + x_2 + x_3.
-// ///
-// /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
-// /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
-// pub fn y2a<F: PrimeField, N: Rep3Network>(
-//     x: BinaryBundle<WireMod2>,
-//     delta: Option<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3PrimeFieldShare<F>> {
-//     let mut res = Rep3PrimeFieldShare::zero_share();
+/// Transforms the shared value x from a yao sharing to an arithmetic sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 + x_2 + x_3.
+///
+/// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
+/// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
+pub fn y2a<F: PrimeField, N: Rep3Network>(
+    x: BinaryBundle<WireMod2>,
+    delta: Option<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3PrimeFieldShare<F>> {
+    let mut res = Rep3PrimeFieldShare::zero_share();
 
-//     match io_context.id {
-//         PartyID::ID0 => {
-//             let k3 = io_context.rngs.bitcomp2.random_fes_3keys::<F>();
-//             res.b = (k3.0 + k3.1 + k3.2).neg();
-//             let x23 = yao::input_field_id2::<F, _>(None, None, io_context)?;
+    match io_context.id {
+        PartyID::ID0 => {
+            let k3 = io_context.rngs.bitcomp2.random_fes_3keys::<F>();
+            res.b = (k3.0 + k3.1 + k3.2).neg();
+            let x23 = yao::input_field_id2::<F, _>(None, None, io_context)?;
 
-//             let mut evaluator = Rep3Evaluator::new(io_context);
-//             evaluator.receive_circuit()?;
-//             let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x, &x23);
-//             let x1 = GCUtils::garbled_circuits_error(x1)?;
-//             let x1 = evaluator.output_to_id0_and_id1(x1.wires())?;
-//             res.a = GCUtils::bits_to_field(&x1)?;
-//         }
-//         PartyID::ID1 => {
-//             y2a_impl_p1!(Rep3Garbler<N>, x, delta, io_context, res)
-//         }
-//         PartyID::ID2 => {
-//             y2a_impl_p2!(Rep3Garbler<N>, x, delta, io_context, res)
-//         }
-//     };
+            let mut evaluator = Rep3Evaluator::new(io_context);
+            evaluator.receive_circuit()?;
+            let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x, &x23);
+            let x1 = GCUtils::garbled_circuits_error(x1)?;
+            let x1 = evaluator.output_to_id0_and_id1(x1.wires())?;
+            res.a = GCUtils::bits_to_field(&x1)?;
+        }
+        PartyID::ID1 => {
+            y2a_impl_p1!(Rep3Garbler<N>, x, delta, io_context, res)
+        }
+        PartyID::ID2 => {
+            y2a_impl_p2!(Rep3Garbler<N>, x, delta, io_context, res)
+        }
+    };
 
-//     Ok(res)
-// }
+    Ok(res)
+}
 
-// /// Transforms the shared value x from a yao sharing to an arithmetic sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 + x_2 + x_3. Uses the Streaming Garbler/Evaluator.
-// ///
-// /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
-// /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
-// pub fn y2a_streaming<F: PrimeField, N: Rep3Network>(
-//     x: BinaryBundle<WireMod2>,
-//     delta: Option<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3PrimeFieldShare<F>> {
-//     let mut res = Rep3PrimeFieldShare::zero_share();
+/// Transforms the shared value x from a yao sharing to an arithmetic sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 + x_2 + x_3. Uses the Streaming Garbler/Evaluator.
+///
+/// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
+/// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
+pub fn y2a_streaming<F: PrimeField, N: Rep3Network>(
+    x: BinaryBundle<WireMod2>,
+    delta: Option<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3PrimeFieldShare<F>> {
+    let mut res = Rep3PrimeFieldShare::zero_share();
 
-//     match io_context.id {
-//         PartyID::ID0 => {
-//             let k3 = io_context.rngs.bitcomp2.random_fes_3keys::<F>();
-//             res.b = (k3.0 + k3.1 + k3.2).neg();
-//             let x23 = yao::input_field_id2::<F, _>(None, None, io_context)?;
+    match io_context.id {
+        PartyID::ID0 => {
+            let k3 = io_context.rngs.bitcomp2.random_fes_3keys::<F>();
+            res.b = (k3.0 + k3.1 + k3.2).neg();
+            let x23 = yao::input_field_id2::<F, _>(None, None, io_context)?;
 
-//             let mut evaluator = StreamingRep3Evaluator::new(io_context);
-//             let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x, &x23);
-//             let x1 = GCUtils::garbled_circuits_error(x1)?;
-//             let x1 = evaluator.output_to_id0_and_id1(x1.wires())?;
-//             res.a = GCUtils::bits_to_field(&x1)?;
-//         }
-//         PartyID::ID1 => {
-//             y2a_impl_p1!(StreamingRep3Garbler<N>, x, delta, io_context, res)
-//         }
-//         PartyID::ID2 => {
-//             y2a_impl_p2!(StreamingRep3Garbler<N>, x, delta, io_context, res)
-//         }
-//     };
+            let mut evaluator = StreamingRep3Evaluator::new(io_context);
+            let x1 = GarbledCircuits::adder_mod_p::<_, F>(&mut evaluator, &x, &x23);
+            let x1 = GCUtils::garbled_circuits_error(x1)?;
+            let x1 = evaluator.output_to_id0_and_id1(x1.wires())?;
+            res.a = GCUtils::bits_to_field(&x1)?;
+        }
+        PartyID::ID1 => {
+            y2a_impl_p1!(StreamingRep3Garbler<N>, x, delta, io_context, res)
+        }
+        PartyID::ID2 => {
+            y2a_impl_p2!(StreamingRep3Garbler<N>, x, delta, io_context, res)
+        }
+    };
 
-//     Ok(res)
-// }
+    Ok(res)
+}
 
-// /// Transforms the replicated shared value x from a binary sharing to a yao sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x.
-// ///
-// /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
-// /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
-// pub fn b2y<F: PrimeField, N: Rep3Network>(
-//     x: &Rep3BigUintShare<F>,
-//     delta: Option<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<BinaryBundle<WireMod2>> {
-//     let [x01, x2] =
-//         yao::joint_input_binary_xored(x, delta, io_context, F::MODULUS_BIT_SIZE as usize)?;
+/// Transforms the replicated shared value x from a binary sharing to a yao sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into wires, such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x.
+///
+/// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
+/// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end. These adaptions need to be encoded into a garbled circuit.
+pub fn b2y<F: PrimeField, N: Rep3Network>(
+    x: &Rep3BigUintShare<F>,
+    delta: Option<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<BinaryBundle<WireMod2>> {
+    let [x01, x2] =
+        yao::joint_input_binary_xored(x, delta, io_context, F::MODULUS_BIT_SIZE as usize)?;
 
-//     let converted = match io_context.id {
-//         PartyID::ID0 => {
-//             // There is no code difference between Rep3Evaluator and StreamingRep3Evaluator
-//             let mut evaluator = Rep3Evaluator::new(io_context);
-//             // evaluator.receive_circuit()?; // No network used here
-//             let res = GarbledCircuits::xor_many(&mut evaluator, &x01, &x2);
-//             GCUtils::garbled_circuits_error(res)?
-//         }
-//         PartyID::ID1 | PartyID::ID2 => {
-//             // There is no code difference between Rep3Garbler and StreamingRep3Garbler
-//             let delta = match delta {
-//                 Some(delta) => delta,
-//                 None => Err(std::io::Error::new(
-//                     std::io::ErrorKind::InvalidInput,
-//                     "No delta provided",
-//                 ))?,
-//             };
-//             let mut garbler = Rep3Garbler::new_with_delta(io_context, delta);
-//             let res = GarbledCircuits::xor_many(&mut garbler, &x01, &x2);
-//             GCUtils::garbled_circuits_error(res)?
-//             // garbler.send_circuit()?; // No network used here
-//         }
-//     };
+    let converted = match io_context.id {
+        PartyID::ID0 => {
+            // There is no code difference between Rep3Evaluator and StreamingRep3Evaluator
+            let mut evaluator = Rep3Evaluator::new(io_context);
+            // evaluator.receive_circuit()?; // No network used here
+            let res = GarbledCircuits::xor_many(&mut evaluator, &x01, &x2);
+            GCUtils::garbled_circuits_error(res)?
+        }
+        PartyID::ID1 | PartyID::ID2 => {
+            // There is no code difference between Rep3Garbler and StreamingRep3Garbler
+            let delta = match delta {
+                Some(delta) => delta,
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "No delta provided",
+                ))?,
+            };
+            let mut garbler = Rep3Garbler::new_with_delta(io_context, delta);
+            let res = GarbledCircuits::xor_many(&mut garbler, &x01, &x2);
+            GCUtils::garbled_circuits_error(res)?
+            // garbler.send_circuit()?; // No network used here
+        }
+    };
 
-//     Ok(converted)
-// }
+    Ok(converted)
+}
 
-// /// Transforms the shared value x from a yao sharing to a binary sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 xor x_2 xor x_3.
-// pub fn y2b<F: PrimeField, N: Rep3Network>(
-//     x: BinaryBundle<WireMod2>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3BigUintShare<F>> {
-//     let bitlen = x.size();
-//     let collapsed = GCUtils::collapse_bundle_to_lsb_bits_as_biguint(x);
+/// Transforms the shared value x from a yao sharing to a binary sharing. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 xor x_2 xor x_3.
+pub fn y2b<F: PrimeField, N: Rep3Network>(
+    x: BinaryBundle<WireMod2>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3BigUintShare<F>> {
+    let bitlen = x.size();
+    let collapsed = GCUtils::collapse_bundle_to_lsb_bits_as_biguint(x);
 
-//     let converted = match io_context.id {
-//         PartyID::ID0 => {
-//             let x_xor_px = collapsed;
-//             let r = io_context.rngs.rand.random_biguint_rng1(bitlen);
-//             let r_xor_x_xor_px = x_xor_px ^ &r;
-//             io_context
-//                 .network
-//                 .send(PartyID::ID2, r_xor_x_xor_px.to_owned())?;
-//             Rep3BigUintShare::new(r, r_xor_x_xor_px)
-//         }
-//         PartyID::ID1 => {
-//             let px = collapsed;
-//             let r = io_context.rngs.rand.random_biguint_rng2(bitlen);
-//             Rep3BigUintShare::new(px, r)
-//         }
-//         PartyID::ID2 => {
-//             let px = collapsed;
-//             let r_xor_x_xor_px = io_context.network.recv(PartyID::ID0)?;
-//             Rep3BigUintShare::new(r_xor_x_xor_px, px)
-//         }
-//     };
+    let converted = match io_context.id {
+        PartyID::ID0 => {
+            let x_xor_px = collapsed;
+            let r = io_context.rngs.rand.random_biguint_rng1(bitlen);
+            let r_xor_x_xor_px = x_xor_px ^ &r;
+            io_context
+                .network
+                .send(PartyID::ID2, r_xor_x_xor_px.to_owned())?;
+            Rep3BigUintShare::new(r, r_xor_x_xor_px)
+        }
+        PartyID::ID1 => {
+            let px = collapsed;
+            let r = io_context.rngs.rand.random_biguint_rng2(bitlen);
+            Rep3BigUintShare::new(px, r)
+        }
+        PartyID::ID2 => {
+            let px = collapsed;
+            let r_xor_x_xor_px = io_context.network.recv(PartyID::ID0)?;
+            Rep3BigUintShare::new(r_xor_x_xor_px, px)
+        }
+    };
 
-//     Ok(converted)
-// }
+    Ok(converted)
+}
 
-// /// Transforms the shared values x from yao sharings to binary sharings. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 xor x_2 xor x_3.
-// pub fn y2b_many<F: PrimeField, N: Rep3Network>(
-//     x: Vec<BinaryBundle<WireMod2>>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Vec<Rep3BigUintShare<F>>> {
-//     let mut collapsed = Vec::with_capacity(x.len());
-//     let mut input_bitlengths = Vec::with_capacity(x.len());
-//     for chunk in x.iter() {
-//         input_bitlengths.push(chunk.size());
-//     }
-//     for chunk in x {
-//         collapsed.push(GCUtils::collapse_bundle_to_lsb_bits_as_biguint(chunk));
-//     }
+/// Transforms the shared values x from yao sharings to binary sharings. I.e., the sharing such that the garbler have keys (k_0, delta) for each bit of x, while the evaluator has k_x = k_0 xor delta * x gets transformed into x = x_1 xor x_2 xor x_3.
+pub fn y2b_many<F: PrimeField, N: Rep3Network>(
+    x: Vec<BinaryBundle<WireMod2>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<Rep3BigUintShare<F>>> {
+    let mut collapsed = Vec::with_capacity(x.len());
+    let mut input_bitlengths = Vec::with_capacity(x.len());
+    for chunk in x.iter() {
+        input_bitlengths.push(chunk.size());
+    }
+    for chunk in x {
+        collapsed.push(GCUtils::collapse_bundle_to_lsb_bits_as_biguint(chunk));
+    }
 
-//     let mut result = Vec::with_capacity(collapsed.len());
-//     match io_context.id {
-//         PartyID::ID0 => {
-//             let mut r = Vec::with_capacity(collapsed.len());
-//             let mut r_xor_x_xor_px = Vec::with_capacity(collapsed.len());
+    let mut result = Vec::with_capacity(collapsed.len());
+    match io_context.id {
+        PartyID::ID0 => {
+            let mut r = Vec::with_capacity(collapsed.len());
+            let mut r_xor_x_xor_px = Vec::with_capacity(collapsed.len());
 
-//             for (bitlen, x_xor_px) in izip!(input_bitlengths, collapsed) {
-//                 let r_ = io_context.rngs.rand.random_biguint_rng1(bitlen);
-//                 r_xor_x_xor_px.push(x_xor_px ^ &r_);
-//                 r.push(r_);
-//             }
+            for (bitlen, x_xor_px) in izip!(input_bitlengths, collapsed) {
+                let r_ = io_context.rngs.rand.random_biguint_rng1(bitlen);
+                r_xor_x_xor_px.push(x_xor_px ^ &r_);
+                r.push(r_);
+            }
 
-//             io_context
-//                 .network
-//                 .send_many(PartyID::ID2, &r_xor_x_xor_px)?;
-//             for (r_xor_x_xor_px_, r_) in izip!(r_xor_x_xor_px, r) {
-//                 result.push(Rep3BigUintShare::new(r_xor_x_xor_px_, r_));
-//             }
-//         }
-//         PartyID::ID1 => {
-//             for (bitlen, px) in izip!(input_bitlengths, collapsed) {
-//                 result.push(Rep3BigUintShare::new(
-//                     px,
-//                     io_context.rngs.rand.random_biguint_rng2(bitlen),
-//                 ));
-//             }
-//         }
-//         PartyID::ID2 => {
-//             let r_xor_x_xor_px = io_context.network.recv_many(PartyID::ID0)?;
+            io_context
+                .network
+                .send_many(PartyID::ID2, &r_xor_x_xor_px)?;
+            for (r_xor_x_xor_px_, r_) in izip!(r_xor_x_xor_px, r) {
+                result.push(Rep3BigUintShare::new(r_xor_x_xor_px_, r_));
+            }
+        }
+        PartyID::ID1 => {
+            for (bitlen, px) in izip!(input_bitlengths, collapsed) {
+                result.push(Rep3BigUintShare::new(
+                    px,
+                    io_context.rngs.rand.random_biguint_rng2(bitlen),
+                ));
+            }
+        }
+        PartyID::ID2 => {
+            let r_xor_x_xor_px = io_context.network.recv_many(PartyID::ID0)?;
 
-//             for (px, r_xor_x_xor_px_) in izip!(collapsed, r_xor_x_xor_px) {
-//                 result.push(Rep3BigUintShare::new(px, r_xor_x_xor_px_));
-//             }
-//         }
-//     };
+            for (px, r_xor_x_xor_px_) in izip!(collapsed, r_xor_x_xor_px) {
+                result.push(Rep3BigUintShare::new(px, r_xor_x_xor_px_));
+            }
+        }
+    };
 
-//     Ok(result)
-// }
+    Ok(result)
+}
 
-// /// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3.
-// pub fn a2y2b<F: PrimeField, N: Rep3Network>(
-//     x: Rep3PrimeFieldShare<F>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3BigUintShare<F>> {
-//     let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
-//     let y = a2y(x, delta, io_context)?;
-//     y2b(y, io_context)
-// }
+/// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3.
+pub fn a2y2b<F: PrimeField, N: Rep3Network>(
+    x: Rep3PrimeFieldShare<F>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3BigUintShare<F>> {
+    let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
+    let y = a2y(x, delta, io_context)?;
+    y2b(y, io_context)
+}
 
-// /// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3. Uses the Streaming Garbler/Evaluator.
-// pub fn a2y2b_streaming<F: PrimeField, N: Rep3Network>(
-//     x: Rep3PrimeFieldShare<F>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3BigUintShare<F>> {
-//     let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
-//     let y = a2y_streaming(x, delta, io_context)?;
-//     y2b(y, io_context)
-// }
+/// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3. Uses the Streaming Garbler/Evaluator.
+pub fn a2y2b_streaming<F: PrimeField, N: Rep3Network>(
+    x: Rep3PrimeFieldShare<F>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3BigUintShare<F>> {
+    let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
+    let y = a2y_streaming(x, delta, io_context)?;
+    y2b(y, io_context)
+}
 
-// /// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3. This implementations goes through the yao protocol and currently works only for a binary sharing of a valid field element, i.e., x = x_1 xor x_2 xor x_3 < p.
-// ///
-// /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
-// /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
-// pub fn b2y2a<F: PrimeField, N: Rep3Network>(
-//     x: &Rep3BigUintShare<F>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3PrimeFieldShare<F>> {
-//     let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
-//     let y = b2y(x, delta, io_context)?;
-//     y2a(y, delta, io_context)
-// }
+/// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3. This implementations goes through the yao protocol and currently works only for a binary sharing of a valid field element, i.e., x = x_1 xor x_2 xor x_3 < p.
+///
+/// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
+/// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
+pub fn b2y2a<F: PrimeField, N: Rep3Network>(
+    x: &Rep3BigUintShare<F>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3PrimeFieldShare<F>> {
+    let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
+    let y = b2y(x, delta, io_context)?;
+    y2a(y, delta, io_context)
+}
 
-// /// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3. This implementations goes through the yao protocol and currently works only for a binary sharing of a valid field element, i.e., x = x_1 xor x_2 xor x_3 < p. Uses the Streaming Garbler/Evaluator.
-// ///
-// /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
-// /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
-// pub fn b2y2a_streaming<F: PrimeField, N: Rep3Network>(
-//     x: &Rep3BigUintShare<F>,
-//     io_context: &mut IoContext<N>,
-// ) -> IoResult<Rep3PrimeFieldShare<F>> {
-//     let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
-//     let y = b2y(x, delta, io_context)?;
-//     y2a_streaming(y, delta, io_context)
-// }
+/// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3. This implementations goes through the yao protocol and currently works only for a binary sharing of a valid field element, i.e., x = x_1 xor x_2 xor x_3 < p. Uses the Streaming Garbler/Evaluator.
+///
+/// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
+/// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
+pub fn b2y2a_streaming<F: PrimeField, N: Rep3Network>(
+    x: &Rep3BigUintShare<F>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Rep3PrimeFieldShare<F>> {
+    let delta = io_context.rngs.generate_random_garbler_delta(io_context.id);
+    let y = b2y(x, delta, io_context)?;
+    y2a_streaming(y, delta, io_context)
+}
 
 // /// This function is the first local step of the point_sharing to sharing of the coordinates transformation. In essence, it is very similar to what is done in a2b. It takes a point share and produces two trivial shares of its x and y coordinates each. To create valid (x,y) coordinate shares from it, these shares need to be added according to the point_addition rules of elliptic curves.
 // #[expect(clippy::type_complexity)]

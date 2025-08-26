@@ -2,6 +2,7 @@ use std::iter;
 
 use crate::{
     field::JoltField,
+    jolt::trace,
     poly::{
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3MultilinearPolynomial,
@@ -13,6 +14,7 @@ use crate::{
     },
 };
 use ark_std::cfg_into_iter;
+use eyre::Context;
 use itertools::{izip, multizip, Either, Itertools};
 use jolt_core::{jolt::vm::instruction_lookups::InstructionLookupPolynomials, utils::math::Math};
 use jolt_core::{
@@ -86,6 +88,22 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             M,
         )?;
 
+        println!(
+            "subtable_lookup_indices: {:?} hint: {}",
+            subtable_lookup_indices
+                .iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .len(),
+            subtable_lookup_indices.iter().flatten().size_hint().0
+        );
+
+        let dim: Vec<_> =
+            rep3::conversion::b2a_many(subtable_lookup_indices.iter().flatten(), io_ctx.main())?
+                .chunks_exact(C)
+                .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
+                .collect();
+
         let materialized_subtable_luts = preprocessing
             .materialized_subtables
             .clone()
@@ -94,13 +112,12 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
             })
             .collect_vec();
-
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
-            io_ctx.par_iter(
+            io_ctx.par_iter_init(
                 0..preprocessing.num_memories,
                 None,
-                |memory_index, mut io_ctx| {
-                    let mut io_ctx2 = io_ctx.fork()?;
+                |ctx| ctx.fork().context("while forking worker fork ctx"),
+                |memory_index, mut io_ctx2, mut io_ctx| {
                     let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                     let access_sequence = &subtable_lookup_indices[dim_index];
@@ -109,11 +126,15 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
 
+                    let span = tracing::info_span!("memory", memory_index, subtable_index);
+                    let _guard = span.enter();
+                    let mut ops_used = 0usize;
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = &op.instruction_lookup {
                             let memories_used = &preprocessing.instruction_to_memory_indices
                                 [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
+                                ops_used += 1;
                                 let memory_address = &access_sequence[j];
 
                                 let ohv = Rep3LookupTable::ohv_from_index_no_a2b_conversion(
@@ -150,10 +171,13 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                         &mut io_ctx2,
                                     )
                                     .unwrap();
+
                                 subtable_lookups[j] = subtable_lookup_share;
                             }
                         }
                     }
+                    drop(_guard);
+                    tracing::info!("ops used: {}", ops_used);
 
                     Ok((
                         Rep3MultilinearPolynomial::from(read_cts_i),
@@ -174,12 +198,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 (read_acc, final_acc, e_acc)
             },
         );
-
-        let dim: Vec<_> =
-            rep3::conversion::b2a_many(subtable_lookup_indices.iter().flatten(), io_ctx.main())?
-                .chunks_exact(C)
-                .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
-                .collect();
 
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; num_reads]; Instructions::COUNT];

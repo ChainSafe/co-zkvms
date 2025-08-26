@@ -555,6 +555,71 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
     ///
     /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.
     ///
+    /// The `map` is a function that takes an input and an `IoContext` and returns a flattened result.
+    ///
+    /// The `max_forks` is the maximum number of forks to use.
+    /// If `None`, all forks are used. (Default: rayon::current_num_threads() / num_workers)
+    pub fn par_iter_init<T, U, R, MapFn>(
+        &mut self,
+        inputs: impl IntoParallelIterator<Item = T, Iter: IndexedParallelIterator>,
+        max_forks: Option<usize>,
+        init: impl Fn(&mut IoContext<Network>) -> eyre::Result<U>,
+        map_op: MapFn,
+    ) -> eyre::Result<Vec<R>>
+    where
+        MapFn: Fn(T, &mut U, &mut IoContext<Network>) -> eyre::Result<R> + Sync + Send,
+        T: Sized + Send,
+        U: Send,
+        R: Sync + Send,
+    {
+        let inputs_iter = inputs.into_par_iter();
+        let max_forks = max_forks.unwrap_or(self.forks.len());
+        let len = inputs_iter.len();
+
+        if max_forks == 0 {
+            return inputs_iter
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|val| map_op(val, &mut init(self.main())?, self.main()))
+                .collect::<eyre::Result<Vec<_>>>();
+        }
+
+        if len == 1 {
+            return Ok(vec![map_op(
+                inputs_iter.collect::<Vec<_>>().pop().unwrap(),
+                &mut init(self.main())?,
+                self.main(),
+            )?]);
+        }
+
+        let chunk_size = len.div_ceil(max_forks);
+        assert!(chunk_size != 0);
+        let forks = len.div_ceil(chunk_size);
+        let init_vals = self
+            .forks(forks)
+            .iter_mut()
+            .map(|mut ctx| init(&mut ctx).unwrap())
+            .collect::<Vec<_>>();
+
+        inputs_iter
+            .into_par_iter()
+            .chunks(chunk_size)
+            .zip_eq(self.forks(forks).par_iter_mut())
+            .zip_eq(init_vals.into_par_iter())
+            .map(|((chunk, ctx), mut init_val)| {
+                chunk
+                    .into_iter()
+                    .map(|val| map_op(val, &mut init_val, ctx))
+                    .collect_vec()
+            })
+            .flatten()
+            .collect::<eyre::Result<Vec<_>>>()
+    }
+
+    /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
+    ///
+    /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.
+    ///
     /// The `map` is a function that takes a chunk of inputs and an `IoContext` and returns a flattened result.
     ///
     /// The `chunk_size` is the size of each chunk.
