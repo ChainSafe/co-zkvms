@@ -98,7 +98,8 @@ where
         ProofTranscript: Transcript,
     {
         // let num_workers = 1 << network.log_num_workers_per_party();
-        let mut io_ctx = IoContextPool::init(network, 16, 1 << 10)?; // todo get from network
+        let mut io_ctx =
+            IoContextPool::init(network, rayon::current_num_threads() as u32, 1 << 10)?; // todo get from network
 
         let generate_witness = witness.is_some();
 

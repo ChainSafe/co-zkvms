@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use eyre::Context;
 use mpc_net::channel::ChannelHandle;
+use std::collections::BTreeMap;
 use std::iter;
 use std::sync::Arc;
 
@@ -55,7 +56,7 @@ impl<N: Rep3Network> Clone for IoContext<N> {
             id: self.id,
             rngs: child_rngs,
             rng: child_rng,
-            network: self.network.fork(),
+            network: self.network.clone(),
             a2b_type: self.a2b_type,
             rng_src: Arc::clone(&self.rng_src),
             rngs_src: Arc::clone(&self.rngs_src),
@@ -130,7 +131,18 @@ impl<N: Rep3Network> IoContext<N> {
 
     /// Cronstruct a fork of the [`IoContext`]. This fork can be used concurrently with its parent.
     pub fn fork(&mut self) -> IoResult<Self> {
-        Ok(self.clone())
+        let child_rngs = self.rngs_src.fork(); // lock once, derive new RNG
+        let child_rng = self.rng_src.fork(); // lock once, derive new RNG
+
+        Ok(IoContext {
+            id: self.id,
+            rngs: child_rngs,
+            rng: child_rng,
+            network: self.network.fork(),
+            a2b_type: self.a2b_type,
+            rng_src: Arc::clone(&self.rng_src),
+            rngs_src: Arc::clone(&self.rngs_src),
+        })
     }
 
     /// Generate two random elements
@@ -155,7 +167,7 @@ impl<N: Rep3Network> IoContext<N> {
 
 /// This trait defines the network interface for the REP3 protocol.
 #[async_trait]
-pub trait Rep3Network: Send {
+pub trait Rep3Network: Send + Clone {
     /// Returns the id of the party. The id is in the range 0 <= id < 3
     fn get_id(&self) -> PartyID;
 
@@ -352,9 +364,8 @@ impl Rep3Network for Rep3MpcNet {
         &mut self,
         data: &[F],
     ) -> std::io::Result<Vec<F>> {
-        self.send_many(self.get_id().next_id(), data).unwrap();
-        let x = self.recv_many(self.get_id().prev_id()).unwrap();
-        Ok(x)
+        self.send_many(self.get_id().next_id(), data)?;
+        self.recv_many(self.get_id().prev_id())
     }
 
     async fn reshare_many_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
@@ -406,9 +417,20 @@ impl Rep3Network for Rep3MpcNet {
 
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>> {
         let data = self.recv_bytes(from)?;
+        let len = data.len();
 
-        let res = Vec::<F>::deserialize_uncompressed_unchecked(&data[..])
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let res = Vec::<F>::deserialize_uncompressed_unchecked(&data[..]).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "to {} from {} error: {e}: got {} bytes type {}",
+                    self.id.party_id(),
+                    from,
+                    len,
+                    std::any::type_name::<F>()
+                ),
+            )
+        })?;
 
         Ok(res)
     }
@@ -460,6 +482,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
 
     pub fn forks(&mut self, num_forks: usize) -> &mut [IoContext<Network>] {
         &mut self.forks[..num_forks]
+    }
+
+    pub fn forks_owned(&mut self, num_forks: usize) -> Vec<IoContext<Network>> {
+        self.forks[..num_forks].to_vec()
     }
 
     pub fn network(&mut self) -> &mut Network {

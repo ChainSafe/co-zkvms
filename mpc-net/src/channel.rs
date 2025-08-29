@@ -1,7 +1,7 @@
 //! A channel abstraction for sending and receiving messages.
 use crate::{
-    rep3::quic::codec_cfg,
-    resv_demux::{write_header, ResvJob, HEADER_LEN},
+    rep3::{quic::codec_cfg, PartyWorkerID},
+    resv_demux::{write_header, RecvJob, HEADER_LEN},
 };
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
@@ -317,26 +317,29 @@ where
 
 #[derive(Debug, Clone)]
 pub struct PerOpChannelHandle {
+    id: PartyWorkerID,
     conn: Connection,
     codec: LengthDelimitedCodec,
     rt: Handle,
-    resv_tx: Option<mpsc::Sender<ResvJob>>,
+    resv_tx: Option<mpsc::Sender<RecvJob>>,
     send_limit: Arc<Semaphore>, // bound concurrent sends
-    fork_id: u32,
-    seq: Arc<AtomicU64>,
+    pub fork_id: u32,
+    pub seq: Arc<AtomicU64>,
 }
 
 impl PerOpChannelHandle {
     pub fn new(
+        id: PartyWorkerID,
         conn_next: Connection,
         codec: LengthDelimitedCodec,
         rt: Handle,
-        resv_tx: Option<mpsc::Sender<ResvJob>>,
+        resv_tx: Option<mpsc::Sender<RecvJob>>,
 
         fork_id: u32,
         per_conn_streams: usize,
     ) -> Self {
         Self {
+            id,
             conn: conn_next,
             codec,
             rt,
@@ -349,6 +352,7 @@ impl PerOpChannelHandle {
 
     pub fn fork(&self, fork_id: u32) -> Self {
         Self {
+            id: self.id.clone(),
             conn: self.conn.clone(),
             codec: codec_cfg(),
             rt: self.rt.clone(),
@@ -371,21 +375,9 @@ impl PerOpChannelHandle {
 
     /// Blocking variants return a oneshot Receiver you can `.blocking_recv()`.
     pub fn blocking_send(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
-        tokio::spawn(async move {
-            println!("in runtime");
-        });
-        assert!(
-            tokio::runtime::Handle::try_current().is_ok(),
-            "blocking_send called on Tokio worker"
-        );
-
         self.spawn_send(data)
     }
     pub fn blocking_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
-        assert!(
-            tokio::runtime::Handle::try_current().is_ok(),
-            "blocking_recv called on Tokio worker"
-        );
         self.spawn_recv()
     }
 
@@ -397,6 +389,7 @@ impl PerOpChannelHandle {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let out_sem = self.send_limit.clone();
 
+        let id = self.id.party_id();
         self.rt.spawn(async move {
             let _p = match out_sem.acquire_owned().await {
                 Ok(p) => p,
@@ -407,6 +400,7 @@ impl PerOpChannelHandle {
                 }
             };
             // prepend header inside one LDC frame
+
             let mut buf = BytesMut::with_capacity(HEADER_LEN + payload.len());
             write_header(&mut buf, fork_id, seq);
             buf.extend_from_slice(&payload);
@@ -467,7 +461,7 @@ impl PerOpChannelHandle {
 
         rt.spawn(async move {
             let (otx, orx) = oneshot::channel();
-            let _ = req_tx.send(ResvJob { fork, tx: otx }).await;
+            let _ = req_tx.send(RecvJob { fork, tx: otx }).await;
             let out = match tokio::time::timeout(Duration::from_secs(20), orx).await {
                 Ok(Ok(Ok(bytes))) => Ok(bytes),
                 Ok(Ok(Err(e))) => Err(e),

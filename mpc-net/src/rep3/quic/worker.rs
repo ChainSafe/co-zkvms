@@ -51,10 +51,13 @@ pub static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .unwrap()
 });
 
+#[derive(Clone)]
 pub struct Rep3QuicMpcNetWorker {
     pub id: PartyWorkerID,
     pub chan_next: PerOpChannelHandle,
     pub chan_prev: PerOpChannelHandle,
+    // pub chan_next: ChannelHandle<Bytes, BytesMut>,
+    // pub chan_prev: ChannelHandle<Bytes, BytesMut>,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
     pub log_num_workers_per_party: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
@@ -116,6 +119,7 @@ impl Rep3QuicMpcNetWorker {
                 .ok_or(eyre::eyre!("no prev connection found"))?;
 
             let chan_next = PerOpChannelHandle::new(
+                id,
                 conn_next.clone(),
                 codec_cfg(),
                 RUNTIME.handle().clone(),
@@ -131,6 +135,7 @@ impl Rep3QuicMpcNetWorker {
                 1024,
             );
             let chan_prev = PerOpChannelHandle::new(
+                id,
                 conn_prev.clone(),
                 codec_cfg(),
                 RUNTIME.handle().clone(),
@@ -138,6 +143,19 @@ impl Rep3QuicMpcNetWorker {
                 0,
                 512,
             );
+
+            // let mut channels = net_handler.get_byte_channels().await?;
+            // let chan_next = channels
+            //     .remove(&id.party_id().next_id().into())
+            //     .ok_or(eyre::eyre!("no next channel found"))?;
+            // let chan_prev = channels
+            //     .remove(&id.party_id().prev_id().into())
+            //     .ok_or(eyre::eyre!("no prev channel found"))?;
+            // if !channels.is_empty() {
+            //     bail!("unexpected channels found")
+            // }
+            // let chan_next = ChannelHandle::manage(chan_next);
+            // let chan_prev = ChannelHandle::manage(chan_prev);
             eyre::Ok((net_handler, chan_next, chan_prev, chan_coordinator))
         })?;
         Ok(Self {
@@ -334,6 +352,41 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             seq: Arc::new(AtomicU64::new(0)),
             alloc: self.alloc.clone(),
         }
+        // let id = self.id.clone();
+        // let net_handler = Arc::clone(&self.net_handler);
+        // let (chan_next, chan_prev) = net_handler
+        //     .runtime
+        //     .block_on(async {
+        //         let mut channels = net_handler.inner.get_byte_channels().await?;
+
+        //         let chan_next = channels
+        //             .remove(&id.party_id().next_id().into())
+        //             .expect("to find next channel");
+        //         let chan_prev = channels
+        //             .remove(&id.party_id().prev_id().into())
+        //             .expect("to find prev channel");
+        //         if !channels.is_empty() {
+        //             panic!("unexpected channels found")
+        //         }
+
+        //         let chan_next = ChannelHandle::manage(chan_next);
+        //         let chan_prev = ChannelHandle::manage(chan_prev);
+        //         Ok::<_, std::io::Error>((chan_next, chan_prev))
+        //     })
+        //     .unwrap();
+
+        // Self {
+        //     id,
+        //     net_handler,
+        //     chan_next,
+        //     chan_prev,
+        //     chan_coordinator: None,
+        //     log_num_workers_per_party: 0,
+        //     config: self.config.clone(),
+        //     fork_id,
+        //     seq: Arc::new(AtomicU64::new(0)),
+        //     alloc: self.alloc.clone(),
+        // }
     }
 
     fn fork_with_coordinator(&mut self) -> Result<Self> {

@@ -92,16 +92,12 @@ where
     let k2 = k >> 1;
 
     // create two ohv's with half the bitsize in parallel
-    // let (a, b) = join!(
-    //     gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
-    //     gadgets::ohv::rand_ohv::<T, _>(k2, io_context1)
-    // );
-    let (a, b) = (
+    let (a, b) = join!(
         gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
-        gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
+        gadgets::ohv::rand_ohv::<T, _>(k2, io_context1)
     );
-    let (mut r, e) = a.unwrap();
-    let (r_, e_) = b.unwrap();
+    let (mut r, e) = a?;
+    let (r_, e_) = b?;
 
     // Combine r and r_;
     r <<= k2;
@@ -269,6 +265,27 @@ pub fn read_shared_lut_from_ohv<F: PrimeField, N: Rep3Network>(
     Ok(t)
 }
 
+/// Takes a secret-shared lookup table containing field elements, and a shared one-hot-encoded vector and returns a non-replicated additive sharing of the looked up value lut`\[`index`\]`
+pub fn read_shared_lut_from_many_ohvs<F: PrimeField, N: Rep3Network>(
+    lut: &[Rep3PrimeFieldShare<F>],
+    ohvs: &[Vec<Rep3PrimeFieldShare<F>>],
+    io_context: &mut IoContext<N>,
+) -> Vec<F> {
+    // Start the result with a random mask (for potential resharing later)
+
+    ohvs.iter()
+        .map(|ohv| {
+            let mut t = io_context.rngs.rand.masking_field_element::<F>();
+
+            for (l, e) in lut.iter().zip(ohv.into_iter()) {
+                let mul = e * l;
+                t += mul.into_fe();
+            }
+            t
+        })
+        .collect()
+}
+
 /// The second part of writing to a shared lookup table, i.e, takes the shared value, the shared LUT and and one_hot_vector (all elements 0 except for the index to write to which is set to one) and writes to the shared LUT.
 pub fn write_lut_from_ohv<F: PrimeField, N: Rep3Network>(
     value: &Rep3PrimeFieldShare<F>,
@@ -279,17 +296,25 @@ pub fn write_lut_from_ohv<F: PrimeField, N: Rep3Network>(
     let n = lut.len();
     assert!(n <= ohv.len());
     let mut local_a = Vec::with_capacity(n);
+    let _guard = tracing::trace_span!("inner_product").entered();
     for (l, e) in lut.iter().zip(ohv.iter()) {
         local_a.push(
             (e * &(value - l)).into_fe() + l.a + io_context.rngs.rand.masking_field_element::<F>(),
         );
     }
-    let local_b = io_context.network.reshare_many(&local_a)?;
+    drop(_guard);
 
+    let _guard = tracing::trace_span!("reshare_many").entered();
+    let local_b = io_context.network.reshare_many(&local_a)?;
+    drop(_guard);
+
+    let _guard = tracing::trace_span!("cast").entered();
     for (des, (src_a, src_b)) in lut.iter_mut().zip(local_a.into_iter().zip(local_b)) {
         des.a = src_a;
         des.b = src_b;
     }
+    drop(_guard);
+
     Ok(())
 }
 

@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use ark_ff::PrimeField;
-use itertools::Itertools;
+use itertools::{Itertools, izip};
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare, id::PartyID},
     rep3_ring::{
@@ -256,33 +256,28 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         Ok(result)
     }
 
-    // /// This is a protocol which reads from a shared LUT without converting the result back to the arithmetic domain.
-    // #[tracing::instrument(skip_all, level = "trace")]
-    // pub fn get_from_lut_from_ohv<F: PrimeField>(
-    //     ohv: &[]
-    //     lut: &PublicPrivateLut<F>,
-    //     network0: &mut IoContext<N>,
-    //     network1: &mut IoContext<N>,
-    // ) -> IoResult<Rep3PrimeFieldShare<F>> {
-    //     let len = lut.len();
-    //     tracing::debug!("doing read on LUT-map of size {}", len);
-    //     let bits = index;
-    //     let k = len.next_power_of_two().ilog2() as usize;
-
-    //     let result = if k == 1 {
-    //         Self::get_from_lut_internal::<Bit, _>(bits, lut, network0, network1)?
-    //     } else if k <= 8 {
-    //         Self::get_from_lut_internal::<u8, _>(bits, lut, network0, network1)?
-    //     } else if k <= 16 {
-    //         Self::get_from_lut_internal::<u16, _>(bits, lut, network0, network1)?
-    //     } else if k <= 32 {
-    //         Self::get_from_lut_internal::<u32, _>(bits, lut, network0, network1)?
-    //     } else {
-    //         panic!("Table is too large")
-    //     };
-    //     tracing::debug!("got a result!");
-    //     Ok(result)
-    // }
+    /// This is a protocol which reads from a shared LUT without converting the result back to the arithmetic domain.
+    #[tracing::instrument(skip_all, level = "trace")]
+    pub fn get_from_lut_from_ohv<F: PrimeField>(
+        ohv: &[Rep3PrimeFieldShare<F>],
+        lut: &mut PublicPrivateLut<F>,
+        io_ctx: &mut IoContext<N>,
+    ) -> IoResult<Rep3PrimeFieldShare<F>> {
+        match lut {
+            PublicPrivateLut::Public(vec) => {
+                // There is not really a performance difference (i.e., more multiplications) when both lut and value are secret shared compared to public lut and private value. Thus we promote
+                let id = io_ctx.id;
+                let shared = vec
+                    .iter()
+                    .map(|v| arithmetic::promote_to_trivial_share(id, *v))
+                    .collect::<Vec<_>>();
+                let res = Self::get_from_shared_lut_from_ohv(ohv, &shared, io_ctx);
+                *lut = PublicPrivateLut::Shared(shared);
+                res
+            }
+            PublicPrivateLut::Shared(vec) => Self::get_from_shared_lut_from_ohv(ohv, vec, io_ctx),
+        }
+    }
 
     fn write_to_lut_internal<T: IntRing2k, F: PrimeField>(
         index: Rep3BigUintShare<F>,
@@ -484,12 +479,53 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         lut: &mut [Rep3PrimeFieldShare<F>],
         network0: &mut IoContext<N>,
     ) -> IoResult<()> {
-        let len = lut.len();
-        tracing::debug!("doing write on LUT-map of size {}", len);
         gadgets::lut::write_lut_from_ohv(&value, lut, ohv, network0)?;
-        tracing::debug!("we are done");
         Ok(())
     }
+
+    // /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector
+    // #[tracing::instrument(skip_all, level = "trace")]
+    // pub fn write_to_shared_lut_many_ohv<F: PrimeField>(
+    //     ohvs: &[Vec<Rep3PrimeFieldShare<F>>],
+    //     value: Rep3PrimeFieldShare<F>,
+    //     lut: &mut [Rep3PrimeFieldShare<F>],
+    //     io_context: &mut IoContext<N>,
+    // ) -> IoResult<()> {
+    //     let n = lut.len();
+    //     assert!(n <= ohvs[0].len());
+    //     let _guard = tracing::trace_span!("inner_product").entered();
+    //     let local_a = ohvs
+    //         .into_iter()
+    //         .flat_map(|ohv| {
+    //             let mut local_a = Vec::with_capacity(n);
+
+    //             for (l, e) in lut.iter().zip(ohv.iter()) {
+    //                 local_a.push(
+    //                     (e * &(&value - l)).into_fe()
+    //                         + l.a
+    //                         + io_context.rngs.rand.masking_field_element::<F>(),
+    //                 );
+    //             }
+    //             local_a
+    //         })
+    //         .collect::<Vec<_>>();
+
+    //     drop(_guard);
+
+    //     let _guard = tracing::trace_span!("reshare_many").entered();
+    //     let local_b = io_context.network.reshare_many(&local_a)?;
+    //     drop(_guard);
+
+    //     let _guard = tracing::trace_span!("cast").entered();
+    //     izip!(local_a, local_b).chunks(n).map(|chunk| {
+    //         for (des, (src_a, src_b)) in lut.iter_mut().zip(src_a.into_iter().zip(src_b)) {
+    //         des.a = src_a;
+    //         des.b = src_b;
+    //     }
+    //     drop(_guard);
+
+    //     Ok(())
+    // }
 
     /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector
     #[tracing::instrument(skip_all, level = "trace")]
@@ -501,6 +537,20 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         let f_a = gadgets::lut::read_shared_lut_from_ohv(lut, ohv, network0)?;
         let f_b = network0.network.reshare(f_a)?;
         Ok(Rep3PrimeFieldShare::new(f_a, f_b))
+    }
+
+    /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector
+    #[tracing::instrument(skip_all, level = "trace")]
+    pub fn get_from_shared_lut_from_many_ohvs<F: PrimeField>(
+        ohvs: &[Vec<Rep3PrimeFieldShare<F>>],
+        lut: &[Rep3PrimeFieldShare<F>],
+        network0: &mut IoContext<N>,
+    ) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
+        let f_a = gadgets::lut::read_shared_lut_from_many_ohvs(lut, ohvs, network0);
+        let f_b = network0.network.reshare_many(&f_a)?;
+        Ok(izip!(f_a, f_b)
+            .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
+            .collect())
     }
 
     /// Returns true if LUT is public

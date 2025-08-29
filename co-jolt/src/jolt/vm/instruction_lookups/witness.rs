@@ -99,14 +99,26 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             M,
         )?;
 
-        let materialized_subtable_luts = preprocessing
+        let id = io_ctx.main().id;
+        let materialized_subtable_luts: Vec<Vec<_>> = preprocessing
             .materialized_subtables
-            .clone()
-            .into_iter()
+            .par_iter()
             .map(|subtable| {
-                PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
+                subtable
+                    .iter()
+                    .map(|v| arithmetic::promote_to_trivial_share(id, F::from(*v)))
+                    .collect::<Vec<_>>()
             })
-            .collect_vec();
+            .collect();
+
+        // let materialized_subtable_luts = preprocessing
+        //     .materialized_subtables
+        //     .clone()
+        //     .into_iter()
+        //     .map(|subtable| {
+        //         PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
+        //     })
+        //     .collect_vec();
 
         let (instructions_used, access_sequences): (
             Vec<Vec<usize>>,
@@ -183,8 +195,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         ));
                     }
 
-                    // let span = tracing::trace_span!("memory", memory_index, subtable_index);
-                    // let _guard = span.enter();
+                    let span = tracing::trace_span!("memory", memory_index, subtable_index);
+                    let _guard = span.enter();
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = &op.instruction_lookup {
                             let memories_used = &preprocessing.instruction_to_memory_indices
@@ -240,19 +252,17 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                 .unwrap();
 
                                 let subtable_lookup_share =
-                                    Rep3LookupTable::get_from_lut_no_a2b_conversion(
-                                        memory_address.clone(), // TODO: use OHV
+                                    Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                        &ohv,
                                         &materialized_subtable_luts[subtable_index],
                                         &mut io_ctx,
-                                        &mut io_ctx2,
-                                    )
-                                    .unwrap();
+                                    )?;
 
                                 subtable_lookups[j] = subtable_lookup_share;
                             }
                         }
                     }
-                    // drop(_guard);
+                    drop(_guard);
                     // tracing::info!("ops used: {}", ops_used);
 
                     Ok((

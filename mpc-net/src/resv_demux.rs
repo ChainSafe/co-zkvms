@@ -1,170 +1,176 @@
 use bytes::{Buf, BufMut, BytesMut};
 use futures::TryStreamExt;
-use quinn::{Connection, RecvStream};
+use quinn::Connection;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     io,
     sync::Arc,
 };
 use tokio::{
-    io::AsyncReadExt,
     runtime::Handle,
     sync::{mpsc, oneshot, Semaphore},
 };
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 
-const PROTOCOL: &'static [u8] = b"REP3";
+const PROTOCOL: u32 = u32::from_be_bytes(*b"REP3");
 const VER: u8 = 1;
-
-pub(crate) const HEADER_LEN: usize = 17;
+pub const HEADER_LEN: usize = 4 + 1 + 4 + 8;
+const PER_FORK_WINDOW: usize = 4; // tune
 
 #[inline]
 pub fn write_header(dst: &mut BytesMut, fork_id: u32, seq: u64) {
     dst.reserve(HEADER_LEN);
-    dst.put(PROTOCOL);
+    dst.put_u32(PROTOCOL);
     dst.put_u8(VER);
     dst.put_u32(fork_id);
     dst.put_u64(seq);
 }
 
-pub struct ResvJob {
+fn parse_header(frame: &mut BytesMut) -> io::Result<(u32, u64)> {
+    if frame.len() < HEADER_LEN {
+        return Err(ioe("short"));
+    }
+    let mut h = frame.split_to(HEADER_LEN);
+    let m = h.get_u32();
+    let v = h.get_u8();
+    let fork = h.get_u32();
+    let seq = h.get_u64();
+    if m != PROTOCOL || v != VER {
+        return Err(ioe("bad hdr"));
+    }
+    Ok((fork, seq))
+}
+
+#[derive(Debug)]
+pub struct RecvJob {
     pub fork: u32,
     pub tx: oneshot::Sender<Result<BytesMut, io::Error>>,
 }
 
-pub struct RecvDemux {}
+struct ForkState {
+    next_assign: u64,
+    pending: BTreeMap<u64, BytesMut>,
+    waiters: BTreeMap<u64, oneshot::Sender<Result<BytesMut, io::Error>>>,
+    backlog: VecDeque<oneshot::Sender<Result<BytesMut, io::Error>>>,
+}
+impl ForkState {
+    fn new() -> Self {
+        Self {
+            next_assign: 0,
+            pending: BTreeMap::new(),
+            waiters: BTreeMap::new(),
+            backlog: VecDeque::new(),
+        }
+    }
+    fn outstanding(&self) -> usize {
+        self.waiters.len()
+    }
+}
 
+fn ioe<E: std::fmt::Display>(e: E) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, e.to_string())
+}
+
+pub struct RecvDemux;
 impl RecvDemux {
     pub fn handle(
-        conn: Connection,
+        conn_prev: Connection,
         codec: LengthDelimitedCodec,
         rt: Handle,
-        inflight_max: usize,
-    ) -> mpsc::Sender<ResvJob> {
-        let (req_tx, mut req_rx) = mpsc::channel::<ResvJob>(1024);
+        inflight_reads: usize,
+    ) -> mpsc::Sender<RecvJob> {
+        let (tx, mut rx) = mpsc::channel::<RecvJob>(2048);
+
+        // accept/read task → sends HubMsg::Data into a local mpsc
+        let (dt, mut dr) = mpsc::channel::<(u32, u64, BytesMut)>(2048);
+        let inflight = Arc::new(Semaphore::new(inflight_reads));
+        let codec_read = codec.clone();
+        let infl = inflight.clone();
+        let _rt = rt.clone();
         rt.spawn(async move {
-            let inflight = Arc::new(Semaphore::new(inflight_max));
+            loop {
+                let Ok(rs) = conn_prev.accept_uni().await else {
+                    break;
+                };
+                let codec = codec_read.clone();
+                let dt = dt.clone();
+                let infl = infl.clone();
+                _rt.spawn(async move {
+                    let _p = infl.acquire_owned().await.ok();
+                    let mut fr = FramedRead::new(rs, codec);
+                    if let Ok(Some(mut frame)) = fr.try_next().await {
+                        if let Ok((fork, seq)) = parse_header(&mut frame) {
+                            let _ = dt.send((fork, seq, frame)).await;
+                        }
+                    }
+                });
+            }
+        });
+
+        // main actor: match reqs↔data by seq per fork
+        rt.spawn(async move {
             let mut forks: HashMap<u32, ForkState> = HashMap::new();
 
-            let serve_ready = |fork_id: u32, forks: &mut HashMap<u32, ForkState>| {
-                if let Some(fs) = forks.get_mut(&fork_id) {
-                    while let Some(payload) = fs.pending.remove(&fs.expected) {
-                        let Some(reply) = fs.waiters.pop_front() else {
-                            // no waiter yet; put stream back and stop
-                            fs.pending.insert(fs.expected, payload);
-                            break;
-                        };
-                        let permit = inflight.clone();
-                        tokio::spawn(async move {
-                            let _permit = permit.acquire_owned().await.ok();
-                            let _ = reply.send(Ok(payload));
-                        });
-                        fs.expected = fs.expected.wrapping_add(1);
+            // helper: after a delivery, backfill from backlog while window allows
+            let try_assign_from_backlog = |fs: &mut ForkState| {
+                while fs.outstanding() < PER_FORK_WINDOW {
+                    let Some(tx) = fs.backlog.pop_front() else {
+                        break;
+                    };
+                    let seq = fs.next_assign;
+                    fs.next_assign += 1;
+                    if let Some(payload) = fs.pending.remove(&seq) {
+                        let _ = tx.send(Ok(payload));
+                    } else {
+                        fs.waiters.insert(seq, tx);
                     }
                 }
             };
 
             loop {
                 tokio::select! {
-                    accepted = conn.accept_uni() => {
-                        let rs = match accepted {
-                            Ok(rs) => rs,
-                            Err(e) => {
-                                Self::notify_all_waiters(&mut forks, e);
-                                break;
-                            }
-                        };
-
-                        let mut payload = match FramedRead::new(rs, codec.clone()).try_next().await {
-                            Ok(Some(buf)) => buf,
-                            Ok(None) => {
-                                panic!("Failed to read from stream");
-                            }
-                            Err(e) => {
-                                panic!("Failed to read from stream: {}", e);
-                            }
-                        };
-
-                        let (fork, seq) = match Self::read_header(&mut payload).await {
-                            Ok((fork, seq)) => (fork, seq),
-                            Err(e) => {
-                                panic!("Failed to read header: {}", e);
-                                // continue;
-                            }
-                        };
-
-                        let fs = forks.entry(fork).or_insert_with(|| ForkState {
-                            expected: 0, pending: BTreeMap::new(), waiters: VecDeque::new()
-                        });
-                        if fs.pending.insert(seq, payload).is_some() {
-                            tracing::warn!("Duplicate sequence number received");
-                            // duplicate seq; last wins
-                        }
-                        serve_ready(fork, &mut forks);
-                    }
-                    req = req_rx.recv() => {
-                        let Some(ResvJob{ fork, tx }) = req else { Self::notify_all_waiters(&mut forks, "req_rx dropped"); break; };
-                        let fs = forks.entry(fork).or_insert_with(|| ForkState {
-                            expected: 0, pending: BTreeMap::new(), waiters: VecDeque::new()
-                        });
-                        if let Some(payload) = fs.pending.remove(&fs.expected) {
-                            let permit = inflight.clone();
-                            tokio::spawn(async move {
-                                let _permit = permit.acquire_owned().await.ok();
-                                let _ = tx.send(Ok(payload));
-                            });
-                            fs.expected = fs.expected.wrapping_add(1);
-                            serve_ready(fork, &mut forks);
+                    Some((fork, seq, payload)) = dr.recv() => {
+                        let fs = forks.entry(fork).or_insert_with(ForkState::new);
+                        if let Some(w) = fs.waiters.remove(&seq) {
+                            let _ = w.send(Ok(payload));
+                            // a waiter was satisfied → window slot freed
+                            try_assign_from_backlog(fs);
                         } else {
-                            fs.waiters.push_back(tx); // if receiver drops, send() will fail later; fine
+                            // data ahead of assigned seqs → park it
+                            fs.pending.insert(seq, payload);
                         }
                     }
+                    Some(RecvJob { fork, tx }) = rx.recv() => {
+                        let fs = forks.entry(fork).or_insert_with(ForkState::new);
+                        if fs.outstanding() < PER_FORK_WINDOW {
+                            let seq = fs.next_assign; fs.next_assign += 1;
+                            if let Some(payload) = fs.pending.remove(&seq) {
+                                let _ = tx.send(Ok(payload));
+                                // delivered immediately; window slot used+freed → refill from backlog if any
+                                try_assign_from_backlog(fs);
+                            } else {
+                                fs.waiters.insert(seq, tx);
+                            }
+                        } else {
+                            // window full; queue requester
+                            fs.backlog.push_back(tx);
+                        }
+                    }
+                    else => break,
+                }
+            }
+
+            // shutdown: fail outstanding waiters
+            for (_, mut fs) in forks.drain() {
+                for (_, tx) in fs.waiters {
+                    let _ = tx.send(Err(ioe("hub closed")));
+                }
+                for tx in fs.backlog.drain(..) {
+                    let _ = tx.send(Err(ioe("hub closed")));
                 }
             }
         });
-        req_tx
+
+        tx
     }
-
-    #[inline]
-    async fn read_header(rs: &mut BytesMut) -> io::Result<(u32, u64)> {
-        let mut header = rs.split_to(HEADER_LEN);
-        let protocol = header.get_u32().to_be_bytes();
-        if protocol != PROTOCOL {
-            return Err(io_err(format!(
-                "unexpected protocol, expected: {:?}, got: {:?}",
-                PROTOCOL, protocol,
-            )));
-        }
-        let ver = header.get_u8();
-        if ver != VER {
-            return Err(io_err(format!(
-                "unexpected version, expected: {}, got: {}",
-                VER, ver,
-            )));
-        }
-        let fork = header.get_u32();
-        let seq = header.get_u64();
-        Ok((fork, seq))
-    }
-
-    fn notify_all_waiters<E: std::fmt::Display + Clone>(forks: &mut HashMap<u32, ForkState>, e: E) {
-        tracing::warn!("recv hub closed");
-        for (_, mut fs) in forks.drain() {
-            while let Some(tx) = fs.waiters.pop_front() {
-                let _ = tx.send(Err(io_err(e.clone())));
-            }
-        }
-    }
-}
-
-// Per-fork state kept local to the hub task (no locking needed).
-struct ForkState {
-    expected: u64,
-    pending: BTreeMap<u64, BytesMut>, // seq -> stream (body unread)
-    waiters: VecDeque<oneshot::Sender<Result<BytesMut, io::Error>>>,
-}
-
-#[inline]
-fn io_err<E: std::fmt::Display>(e: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
 }

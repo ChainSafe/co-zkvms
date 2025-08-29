@@ -46,7 +46,7 @@ pub trait MpcStarNetCoordinator: Sized {
     fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
 }
 
-pub trait MpcStarNetWorker: Sized {
+pub trait MpcStarNetWorker: Sized + Clone {
     fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: T,

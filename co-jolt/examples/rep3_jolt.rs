@@ -127,7 +127,8 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        // .num_threads(num_cpus::get())
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -356,7 +357,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         let _ = tracing::subscriber::set_global_default(
             subscriber
                 .with(chrome_layer)
-                .with(ForestLayer::default().with_filter(LevelFilter::TRACE)),
+                .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
         );
         tracing::info!("tracing_chrome writes to file: {}", file);
         Some(TracingGuard {
