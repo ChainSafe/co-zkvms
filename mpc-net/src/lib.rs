@@ -8,6 +8,7 @@ use tokio::runtime::Runtime;
 pub mod channel;
 pub mod codecs;
 pub mod config;
+pub mod resv_demux;
 
 pub use rep3::quic::MpcNetworkHandlerWorker as MpcNetworkHandler;
 
@@ -25,7 +26,7 @@ pub struct MpcNetworkHandlerWrapper<H: MpcNetworkHandlerShutdown = MpcNetworkHan
 }
 
 impl<H: MpcNetworkHandlerShutdown> MpcNetworkHandlerWrapper<H> {
-    /// Create a new wrapper  
+    /// Create a new wrapper
     pub fn new(runtime: tokio::runtime::Handle, inner: H) -> Self {
         Self { runtime, inner }
     }
@@ -54,7 +55,7 @@ pub(crate) struct MpcNetworkHandlerWrapperMut<H: MpcNetworkHandlerShutdown = Mpc
 }
 
 impl<H: MpcNetworkHandlerShutdown> MpcNetworkHandlerWrapperMut<H> {
-    /// Create a new wrapper  
+    /// Create a new wrapper
     pub fn new(runtime: Runtime, inner: H) -> Self {
         Self {
             runtime,

@@ -30,7 +30,13 @@ use mpc_core::protocols::{
         },
         PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
-    rep3_ring::lut::{PublicPrivateLut, Rep3LookupTable},
+    rep3_ring::{
+        self,
+        gadgets::ohv::ohv,
+        lut::{PublicPrivateLut, Rep3LookupTable},
+        ring::ring_impl::RingElement,
+        Rep3RingShare,
+    },
 };
 use rand::Rng;
 
@@ -45,6 +51,8 @@ use crate::jolt::{
         JoltTraceStep,
     },
 };
+
+const _M: usize = 1 << 16;
 
 pub type Rep3InstructionLookupPolynomials<F> = InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
@@ -66,6 +74,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
         Network: Rep3NetworkWorker,
     {
+        println!("generate_witness_rep3");
+
         // let mut network = BiNetwork::new(io_ctx)?;
         let num_reads = ops.len().next_power_of_two();
 
@@ -78,6 +88,11 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
             io_ctx.main(),
         )?;
+
+        println!("Promoted public operands to shared");
+
+        io_ctx.main().network.reshare(F::zero()).unwrap();
+        println!("reshare done");
 
         let lookup_outputs = compute_lookup_outputs_rep3(&ops, num_reads, io_ctx)?;
 
@@ -124,11 +139,22 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             })
             .unzip();
 
-        let mut ohvs = Rep3LookupTable::ohv_from_index_no_a2b_conversion_many(
-            access_sequences.into_iter().flatten(),
+        tracing::info!(
+            "instructions_used: {}",
+            access_sequences.iter().flatten().count()
+        );
+
+        let mut ohvs = Rep3LookupTable::ohv_ring_from_index_no_a2b_conversion_many(
+            access_sequences.par_iter().cloned().flatten(),
             M,
             io_ctx.main(),
         )?;
+
+        // let mut ohvs = Rep3LookupTable::ohv_from_index_no_a2b_conversion_many(
+        //     access_sequences.into_par_iter().flatten(),
+        //     M,
+        //     io_ctx.main(),
+        // )?;
         let mut ohvs_by_memory = Vec::with_capacity(preprocessing.num_memories);
         instructions_used
             .iter()
@@ -142,7 +168,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     .zip_eq(ohvs_by_memory),
                 None,
                 |ctx| ctx.fork().context("while forking worker fork ctx"),
-                |(memory_index, ohvs), mut io_ctx2, mut io_ctx| {
+                |(memory_index, mut ohvs), mut io_ctx2, mut io_ctx| {
                     let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                     let access_sequence = &subtable_lookup_indices[dim_index];
@@ -150,20 +176,51 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
-                    let mut ohvs = ohvs.into_iter();
+                    // let mut ohvs = ohvs.into_iter();
+                    //
 
-                    // let span = tracing::info_span!("memory", memory_index, subtable_index);
-                    // let _guard = span.enter();
-                    // let mut ops_used = 0usize;
+                    // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
+                    //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
+                    //     io_ctx,
+                    // )?;
+
+                    let span = tracing::trace_span!("memory", memory_index, subtable_index);
+                    let _guard = span.enter();
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = &op.instruction_lookup {
                             let memories_used = &preprocessing.instruction_to_memory_indices
                                 [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
-                                // ops_used += 1;
                                 let memory_address = &access_sequence[j];
 
-                                let ohv = ohvs.next().unwrap();
+                                // let ohv = ohvs
+                                //     .drain(..M)
+                                //     .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
+                                //         a: F::from(a.convert()),
+                                //         b: F::from(b.convert()),
+                                //     })
+                                //     .collect::<Vec<_>>();
+
+                                let ohv =
+                                    rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
+                                        &ohvs.pop().unwrap(),
+                                        io_ctx,
+                                    )?
+                                    .into_iter()
+                                    .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
+                                        a: F::from(a.convert()),
+                                        b: F::from(b.convert()),
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                // let ohv = ohvs.next().unwrap();
+
+                                // let mut ohv = Rep3LookupTable::ohv_from_index_no_a2b_conversion(
+                                //     memory_address.clone(),
+                                //     M,
+                                //     io_ctx,
+                                //     io_ctx2,
+                                // )?;
 
                                 let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
                                     &ohv,
@@ -197,7 +254,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             }
                         }
                     }
-                    // drop(_guard);
+                    drop(_guard);
                     // tracing::info!("ops used: {}", ops_used);
 
                     Ok((

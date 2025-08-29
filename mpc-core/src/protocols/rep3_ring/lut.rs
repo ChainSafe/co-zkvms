@@ -18,7 +18,7 @@ use crate::{
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use mpc_types::protocols::{
-    rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3::{Rep3BigUintShare, Rep3PrimeFieldShare, id::PartyID},
     rep3_ring::{
         Rep3RingShare,
         ring::{bit::Bit, int_ring::IntRing2k},
@@ -301,12 +301,12 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
 
     #[tracing::instrument(skip_all)]
     fn ohv_from_index_internal_many<T: IntRing2k, F: PrimeField>(
-        index: impl IntoIterator<Item = Rep3BigUintShare<F>>,
+        index: impl IntoParallelIterator<Item = Rep3BigUintShare<F>>,
         k: usize,
         io_ctx: &mut IoContext<N>,
     ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
         let bits = index
-            .into_iter()
+            .into_par_iter()
             .map(|index| {
                 Rep3RingShare::new(
                     T::cast_from_biguint(&index.a),
@@ -367,13 +367,21 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
             panic!("Table is too large")
         };
 
-        conversion::bit_inject_from_bits_to_field_many::<F, _>(&e, network0)
+        Ok(
+            conversion::bit_inject_from_bits_many::<u64, _>(&e, network0)?
+                .into_iter()
+                .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
+                    a: F::from(a.convert()),
+                    b: F::from(b.convert()),
+                })
+                .collect(),
+        )
     }
 
     /// Creates a shared one-hot-encoded vector from a given shared index
     #[tracing::instrument(skip_all, level = "trace")]
     pub fn ohv_from_index_no_a2b_conversion_many<F: PrimeField>(
-        index: impl IntoIterator<Item = Rep3BigUintShare<F>>,
+        index: impl IntoParallelIterator<Item = Rep3BigUintShare<F>>,
         len: usize,
         io_ctx: &mut IoContext<N>,
     ) -> IoResult<Vec<Vec<Rep3PrimeFieldShare<F>>>> {
@@ -395,17 +403,48 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         let span = tracing::info_span!("ohv_from_index_no_a2b_conversion_many");
         let _enter = span.enter();
 
-        let res = conversion::bit_inject_from_bits_to_field_many::<F, _>(
+        let res = conversion::bit_inject_from_bits_many::<u64, _>(
             &e.into_par_iter().flatten().collect::<Vec<_>>(),
             io_ctx,
         )?
         .into_iter()
         .chunks(1 << k)
         .into_iter()
-        .map(|chunk| chunk.collect::<Vec<_>>())
+        .map(|chunk| {
+            chunk
+                .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
+                    a: F::from(a.convert()),
+                    b: F::from(b.convert()),
+                })
+                .collect()
+        })
         .collect::<Vec<_>>();
 
         Ok(res)
+    }
+
+    /// Creates a shared one-hot-encoded vector from a given shared index
+    #[tracing::instrument(skip_all, level = "trace")]
+    pub fn ohv_ring_from_index_no_a2b_conversion_many<F: PrimeField>(
+        index: impl IntoParallelIterator<Item = Rep3BigUintShare<F>>,
+        len: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
+        let bits = index;
+        let k = len.next_power_of_two().ilog2() as usize;
+
+        let e = if k == 1 {
+            Self::ohv_from_index_internal_many::<Bit, _>(bits, k, io_ctx)?
+        } else if k <= 8 {
+            Self::ohv_from_index_internal_many::<u8, _>(bits, k, io_ctx)?
+        } else if k <= 16 {
+            Self::ohv_from_index_internal_many::<u16, _>(bits, k, io_ctx)?
+        } else if k <= 32 {
+            Self::ohv_from_index_internal_many::<u32, _>(bits, k, io_ctx)?
+        } else {
+            panic!("Table is too large")
+        };
+        Ok(e)
     }
 
     /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector

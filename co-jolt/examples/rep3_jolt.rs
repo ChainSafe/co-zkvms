@@ -142,7 +142,7 @@ fn main() -> Result<()> {
     // let mut inputs = vec![];
     // inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
+    let inputs = postcard::to_stdvec(&1u32).unwrap();
 
     // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
 
@@ -191,7 +191,8 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     // icicle_init();
 
     let mut network =
-        Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
+        Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2(), 1 << 10)
+            .unwrap();
 
     let (program_io, trace): (Rep3ProgramIOInput<F>, Vec<JoltTraceStep<F, RV32I<F>>>) =
         network.receive_request()?;
@@ -355,7 +356,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         let _ = tracing::subscriber::set_global_default(
             subscriber
                 .with(chrome_layer)
-                .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
+                .with(ForestLayer::default().with_filter(LevelFilter::TRACE)),
         );
         tracing::info!("tracing_chrome writes to file: {}", file);
         Some(TracingGuard {
@@ -409,7 +410,6 @@ impl std::str::FromStr for TraceParties {
             .map(|n| n.parse::<usize>())
             .collect::<Result<Vec<_>, _>>()
         {
-            println!("trace parties: {:?}", nums);
             Ok(TraceParties::Party(nums))
         } else {
             Err(format!("Invalid trace parties: {}", s))

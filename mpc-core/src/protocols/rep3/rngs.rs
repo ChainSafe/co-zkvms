@@ -10,6 +10,7 @@ use ark_linear_sumcheck::rng::FeedableRNG;
 use fancy_garbling::WireMod2;
 use mpc_types::protocols::rep3::id::PartyID;
 use num_bigint::BigUint;
+use parking_lot::Mutex;
 use rand::{
     Rng, RngCore, SeedableRng, distributions::Standard, prelude::Distribution, seq::SliceRandom,
 };
@@ -77,6 +78,27 @@ impl Rep3CorrelatedRng {
             PartyID::ID1 => Some(GCUtils::random_delta(&mut self.rand.rng1)),
             PartyID::ID2 => Some(GCUtils::random_delta(&mut self.rand.rng2)),
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct RngForker<R>(Mutex<R>);
+
+impl<R> RngForker<R> {
+    pub fn new(master: R) -> Self {
+        Self(Mutex::new(master))
+    }
+}
+
+impl RngForker<Rep3CorrelatedRng> {
+    pub fn fork(&self) -> Rep3CorrelatedRng {
+        self.0.lock().fork()
+    }
+}
+
+impl RngForker<RngType> {
+    pub fn fork(&self) -> RngType {
+        RngType::from_seed(self.0.lock().r#gen())
     }
 }
 

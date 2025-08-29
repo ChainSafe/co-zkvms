@@ -799,6 +799,7 @@ pub(crate) fn arithmetic_xor<F: PrimeField, N: Rep3Network>(
     Ok(FieldShare { a: res_a, b: res_b })
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
     x: &[Rep3PrimeFieldShare<F>], // TODO: impl IntoParallelIterator
     y: &[Rep3PrimeFieldShare<F>],
@@ -837,12 +838,14 @@ pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
             },
         );
 
+    let _guard = tracing::trace_span!("reshare_many").entered();
     let b = io_context.network.reshare_many(&a)?;
     let res = a
         .into_par_iter()
         .zip(b)
         .map(|(a, b)| FieldShare { a, b })
         .collect();
+    drop(_guard);
     Ok(res)
 }
 

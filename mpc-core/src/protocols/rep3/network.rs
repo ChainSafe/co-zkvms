@@ -18,6 +18,7 @@ use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
 
 use crate::protocols::rep3::PartyID;
+use crate::protocols::rep3::rngs::RngForker;
 use crate::{IoResult, RngType};
 
 use rayon::prelude::*;
@@ -40,6 +41,26 @@ pub struct IoContext<N: Rep3Network> {
     pub network: N,
     /// The used arithmetic/binary conversion protocol
     pub a2b_type: A2BType,
+
+    rng_src: Arc<RngForker<RngType>>,
+    rngs_src: Arc<RngForker<Rep3CorrelatedRng>>,
+}
+
+impl<N: Rep3Network> Clone for IoContext<N> {
+    fn clone(&self) -> Self {
+        let child_rngs = self.rngs_src.fork(); // lock once, derive new RNG
+        let child_rng = self.rng_src.fork(); // lock once, derive new RNG
+
+        IoContext {
+            id: self.id,
+            rngs: child_rngs,
+            rng: child_rng,
+            network: self.network.fork(),
+            a2b_type: self.a2b_type,
+            rng_src: Arc::clone(&self.rng_src),
+            rngs_src: Arc::clone(&self.rngs_src),
+        }
+    }
 }
 
 impl<N: Rep3Network> IoContext<N> {
@@ -89,14 +110,16 @@ impl<N: Rep3Network> IoContext<N> {
         let mut rng = RngType::from_entropy();
         let mut rand = Self::setup_prf(&mut network, &mut rng)?;
         let bitcomps = Self::setup_bitcomp(&mut network, &mut rand)?;
-        let rngs = Rep3CorrelatedRng::new(rand, bitcomps.0, bitcomps.1);
+        let mut master_rngs = Rep3CorrelatedRng::new(rand, bitcomps.0, bitcomps.1);
 
         Ok(Self {
             id: network.get_id(), //shorthand access
             network,
-            rngs,
-            rng,
+            rngs: master_rngs.fork(),
+            rng: rng.clone(),
             a2b_type: A2BType::default(),
+            rng_src: Arc::new(RngForker::new(rng)),
+            rngs_src: Arc::new(RngForker::new(master_rngs)),
         })
     }
 
@@ -107,19 +130,7 @@ impl<N: Rep3Network> IoContext<N> {
 
     /// Cronstruct a fork of the [`IoContext`]. This fork can be used concurrently with its parent.
     pub fn fork(&mut self) -> IoResult<Self> {
-        let network = self.network.fork()?;
-        let rngs = self.rngs.fork();
-        let rng = RngType::from_seed(self.rng.r#gen());
-        let id = self.id;
-        let a2b_type = self.a2b_type;
-
-        Ok(Self {
-            id,
-            rngs,
-            network,
-            rng,
-            a2b_type,
-        })
+        Ok(self.clone())
     }
 
     /// Generate two random elements
@@ -324,7 +335,7 @@ pub trait Rep3Network: Send {
     }
 
     /// Fork the network into two separate instances with their own connections
-    fn fork(&mut self) -> std::io::Result<Self>
+    fn fork(&self) -> Self
     where
         Self: Sized;
 }
@@ -370,6 +381,9 @@ impl Rep3Network for Rep3MpcNet {
         data: &[F],
     ) -> std::io::Result<()> {
         let size = data.serialized_size(ark_serialize::Compress::No);
+        if size > 1 << 30 {
+            tracing::info!("frame size more than 1GB: {}", size);
+        }
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -391,6 +405,7 @@ impl Rep3Network for Rep3MpcNet {
 
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>> {
         let data = self.recv_bytes(from)?;
+        println!("received data by {} from {}", self.id.party_id(), from);
 
         let res = Vec::<F>::deserialize_uncompressed_unchecked(&data[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -410,36 +425,8 @@ impl Rep3Network for Rep3MpcNet {
         Ok(res)
     }
 
-    fn fork(&mut self) -> std::io::Result<Self> {
-        let id = self.id.clone();
-        let net_handler = Arc::clone(&self.net_handler);
-        let (chan_next, chan_prev) = net_handler.runtime.block_on(async {
-            let mut channels = net_handler.inner.get_byte_channels().await?;
-
-            let chan_next = channels
-                .remove(&id.party_id().next_id().into())
-                .expect("to find next channel");
-            let chan_prev = channels
-                .remove(&id.party_id().prev_id().into())
-                .expect("to find prev channel");
-            if !channels.is_empty() {
-                panic!("unexpected channels found")
-            }
-
-            let chan_next = ChannelHandle::manage(chan_next);
-            let chan_prev = ChannelHandle::manage(chan_prev);
-            Ok::<_, std::io::Error>((chan_next, chan_prev))
-        })?;
-
-        Ok(Self {
-            id,
-            net_handler,
-            chan_next,
-            chan_prev,
-            chan_coordinator: None,
-            log_num_workers_per_party: 0,
-            config: self.config.clone(),
-        })
+    fn fork(&self) -> Self {
+        MpcStarNetWorker::fork(&self)
     }
 }
 
@@ -638,6 +625,10 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         let inputs_iter = inputs.into_par_iter();
         let len = inputs_iter.len();
 
+        if self.forks.len() == 0 {
+            return map(inputs_iter.collect(), self.main());
+        }
+
         let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
         assert!(chunk_size != 0);
         if len <= chunk_size {
@@ -682,7 +673,7 @@ pub struct IoContextPool<Network: Rep3NetworkWorker> {
 
 impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     #[tracing::instrument(skip_all, name = "IoContextPool::init")]
-    pub fn init(network: Network, num_forks: usize) -> eyre::Result<Self> {
+    pub fn init(network: Network, num_forks: u32, forks_cap: u32) -> eyre::Result<Self> {
         let num_workers = 1 << network.log_num_workers_per_party();
         let mut main_worker = IoContext::init(network)?;
         let rngs = &mut main_worker.rngs;
@@ -692,18 +683,20 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
         let workers: Vec<_> = main_worker
             .network
-            .get_worker_subnets(num_workers)
+            .get_worker_subnets(num_workers, forks_cap)
             .context("while setting up worker subnets")?
             .into_iter()
             .map(|network| {
-                let rngs = rngs.fork();
+                let mut rngs = rngs.fork();
                 let rng = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
                 IoContext {
                     network,
-                    rngs,
-                    rng,
+                    rngs: rngs.fork(),
+                    rng: rng.clone(),
                     id,
                     a2b_type,
+                    rng_src: Arc::new(RngForker::new(rng)),
+                    rngs_src: Arc::new(RngForker::new(rngs)),
                 }
             })
             .collect();
@@ -712,7 +705,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .enumerate()
             .map(|(worker_id, mut worker)| {
                 let forks = iter::repeat_with(|| worker.fork())
-                    .take(num_forks)
+                    .take(num_forks as usize)
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(WorkerIoContext {

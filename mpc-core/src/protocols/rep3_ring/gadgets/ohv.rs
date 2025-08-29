@@ -79,6 +79,7 @@ pub fn ohv<T: IntRing2k, N: Rep3Network>(
 /// Generates a one-hot-encoded vector of size k bits from a given secret shared index which is already decomposed into shared bits.
 /// The output is (r, e), where r is a binary sharing of the index of the set bit, wheras e is a vector of size 2^k with all bits zero except at index r.
 /// The algorithm is a rewrite of Protocol 5 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     k: usize,
     mut bits: Vec<Rep3RingShare<T>>,
@@ -241,6 +242,7 @@ fn pack_and<N: Rep3Network>(
     }
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 fn pack_and_many<'a, N: Rep3Network>(
     inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
     rhs: &Vec<Rep3RingShare<Bit>>,

@@ -1,7 +1,8 @@
 use crate::{
-    channel::{BytesChannel, Channel},
+    channel::{BytesChannel, Channel, PerOpChannelHandle},
     codecs::BincodeCodec,
     rep3::{PartyID, PartyWorkerID},
+    resv_demux::RecvHub,
     MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -20,13 +21,16 @@ use quinn::{
     VarInt,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+};
 use std::{
     collections::HashMap,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    time::Duration,
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -47,24 +51,34 @@ pub static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .unwrap()
 });
 
-#[derive(Clone)]
 pub struct Rep3QuicMpcNetWorker {
     pub id: PartyWorkerID,
-    pub chan_next: ChannelHandle<Bytes, BytesMut>,
-    pub chan_prev: ChannelHandle<Bytes, BytesMut>,
+    pub chan_next: PerOpChannelHandle,
+    pub chan_prev: PerOpChannelHandle,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
     pub log_num_workers_per_party: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
     pub config: NetworkConfig,
+
+    pub fork_id: u32,
+    pub seq: Arc<AtomicU64>,
+    pub alloc: Arc<ForkAlloc>,
 }
 
 impl Rep3QuicMpcNetWorker {
-    pub fn new(config: NetworkConfig, log_num_workers_per_party: usize) -> Result<Self> {
+    pub fn new(
+        config: NetworkConfig,
+        log_num_workers_per_party: usize,
+        forks_cap: u32,
+    ) -> Result<Self> {
         ensure!(
             config.parties.len() == 3,
             "REP3 protocol requires exactly 3 parties"
         );
 
+        let alloc = Arc::new(ForkAlloc::new(forks_cap));
+        let fork_id = alloc.alloc();
+        let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
         let (net_handler, chan_next, chan_prev, chan_coordinator) = RUNTIME.block_on(async {
@@ -73,20 +87,41 @@ impl Rep3QuicMpcNetWorker {
                 .get_coordinator_byte_channel()
                 .await?
                 .map(ChannelHandle::manage);
-            let mut channels = net_handler.get_byte_channels().await?;
-            let chan_next = channels
-                .remove(&id.party_id().next_id().into())
-                .ok_or(eyre::eyre!("no next channel found"))?;
-            let chan_prev = channels
-                .remove(&id.party_id().prev_id().into())
-                .ok_or(eyre::eyre!("no prev channel found"))?;
-            if !channels.is_empty() {
-                bail!("unexpected channels found")
-            }
 
-            let chan_next = ChannelHandle::manage(chan_next);
-            let chan_prev = ChannelHandle::manage(chan_prev);
-            Ok((net_handler, chan_next, chan_prev, chan_coordinator))
+            let conn_next = net_handler
+                .parties_connections
+                .get(&id.party_id().next_id().into())
+                .ok_or(eyre::eyre!("no next connection found"))?;
+            let conn_prev = net_handler
+                .parties_connections
+                .get(&id.party_id().prev_id().into())
+                .ok_or(eyre::eyre!("no prev connection found"))?;
+
+            let chan_next = PerOpChannelHandle::new(
+                conn_next.clone(),
+                None,
+                codec_cfg(),
+                RUNTIME.handle().clone(),
+                fork_id,
+                512,
+            );
+
+            let resv_demux = RecvHub::new(
+                id,
+                conn_prev.clone(),
+                codec_cfg(),
+                RUNTIME.handle().clone(),
+                1024,
+            );
+            let chan_prev = PerOpChannelHandle::new(
+                conn_prev.clone(),
+                Some(resv_demux),
+                codec_cfg(),
+                RUNTIME.handle().clone(),
+                0,
+                512,
+            );
+            eyre::Ok((net_handler, chan_next, chan_prev, chan_coordinator))
         })?;
         Ok(Self {
             id,
@@ -99,11 +134,15 @@ impl Rep3QuicMpcNetWorker {
             chan_coordinator,
             log_num_workers_per_party,
             config,
+            alloc,
+            fork_id,
+            seq,
         })
     }
 
     /// Sends bytes over the network to the target party.
     pub fn send_bytes(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
+        println!("send bytes from {} to {}", self.id.party_id(), target);
         if target == self.id.party_id().next_id() {
             std::mem::drop(self.chan_next.blocking_send(data));
             Ok(())
@@ -135,6 +174,7 @@ impl Rep3QuicMpcNetWorker {
 
     /// Receives bytes over the network from the party with the given id.
     pub fn recv_bytes(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
+        println!("receiving bytes by {} from {}", self.id.party_id(), from);
         let data = if from == self.id.party_id().prev_id() {
             self.chan_prev.blocking_recv().blocking_recv()
         } else if from == self.id.party_id().next_id() {
@@ -180,6 +220,26 @@ impl Rep3QuicMpcNetWorker {
         self.net_handler
             .runtime
             .block_on(async { self.net_handler.inner.log_connection_stats() })
+    }
+}
+
+#[derive(Debug)]
+pub struct ForkAlloc {
+    next: AtomicU32,
+    cap: u32,
+}
+impl ForkAlloc {
+    pub fn new(cap: u32) -> Self {
+        Self {
+            next: AtomicU32::new(0),
+            cap,
+        }
+    }
+    #[inline]
+    pub fn alloc(&self) -> u32 {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        assert!(id < self.cap, "fork capacity exhausted");
+        id
     }
 }
 
@@ -244,57 +304,79 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         self.id.party_id()
     }
 
+    #[inline]
+    fn fork(&self) -> Self {
+        let fork_id = self.alloc.alloc();
+        Self {
+            id: self.id.clone(),
+            chan_next: self.chan_next.fork(fork_id),
+            chan_prev: self.chan_prev.fork(fork_id),
+            chan_coordinator: None,
+            log_num_workers_per_party: self.log_num_workers_per_party.clone(),
+            net_handler: self.net_handler.clone(),
+            config: self.config.clone(),
+            fork_id: self.alloc.alloc(),
+            seq: Arc::new(AtomicU64::new(0)),
+            alloc: self.alloc.clone(),
+        }
+    }
+
     fn fork_with_coordinator(&mut self) -> Result<Self> {
         let id = self.id.clone();
         let net_handler = Arc::clone(&self.net_handler);
-        let (chan_next, chan_prev, chan_coordinator) = net_handler.runtime.block_on(async {
+        let chan_coordinator = net_handler.runtime.block_on(async {
             let chan_coordinator = net_handler
                 .inner
                 .get_coordinator_byte_channel()
                 .await?
                 .map(ChannelHandle::manage);
 
-            let mut channels = net_handler.inner.get_byte_channels().await?;
-
-            let chan_next = channels
-                .remove(&id.party_id().next_id().into())
-                .expect("to find next channel");
-            let chan_prev = channels
-                .remove(&id.party_id().prev_id().into())
-                .expect("to find prev channel");
-            if !channels.is_empty() {
-                panic!("unexpected channels found")
-            }
-
-            let chan_next = ChannelHandle::manage(chan_next);
-            let chan_prev = ChannelHandle::manage(chan_prev);
-
-            Ok::<_, Report>((chan_next, chan_prev, chan_coordinator))
+            Ok::<_, Report>(chan_coordinator)
         })?;
 
         Ok(Self {
             id,
             net_handler: net_handler,
-            chan_next,
-            chan_prev,
+            chan_next: self.chan_next.clone(),
+            chan_prev: self.chan_prev.clone(),
             chan_coordinator,
             log_num_workers_per_party: self.log_num_workers_per_party,
             config: self.config.clone(),
+            fork_id: self.alloc.alloc(),
+            seq: Arc::new(AtomicU64::new(0)),
+            alloc: self.alloc.clone(),
         })
     }
 
     #[tracing::instrument(skip_all, name = "MpcStarNetWorker::get_worker_subnets")]
-    fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>> {
+    fn get_worker_subnets(&self, num_workers: usize, forks_cap: u32) -> Result<Vec<Self>> {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;
         (1..num_workers)
-            .map(|worker_id| Self::new(config.for_worker(worker_id), log_num_workers_per_party))
+            .map(|worker_id| {
+                Self::new(
+                    config.for_worker(worker_id),
+                    log_num_workers_per_party,
+                    forks_cap,
+                )
+            })
             .collect::<Result<Vec<_>>>()
     }
 
     fn worker_idx(&self) -> usize {
         self.id.1
     }
+}
+
+pub fn codec_cfg() -> tokio_util::codec::LengthDelimitedCodec {
+    pub const LEN_BYTES: usize = 5;
+    pub const MAX_FRAME: usize = 1 << 30; // 1 GiB (pick a real bound)
+
+    tokio_util::codec::LengthDelimitedCodec::builder()
+        .length_field_type::<u64>()
+        .length_field_length(LEN_BYTES)
+        .max_frame_length(MAX_FRAME)
+        .new_codec()
 }
 
 /// A network handler for MPC protocols.
@@ -309,6 +391,27 @@ pub struct MpcNetworkHandlerWorker {
 }
 
 impl MpcNetworkHandlerWorker {
+    fn transport_with_streams(bdp_bytes: u32, max_bidi: u32) -> Arc<TransportConfig> {
+        let mut t = TransportConfig::default();
+
+        // flow control windows (rule of thumb: a few×BDP)
+        t.receive_window(VarInt::from(
+            (bdp_bytes as u64 * 4).min(u32::MAX as u64) as u32
+        ));
+        t.stream_receive_window(VarInt::from((bdp_bytes / 2).max(128 * 1024))); // per stream
+
+        // allow many concurrent bidi streams per connection
+        t.max_concurrent_bidi_streams(VarInt::from(max_bidi)); // e.g. 256–2048
+
+        // connection liveness
+        t.max_idle_timeout(Some(
+            IdleTimeout::try_from(Duration::from_secs(180)).unwrap(),
+        ));
+        t.keep_alive_interval(Some(Duration::from_secs(1)));
+
+        Arc::new(t)
+    }
+
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
     pub async fn establish(config: NetworkConfig) -> Result<Self, Report> {
         config.check_config()?;
@@ -333,32 +436,16 @@ impl MpcNetworkHandlerWorker {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
-        // let link_rtt = Duration::from_micros(50_000); // 50 µs → adjust
-        // let link_bw = 12_500_000u32; // 100 Mb/s → adjust
-        // let bdp_bytes = (link_bw as u64 * link_rtt.as_micros() as u64 / 1_000_000) as u32;
-
-        // let mut transport_config = TransportConfig::default();
-        // transport_config
-        //     .receive_window(VarInt::from(bdp_bytes)) // conn-level
-        //     .stream_receive_window(VarInt::from(bdp_bytes / 2)) // per-stream
-        //     .max_concurrent_bidi_streams(VarInt::from(2_048u32))
-        //     .max_idle_timeout(Some(
-        //         IdleTimeout::try_from(Duration::from_secs(60)).unwrap(),
-        //     ))
-        //     .keep_alive_interval(Some(Duration::from_secs(1)));
-
-        // let transport_config = Arc::new(transport_config);
-
         let client_config = {
-            let mut transport_config = TransportConfig::default();
-            transport_config.max_idle_timeout(Some(
-                IdleTimeout::try_from(Duration::from_secs(3 * 60)).unwrap(),
-            ));
-            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+            let link_rtt = Duration::from_micros(50_000); // example
+            let link_bw = 12_500_000u32; // bytes/sec (100 Mb/s)
+            let bdp_bytes = (link_bw as u64 * link_rtt.as_micros() as u64 / 1_000_000) as u32;
+
+            let transport_config = Self::transport_with_streams(bdp_bytes, 1024);
 
             let mut client_config =
                 ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
-            client_config.transport_config(Arc::new(transport_config));
+            client_config.transport_config(transport_config);
             client_config
         };
 

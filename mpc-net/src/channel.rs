@@ -1,10 +1,24 @@
 //! A channel abstraction for sending and receiving messages.
-use bytes::BytesMut;
-use futures::{Sink, SinkExt, Stream, StreamExt};
-use std::{io, marker::Unpin, pin::Pin};
+use crate::{
+    rep3::quic::codec_cfg,
+    resv_demux::{header, RecvHub},
+};
+use bytes::{Bytes, BytesMut};
+use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use quinn::{Connection, ConnectionError, RecvStream, SendStream};
+use std::{
+    io,
+    marker::{PhantomData, Unpin},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::{mpsc, oneshot},
+    runtime::Handle,
+    sync::{mpsc, oneshot, Semaphore},
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};
 
@@ -207,6 +221,7 @@ where
                         if write_job.ret.send(Ok(())).is_err() {
                             tracing::trace!("Debug: Write Job finished but receiver is gone!");
                         }
+
                         // workaround to free capacity after sending large frames (witness shares)
                         let buf = write.write_buffer();
                         if buf.is_empty() && buf.capacity() > RESET_LIMIT {
@@ -299,73 +314,159 @@ where
     }
 }
 
-// /// A handle to a channel that allows sending and receiving messages.
-// #[derive(Debug)]
-// pub struct ChannelHandle2<R, W, C, MSend, MRecv> {
-//     read: FramedRead<R, C>,
-//     write: FramedWrite<W, C>,
-//     _phantom: std::marker::PhantomData<(MSend, MRecv)>,
-// }
+fn ioerr(s: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, s)
+}
 
-// impl<R, W, C, MSend, MRecv> ChannelHandle2<R, W, C, MSend, MRecv>
-// where
-//     MSend: Send + std::fmt::Debug + 'static,
-//     MRecv: Send + std::fmt::Debug + 'static,
-//     R: AsyncReadExt + Unpin + 'static,
-//     W: AsyncWriteExt + Unpin + 'static,
-//     C: Encoder<MSend, Error = io::Error> + 'static,
-//     FramedRead<R, C>: Stream<Item = Result<MRecv, io::Error>> + Send,
-//     FramedWrite<W, C>: Sink<MSend, Error = io::Error> + Send,
-// {
-//     /// Create a new [`ChannelHandle`] from a [`Channel`]. This spawns a new tokio task that handles the read and write jobs so they can happen concurrently.
-//     pub fn manage(chan: Channel<R, W, C>) -> ChannelHandle2<R, W, C, MSend, MRecv>
-//     {
-//         let (write_send, mut write_recv) = mpsc::channel::<WriteJob<MSend>>(1024);
-//         // let (read_send, mut read_recv) = mpsc::channel::<ReadJob<MRecv>>(1024);
+#[derive(Debug, Clone)]
+pub struct PerOpChannelHandle {
+    conn: Connection,
+    codec: LengthDelimitedCodec,
+    rt: Handle,
+    send_limit: Arc<Semaphore>, // bound concurrent sends
+    fork_id: u32,
+    seq: Arc<AtomicU64>,
+    resv_demux: Option<Arc<RecvHub>>,
+    inbox: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<(u64, BytesMut)>>>>, // from RecvHub::register(...)
+}
 
-//         let (mut write, mut read) = chan.split();
+impl PerOpChannelHandle {
+    pub fn new(
+        conn_next: Connection,
+        resv_demux: Option<Arc<RecvHub>>,
+        codec: LengthDelimitedCodec,
+        rt: Handle,
+        fork_id: u32,
+        per_conn_streams: usize,
+    ) -> Self {
+        let inbox = if let Some(resv_demux) = resv_demux.as_ref() {
+            resv_demux.start(); // idempotent multi-calls ok
+            Some(Arc::new(tokio::sync::Mutex::new(
+                resv_demux.register(fork_id),
+            )))
+        } else {
+            None
+        };
 
-//         // tokio::spawn(async move {
-//         //     while let Some(write_job) = write_recv.recv().await {
-//         //         match write.send(write_job.data).await {
-//         //             Ok(_) => {
-//         //                 // we don't really care if the receiver for a write job is gone, as this is a common case
-//         //                 // therefore we only emit a trace message
-//         //                 if write_job.ret.send(Ok(())).is_err() {
-//         //                     tracing::trace!("Debug: Write Job finished but receiver is gone!");
-//         //                 }
-//         //             }
-//         //             Err(err) => {
-//         //                 tracing::error!("Write job failed: {err}");
-//         //             }
-//         //         }
-//         //     }
-//         // });
+        Self {
+            conn: conn_next,
+            codec,
+            rt,
+            send_limit: Arc::new(Semaphore::new(per_conn_streams)),
+            fork_id,
+            resv_demux,
+            seq: Arc::new(AtomicU64::new(0)),
+            inbox,
+        }
+    }
 
-//         Self {
-//             read,
-//             write,
-//             _phantom: std::marker::PhantomData,
-//         }
-//     }
+    pub fn fork(&self, fork_id: u32) -> Self {
+        let inbox = if let Some(resv_demux) = self.resv_demux.as_ref() {
+            resv_demux.start(); // idempotent multi-calls ok
+            Some(Arc::new(tokio::sync::Mutex::new(
+                resv_demux.register(fork_id),
+            )))
+        } else {
+            None
+        };
 
-//     /// Instructs the channel to send a message. Returns a [oneshot::Receiver] that will return the result of the send operation.
-//     pub async fn send(&mut self, data: MSend) -> Result<(), io::Error> {
-//         self.write.send(data).await
-//     }
+        Self {
+            conn: self.conn.clone(),
+            codec: codec_cfg(),
+            rt: self.rt.clone(),
+            send_limit: self.send_limit.clone(),
+            fork_id,
+            seq: Arc::new(AtomicU64::new(0)),
+            inbox,
+            resv_demux: self.resv_demux.clone(),
+        }
+    }
 
-//     /// Instructs the channel to receive a message. Returns a [oneshot::Receiver] that will return the result of the receive operation.
-//     pub async fn recv(&mut self) -> Option<Result<MRecv, io::Error>> {
-//         self.read.next().await
-//     }
+    // --- SAME API as your ChannelHandle ---
 
-//     /// A blocking version of [ChannelHandle::send]. This will block until the send operation is complete.
-//     pub fn blocking_send(&mut self, data: MSend) -> Result<(), io::Error> {
-//         RUNTIME.block_on(async move { self.write.send(data).await })
-//     }
+    /// Async: schedule a SEND to next party (per-op UNI stream). Returns oneshot for send result.
+    pub async fn send(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        self.spawn_send(data)
+    }
 
-//     /// A blocking version of [ChannelHandle::recv]. This will block until the receive operation is complete.
-//     pub fn blocking_recv(&mut self) -> Option<Result<MRecv, io::Error>> {
-//         RUNTIME.block_on(async move { self.read.next().await })
-//     }
-// }
+    /// Async: schedule a RECV from prev party (accept next UNI). Returns oneshot for received message.
+    pub async fn recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
+        self.spawn_recv()
+    }
+
+    /// Blocking variants return a oneshot Receiver you can `.blocking_recv()`.
+    pub fn blocking_send(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        self.spawn_send(data)
+    }
+    pub fn blocking_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
+        self.spawn_recv()
+    }
+
+    fn spawn_send(&self, payload: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        let (tx, rx) = oneshot::channel();
+        let conn = self.conn.clone();
+        let codec = self.codec.clone();
+        let fork_id = self.fork_id;
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let out_sem = self.send_limit.clone();
+
+        self.rt.spawn(async move {
+            let _p = match out_sem.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    let _ = tx.send(err("sem closed"));
+                    return;
+                }
+            };
+            // prepend header inside one LDC frame
+            let mut buf = BytesMut::with_capacity(13 + payload.len());
+            buf.extend_from_slice(&header(fork_id, seq));
+            buf.extend_from_slice(&payload);
+            // open per-op UNI and send framed
+            let send: SendStream = match conn.open_uni().await {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.send(Err(io_err(e)));
+                    return;
+                }
+            };
+            let mut fw = FramedWrite::new(send, codec);
+            let res = async {
+                fw.send(buf.freeze()).await?;
+                fw.flush().await?;
+                let mut s = fw.into_inner();
+                s.finish().map_err(io_err)
+            }
+            .await;
+            let _ = tx.send(res);
+        });
+        rx
+    }
+
+    fn spawn_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
+        let inbox = self.inbox.as_ref().expect("send-only connection").clone();
+        let (tx, rx) = oneshot::channel();
+        self.rt.spawn(async move {
+            let mut rxq = inbox.lock().await;
+            match rxq.recv().await {
+                Some((_seq, bytes)) => {
+                    let _ = tx.send(Ok(bytes));
+                }
+                None => {
+                    let _ = tx.send(Err(io_err("inbox closed")));
+                }
+            }
+        });
+        rx
+    }
+}
+
+#[inline]
+fn err(msg: &str) -> Result<(), io::Error> {
+    Err(io::Error::new(io::ErrorKind::Other, msg))
+}
+
+#[inline]
+fn io_err<E: std::fmt::Display>(e: E) -> io::Error {
+    io::Error::new(std::io::ErrorKind::Other, e.to_string())
+}

@@ -567,6 +567,7 @@ where
     Ok(RingShare { a: res_a, b: res_b })
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn arithmetic_xor_many<T: IntRing2k, N: Rep3Network>(
     x: &[RingShare<T>],
     y: &[RingShare<T>],
@@ -586,7 +587,9 @@ where
         a.push(res_a);
     }
 
+    let _guard = tracing::trace_span!("reshare_many").entered();
     let b = io_context.network.reshare_many(&a)?;
+    drop(_guard);
     let res = a
         .into_iter()
         .zip(b)
