@@ -181,10 +181,11 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
                     share,
                     network0,
                     network1,
-                )?;
-                let bin_b = network0.network.reshare(bin_a.to_owned())?;
+                )
+                .unwrap();
+                let bin_b = network0.network.reshare(bin_a.to_owned()).unwrap();
                 let bin = Rep3BigUintShare::new(bin_a, bin_b);
-                rep3::conversion::b2a_selector(&bin, network0)?
+                rep3::conversion::b2a_selector(&bin, network0).unwrap()
             }
             PublicPrivateLut::Shared(vec) => {
                 let f_a = gadgets::lut::read_shared_lut(vec.as_ref(), share, network0)?;
@@ -254,6 +255,34 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         tracing::debug!("got a result!");
         Ok(result)
     }
+
+    // /// This is a protocol which reads from a shared LUT without converting the result back to the arithmetic domain.
+    // #[tracing::instrument(skip_all, level = "trace")]
+    // pub fn get_from_lut_from_ohv<F: PrimeField>(
+    //     ohv: &[]
+    //     lut: &PublicPrivateLut<F>,
+    //     network0: &mut IoContext<N>,
+    //     network1: &mut IoContext<N>,
+    // ) -> IoResult<Rep3PrimeFieldShare<F>> {
+    //     let len = lut.len();
+    //     tracing::debug!("doing read on LUT-map of size {}", len);
+    //     let bits = index;
+    //     let k = len.next_power_of_two().ilog2() as usize;
+
+    //     let result = if k == 1 {
+    //         Self::get_from_lut_internal::<Bit, _>(bits, lut, network0, network1)?
+    //     } else if k <= 8 {
+    //         Self::get_from_lut_internal::<u8, _>(bits, lut, network0, network1)?
+    //     } else if k <= 16 {
+    //         Self::get_from_lut_internal::<u16, _>(bits, lut, network0, network1)?
+    //     } else if k <= 32 {
+    //         Self::get_from_lut_internal::<u32, _>(bits, lut, network0, network1)?
+    //     } else {
+    //         panic!("Table is too large")
+    //     };
+    //     tracing::debug!("got a result!");
+    //     Ok(result)
+    // }
 
     fn write_to_lut_internal<T: IntRing2k, F: PrimeField>(
         index: Rep3BigUintShare<F>,
@@ -454,7 +483,6 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         value: Rep3PrimeFieldShare<F>,
         lut: &mut [Rep3PrimeFieldShare<F>],
         network0: &mut IoContext<N>,
-        _network1: &mut IoContext<N>,
     ) -> IoResult<()> {
         let len = lut.len();
         tracing::debug!("doing write on LUT-map of size {}", len);
@@ -464,11 +492,11 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
     }
 
     /// Writes to a shared lookup table with the index already being transformed into the shared one-hot-encoded vector
+    #[tracing::instrument(skip_all, level = "trace")]
     pub fn get_from_shared_lut_from_ohv<F: PrimeField>(
         ohv: &[Rep3PrimeFieldShare<F>],
         lut: &[Rep3PrimeFieldShare<F>],
         network0: &mut IoContext<N>,
-        _network1: &mut IoContext<N>,
     ) -> IoResult<Rep3PrimeFieldShare<F>> {
         let f_a = gadgets::lut::read_shared_lut_from_ohv(lut, ohv, network0)?;
         let f_b = network0.network.reshare(f_a)?;

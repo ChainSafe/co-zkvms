@@ -352,8 +352,9 @@ impl Rep3Network for Rep3MpcNet {
         &mut self,
         data: &[F],
     ) -> std::io::Result<Vec<F>> {
-        self.send_many(self.get_id().next_id(), data)?;
-        self.recv_many(self.get_id().prev_id())
+        self.send_many(self.get_id().next_id(), data).unwrap();
+        let x = self.recv_many(self.get_id().prev_id()).unwrap();
+        Ok(x)
     }
 
     async fn reshare_many_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
@@ -405,7 +406,6 @@ impl Rep3Network for Rep3MpcNet {
 
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>> {
         let data = self.recv_bytes(from)?;
-        println!("received data by {} from {}", self.id.party_id(), from);
 
         let res = Vec::<F>::deserialize_uncompressed_unchecked(&data[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -564,6 +564,7 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         let len = inputs_iter.len();
 
         if max_forks == 0 {
+            println!("MAX FORKS: {}", max_forks);
             return inputs_iter
                 .collect::<Vec<_>>()
                 .into_iter()

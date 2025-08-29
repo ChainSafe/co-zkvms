@@ -1,7 +1,7 @@
 //! A channel abstraction for sending and receiving messages.
 use crate::{
     rep3::quic::codec_cfg,
-    resv_demux::{header, RecvHub},
+    resv_demux::{write_header, ResvJob, HEADER_LEN},
 };
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
@@ -14,6 +14,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -314,75 +315,49 @@ where
     }
 }
 
-fn ioerr(s: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, s)
-}
-
 #[derive(Debug, Clone)]
 pub struct PerOpChannelHandle {
     conn: Connection,
     codec: LengthDelimitedCodec,
     rt: Handle,
+    resv_tx: Option<mpsc::Sender<ResvJob>>,
     send_limit: Arc<Semaphore>, // bound concurrent sends
     fork_id: u32,
     seq: Arc<AtomicU64>,
-    resv_demux: Option<Arc<RecvHub>>,
-    inbox: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<(u64, BytesMut)>>>>, // from RecvHub::register(...)
 }
 
 impl PerOpChannelHandle {
     pub fn new(
         conn_next: Connection,
-        resv_demux: Option<Arc<RecvHub>>,
         codec: LengthDelimitedCodec,
         rt: Handle,
+        resv_tx: Option<mpsc::Sender<ResvJob>>,
+
         fork_id: u32,
         per_conn_streams: usize,
     ) -> Self {
-        let inbox = if let Some(resv_demux) = resv_demux.as_ref() {
-            resv_demux.start(); // idempotent multi-calls ok
-            Some(Arc::new(tokio::sync::Mutex::new(
-                resv_demux.register(fork_id),
-            )))
-        } else {
-            None
-        };
-
         Self {
             conn: conn_next,
             codec,
             rt,
             send_limit: Arc::new(Semaphore::new(per_conn_streams)),
             fork_id,
-            resv_demux,
+            resv_tx,
             seq: Arc::new(AtomicU64::new(0)),
-            inbox,
         }
     }
 
     pub fn fork(&self, fork_id: u32) -> Self {
-        let inbox = if let Some(resv_demux) = self.resv_demux.as_ref() {
-            resv_demux.start(); // idempotent multi-calls ok
-            Some(Arc::new(tokio::sync::Mutex::new(
-                resv_demux.register(fork_id),
-            )))
-        } else {
-            None
-        };
-
         Self {
             conn: self.conn.clone(),
             codec: codec_cfg(),
             rt: self.rt.clone(),
             send_limit: self.send_limit.clone(),
             fork_id,
+            resv_tx: self.resv_tx.clone(),
             seq: Arc::new(AtomicU64::new(0)),
-            inbox,
-            resv_demux: self.resv_demux.clone(),
         }
     }
-
-    // --- SAME API as your ChannelHandle ---
 
     /// Async: schedule a SEND to next party (per-op UNI stream). Returns oneshot for send result.
     pub async fn send(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
@@ -396,9 +371,21 @@ impl PerOpChannelHandle {
 
     /// Blocking variants return a oneshot Receiver you can `.blocking_recv()`.
     pub fn blocking_send(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        tokio::spawn(async move {
+            println!("in runtime");
+        });
+        assert!(
+            tokio::runtime::Handle::try_current().is_ok(),
+            "blocking_send called on Tokio worker"
+        );
+
         self.spawn_send(data)
     }
     pub fn blocking_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
+        assert!(
+            tokio::runtime::Handle::try_current().is_ok(),
+            "blocking_recv called on Tokio worker"
+        );
         self.spawn_recv()
     }
 
@@ -414,13 +401,14 @@ impl PerOpChannelHandle {
             let _p = match out_sem.acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => {
-                    let _ = tx.send(err("sem closed"));
+                    tracing::warn!("limit reached");
+                    let _ = tx.send(err("limit reached"));
                     return;
                 }
             };
             // prepend header inside one LDC frame
-            let mut buf = BytesMut::with_capacity(13 + payload.len());
-            buf.extend_from_slice(&header(fork_id, seq));
+            let mut buf = BytesMut::with_capacity(HEADER_LEN + payload.len());
+            write_header(&mut buf, fork_id, seq);
             buf.extend_from_slice(&payload);
             // open per-op UNI and send framed
             let send: SendStream = match conn.open_uni().await {
@@ -443,19 +431,53 @@ impl PerOpChannelHandle {
         rx
     }
 
-    fn spawn_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
-        let inbox = self.inbox.as_ref().expect("send-only connection").clone();
+    pub fn spawn_recv(&self) -> oneshot::Receiver<Result<BytesMut, io::Error>> {
+        // let (tx, rx) = oneshot::channel();
+        // match self.resv_tx.as_ref() {
+        //     Some(hub) => {
+        //         match hub.try_send(ResvJob {
+        //             fork: self.fork_id,
+        //             tx,
+        //         }) {
+        //             Ok(_) => {}
+        //             Err(tokio::sync::mpsc::error::TrySendError::Full(req)) => {
+        //                 let hub = hub.clone();
+        //                 self.rt.spawn(async move {
+        //                     let _ = hub.send(req).await;
+        //                 });
+        //             }
+        //             Err(tokio::sync::mpsc::error::TrySendError::Closed(resv_job)) => {
+        //                 let _ = resv_job.tx.send(Err(io_err("recv hub closed")));
+        //             }
+        //         }
+        //     }
+        //     None => {
+        //         let _ = tx.send(Err(io_err("send-only connection")));
+        //     }
+        // }
+        // rx
         let (tx, rx) = oneshot::channel();
-        self.rt.spawn(async move {
-            let mut rxq = inbox.lock().await;
-            match rxq.recv().await {
-                Some((_seq, bytes)) => {
-                    let _ = tx.send(Ok(bytes));
-                }
-                None => {
-                    let _ = tx.send(Err(io_err("inbox closed")));
-                }
-            }
+        let Some(req_tx) = self.resv_tx.as_ref() else {
+            let _ = tx.send(Err(io_err("no recv hub")));
+            return rx;
+        };
+        let fork = self.fork_id;
+        let req_tx = req_tx.clone();
+        let rt = self.rt.clone();
+
+        rt.spawn(async move {
+            let (otx, orx) = oneshot::channel();
+            let _ = req_tx.send(ResvJob { fork, tx: otx }).await;
+            let out = match tokio::time::timeout(Duration::from_secs(20), orx).await {
+                Ok(Ok(Ok(bytes))) => Ok(bytes),
+                Ok(Ok(Err(e))) => Err(e),
+                Ok(Err(e)) => Err(io_err(e)),
+                Err(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "recv timeout",
+                )),
+            };
+            let _ = tx.send(out);
         });
         rx
     }

@@ -799,8 +799,36 @@ pub(crate) fn arithmetic_xor<F: PrimeField, N: Rep3Network>(
     Ok(FieldShare { a: res_a, b: res_b })
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
+#[tracing::instrument(skip_all, name = "rep3::arithmetic_xor_many", level = "trace")]
 pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
+    x: &[Rep3PrimeFieldShare<F>], // TODO: impl IntoParallelIterator
+    y: &[Rep3PrimeFieldShare<F>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<Rep3PrimeFieldShare<F>>> {
+    debug_assert_eq!(x.len(), y.len());
+
+    let mut a = Vec::with_capacity(x.len());
+    for (x, y) in x.iter().zip(y.iter()) {
+        let mut d = (x * y).into_fe() + io_context.rngs.rand.masking_field_element::<F>();
+        d.double_in_place();
+        let e = x.a + y.a;
+        let res_a = e - d;
+        a.push(res_a);
+    }
+
+    let _guard = tracing::trace_span!("reshare_many").entered();
+    let b = io_context.network.reshare_many(&a)?;
+    let res = a
+        .into_iter()
+        .zip(b)
+        .map(|(a, b)| FieldShare { a, b })
+        .collect();
+    drop(_guard);
+    Ok(res)
+}
+
+#[tracing::instrument(skip_all, name = "rep3::arithmetic_xor_many_par", level = "trace")]
+pub(crate) fn arithmetic_xor_many_par<F: PrimeField, N: Rep3Network>(
     x: &[Rep3PrimeFieldShare<F>], // TODO: impl IntoParallelIterator
     y: &[Rep3PrimeFieldShare<F>],
     io_context: &mut IoContext<N>,
@@ -809,15 +837,6 @@ pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
 
     let mut a = vec![F::zero(); x.len()];
     let random_seeds = io_context.rngs.rand.random_seeds();
-
-    //     let mut a = Vec::with_capacity(x.len());
-    //     for (x, y) in x.iter().zip(y.iter()) {
-    //         let mut d = (x * y).into_fe() + io_context.rngs.rand.masking_field_element::<F>();
-    //         d.double_in_place();
-    //         let e = x.a + y.a;
-    //         let res_a = e - d;
-    //         a.push(res_a);
-    //     }
 
     x.par_iter()
         .zip(y.par_iter())

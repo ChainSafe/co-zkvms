@@ -3,7 +3,7 @@ mkdir -p data
 cargo build --example rep3_jolt --release
 
 cd ../mpc-net
-cargo build --bin gen_cert --release
+# cargo build --bin gen_cert --release
 cd ../co-jolt
 [[ -f "data/cert_coordinator.der" ]] || ../target/release/gen_cert -k data/key_coordinator.der -c data/cert_coordinator.der -s localhost -s ip6-localhost -s 127.0.0.1 -s coordinator
 
@@ -14,4 +14,4 @@ cd ../co-jolt
 ../target/release/examples/rep3_jolt -c examples/config_coordinator.toml &
 ../target/release/examples/rep3_jolt -c examples/config_party1.toml &
 ../target/release/examples/rep3_jolt -c examples/config_party2.toml &
-../target/release/examples/rep3_jolt -c examples/config_party3.toml 
+../target/release/examples/rep3_jolt -c examples/config_party3.toml

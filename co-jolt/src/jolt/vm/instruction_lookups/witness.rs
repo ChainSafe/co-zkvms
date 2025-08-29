@@ -89,13 +89,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             io_ctx.main(),
         )?;
 
-        println!("Promoted public operands to shared");
-
         io_ctx.main().network.reshare(F::zero()).unwrap();
-        println!("reshare done");
 
         let lookup_outputs = compute_lookup_outputs_rep3(&ops, num_reads, io_ctx)?;
-
         let subtable_lookup_indices = subtable_lookup_indices_rep3::<C, F, Network, Instructions>(
             ops,
             &lookup_outputs,
@@ -139,11 +135,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             })
             .unzip();
 
-        tracing::info!(
-            "instructions_used: {}",
-            access_sequences.iter().flatten().count()
-        );
-
         let mut ohvs = Rep3LookupTable::ohv_ring_from_index_no_a2b_conversion_many(
             access_sequences.par_iter().cloned().flatten(),
             M,
@@ -183,9 +174,17 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
                     //     io_ctx,
                     // )?;
+                    //
+                    if ohvs.is_empty() {
+                        return Ok((
+                            Rep3MultilinearPolynomial::from(read_cts_i),
+                            Rep3MultilinearPolynomial::from(final_cts_i),
+                            Rep3MultilinearPolynomial::from(subtable_lookups),
+                        ));
+                    }
 
-                    let span = tracing::trace_span!("memory", memory_index, subtable_index);
-                    let _guard = span.enter();
+                    // let span = tracing::trace_span!("memory", memory_index, subtable_index);
+                    // let _guard = span.enter();
                     for (j, op) in ops.iter().enumerate() {
                         if let Some(op) = &op.instruction_lookup {
                             let memories_used = &preprocessing.instruction_to_memory_indices
@@ -226,24 +225,23 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                     &ohv,
                                     &final_cts_i,
                                     &mut io_ctx,
-                                    &mut io_ctx2,
                                 )?;
                                 read_cts_i[j] = counter;
                                 counter = counter
                                     + arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
+                                tracing::trace!("write_to_shared_lut_from_ohv start");
 
                                 Rep3LookupTable::write_to_shared_lut_from_ohv(
                                     &ohv,
                                     counter,
                                     &mut final_cts_i,
                                     &mut io_ctx,
-                                    &mut io_ctx2,
                                 )
                                 .unwrap();
 
                                 let subtable_lookup_share =
                                     Rep3LookupTable::get_from_lut_no_a2b_conversion(
-                                        memory_address.clone(),
+                                        memory_address.clone(), // TODO: use OHV
                                         &materialized_subtable_luts[subtable_index],
                                         &mut io_ctx,
                                         &mut io_ctx2,
@@ -254,7 +252,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             }
                         }
                     }
-                    drop(_guard);
+                    // drop(_guard);
                     // tracing::info!("ops used: {}", ops_used);
 
                     Ok((

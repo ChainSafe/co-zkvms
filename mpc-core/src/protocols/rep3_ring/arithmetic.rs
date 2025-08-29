@@ -567,7 +567,7 @@ where
     Ok(RingShare { a: res_a, b: res_b })
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
+// #[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn arithmetic_xor_many<T: IntRing2k, N: Rep3Network>(
     x: &[RingShare<T>],
     y: &[RingShare<T>],

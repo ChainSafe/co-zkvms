@@ -25,9 +25,10 @@ use serde::{Deserialize, Serialize};
 )]
 pub enum A2BType {
     /// The arithmetic-to-binary conversion is directly done using "Bit Decomposition", while the binary-to-arithmetic conversion is done using "Bit Composition". This process has a larger number of communication rounds with less communicated bytes.
+    #[default]
     Direct,
     /// The arithmetic-to-binary conversion is done by "Arithmetic to Yao" followed by "Yao to Binary", while the binary-to-arithmetic conversion is done using "Binary to Yao" followed by "Yao to Arithmetic". This process has a low number of communication rounds with more communicated bytes.
-    #[default]
+    // #[default]
     Yao,
 }
 
@@ -49,7 +50,7 @@ pub fn b2a_selector<F: PrimeField, N: Rep3Network>(
 ) -> std::io::Result<Rep3PrimeFieldShare<F>> {
     match io_context.a2b_type {
         A2BType::Direct => b2a(x, io_context),
-        A2BType::Yao => b2y2a(x, io_context),
+        A2BType::Yao => unimplemented!(),
     }
 }
 

@@ -71,6 +71,7 @@ where
 
 /// Takes a public lookup table containing field elements, and a replicated binary share of an index and returns a non-replicated binary sharing of the looked up value lut`\[`index`\]`. The table size needs to be a power of two where the power is even. If this is not the case, the table is implicitly padded with 0.
 /// The algorithm is a rewrite of Protocol 10 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn read_public_lut_low_depth<F: PrimeField, T: IntRing2k, N: Rep3Network>(
     lut: &[F],
     index: Rep3RingShare<T>,
@@ -91,12 +92,16 @@ where
     let k2 = k >> 1;
 
     // create two ohv's with half the bitsize in parallel
-    let (a, b) = join!(
+    // let (a, b) = join!(
+    //     gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
+    //     gadgets::ohv::rand_ohv::<T, _>(k2, io_context1)
+    // );
+    let (a, b) = (
         gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
-        gadgets::ohv::rand_ohv::<T, _>(k2, io_context1)
+        gadgets::ohv::rand_ohv::<T, _>(k2, io_context0),
     );
-    let (mut r, e) = a?;
-    let (r_, e_) = b?;
+    let (mut r, e) = a.unwrap();
+    let (r_, e_) = b.unwrap();
 
     // Combine r and r_;
     r <<= k2;
@@ -275,7 +280,9 @@ pub fn write_lut_from_ohv<F: PrimeField, N: Rep3Network>(
     assert!(n <= ohv.len());
     let mut local_a = Vec::with_capacity(n);
     for (l, e) in lut.iter().zip(ohv.iter()) {
-        local_a.push((e * &(value - l)).into_fe() + l.a + io_context.rngs.rand.masking_field_element::<F>());
+        local_a.push(
+            (e * &(value - l)).into_fe() + l.a + io_context.rngs.rand.masking_field_element::<F>(),
+        );
     }
     let local_b = io_context.network.reshare_many(&local_a)?;
 

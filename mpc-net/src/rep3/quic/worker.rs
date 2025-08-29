@@ -2,7 +2,7 @@ use crate::{
     channel::{BytesChannel, Channel, PerOpChannelHandle},
     codecs::BincodeCodec,
     rep3::{PartyID, PartyWorkerID},
-    resv_demux::RecvHub,
+    resv_demux::RecvDemux,
     MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -88,26 +88,43 @@ impl Rep3QuicMpcNetWorker {
                 .await?
                 .map(ChannelHandle::manage);
 
-            let conn_next = net_handler
-                .parties_connections
+            let mut connections = HashMap::with_capacity(net_handler.parties_connections.len() - 1);
+            for (&id, conn) in net_handler.parties_connections.iter() {
+                if id < net_handler.my_id {
+                    // we are the client, so we are the receiver
+                    let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
+                    send_stream.write_u32(net_handler.my_id as u32).await?;
+                    let their_id = recv_stream.read_u32().await?;
+                    assert!(their_id == id as u32);
+                    assert!(connections.insert(id, conn.clone()).is_none());
+                } else {
+                    // we are the server, so we are the sender
+                    let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
+                    let their_id = recv_stream.read_u32().await?;
+                    assert!(their_id == id as u32);
+                    send_stream.write_u32(net_handler.my_id as u32).await?;
+                    assert!(connections.insert(id, conn.clone()).is_none());
+                }
+            }
+
+            let conn_next = connections
                 .get(&id.party_id().next_id().into())
                 .ok_or(eyre::eyre!("no next connection found"))?;
-            let conn_prev = net_handler
-                .parties_connections
+
+            let conn_prev = connections
                 .get(&id.party_id().prev_id().into())
                 .ok_or(eyre::eyre!("no prev connection found"))?;
 
             let chan_next = PerOpChannelHandle::new(
                 conn_next.clone(),
-                None,
                 codec_cfg(),
                 RUNTIME.handle().clone(),
+                None,
                 fork_id,
                 512,
             );
 
-            let resv_demux = RecvHub::new(
-                id,
+            let recv_tx = RecvDemux::handle(
                 conn_prev.clone(),
                 codec_cfg(),
                 RUNTIME.handle().clone(),
@@ -115,9 +132,9 @@ impl Rep3QuicMpcNetWorker {
             );
             let chan_prev = PerOpChannelHandle::new(
                 conn_prev.clone(),
-                Some(resv_demux),
                 codec_cfg(),
                 RUNTIME.handle().clone(),
+                Some(recv_tx),
                 0,
                 512,
             );
@@ -142,7 +159,6 @@ impl Rep3QuicMpcNetWorker {
 
     /// Sends bytes over the network to the target party.
     pub fn send_bytes(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
-        println!("send bytes from {} to {}", self.id.party_id(), target);
         if target == self.id.party_id().next_id() {
             std::mem::drop(self.chan_next.blocking_send(data));
             Ok(())
@@ -174,7 +190,6 @@ impl Rep3QuicMpcNetWorker {
 
     /// Receives bytes over the network from the party with the given id.
     pub fn recv_bytes(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
-        println!("receiving bytes by {} from {}", self.id.party_id(), from);
         let data = if from == self.id.party_id().prev_id() {
             self.chan_prev.blocking_recv().blocking_recv()
         } else if from == self.id.party_id().next_id() {
