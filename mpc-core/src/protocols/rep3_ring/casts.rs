@@ -52,6 +52,20 @@ where
     }
 }
 
+/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the ring_to_field cast.
+pub fn ring_to_field_many_selector<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    x: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> std::io::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    Standard: Distribution<T>,
+{
+    match io_context.a2b_type {
+        A2BType::Direct => ring_to_field_a2b_many(x, io_context),
+        A2BType::Yao => Ok(yao::ring_to_field_many(x, io_context)?),
+    }
+}
+
 /// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the field_to_ring cast.
 pub fn field_to_ring_selector<F: PrimeField, T: IntRing2k, N: Rep3Network>(
     x: Rep3PrimeFieldShare<F>,
@@ -187,4 +201,46 @@ where
         T::cast_to_biguint(&binary.b.0),
     );
     rep3::conversion::b2a(&biguint_share, io_context)
+}
+
+/// A cast of a Rep3RingShare to a Rep3PrimeFieldShare
+#[tracing::instrument(skip_all, level = "trace")]
+pub fn ring_to_field_a2b_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    shares: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> std::io::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    Standard: Distribution<T>,
+{
+    // A special case for Bit
+    if TypeId::of::<T>() == TypeId::of::<Bit>() {
+        let shares = shares.to_vec();
+        let biguint_shares = shares
+            .into_iter()
+            .map(|share| {
+                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share)
+                    .expect("We already checked types");
+                let biguint_share = Rep3BigUintShare::new(
+                    BigUint::from(share.a.0.convert() as u64),
+                    BigUint::from(share.b.0.convert() as u64),
+                );
+                biguint_share
+            })
+            .collect::<Vec<_>>();
+
+        return rep3::conversion::bit_inject_many(&biguint_shares, io_context);
+    }
+
+    let binary = conversion::a2b_many(shares, io_context)?;
+    let biguint_shares = binary
+        .into_iter()
+        .map(|binary| {
+            Rep3BigUintShare::new(
+                T::cast_to_biguint(&binary.a.0),
+                T::cast_to_biguint(&binary.b.0),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    rep3::conversion::b2a_many(&biguint_shares, io_context)
 }

@@ -28,7 +28,6 @@ pub enum A2BType {
     #[default]
     Direct,
     /// The arithmetic-to-binary conversion is done by "Arithmetic to Yao" followed by "Yao to Binary", while the binary-to-arithmetic conversion is done using "Binary to Yao" followed by "Yao to Arithmetic". This process has a low number of communication rounds with more communicated bytes.
-    // #[default]
     Yao,
 }
 

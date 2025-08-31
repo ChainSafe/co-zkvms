@@ -154,7 +154,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     .into_par_iter()
                     .zip_eq(ohvs_by_memory),
                 None,
-                |(memory_index, mut ohvs), mut io_ctx| {
+                |(memory_index, ohvs), io_ctx| {
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                     // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_to_field_many(
                     //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
@@ -162,6 +162,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     // )?
                     // .into_iter();
 
+                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
                     if ohvs.is_empty() {
                         return Ok((
                             Rep3MultilinearPolynomial::from(vec![
@@ -180,8 +181,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let mut read_cts_i_local_a = vec![F::zero(); num_reads];
                     let mut lookup_subtables_local_a = vec![F::zero(); num_reads];
 
-                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
-
                     let _guard =
                         tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
                             .entered();
@@ -195,6 +194,29 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                         &ohvs.next().unwrap(),
                                         io_ctx,
                                     )?;
+
+                                // let ohv_check =
+                                //     rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
+                                //         &ohv_bits, io_ctx,
+                                //     )?
+                                //     .into_iter()
+                                //     .map(|Rep3RingShare { a, b }| {
+                                //         Rep3PrimeFieldShare::new(
+                                //             F::from(a.convert()),
+                                //             F::from(b.convert()),
+                                //         )
+                                //     })
+                                //     .collect::<Vec<_>>();
+
+                                // let ohv_open = rep3::arithmetic::open_vec(&ohv, io_ctx).unwrap();
+                                // let ohv_check_open =
+                                //     rep3::arithmetic::open_vec(&ohv_check, io_ctx).unwrap();
+                                // .into_iter()
+                                // .map(|r| F::from(r.convert()))
+                                // .collect::<Vec<_>>();
+
+                                // assert_eq!(ohv_open[0..10], ohv_check_open[0..10]);
+
                                 // .into_iter()
                                 // .map(|mut r| {
                                 //     Rep3PrimeFieldShare {

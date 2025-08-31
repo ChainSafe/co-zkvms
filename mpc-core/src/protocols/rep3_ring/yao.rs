@@ -340,6 +340,7 @@ pub fn joint_input_binary_xored<T: IntRing2k, N: Rep3Network>(
 }
 
 /// A cast of a vector of Rep3RingShare to a vector of Rep3PrimeFieldShare
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn ring_to_field_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     inputs: &[Rep3RingShare<T>],
     io_context: &mut IoContext<N>,
