@@ -1,5 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -18,14 +19,12 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
     Debug,
     Serialize,
     Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
     PartialEq,
 )]
-pub struct RightShiftPaddingInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
+pub struct RightShiftPaddingInstruction<const WORD_SIZE: usize>(pub Rep3Operand);
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
-    for RightShiftPaddingInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
+    for RightShiftPaddingInstruction<WORD_SIZE>
 {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), 0)
@@ -62,22 +61,22 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
-    for RightShiftPaddingInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
+    for RightShiftPaddingInstruction<WORD_SIZE>
 {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::default())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, None)
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         None
     }
 
@@ -103,24 +102,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         _: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
-        vec![Rep3BigUintShare::zero_share(); C]
-    }
-
-    fn output<N: Rep3Network>(
-        &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let shift = self.0.as_public() % WORD_SIZE as u64;
-        let ones = (1 << shift) - 1;
-        Ok(rep3::arithmetic::promote_to_trivial_share(
-            io_ctx.id,
-            F::from(ones << (WORD_SIZE as u64 - shift)),
-        )
-        .into())
+    ) -> Vec<Rep3RingShare<u32>> {
+        vec![Rep3RingShare::zero_share(); C]
     }
 
     fn output_batched<'a, N: Rep3Network>(

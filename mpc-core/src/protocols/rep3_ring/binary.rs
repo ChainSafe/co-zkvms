@@ -49,6 +49,22 @@ where
     Ok(xor ^ and)
 }
 
+/// Performs a bitwise OR operation on two shared values.
+pub fn or_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let xor = izip!(a, b).map(|(a, b)| a ^ b).collect::<Vec<_>>();
+    let and = and_many(a, b, io_context)?;
+    Ok(izip!(xor, and)
+        .map(|(xor, and)| xor ^ and)
+        .collect::<Vec<_>>())
+}
+
 /// Performs a bitwise OR operation on a shared value and a public value.
 pub fn or_public<T: IntRing2k>(
     shared: &RingShare<T>,
@@ -77,9 +93,9 @@ where
 }
 
 /// Performs a bitwise AND operation on multiple shared values.
-pub fn and_many<T: IntRing2k, N: Rep3Network>(
-    a: &[RingShare<T>],
-    b: &[RingShare<T>],
+pub fn and_many<'a, T: IntRing2k, N: Rep3Network>(
+    a: impl IntoIterator<Item = impl AsRef<RingShare<T>>>,
+    b: impl IntoIterator<Item = impl AsRef<RingShare<T>>>,
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<RingShare<T>>>
 where
@@ -89,7 +105,7 @@ where
         .map(|(a, b)| {
             let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
             mask ^= mask_b;
-            (a & b) ^ mask
+            (a.as_ref().a & b.as_ref().a) ^ mask
         })
         .collect::<Vec<_>>();
     let local_b = io_context.network.reshare_many(&local_a)?;
@@ -161,6 +177,17 @@ pub fn promote_to_trivial_share<T: IntRing2k>(
     }
 }
 
+pub fn add_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    super::detail::low_depth_binary_add_many(a, b, io_context)
+}
+
 /// Computes a CMUX: If `c` is `1`, returns `x_t`, otherwise returns `x_f`.
 pub fn cmux<T: IntRing2k, N: Rep3Network>(
     c: &RingShare<T>,
@@ -174,6 +201,24 @@ where
     let xor = x_f ^ x_t;
     let mut and = and(c, &xor, io_context)?;
     and ^= x_f;
+    Ok(and)
+}
+
+/// Computes a CMUX: If `c` is `1`, returns `x_t`, otherwise returns `x_f`.
+pub fn cmux_many<T: IntRing2k, N: Rep3Network>(
+    c: &[RingShare<T>],
+    x_t: &[RingShare<T>],
+    x_f: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    // let xor = x_f ^ x_t;
+    let xor = izip!(x_f, x_t).map(|(a, b)| a ^ b).collect::<Vec<_>>();
+    let mut and = and_many(c, &xor, io_context)?;
+    // and ^= x_f;
+    izip!(and.iter_mut(), x_f.iter()).for_each(|(and, x_f)| *and ^= x_f);
     Ok(and)
 }
 
@@ -244,4 +289,36 @@ where
         a: RingElement(Bit::new((x.a & RingElement::one()) == RingElement::one())),
         b: RingElement(Bit::new((x.b & RingElement::one()) == RingElement::one())),
     })
+}
+
+/// Computes a binary circuit to check whether the replicated binary-shared input x is zero or not. The output is a binary sharing of one bit.
+pub fn is_zero_many<T: IntRing2k, N: Rep3Network>(
+    x: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    // negate
+    let mut x = x.iter().map(|s| !s).collect::<Vec<_>>();
+
+    // do ands in a tree
+    // TODO: Make and tree more communication efficient, ATM we send the full element for each level, even though they halve in size
+    let mut len = T::K;
+    debug_assert!(len.is_power_of_two());
+    while len > 1 {
+        // if len % 2 == 1 // Does not happen, we are in a ring with 2^k
+        len >>= 1;
+        let mask = (RingElement::one() << len) - RingElement::one();
+        let a = x.iter().map(|s| *s & mask);
+        let b = x.iter().map(|s| (s >> len) & mask);
+        x = and_many(a, b, io_context)?;
+    }
+    // extract LSB
+    Ok(x.into_iter()
+        .map(|x| RingShare {
+            a: RingElement(Bit::new((x.a & RingElement::one()) == RingElement::one())),
+            b: RingElement(Bit::new((x.b & RingElement::one()) == RingElement::one())),
+        })
+        .collect())
 }

@@ -25,6 +25,7 @@ where
     kogge_stone_inner(&p, &g, io_context)
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 pub(super) fn low_depth_binary_add_many<T: IntRing2k, N: Rep3Network>(
     x1: &[Rep3RingShare<T>],
     x2: &[Rep3RingShare<T>],
@@ -64,6 +65,22 @@ fn kogge_stone_inner_many<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
+    kogge_stone_loop_many(&mut p.to_owned(), g, io_context)?;
+    izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| {
+        *g <<= 1;
+        *g ^= p;
+    });
+    Ok(())
+}
+
+fn kogge_stone_loop_many<T: IntRing2k, N: Rep3Network>(
+    p: &mut [Rep3RingShare<T>],
+    g: &mut [Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<()>
+where
+    Standard: Distribution<T>,
+{
     let bitlen = T::K;
     let d: u32 = bitlen.ilog2(); // T is a ring with 2^k elements
     debug_assert!(bitlen.is_power_of_two());
@@ -78,10 +95,7 @@ where
         izip!(p.iter_mut(), r2).for_each(|(p, r2)| *p = r2);
         izip!(g.iter_mut(), r1).for_each(|(g, r1)| *g ^= r1);
     }
-    izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| {
-        *g <<= 1;
-        *g ^= p;
-    });
+
     Ok(())
 }
 
@@ -97,6 +111,23 @@ where
     let c = g.get_bit(T::K - 1);
     g <<= 1;
     g ^= p;
+    Ok((g, c))
+}
+
+fn kogge_stone_inner_with_carry_many<T: IntRing2k, N: Rep3Network>(
+    p: Vec<Rep3RingShare<T>>,
+    mut g: Vec<Rep3RingShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<(Vec<Rep3RingShare<T>>, Vec<Rep3RingShare<Bit>>)>
+where
+    Standard: Distribution<T>,
+{
+    kogge_stone_loop_many(&mut p.clone(), &mut g, io_context)?;
+    let c = g.iter().map(|g| g.get_bit(T::K - 1)).collect::<Vec<_>>();
+    izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| {
+        *g <<= 1;
+        *g ^= p;
+    });
     Ok((g, c))
 }
 
@@ -231,6 +262,35 @@ where
 }
 
 // Calculates 2^k + x1 - x2
+fn low_depth_binary_sub_with_carry_many<T: IntRing2k, N: Rep3Network>(
+    x1: &[Rep3RingShare<T>],
+    x2: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<(Vec<Rep3RingShare<T>>, Vec<Rep3RingShare<Bit>>)>
+where
+    Standard: Distribution<T>,
+{
+    // Let x2' = be the bit_not of x2
+    // Add x1 + x2' via a packed Kogge-Stone adder, where carry_in = 1
+    // This is equivalent to x1 - x2 = x1 + two's complement of x2
+
+    // bitnot of x2
+    let x2 = x2.iter().map(|x| !x).collect::<Vec<_>>();
+    // Now start the Kogge-Stone adder
+    let p = izip!(x1, &x2).map(|(x1, x2)| *x1 ^ *x2).collect::<Vec<_>>();
+    let mut g = binary::and_many(x1, &x2, io_context)?;
+    // Since carry_in = 1, we need to XOR the LSB of x1 and x2 to g (i.e., xor the LSB of p)
+    // g ^= p & RingElement::one();
+    izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| *g ^= *p & RingElement::one());
+
+    let (mut res, c) = kogge_stone_inner_with_carry_many(p, g, io_context)?;
+    // let res =
+    res.iter_mut()
+        .for_each(|r| *r = binary::xor_public(&r, &RingElement::one(), io_context.id)); // cin=1
+    Ok((res, c))
+}
+
+// Calculates 2^k + x1 - x2
 fn low_depth_binary_sub_by_const_with_carry<T: IntRing2k, N: Rep3Network>(
     x1: &Rep3RingShare<T>,
     x2: &RingElement<T>,
@@ -292,6 +352,19 @@ where
     let a_bits = conversion::a2b_selector(x, io_context)?;
     let b_bits = conversion::a2b_selector(y, io_context)?;
     let (_, r) = low_depth_binary_sub_with_carry(&a_bits, &b_bits, io_context)?;
+    Ok(r)
+}
+
+/// Computes a binary circuit to compare two binary shared values \[x\] > \[y\]. Thus, the inputs x and y are transformed from arithmetic to binary sharings using [Rep3Protocol::a2b] first. The output is a binary sharing of one bit.
+pub(crate) fn unsigned_ge_many<T: IntRing2k, N: Rep3Network>(
+    x_bits: &[Rep3RingShare<T>],
+    y_bits: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<Rep3RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    let (_, r) = low_depth_binary_sub_with_carry_many(&x_bits, &y_bits, io_context)?;
     Ok(r)
 }
 

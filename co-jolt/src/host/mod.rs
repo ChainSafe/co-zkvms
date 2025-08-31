@@ -212,19 +212,30 @@ impl Program {
         let trace = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
-                _ => vec![row],
+                // RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                // RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                // RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                // RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                // RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                // RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                // RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                // RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                // RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                // RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                // RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                // RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
+                // _ => vec![row],
+
+                // ["ADD", "AND", "BEQ", "BGEU", "BNE", "MUL", "OR", "SLL", "SLT", "SLTU", "SRA", "SRL", "SUB", "VIRTUAL_ADVICE", "XOR"]
+                RV32IM::OR
+                | RV32IM::AND
+                | RV32IM::XOR
+                | RV32IM::MUL
+                | RV32IM::BEQ
+                | RV32IM::BGEU
+                | RV32IM::BNE
+                | RV32IM::SUB => vec![row],
+                _ => vec![],
             })
             .map(|row| {
                 let instruction_lookup = RV32I::try_from(&row)

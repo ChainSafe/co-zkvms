@@ -4,10 +4,13 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare, Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3BigUintShare, Rep3PrimeFieldShare,
+    },
+    rep3_ring::{self, Rep3RingShare},
 };
 
 use super::{JoltInstruction, SubtableIndices};
@@ -21,22 +24,12 @@ use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-)]
-pub struct ANDInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ANDInstruction(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField> JoltInstruction<F> for ANDInstruction<F> {
+impl<F: JoltField> JoltInstruction<F> for ANDInstruction {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -80,20 +73,20 @@ impl<F: JoltField> JoltInstruction<F> for ANDInstruction<F> {
     }
 }
 
-impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
 
@@ -123,23 +116,16 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(
             self.0.as_binary_share(),
             self.1.as_binary_share(),
             C,
             log_M,
         )
-    }
-
-    fn output<N: Rep3Network>(
-        &self,
-        _io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        unimplemented!()
     }
 
     fn output_batched<'a, N: Rep3Network>(
@@ -158,11 +144,11 @@ impl<F: JoltField> Rep3JoltInstruction<F> for ANDInstruction<F> {
             })
             .unzip();
 
-        rep3::binary::and_vec(&x, &y, io_ctx)
+        rep3_ring::binary::and_many(&x, &y, io_ctx)
             .context("AND")?
             .into_iter()
             .zip(out)
-            .for_each(|(z, out)| *out = FutureVal::b2a(z));
+            .for_each(|(z, out)| *out = FutureVal::cast_to_field_b2a(z));
         Ok(())
     }
 }

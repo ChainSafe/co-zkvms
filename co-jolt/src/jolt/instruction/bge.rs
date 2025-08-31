@@ -9,10 +9,13 @@ use jolt_core::jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
     ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
 };
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare, Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3BigUintShare, Rep3PrimeFieldShare,
+    },
+    rep3_ring::{self, Rep3RingShare},
 };
 
 use super::{
@@ -23,19 +26,10 @@ use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
 
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-)]
-pub struct BGEInstruction<F: JoltField>(pub Rep3Operand<F>, pub Rep3Operand<F>);
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BGEInstruction(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField> JoltInstruction<F> for BGEInstruction<F> {
+impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -46,7 +40,7 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction<F> {
     fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
         F::one()
-            - <SLTInstruction<F> as JoltInstruction<F>>::combine_lookups(
+            - <SLTInstruction as JoltInstruction<F>>::combine_lookups(
                 &SLTInstruction(self.0.clone(), self.1.clone()),
                 vals,
                 C,
@@ -93,20 +87,20 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction<F> {
     }
 }
 
-impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
 
@@ -120,7 +114,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
     ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
         let res = rep3::arithmetic::sub_public_by_shared(
             F::one(),
-            <SLTInstruction<F> as Rep3JoltInstruction<F>>::combine_lookups_rep3(
+            <SLTInstruction as Rep3JoltInstruction<F>>::combine_lookups_rep3(
                 &SLTInstruction(self.0.clone(), self.1.clone()),
                 vals,
                 C,
@@ -145,7 +139,7 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        let res = <SLTInstruction<F> as Rep3JoltInstruction<F>>::combine_lookups_rep3_batched(
+        let res = <SLTInstruction as Rep3JoltInstruction<F>>::combine_lookups_rep3_batched(
             &SLTInstruction(self.0.clone(), self.1.clone()),
             vals,
             C,
@@ -161,20 +155,16 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(
             self.0.as_binary_share(),
             self.1.as_binary_share(),
             C,
             log_M,
         )
-    }
-
-    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        unimplemented!()
     }
 
     fn output_batched<'a, N: Rep3Network>(
@@ -193,12 +183,12 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction<F> {
             })
             .unzip();
 
-        rep3::arithmetic::ge_many(&a, &b, io_ctx)
+        rep3_ring::arithmetic::ge_many(&a, &b, io_ctx)
             .context("BGEInstruction::output_batched")?
             .into_iter()
             .zip(out)
             .for_each(|(ge, out)| {
-                *out = FutureVal::Ready(ge);
+                *out = FutureVal::bit_inject_to_field(ge);
             });
         Ok(())
     }

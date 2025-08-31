@@ -13,8 +13,14 @@ use jolt_core::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    rep3::network::{IoContext, Rep3Network},
+    rep3_ring,
+};
+use mpc_core::protocols::{
+    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3_ring::Rep3RingShare,
+};
 
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
@@ -26,17 +32,15 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
     Debug,
     Serialize,
     Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
     PartialEq,
 )]
-pub struct ASSERTLTEInstruction<const WORD_SIZE: usize, F: JoltField>(
-    pub Rep3Operand<F>,
-    pub Rep3Operand<F>,
+pub struct ASSERTLTEInstruction<const WORD_SIZE: usize>(
+    pub Rep3Operand,
+    pub Rep3Operand,
 );
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
-    for ASSERTLTEInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
+    for ASSERTLTEInstruction<WORD_SIZE>
 {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
@@ -92,22 +96,22 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F>
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
-    for ASSERTLTEInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
+    for ASSERTLTEInstruction<WORD_SIZE>
 {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
 
@@ -230,23 +234,16 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(
             self.0.as_binary_share(),
             self.1.as_binary_share(),
             C,
             log_M,
         )
-    }
-
-    fn output<N: Rep3Network>(
-        &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        unimplemented!()
     }
 
     fn output_batched<'a, N: Rep3Network>(
@@ -265,12 +262,12 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
             })
             .unzip();
 
-        rep3::arithmetic::lt_many(&a, &b, io_ctx)
+        rep3_ring::arithmetic::lt_many(&a, &b, io_ctx)
             .context("ASSERTLTEInstruction::output_batched")?
             .into_iter()
             .zip(out)
-            .for_each(|(ready, out)| {
-                *out = FutureVal::Ready(ready);
+            .for_each(|(r, out)| {
+                *out = FutureVal::bit_inject_to_field(r);
             });
         Ok(())
     }

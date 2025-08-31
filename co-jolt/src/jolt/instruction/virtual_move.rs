@@ -12,8 +12,11 @@ use jolt_core::{
     jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    rep3::network::{IoContext, Rep3Network},
+    rep3_ring::Rep3RingShare,
+};
 
 use crate::utils::instruction_utils::{
     concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand_usize,
@@ -27,13 +30,11 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
     Debug,
     Serialize,
     Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
     PartialEq,
 )]
-pub struct MOVEInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
+pub struct MOVEInstruction<const WORD_SIZE: usize>(pub Rep3Operand);
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVEInstruction<WORD_SIZE, F> {
+impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), 0)
     }
@@ -72,22 +73,22 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVEInstructio
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
-    for MOVEInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
+    for MOVEInstruction<WORD_SIZE>
 {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::default())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, None)
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         None
     }
 
@@ -113,18 +114,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
-    }
-
-    fn output<N: Rep3Network>(
-        &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(self.0.as_arithmetic_share())
     }
 
     fn output_batched<'a, N: Rep3Network>(
@@ -134,7 +128,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
-            *out = FutureVal::Ready(step.lhs().as_arithmetic_share());
+            *out = FutureVal::cast_to_field(step.lhs().as_arithmetic_share());
         });
         Ok(())
     }

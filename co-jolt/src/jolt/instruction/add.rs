@@ -2,6 +2,7 @@ use ark_std::log2;
 use itertools::izip;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -17,22 +18,10 @@ use crate::utils::instruction_utils::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-)]
-pub struct ADDInstruction<const WORD_SIZE: usize, F: JoltField>(
-    pub Rep3Operand<F>,
-    pub Rep3Operand<F>,
-);
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ADDInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction<WORD_SIZE, F> {
+impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
@@ -88,20 +77,20 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for ADDInstruction
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruction<WORD_SIZE, F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruction<WORD_SIZE> {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
 
@@ -133,23 +122,20 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
     fn to_indices_intermediate(
         &self,
         _: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
-        FutureVal::a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
+    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
+        FutureVal::ring_a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3BigUintShare<F>>,
+        z: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_add_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
-    fn output<N: Rep3Network>(&self, _: &mut IoContext<N>) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
-    }
-
+    #[tracing::instrument(skip_all, name = "ADD::output_batched", level = "trace")]
     fn output_batched<'a, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction<F>],
@@ -157,7 +143,7 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for ADDInstruc
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
-            *out = FutureVal::Ready(
+            *out = FutureVal::cast_to_field(
                 step.lhs().as_arithmetic_share() + step.rhs().unwrap().as_arithmetic_share(),
             )
         });

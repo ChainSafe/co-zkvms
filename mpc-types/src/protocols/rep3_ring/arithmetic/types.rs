@@ -71,3 +71,9 @@ impl<T: IntRing2k> Rep3RingShare<T> {
         }
     }
 }
+
+impl<T: IntRing2k> AsRef<Rep3RingShare<T>> for Rep3RingShare<T> {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}

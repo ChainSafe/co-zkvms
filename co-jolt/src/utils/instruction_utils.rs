@@ -3,7 +3,13 @@ use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 
 use crate::field::JoltField;
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3_ring::{
+        ring::{int_ring::IntRing2k, ring_impl::RingElement},
+        Rep3RingShare,
+    },
+};
 use num_bigint::BigUint;
 use std::{collections::HashMap, ops::Shr};
 
@@ -47,15 +53,15 @@ pub fn concatenate_lookups_rep3_batched<F: JoltField>(
     sums
 }
 
-pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
-    x: Rep3BigUintShare<F>,
-    y: Rep3BigUintShare<F>,
+pub fn rep3_chunk_and_concatenate_operands(
+    x: Rep3RingShare<u32>,
+    y: Rep3RingShare<u32>,
     C: usize,
     log_M: usize,
-) -> Vec<Rep3BigUintShare<F>> {
+) -> Vec<Rep3RingShare<u32>> {
     let operand_bits: usize = log_M / 2;
 
-    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as usize);
+    let operand_bit_mask = RingElement(((1 << operand_bits) - 1) as u32);
     (0..C)
         .map(|i| {
             let shift = (C - i - 1) * operand_bits;
@@ -69,13 +75,13 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
 }
 
 /// z = x + y (mod 2^{C*log_M}), then split z into C chunks of `log_M` bits (MSB-first).
-pub fn rep3_add_and_chunk_operands<F: JoltField>(
-    z: &Rep3BigUintShare<F>,
+pub fn rep3_add_and_chunk_operands(
+    z: &Rep3RingShare<u32>,
     C: usize,
     log_M: usize,
-) -> Vec<Rep3BigUintShare<F>> {
+) -> Vec<Rep3RingShare<u32>> {
     let sum_chunk_bits: usize = log_M;
-    let sum_chunk_bit_mask = BigUint::from(((1 << sum_chunk_bits) - 1) as usize);
+    let sum_chunk_bit_mask = RingElement(((1 << sum_chunk_bits) - 1) as u32);
 
     (0..C)
         .map(|i| {
@@ -88,13 +94,13 @@ pub fn rep3_add_and_chunk_operands<F: JoltField>(
 
 /// Chunks `z` into `C` chunks bitwise where `z = x * y`.
 /// `log_M` is the number of bits for each of the `C` chunks of `z`.
-pub fn rep3_multiply_and_chunk_operands<F: JoltField>(
-    z: &Rep3BigUintShare<F>,
+pub fn rep3_multiply_and_chunk_operands(
+    z: &Rep3RingShare<u32>,
     C: usize,
     log_M: usize,
-) -> Vec<Rep3BigUintShare<F>> {
+) -> Vec<Rep3RingShare<u32>> {
     let product_chunk_bits: usize = log_M;
-    let product_chunk_bit_mask = BigUint::from(((1 << product_chunk_bits) - 1) as u64);
+    let product_chunk_bit_mask = RingElement(((1 << product_chunk_bits) - 1) as u32);
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * product_chunk_bits) as u32 as usize;
@@ -105,14 +111,14 @@ pub fn rep3_multiply_and_chunk_operands<F: JoltField>(
 
 /// Chunks and concatenates two 64-bit unsigned integers `x` and `y` into a vector of concatenated chunks,
 /// where the second half of each concatenated chunk is always `y_0`, the last chunk of `y` (from left to right).
-pub fn rep3_chunk_and_concatenate_for_shift<F: JoltField>(
-    x: Rep3BigUintShare<F>,
-    y: Rep3BigUintShare<F>,
+pub fn rep3_chunk_and_concatenate_for_shift(
+    x: Rep3RingShare<u32>,
+    y: Rep3RingShare<u32>,
     C: usize,
     log_M: usize,
-) -> Vec<Rep3BigUintShare<F>> {
+) -> Vec<Rep3RingShare<u32>> {
     let operand_bits: usize = log_M / 2;
-    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as usize);
+    let operand_bit_mask = RingElement(((1 << operand_bits) - 1) as u32);
 
     let y_lowest_chunk = y & operand_bit_mask.clone();
 
@@ -130,12 +136,12 @@ pub fn rep3_chunk_and_concatenate_for_shift<F: JoltField>(
 /// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `usize`, each representing a
 /// `chunk_len`-bit chunk. Only different from `chunk_operand` in that it returns `usize` instead of
 /// `u64`.
-pub fn rep3_chunk_operand_usize<F: JoltField>(
-    x: Rep3BigUintShare<F>,
+pub fn rep3_chunk_operand_usize(
+    x: Rep3RingShare<u32>,
     C: usize,
     chunk_len: usize,
-) -> Vec<Rep3BigUintShare<F>> {
-    let bit_mask = BigUint::from(((1 << chunk_len) - 1) as u64);
+) -> Vec<Rep3RingShare<u32>> {
+    let bit_mask = RingElement(((1 << chunk_len) - 1) as u32);
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * chunk_len) as u32 as usize;

@@ -16,8 +16,14 @@ use jolt_core::{
     },
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    rep3::network::{IoContext, Rep3Network},
+    rep3_ring::{ring::ring_impl::RingElement, Rep3RingShare},
+};
+use mpc_core::protocols::{
+    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3_ring,
+};
 
 use crate::utils::instruction_utils::{
     concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand_usize,
@@ -31,11 +37,9 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
     Debug,
     Serialize,
     Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
     PartialEq,
 )]
-pub struct MOVSIGNInstruction<const WORD_SIZE: usize, F: JoltField>(pub Rep3Operand<F>);
+pub struct MOVSIGNInstruction<const WORD_SIZE: usize>(pub Rep3Operand);
 
 // Constants for 32-bit and 64-bit word sizes
 const ALL_ONES_32: u64 = 0xFFFF_FFFF;
@@ -43,7 +47,7 @@ const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 const SIGN_BIT_32: u64 = 0x8000_0000;
 const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVSIGNInstruction<WORD_SIZE, F> {
+impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVSIGNInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), 0)
     }
@@ -110,22 +114,22 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for MOVSIGNInstruc
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
-    for MOVSIGNInstruction<WORD_SIZE, F>
+impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
+    for MOVSIGNInstruction<WORD_SIZE>
 {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::default())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, None)
     }
 
-    fn lhs(&self) -> &Rep3Operand<F> {
+    fn lhs(&self) -> &Rep3Operand {
         &self.0
     }
 
-    fn rhs(&self) -> Option<&Rep3Operand<F>> {
+    fn rhs(&self) -> Option<&Rep3Operand> {
         None
     }
 
@@ -163,18 +167,11 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3BigUintShare<F>>,
+        _: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>> {
+    ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
-    }
-
-    fn output<N: Rep3Network>(
-        &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        unimplemented!()
     }
 
     fn output_batched<'a, N: Rep3Network>(
@@ -185,23 +182,28 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F>
     ) -> eyre::Result<()> {
         let t: Vec<_> = steps
             .into_iter()
-            .map(|step| step.lhs().as_binary_share() & BigUint::from(SIGN_BIT_32))
+            .map(|step| step.lhs().as_binary_share() & RingElement(SIGN_BIT_32 as u32))
             .collect();
 
-        let zeros = vec![Rep3BigUintShare::zero_share(); t.len()];
-        let all_ones =
-            vec![
-                rep3::binary::promote_to_trivial_share(io_ctx.id, &BigUint::from(ALL_ONES_32));
-                t.len()
-            ];
+        let zeros = vec![Rep3RingShare::zero_share(); t.len()];
+        let all_ones = vec![
+            rep3_ring::binary::promote_to_trivial_share(
+                io_ctx.id,
+                &RingElement(ALL_ONES_32 as u32)
+            );
+            t.len()
+        ];
 
-        let cond = rep3::binary::is_zero_many(t, io_ctx)?;
-        rep3::binary::cmux_many(&cond, &zeros, &all_ones, io_ctx)
+        let cond = rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
+            &rep3_ring::binary::is_zero_many(&t, io_ctx)?,
+            io_ctx,
+        )?;
+        rep3_ring::binary::cmux_many(&cond, &zeros, &all_ones, io_ctx)
             .context("Failed to cmux")?
             .into_iter()
             .zip(out)
             .for_each(|(ready, out)| {
-                *out = FutureVal::b2a(ready);
+                *out = FutureVal::cast_to_field_b2a(ready);
             });
         Ok(())
     }

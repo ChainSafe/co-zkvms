@@ -14,6 +14,7 @@ use itertools::izip;
 use num_bigint::BigUint;
 use std::any::TypeId;
 
+#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>(
     x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
@@ -24,6 +25,7 @@ pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>
     low_depth_sub_p_cmux_many::<F, N>(&x, io_context, bitlen + 1)
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn low_depth_binary_add_many<'a, F: PrimeField, N: Rep3Network>(
     x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
@@ -38,6 +40,7 @@ pub(crate) fn low_depth_binary_add_many<'a, F: PrimeField, N: Rep3Network>(
     Ok(g)
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 fn kogge_stone_inner_many<F: PrimeField, N: Rep3Network>(
     p: &mut [Rep3BigUintShare<F>],
     g: &mut [Rep3BigUintShare<F>],
@@ -55,12 +58,15 @@ fn kogge_stone_inner_many<F: PrimeField, N: Rep3Network>(
         let g_ = g.iter().map(|p| p & &mask);
         let p_shift = p.iter().map(|p| p >> shift);
 
-        let (r1, r2) = and_twice_many_iter(p_shift, g_, p_, io_context, bitlen - shift, len)?;
+        // TODO: Make and more communication efficient, ATM we send the full element for each level, even though they reduce in size
+        // maybe just input the mask into AND?
+        let (r1, r2) =
+            and_twice_many_iter(p_shift, g_, p_, io_context, bitlen - shift, len, shift)?;
         for (p, r2) in izip!(p.iter_mut(), r2.into_iter()) {
-            *p = r2 << shift;
+            *p = r2;
         }
         for (g, r1) in izip!(g.iter_mut(), r1.into_iter()) {
-            *g ^= r1 << shift;
+            *g ^= r1;
         }
     }
     for (g, s_) in izip!(g.iter_mut(), s_) {
@@ -121,6 +127,7 @@ fn kogge_stone_inner<F: PrimeField, N: Rep3Network>(
     Ok(g)
 }
 
+#[tracing::instrument(skip_all, level = "trace")]
 fn low_depth_sub_p_cmux_many<F: PrimeField, N: Rep3Network>(
     x: &[Rep3BigUintShare<F>],
     io_context: &mut IoContext<N>,
@@ -254,6 +261,7 @@ fn ceil_log2(x: usize) -> usize {
 }
 
 #[expect(clippy::type_complexity)]
+#[tracing::instrument(skip_all, level = "trace")]
 fn and_twice_many_iter<F: PrimeField, N: Rep3Network>(
     a: impl Iterator<Item = Rep3BigUintShare<F>>,
     b1: impl Iterator<Item = Rep3BigUintShare<F>>,
@@ -261,6 +269,7 @@ fn and_twice_many_iter<F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
     bitlen: usize,
     len: usize,
+    shift: usize,
 ) -> IoResult<(Vec<Rep3BigUintShare<F>>, Vec<Rep3BigUintShare<F>>)> {
     let mut local_a1 = Vec::with_capacity(len);
     let mut local_a2 = Vec::with_capacity(len);
@@ -270,8 +279,8 @@ fn and_twice_many_iter<F: PrimeField, N: Rep3Network>(
 
         let (mut mask2, mask_b) = io_context.rngs.rand.random_biguint(bitlen);
         mask2 ^= mask_b;
-        local_a1.push((&b1 & &a) ^ mask1);
-        local_a2.push((a & b2) ^ mask2);
+        local_a1.push(((&b1 & &a) ^ mask1) << shift);
+        local_a2.push(((a & b2) ^ mask2) << shift);
     }
 
     io_context

@@ -219,6 +219,7 @@ pub fn b2a<F: PrimeField, N: Rep3Network>(
 ///
 /// Keep in mind: Only works if the input is actually a binary sharing of a valid field element
 /// If the input has the correct number of bits, but is >= P, then either x can be reduced with self.low_depth_sub_p_cmux(x) first, or self.low_depth_binary_add_2_mod_p(x, y) is extended to subtract 2P in parallel as well. The second solution requires another multiplexer in the end.
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
     x: impl IntoIterator<Item = &'a Rep3BigUintShare<F>, IntoIter: ExactSizeIterator>,
     io_context: &mut IoContext<N>,
@@ -270,10 +271,12 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
     };
 
     // reshare y
+    let _guard = tracing::trace_span!("reshare_many").entered();
     let y_b: Vec<_> = io_context.network.reshare_many(&y_a)?;
     let y: Vec<_> = izip!(y_a, y_b)
         .map(|(a, b)| BinaryShare::new(a, b))
         .collect();
+    drop(_guard);
 
     let z = detail::low_depth_binary_add_mod_p_many::<F, N>(
         x,

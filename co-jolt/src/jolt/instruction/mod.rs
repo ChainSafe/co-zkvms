@@ -6,15 +6,21 @@ use ark_serialize::{
 };
 use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare,
-};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring;
+use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+use mpc_core::protocols::{
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3BigUintShare,
+    },
+    rep3_ring::Rep3RingShare,
+};
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
@@ -76,12 +82,12 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 
 #[enum_dispatch]
 pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>);
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand);
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>);
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>);
 
-    fn lhs(&self) -> &Rep3Operand<F>;
-    fn rhs(&self) -> Option<&Rep3Operand<F>>;
+    fn lhs(&self) -> &Rep3Operand;
+    fn rhs(&self) -> Option<&Rep3Operand>;
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
     fn combine_lookups_rep3<N: Rep3Network>(
@@ -104,21 +110,16 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
     fn to_indices_intermediate(
         &self,
         z: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3BigUintShare<F>>> {
+    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
         FutureVal::Ready(None)
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3BigUintShare<F>>,
+        z: Option<Rep3RingShare<u32>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<Rep3BigUintShare<F>>;
-
-    fn output<N: Rep3Network>(
-        &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
+    ) -> Vec<Rep3RingShare<u32>>;
 
     fn output_batched<'a, N: Rep3Network>(
         &self,
@@ -140,8 +141,6 @@ pub trait JoltInstructionSet<F: JoltField>:
     + AsRef<str>
     + Send
     + Sync
-    + CanonicalSerialize
-    + CanonicalDeserialize
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -170,16 +169,28 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
 
             if let Rep3Operand::Public(x) = op1 {
                 *op1 = Rep3Operand::Shared {
-                    binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
-                    arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                    binary: rep3_ring::binary::promote_to_trivial_share(
+                        id,
+                        &RingElement(*x as u32),
+                    ),
+                    arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
+                        id,
+                        RingElement(*x as u32),
+                    )),
                     public: Some(*x),
                 };
             }
 
             if let Some(Rep3Operand::Public(x)) = op2 {
                 *op2.unwrap() = Rep3Operand::Shared {
-                    binary: rep3::binary::promote_to_trivial_share(id, &(*x).into()),
-                    arithmetic: Some(rep3::arithmetic::promote_to_trivial_share(id, (*x).into())),
+                    binary: rep3_ring::binary::promote_to_trivial_share(
+                        id,
+                        &RingElement(*x as u32),
+                    ),
+                    arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
+                        id,
+                        RingElement(*x as u32),
+                    )),
                     public: Some(*x),
                 };
             }
@@ -191,61 +202,60 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
-        let (inputs, field_operands): (
-            Vec<Vec<Rep3BigUintShare<F>>>,
-            Vec<Vec<&mut Rep3Operand<F>>>,
-        ) = ops
-            .filter_map(|op| op.as_mut())
-            .map(|op| {
-                let (op1, op2) = op.operands_mut();
-                match (&op1, &op2) {
-                    (
-                        Rep3Operand::Shared {
-                            arithmetic: None,
-                            binary: x,
-                            ..
-                        },
-                        Some(Rep3Operand::Shared {
-                            arithmetic: None,
-                            binary: y,
-                            ..
-                        }),
-                    ) => {
-                        let res = vec![x.clone(), y.clone()];
-                        (res, vec![op1, op2.unwrap()])
+        let (inputs, field_operands): (Vec<Vec<Rep3RingShare<u32>>>, Vec<Vec<&mut Rep3Operand>>) =
+            ops.filter_map(|op| op.as_mut())
+                .map(|op| {
+                    let (op1, op2) = op.operands_mut();
+                    match (&op1, &op2) {
+                        (
+                            Rep3Operand::Shared {
+                                arithmetic: None,
+                                binary: x,
+                                ..
+                            },
+                            Some(Rep3Operand::Shared {
+                                arithmetic: None,
+                                binary: y,
+                                ..
+                            }),
+                        ) => {
+                            let res = vec![x.clone(), y.clone()];
+                            (res, vec![op1, op2.unwrap()])
+                        }
+                        (
+                            Rep3Operand::Shared {
+                                arithmetic: None,
+                                binary: x,
+                                ..
+                            },
+                            _,
+                        ) => {
+                            let res = vec![x.clone()];
+                            (res, vec![op1])
+                        }
+                        (
+                            _,
+                            Some(Rep3Operand::Shared {
+                                arithmetic: None,
+                                binary: y,
+                                ..
+                            }),
+                        ) => {
+                            let res = vec![y.clone()];
+                            (res, vec![op2.unwrap()])
+                        }
+                        _ => (vec![], vec![]),
                     }
-                    (
-                        Rep3Operand::Shared {
-                            arithmetic: None,
-                            binary: x,
-                            ..
-                        },
-                        _,
-                    ) => {
-                        let res = vec![x.clone()];
-                        (res, vec![op1])
-                    }
-                    (
-                        _,
-                        Some(Rep3Operand::Shared {
-                            arithmetic: None,
-                            binary: y,
-                            ..
-                        }),
-                    ) => {
-                        let res = vec![y.clone()];
-                        (res, vec![op2.unwrap()])
-                    }
-                    _ => (vec![], vec![]),
-                }
-            })
-            .unzip();
+                })
+                .unzip();
 
         if inputs.iter().flatten().next().is_none() {
             return Ok(());
         }
-        let mut outputs =
-            rep3::conversion::b2a_many(&inputs.into_iter().flatten().collect::<Vec<_>>(), io_ctx)?;
+        let mut outputs = rep3_ring::conversion::a2b_many(
+            &inputs.into_iter().flatten().collect::<Vec<_>>(),
+            io_ctx,
+        )?;
         for operands in field_operands.into_iter() {
             for (output, operand) in outputs.drain(..operands.len()).zip(operands) {
                 match operand {
@@ -253,6 +263,7 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
                         arithmetic: None,
                         binary,
                         public,
+                        ..
                     } => {
                         *operand = Rep3Operand::Shared {
                             binary: std::mem::take(binary),
@@ -273,17 +284,16 @@ pub trait Rep3JoltInstructionSet<F: JoltField>:
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(from = "u64", into = "u64")]
-pub enum Rep3Operand<F: JoltField> {
+pub enum Rep3Operand {
     Shared {
-        binary: Rep3BigUintShare<F>,
-        arithmetic: Option<Rep3PrimeFieldShare<F>>,
+        binary: Rep3RingShare<u32>,
+        arithmetic: Option<Rep3RingShare<u32>>,
         public: Option<u64>, // Some for trivial shares
     },
     Public(u64),
 }
 
-impl<F: JoltField> Rep3Operand<F> {
+impl Rep3Operand {
     pub fn as_public(&self) -> u64 {
         match self {
             Rep3Operand::Public(x)
@@ -294,14 +304,14 @@ impl<F: JoltField> Rep3Operand<F> {
         }
     }
 
-    pub fn as_arithmetic_share(&self) -> Rep3PrimeFieldShare<F> {
+    pub fn as_arithmetic_share(&self) -> Rep3RingShare<u32> {
         match self {
             Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             _ => panic!("Not an arithmetic operand"),
         }
     }
 
-    pub fn as_binary_share(&self) -> Rep3BigUintShare<F> {
+    pub fn as_binary_share(&self) -> Rep3RingShare<u32> {
         match self {
             Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),
@@ -309,29 +319,29 @@ impl<F: JoltField> Rep3Operand<F> {
     }
 }
 
-impl<F: JoltField> Default for Rep3Operand<F> {
+impl Default for Rep3Operand {
     fn default() -> Self {
         Rep3Operand::Public(0)
     }
 }
 
-impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand<F> {
-    fn from(value: Rep3BigUintShare<F>) -> Self {
-        Rep3Operand::Shared {
-            binary: value,
-            arithmetic: None,
-            public: None,
-        }
-    }
-}
+// impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand {
+//     fn from(value: Rep3BigUintShare<F>) -> Self {
+//         Rep3Operand::Shared {
+//             binary: value,
+//             arithmetic: None,
+//             public: None,
+//         }
+//     }
+// }
 
-impl<F: JoltField> From<u64> for Rep3Operand<F> {
+impl From<u64> for Rep3Operand {
     fn from(value: u64) -> Self {
         Rep3Operand::Public(value)
     }
 }
 
-impl<F: JoltField> Into<u64> for Rep3Operand<F> {
+impl Into<u64> for Rep3Operand {
     fn into(self) -> u64 {
         match self {
             Rep3Operand::Public(x) => x,
@@ -340,95 +350,95 @@ impl<F: JoltField> Into<u64> for Rep3Operand<F> {
     }
 }
 
-impl<F: JoltField> CanonicalSerialize for Rep3Operand<F> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            Rep3Operand::Public(x) => {
-                (0_u8).serialize_with_mode(&mut writer, compress)?;
-                x.serialize_with_mode(&mut writer, compress)?;
-            }
-            Rep3Operand::Shared {
-                binary,
-                arithmetic,
-                public,
-            } => {
-                (1_u8).serialize_with_mode(&mut writer, compress)?;
-                binary.serialize_with_mode(&mut writer, compress)?;
-                arithmetic.serialize_with_mode(&mut writer, compress)?;
-                public.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
-        Ok(())
-    }
+// impl<F: JoltField> CanonicalSerialize for Rep3Operand {
+//     fn serialize_with_mode<W: std::io::Write>(
+//         &self,
+//         mut writer: W,
+//         compress: Compress,
+//     ) -> Result<(), SerializationError> {
+//         match self {
+//             Rep3Operand::Public(x) => {
+//                 (0_u8).serialize_with_mode(&mut writer, compress)?;
+//                 x.serialize_with_mode(&mut writer, compress)?;
+//             }
+//             Rep3Operand::Shared {
+//                 binary,
+//                 arithmetic,
+//                 public,
+//                 ..
+//             } => {
+//                 (1_u8).serialize_with_mode(&mut writer, compress)?;
+//                 binary.serialize_with_mode(&mut writer, compress)?;
+//                 arithmetic.serialize_with_mode(&mut writer, compress)?;
+//                 public.serialize_with_mode(&mut writer, compress)?;
+//             }
+//         }
+//         Ok(())
+//     }
 
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            Rep3Operand::Public(x) => {
-                (0_u8).serialized_size(compress) + x.serialized_size(compress)
-            }
-            Rep3Operand::Shared {
-                binary,
-                arithmetic,
-                public,
-            } => {
-                (1_u8).serialized_size(compress)
-                    + binary.serialized_size(compress)
-                    + arithmetic.serialized_size(compress)
-                    + public.serialized_size(compress)
-            }
-        }
-    }
-}
+//     fn serialized_size(&self, compress: Compress) -> usize {
+//         match self {
+//             Rep3Operand::Public(x) => {
+//                 (0_u8).serialized_size(compress) + x.serialized_size(compress)
+//             }
+//             Rep3Operand::Shared {
+//                 binary,
+//                 arithmetic,
+//                 public,
+//                 ..
+//             } => {
+//                 (1_u8).serialized_size(compress)
+//                     + binary.serialized_size(compress)
+//                     + arithmetic.serialized_size(compress)
+//                     + public.serialized_size(compress)
+//             }
+//         }
+//     }
+// }
 
-impl<F: JoltField> CanonicalDeserialize for Rep3Operand<F> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let res = match discriminant {
-            0 => Rep3Operand::Public(u64::deserialize_with_mode(&mut reader, compress, validate)?),
-            1 => Rep3Operand::Shared {
-                binary: Rep3BigUintShare::<F>::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                )?,
-                arithmetic: Option::<Rep3PrimeFieldShare<F>>::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                )?,
-                public: Option::<u64>::deserialize_with_mode(&mut reader, compress, validate)?,
-            },
-            _ => Err(SerializationError::InvalidData)?,
-        };
-        Ok(res)
-    }
-}
+// impl<F: JoltField> CanonicalDeserialize for Rep3Operand {
+//     fn deserialize_with_mode<R: std::io::Read>(
+//         mut reader: R,
+//         compress: Compress,
+//         validate: Validate,
+//     ) -> Result<Self, SerializationError> {
+//         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+//         let res = match discriminant {
+//             0 => Rep3Operand::Public(u64::deserialize_with_mode(&mut reader, compress, validate)?),
+//             1 => Rep3Operand::Shared {
+//                 binary: Rep3RingShare::<F>::deserialize_with_mode(&mut reader, compress, validate)?,
+//                 arithmetic: Option::<Rep3RingShare<F>>::deserialize_with_mode(
+//                     &mut reader,
+//                     compress,
+//                     validate,
+//                 )?,
+//                 public: Option::<u64>::deserialize_with_mode(&mut reader, compress, validate)?,
+//                 _marker: PhantomData,
+//             },
+//             _ => Err(SerializationError::InvalidData)?,
+//         };
+//         Ok(res)
+//     }
+// }
 
-impl<F: JoltField> Valid for Rep3Operand<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Rep3Operand::Public(value) => value.check(),
-            Rep3Operand::Shared {
-                binary,
-                arithmetic,
-                public,
-            } => {
-                binary.check()?;
-                arithmetic.check()?;
-                public.check()?;
-                Ok(())
-            }
-        }
-    }
-}
+// impl<F: JoltField> Valid for Rep3Operand {
+//     fn check(&self) -> Result<(), SerializationError> {
+//         match self {
+//             Rep3Operand::Public(value) => value.check(),
+//             Rep3Operand::Shared {
+//                 binary,
+//                 arithmetic,
+//                 public,
+//                 ..
+//             } => {
+//                 binary.check()?;
+//                 arithmetic.check()?;
+//                 public.check()?;
+//                 Ok(())
+//             }
+//         }
+//     }
+// }
 
 #[macro_export]
 macro_rules! instruction_set {
@@ -438,15 +448,15 @@ macro_rules! instruction_set {
             #[repr(u8)]
             #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount, AsRefStr, Serialize, Deserialize)]
             #[enum_dispatch(JoltInstruction<F>, Rep3JoltInstruction<F>)]
-            pub enum $enum_name<F: JoltField> {
+            pub enum $enum_name {
                 $([<$alias>]($struct)),+
             }
         }
-        impl<F: JoltField> JoltInstructionSet<F> for $enum_name<F> {}
-        impl<F: JoltField> Rep3JoltInstructionSet<F> for $enum_name<F> {}
+        impl<F: JoltField> JoltInstructionSet<F> for $enum_name {}
+        impl<F: JoltField> Rep3JoltInstructionSet<F> for $enum_name {}
 
         // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
-        impl<F: JoltField> Default for $enum_name<F> {
+        impl Default for $enum_name {
             fn default() -> Self {
                 $enum_name::iter().collect::<Vec<_>>()[0].clone()
             }

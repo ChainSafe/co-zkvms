@@ -12,7 +12,7 @@ use crate::{
         future::{FutureExt, FutureVal},
     },
 };
-use ark_ff::One;
+use ark_ff::{One, Zero};
 use ark_std::cfg_into_iter;
 use eyre::Context;
 use itertools::{izip, multizip, Either, Itertools};
@@ -104,7 +104,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .map(|subtable| {
                 subtable
                     .iter()
-                    .map(|v| arithmetic::promote_to_trivial_share(id, F::from_u32(*v)))
+                    .map(|v| {
+                        rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement::from(*v))
+                    })
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -150,150 +152,166 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter(
-                (0..preprocessing.num_memories)
-                    .into_par_iter()
-                    .zip_eq(ohvs_by_memory),
-                None,
-                |(memory_index, ohvs), io_ctx| {
-                    let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-                    // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_to_field_many(
-                    //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
-                    //     io_ctx,
-                    // )?
-                    // .into_iter();
+                    (0..preprocessing.num_memories)
+                        .into_par_iter()
+                        .zip_eq(ohvs_by_memory),
+                    None,
+                    |(memory_index, ohvs), io_ctx| {
+                        let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                        // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_to_field_many(
+                        //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
+                        //     io_ctx,
+                        // )?
+                        // .into_iter();
 
-                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
-                    if ohvs.is_empty() {
-                        return Ok((
-                            Rep3MultilinearPolynomial::from(vec![
+                        let mut final_cts_i = vec![Rep3RingShare::zero_share(); M];
+                        if ohvs.is_empty() {
+                            return Ok((
+                                Rep3MultilinearPolynomial::from(vec![
                                 Rep3PrimeFieldShare::zero_share();
                                 num_reads
                             ]),
-                            Rep3MultilinearPolynomial::from(final_cts_i),
-                            Rep3MultilinearPolynomial::from(vec![
+                                Rep3MultilinearPolynomial::from(vec![
                                 Rep3PrimeFieldShare::zero_share();
                                 num_reads
                             ]),
-                        ));
-                    }
+                                Rep3MultilinearPolynomial::from(vec![
+                                Rep3PrimeFieldShare::zero_share();
+                                num_reads
+                            ]),
+                            ));
+                        }
 
-                    let mut ohvs = ohvs.into_iter();
-                    let mut read_cts_i_local_a = vec![F::zero(); num_reads];
-                    let mut lookup_subtables_local_a = vec![F::zero(); num_reads];
+                        let mut ohvs = ohvs.into_iter();
+                        let mut read_cts_i_local_a = vec![RingElement::zero(); num_reads];
+                        let mut lookup_subtables_local_a = vec![RingElement::zero(); num_reads];
 
-                    let _guard =
-                        tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
-                            .entered();
-                    for (j, op) in ops.iter().enumerate() {
-                        if let Some(op) = &op.instruction_lookup {
-                            let memories_used = &preprocessing.instruction_to_memory_indices
-                                [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
-                            if memories_used.contains(&memory_index) {
-                                let ohv =
-                                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(
-                                        &ohvs.next().unwrap(),
-                                        io_ctx,
-                                    )?;
+                        let _guard =
+                            tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
+                                .entered();
+                        for (j, op) in ops.iter().enumerate() {
+                            if let Some(op) = &op.instruction_lookup {
+                                let memories_used = &preprocessing.instruction_to_memory_indices
+                                    [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
+                                if memories_used.contains(&memory_index) {
+                                    let ohv =
+                                        rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
+                                            &ohvs.next().unwrap(),
+                                            io_ctx,
+                                        )?;
 
-                                // let ohv_check =
-                                //     rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
-                                //         &ohv_bits, io_ctx,
-                                //     )?
-                                //     .into_iter()
-                                //     .map(|Rep3RingShare { a, b }| {
-                                //         Rep3PrimeFieldShare::new(
-                                //             F::from(a.convert()),
-                                //             F::from(b.convert()),
-                                //         )
-                                //     })
-                                //     .collect::<Vec<_>>();
+                                    // let ohv_check =
+                                    //     rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
+                                    //         &ohv_bits, io_ctx,
+                                    //     )?
+                                    //     .into_iter()
+                                    //     .map(|Rep3RingShare { a, b }| {
+                                    //         Rep3PrimeFieldShare::new(
+                                    //             F::from(a.convert()),
+                                    //             F::from(b.convert()),
+                                    //         )
+                                    //     })
+                                    //     .collect::<Vec<_>>();
 
-                                // let ohv_open = rep3::arithmetic::open_vec(&ohv, io_ctx).unwrap();
-                                // let ohv_check_open =
-                                //     rep3::arithmetic::open_vec(&ohv_check, io_ctx).unwrap();
-                                // .into_iter()
-                                // .map(|r| F::from(r.convert()))
-                                // .collect::<Vec<_>>();
+                                    // let ohv_open = rep3::arithmetic::open_vec(&ohv, io_ctx).unwrap();
+                                    // let ohv_check_open =
+                                    //     rep3::arithmetic::open_vec(&ohv_check, io_ctx).unwrap();
+                                    // .into_iter()
+                                    // .map(|r| F::from(r.convert()))
+                                    // .collect::<Vec<_>>();
 
-                                // assert_eq!(ohv_open[0..10], ohv_check_open[0..10]);
+                                    // assert_eq!(ohv_open[0..10], ohv_check_open[0..10]);
 
-                                // .into_iter()
-                                // .map(|mut r| {
-                                //     Rep3PrimeFieldShare {
-                                //         a: F::from(r.a.convert()),
-                                //         b: F::from(r.b.convert()),
-                                //     }
-                                // })
-                                // .collect::<Vec<_>>();
+                                    // .into_iter()
+                                    // .map(|mut r| {
+                                    //     Rep3PrimeFieldShare {
+                                    //         a: F::from(r.a.convert()),
+                                    //         b: F::from(r.b.convert()),
+                                    //     }
+                                    // })
+                                    // .collect::<Vec<_>>();
 
-                                // let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
-                                //     &ohv,
-                                //     &final_cts_i,
-                                //     io_ctx,
-                                // )
-                                // .unwrap();
-                                // read_cts_i[j] = counter;
-                                // counter = counter
-                                //     + arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
+                                    // let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                    //     &ohv,
+                                    //     &final_cts_i,
+                                    //     io_ctx,
+                                    // )
+                                    // .unwrap();
+                                    // read_cts_i[j] = counter;
+                                    // counter = counter
+                                    //     + arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
 
-                                // Rep3LookupTable::write_to_shared_lut_from_ohv(
-                                //     &ohv,
-                                //     counter,
-                                //     &mut final_cts_i,
-                                //     io_ctx,
-                                // )
-                                // .unwrap();
+                                    // Rep3LookupTable::write_to_shared_lut_from_ohv(
+                                    //     &ohv,
+                                    //     counter,
+                                    //     &mut final_cts_i,
+                                    //     io_ctx,
+                                    // )
+                                    // .unwrap();
 
-                                let _guard = tracing::trace_span!("luts_rw_local").entered();
-                                let mut counter = io_ctx.rngs.rand.masking_field_element::<F>();
-                                for (l, e) in final_cts_i.iter_mut().zip(ohv.iter()) {
-                                    counter += (*e * *l).into_fe();
-                                    *l += e; // ohv_bit (either 0 or 1)
+                                    let _guard = tracing::trace_span!("luts_rw_local").entered();
+                                    let mut counter =
+                                        io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                    for (l, e) in final_cts_i.iter_mut().zip(ohv.iter()) {
+                                        counter += *e * *l;
+                                        *l += e; // ohv_bit (either 0 or 1)
+                                    }
+                                    let mut subtable_lookup =
+                                        io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                    for (l, e) in materialized_subtable_luts[subtable_index]
+                                        .iter()
+                                        .zip(ohv.iter())
+                                    {
+                                        subtable_lookup += *e * *l;
+                                    }
+
+                                    // let subtable_lookup_share =
+                                    //     Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                    //         &ohv,
+                                    //         &materialized_subtable_luts[subtable_index],
+                                    //         io_ctx,
+                                    //     )
+                                    //     .unwrap();
+
+                                    read_cts_i_local_a[j] = counter;
+                                    lookup_subtables_local_a[j] = subtable_lookup;
                                 }
-                                let mut subtable_lookup =
-                                    io_ctx.rngs.rand.masking_field_element::<F>();
-                                for (l, e) in materialized_subtable_luts[subtable_index]
-                                    .iter()
-                                    .zip(ohv.iter())
-                                {
-                                    subtable_lookup += (*e * *l).into_fe();
-                                }
-
-                                // let subtable_lookup_share =
-                                //     Rep3LookupTable::get_from_shared_lut_from_ohv(
-                                //         &ohv,
-                                //         &materialized_subtable_luts[subtable_index],
-                                //         io_ctx,
-                                //     )
-                                //     .unwrap();
-
-                                read_cts_i_local_a[j] = counter;
-                                lookup_subtables_local_a[j] = subtable_lookup;
                             }
                         }
-                    }
-                    drop(_guard);
+                        drop(_guard);
 
-                    let _guard = tracing::trace_span!("luts_reshare").entered();
-                    let read_cts_i_b = io_ctx.network.reshare_many(&read_cts_i_local_a)?;
-                    let lookup_subtables_b =
-                        io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
+                        let _guard = tracing::trace_span!("luts_reshare").entered();
+                        let read_cts_i_b = io_ctx.network.reshare_many(&read_cts_i_local_a)?;
+                        let lookup_subtables_b =
+                            io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
 
-                    let read_cts_i = izip!(read_cts_i_local_a, read_cts_i_b)
-                        .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
-                        .collect::<Vec<_>>();
-                    let subtable_lookups = izip!(lookup_subtables_local_a, lookup_subtables_b)
-                        .map(|(a, b)| Rep3PrimeFieldShare::new(a, b))
-                        .collect::<Vec<_>>();
-                    drop(_guard);
+                        let read_cts_i = izip!(read_cts_i_local_a, read_cts_i_b)
+                            .map(|(a, b)| Rep3RingShare { a, b })
+                            .collect::<Vec<_>>();
+                        let subtable_lookups = izip!(lookup_subtables_local_a, lookup_subtables_b)
+                            .map(|(a, b)| Rep3RingShare { a, b })
+                            .collect::<Vec<_>>();
+                        drop(_guard);
 
-                    Ok((
-                        Rep3MultilinearPolynomial::from(read_cts_i),
-                        Rep3MultilinearPolynomial::from(final_cts_i),
-                        Rep3MultilinearPolynomial::from(subtable_lookups),
-                    ))
-                },
-            )
+                        let read_cts_i =
+                            rep3_ring::casts::ring_to_field_many_selector(&read_cts_i, io_ctx)
+                                .unwrap();
+                        let final_cts_i =
+                            rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx)
+                                .unwrap();
+                        let subtable_lookups = rep3_ring::casts::ring_to_field_many_selector(
+                            &subtable_lookups,
+                            io_ctx,
+                        )
+                        .unwrap();
+
+                        Ok((
+                            Rep3MultilinearPolynomial::from(read_cts_i),
+                            Rep3MultilinearPolynomial::from(final_cts_i),
+                            Rep3MultilinearPolynomial::from(subtable_lookups),
+                        ))
+                    },
+                )
         })?;
 
         // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)

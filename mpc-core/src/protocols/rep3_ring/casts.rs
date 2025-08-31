@@ -244,3 +244,44 @@ where
 
     rep3::conversion::b2a_many(&biguint_shares, io_context)
 }
+
+/// A cast of a Rep3RingShare to a Rep3PrimeFieldShare
+#[tracing::instrument(skip_all, level = "trace")]
+pub fn binary_ring_to_field_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    binary: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> std::io::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    Standard: Distribution<T>,
+{
+    // A special case for Bit
+    if TypeId::of::<T>() == TypeId::of::<Bit>() {
+        let shares = binary.to_vec();
+        let biguint_shares = shares
+            .into_iter()
+            .map(|share| {
+                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share)
+                    .expect("We already checked types");
+                let biguint_share = Rep3BigUintShare::new(
+                    BigUint::from(share.a.0.convert() as u64),
+                    BigUint::from(share.b.0.convert() as u64),
+                );
+                biguint_share
+            })
+            .collect::<Vec<_>>();
+
+        return rep3::conversion::bit_inject_many(&biguint_shares, io_context);
+    }
+
+    let biguint_shares = binary
+        .into_iter()
+        .map(|binary| {
+            Rep3BigUintShare::new(
+                T::cast_to_biguint(&binary.a.0),
+                T::cast_to_biguint(&binary.b.0),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    rep3::conversion::b2a_many(&biguint_shares, io_context)
+}

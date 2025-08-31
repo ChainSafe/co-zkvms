@@ -3,6 +3,10 @@ use ark_std::test_rng;
 use clap::Parser;
 use co_jolt::field::JoltField;
 use co_jolt::jolt::instruction::Rep3JoltInstructionSet;
+use co_jolt::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
+use co_jolt::jolt::vm::instruction_lookups::{
+    InstructionLookupPolynomials, InstructionLookupsProof,
+};
 use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
 use co_jolt::utils::math::Math;
 use co_jolt::{
@@ -28,7 +32,7 @@ use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use jolt_core::{jolt::vm::JoltProverPreprocessing, msm::icicle_init};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
@@ -215,6 +219,11 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         network,
     )?;
 
+    prover
+        .io_ctx
+        .network()
+        .send_response(prover.polynomials.instruction_lookups)?;
+
     // prover.prove()?;
 
     prover.io_ctx.network().log_connection_stats();
@@ -304,6 +313,71 @@ pub fn run_coordinator(
 
     network.log_connection_stats(Some("Coordinator send witness communication"));
     network.reset_stats();
+
+    let polys = Rep3InstructionLookupPolynomials::combine_polynomials(
+        &preprocessing.shared.instruction_lookups,
+        network.receive_responses()?,
+    )?;
+
+    let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io)
+        .instruction_lookups;
+
+    assert_eq!(polys.lookup_outputs, check.lookup_outputs);
+    izip!(polys.dim, check.dim).for_each(|(poly, check)| {
+        let poly = poly.coeffs_as_field_elements();
+        let check = check.coeffs_as_field_elements();
+        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+        if let Some(pos) = p {
+            panic!(
+                "lookup_outputs mismatch at position {:?} != {:?}",
+                &poly[pos..pos + 5],
+                &check[pos..pos + 5]
+            );
+        }
+    });
+    izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
+        let poly = poly.coeffs_as_field_elements();
+        let check = check.coeffs_as_field_elements();
+        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+        if let Some(pos) = p {
+            panic!(
+                "final_cts mismatch at position {} {:?} != {:?}",
+                pos,
+                &poly[pos..pos + 5],
+                &check[pos..pos + 5]
+            );
+        }
+    });
+    izip!(polys.read_cts, check.read_cts)
+        .enumerate()
+        .for_each(|(i, (poly, check))| {
+            let poly = poly.coeffs_as_field_elements();
+            let check = check.coeffs_as_field_elements();
+            let p = izip!(&poly, &check).position(|(f, check)| *f != *check);
+            if let Some(pos) = p {
+                panic!(
+                    "read_cts[{}] mismatch at position {} {:?} != {:?}",
+                    i,
+                    pos,
+                    &poly[pos..],
+                    &check[pos..]
+                );
+            }
+        });
+
+    izip!(polys.E_polys, check.E_polys).for_each(|(poly, check)| {
+        let poly = poly.coeffs_as_field_elements();
+        let check = check.coeffs_as_field_elements();
+        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+        if let Some(pos) = p {
+            panic!(
+                "E_polys mismatch at position {} {:?} != {:?}",
+                pos,
+                &poly[pos..pos + 5],
+                &check[pos..pos + 5]
+            );
+        }
+    });
 
     // let (proof, commitments) = RV32IJoltVM::prove_rep3(
     //     meta,

@@ -363,6 +363,20 @@ where
     Ok(sub_public_by_shared(RingElement::one(), tmp, io_context.id))
 }
 
+/// Returns 1 if lhs < rhs and 0 otherwise. Checks if one shared value is less than another shared value. The result is a shared value that has value 1 if the first shared value is less than the second shared value and 0 otherwise.
+pub fn lt_many<T: IntRing2k, N: Rep3Network>(
+    lhs: &[RingShare<T>],
+    rhs: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    // a < b is equivalent to !(a >= b)
+    let tmp = ge_many(lhs, rhs, io_context)?;
+    Ok(tmp.iter().map(|x| !x).collect())
+}
+
 /// Returns 1 if lhs < rhs and 0 otherwise. Checks if a shared value is less than the public value. The result is a shared value that has value 1 if the shared value is less than the public value and 0 otherwise.
 pub fn lt_public<T: IntRing2k, N: Rep3Network>(
     lhs: RingShare<T>,
@@ -442,6 +456,18 @@ where
     detail::unsigned_ge(lhs, rhs, io_context)
 }
 
+/// Returns 1 if lhs >= rhs and 0 otherwise. Checks if one shared value is greater than or equal to another shared value. The result is a shared value that has value 1 if the first shared value is greater than or equal to the second shared value and 0 otherwise.
+pub fn ge_many<T: IntRing2k, N: Rep3Network>(
+    lhs: &[RingShare<T>],
+    rhs: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    detail::unsigned_ge_many(lhs, rhs, io_context)
+}
+
 /// Returns 1 if lhs >= rhs and 0 otherwise. Checks if a shared value is greater than or equal to a public value. The result is a shared value that has value 1 if the shared value is greater than or equal to the public value and 0 otherwise.
 pub fn ge_public<T: IntRing2k, N: Rep3Network>(
     lhs: RingShare<T>,
@@ -482,6 +508,20 @@ where
     Ok(is_zero)
 }
 
+pub fn eq_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    let diff = izip!(a, b).map(|(a, b)| a - b).collect::<Vec<_>>();
+    let bits = conversion::a2b_many(&diff, io_context)?;
+    let is_zero = binary::is_zero_many(&bits, io_context)?;
+    Ok(is_zero)
+}
+
 /// Checks if two shared values are not equal. The result is a shared value that has value 1 if the two values are not equal and 0 otherwise.
 pub fn neq<T: IntRing2k, N: Rep3Network>(
     a: RingShare<T>,
@@ -493,6 +533,19 @@ where
 {
     let eq = eq(a, b, io_context)?;
     Ok(!eq)
+}
+
+/// Checks if two shared values are not equal. The result is a shared value that has value 1 if the two values are not equal and 0 otherwise.
+pub fn neq_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    let eq = eq_many(a, b, io_context)?;
+    Ok(eq.iter().map(|x| !x).collect())
 }
 
 /// Checks if a shared value is not equal to a public value. The result is a shared value that has value 1 if the two values are not equal and 0 otherwise.
