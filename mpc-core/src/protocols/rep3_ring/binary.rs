@@ -85,9 +85,13 @@ pub fn and_many<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
-    mask ^= mask_b;
-    let local_a = izip!(a, b).map(|(a, b)| (a & b) ^ mask).collect::<Vec<_>>();
+    let local_a = izip!(a, b)
+        .map(|(a, b)| {
+            let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
+            mask ^= mask_b;
+            (a & b) ^ mask
+        })
+        .collect::<Vec<_>>();
     let local_b = io_context.network.reshare_many(&local_a)?;
     Ok(izip!(local_a, local_b)
         .map(|(a, b)| RingShare::new_ring(a, b))

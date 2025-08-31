@@ -10,9 +10,9 @@ use crate::{
     utils::{
         self,
         future::{FutureExt, FutureVal},
-        Forkable,
     },
 };
+use ark_ff::One;
 use ark_std::cfg_into_iter;
 use eyre::Context;
 use itertools::{izip, multizip, Either, Itertools};
@@ -74,8 +74,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
         Network: Rep3NetworkWorker,
     {
-        println!("generate_witness_rep3");
-
         // let mut network = BiNetwork::new(io_ctx)?;
         let num_reads = ops.len().next_power_of_two();
 
@@ -106,19 +104,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .map(|subtable| {
                 subtable
                     .iter()
-                    .map(|v| arithmetic::promote_to_trivial_share(id, F::from(*v)))
+                    .map(|v| arithmetic::promote_to_trivial_share(id, F::from_u32(*v)))
                     .collect::<Vec<_>>()
             })
             .collect();
-
-        // let materialized_subtable_luts = preprocessing
-        //     .materialized_subtables
-        //     .clone()
-        //     .into_iter()
-        //     .map(|subtable| {
-        //         PublicPrivateLut::Public(subtable.into_iter().map(F::from_u32).collect_vec())
-        //     })
-        //     .collect_vec();
 
         let (instructions_used, access_sequences): (
             Vec<Vec<usize>>,
@@ -153,11 +142,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             io_ctx.main(),
         )?;
 
-        // let mut ohvs = Rep3LookupTable::ohv_from_index_no_a2b_conversion_many(
-        //     access_sequences.into_par_iter().flatten(),
-        //     M,
-        //     io_ctx.main(),
-        // )?;
         let mut ohvs_by_memory = Vec::with_capacity(preprocessing.num_memories);
         instructions_used
             .iter()
@@ -165,21 +149,18 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         assert!(ohvs.is_empty());
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
-            io_ctx.par_iter_init(
+            io_ctx.par_iter(
                 (0..preprocessing.num_memories)
                     .into_par_iter()
                     .zip_eq(ohvs_by_memory),
                 None,
-                |ctx| ctx.fork().context("while forking worker fork ctx"),
-                |(memory_index, mut ohvs), mut io_ctx2, mut io_ctx| {
+                |(memory_index, mut ohvs), mut io_ctx| {
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-
-                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
-
-                    // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
+                    // let mut ohvs = rep3_ring::conversion::bit_inject_from_bits_to_field_many(
                     //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
                     //     io_ctx,
-                    // )?;
+                    // )?
+                    // .into_iter();
 
                     if ohvs.is_empty() {
                         return Ok((
@@ -195,8 +176,11 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         ));
                     }
 
+                    let mut ohvs = ohvs.into_iter();
                     let mut read_cts_i_local_a = vec![F::zero(); num_reads];
                     let mut lookup_subtables_local_a = vec![F::zero(); num_reads];
+
+                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
 
                     let _guard =
                         tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
@@ -207,23 +191,38 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                 [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
                                 let ohv =
-                                    rep3_ring::conversion::bit_inject_from_bits_many::<u64, _>(
-                                        &ohvs.pop().unwrap(),
+                                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(
+                                        &ohvs.next().unwrap(),
                                         io_ctx,
-                                    )?
-                                    .into_iter()
-                                    .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
-                                        a: F::from(a.convert()),
-                                        b: F::from(b.convert()),
-                                    })
-                                    .collect::<Vec<_>>();
+                                    )?;
+                                // .into_iter()
+                                // .map(|mut r| {
+                                //     Rep3PrimeFieldShare {
+                                //         a: F::from(r.a.convert()),
+                                //         b: F::from(r.b.convert()),
+                                //     }
+                                // })
+                                // .collect::<Vec<_>>();
 
-                                let _guard = tracing::trace_span!(
-                                    "luts_rw_local",
-                                    memory_index,
-                                    subtable_index
-                                )
-                                .entered();
+                                // let mut counter = Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                //     &ohv,
+                                //     &final_cts_i,
+                                //     io_ctx,
+                                // )
+                                // .unwrap();
+                                // read_cts_i[j] = counter;
+                                // counter = counter
+                                //     + arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
+
+                                // Rep3LookupTable::write_to_shared_lut_from_ohv(
+                                //     &ohv,
+                                //     counter,
+                                //     &mut final_cts_i,
+                                //     io_ctx,
+                                // )
+                                // .unwrap();
+
+                                let _guard = tracing::trace_span!("luts_rw_local").entered();
                                 let mut counter = io_ctx.rngs.rand.masking_field_element::<F>();
                                 for (l, e) in final_cts_i.iter_mut().zip(ohv.iter()) {
                                     counter += (*e * *l).into_fe();
@@ -237,15 +236,23 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                                 {
                                     subtable_lookup += (*e * *l).into_fe();
                                 }
+
+                                // let subtable_lookup_share =
+                                //     Rep3LookupTable::get_from_shared_lut_from_ohv(
+                                //         &ohv,
+                                //         &materialized_subtable_luts[subtable_index],
+                                //         io_ctx,
+                                //     )
+                                //     .unwrap();
+
                                 read_cts_i_local_a[j] = counter;
-                                lookup_subtables_local_a[j] = counter;
+                                lookup_subtables_local_a[j] = subtable_lookup;
                             }
                         }
                     }
                     drop(_guard);
 
-                    let _guard = tracing::trace_span!("luts_reshare", memory_index, subtable_index)
-                        .entered();
+                    let _guard = tracing::trace_span!("luts_reshare").entered();
                     let read_cts_i_b = io_ctx.network.reshare_many(&read_cts_i_local_a)?;
                     let lookup_subtables_b =
                         io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
@@ -539,25 +546,4 @@ fn compute_lookup_outputs_rep3<
 
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
     Ok(Rep3MultilinearPolynomial::from(outputs))
-}
-
-struct BiNetwork<Network: Rep3Network> {
-    pub io_ctx: IoContext<Network>,
-    pub io_ctx1: IoContext<Network>,
-}
-
-impl<Network: Rep3Network> BiNetwork<Network> {
-    pub fn new(mut io_ctx: IoContext<Network>) -> eyre::Result<Self> {
-        let io_ctx1 = io_ctx.fork()?;
-        Ok(Self { io_ctx, io_ctx1 })
-    }
-}
-
-impl<Network: Rep3Network> Forkable for BiNetwork<Network> {
-    fn fork(&mut self) -> eyre::Result<Self> {
-        Ok(Self {
-            io_ctx: self.io_ctx.fork()?,
-            io_ctx1: self.io_ctx1.fork()?,
-        })
-    }
 }

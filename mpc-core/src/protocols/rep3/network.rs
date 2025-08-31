@@ -130,7 +130,7 @@ impl<N: Rep3Network> IoContext<N> {
     }
 
     /// Cronstruct a fork of the [`IoContext`]. This fork can be used concurrently with its parent.
-    pub fn fork(&mut self) -> IoResult<Self> {
+    pub fn fork(&self) -> IoResult<Self> {
         let child_rngs = self.rngs_src.fork(); // lock once, derive new RNG
         let child_rng = self.rng_src.fork(); // lock once, derive new RNG
 
@@ -590,7 +590,6 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
         let len = inputs_iter.len();
 
         if max_forks == 0 {
-            println!("MAX FORKS: {}", max_forks);
             return inputs_iter
                 .collect::<Vec<_>>()
                 .into_iter()

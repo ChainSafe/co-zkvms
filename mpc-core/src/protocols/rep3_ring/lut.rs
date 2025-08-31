@@ -391,15 +391,7 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
             panic!("Table is too large")
         };
 
-        Ok(
-            conversion::bit_inject_from_bits_many::<u64, _>(&e, network0)?
-                .into_iter()
-                .map(|Rep3RingShare { a, b }| Rep3PrimeFieldShare {
-                    a: F::from(a.convert()),
-                    b: F::from(b.convert()),
-                })
-                .collect(),
-        )
+        conversion::bit_inject_from_bits_to_field_many(&e, network0)
     }
 
     /// Creates a shared one-hot-encoded vector from a given shared index

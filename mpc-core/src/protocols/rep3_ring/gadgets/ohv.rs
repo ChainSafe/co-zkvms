@@ -99,13 +99,11 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     }
 
     let mask = (RingElement::one() << new_k) - RingElement::one();
-    for b in &mut bits {
-        *b &= mask;
-    }
+    bits.par_iter_mut().for_each(|b| *b &= mask);
 
     let mut f = ohv_many(new_k, bits, io_context)?; // ohv is recursively called k - 1 times
     let len = f[0].len();
-    assert!(!f.iter().any(|x| x.len() != len));
+    debug_assert!(!f.iter().any(|x| x.len() != len));
     let e = pack_and_many(
         f.par_iter().map(|f| &f[..len - 1]),
         &vks,
@@ -298,22 +296,22 @@ fn pack_and_many<'a, N: Rep3Network>(
                 let local_b = io_context.network.reshare_many(&local_a)?;
                 unpack_many(local_a, local_b, len)
             }
-            _ => {
-                unreachable!()
-            }
+            _ => unreachable!(),
         };
         Ok(result)
     } else {
         type Packtype = u64;
         const BITLEN: usize = std::mem::size_of::<Packtype>() * 8;
 
-        let mut result = Vec::with_capacity(len);
         let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
-        let x = inputs
+
+        let input_chunked = inputs
             .into_par_iter()
             .map(|input| input.chunks(BITLEN).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let input_chunks = transpose(x);
+        let mut results = vec![Vec::with_capacity(len); input_chunked.len()];
+
+        let input_chunks = transpose(input_chunked);
 
         for els in input_chunks {
             let packed = pack_many::<Packtype>(els);
@@ -325,13 +323,18 @@ fn pack_and_many<'a, N: Rep3Network>(
         let mut remaining = len;
         izip!(to_send, received).for_each(|(a, b)| {
             let rcv = std::cmp::min(BITLEN, remaining);
-            let x = transpose(unpack_many(a, b, rcv));
-            result.extend(x);
+            results
+                .par_iter_mut()
+                .zip_eq(a)
+                .zip_eq(b)
+                .for_each(|((result, a), b)| {
+                    result.extend(unpack(Rep3RingShare::new_ring(a, b), rcv));
+                });
             remaining -= rcv;
         });
 
         debug_assert_eq!(remaining, 0);
-        Ok(transpose(result))
+        Ok(results)
     }
 }
 
