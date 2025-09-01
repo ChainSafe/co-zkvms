@@ -80,7 +80,7 @@ impl<
     > JoltRep3Prover<F, C, M, Instructions, Subtables, Constraints, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+    Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Constraints: R1CSConstraints<C, F>,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
@@ -89,7 +89,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "JoltRep3Prover::init")]
     pub fn init(
-        witness: Option<(Vec<JoltTraceStep<F, Instructions>>, Rep3ProgramIOInput<F>)>,
+        witness: Option<(Vec<JoltTraceStep<Instructions>>, Rep3ProgramIOInput<F>)>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         network: Network,
     ) -> eyre::Result<Self>

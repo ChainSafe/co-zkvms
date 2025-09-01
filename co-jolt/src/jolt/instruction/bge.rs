@@ -29,7 +29,7 @@ use crate::utils::instruction_utils::{
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BGEInstruction(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
+impl JoltInstruction for BGEInstruction {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -37,10 +37,10 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
         }
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
         F::one()
-            - <SLTInstruction as JoltInstruction<F>>::combine_lookups(
+            - <SLTInstruction as JoltInstruction>::combine_lookups(
                 &SLTInstruction(self.0.clone(), self.1.clone()),
                 vals,
                 C,
@@ -52,7 +52,7 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
         C + 1
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
@@ -72,7 +72,7 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
         }
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => ((*x as i32) >= (*y as i32)).into(),
             _ => panic!("BGEInstruction::lookup_entry called with non-public operands"),
@@ -87,7 +87,7 @@ impl<F: JoltField> JoltInstruction<F> for BGEInstruction {
     }
 }
 
-impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction {
+impl Rep3JoltInstruction for BGEInstruction {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -104,42 +104,19 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction {
         Some(&self.1)
     }
 
-    #[tracing::instrument(skip_all, name = "BGEInstruction::combine_lookups", level = "trace")]
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let res = rep3::arithmetic::sub_public_by_shared(
-            F::one(),
-            <SLTInstruction as Rep3JoltInstruction<F>>::combine_lookups_rep3(
-                &SLTInstruction(self.0.clone(), self.1.clone()),
-                vals,
-                C,
-                M,
-                io_ctx,
-            )?,
-            io_ctx.network.get_id(),
-        );
-
-        Ok(res)
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "BGEInstruction::combine_lookups_rep3_batched",
         level = "trace"
     )]
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
         M: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        let res = <SLTInstruction as Rep3JoltInstruction<F>>::combine_lookups_rep3_batched(
+        let res = <SLTInstruction as Rep3JoltInstruction>::combine_lookups_rep3_batched(
             &SLTInstruction(self.0.clone(), self.1.clone()),
             vals,
             C,
@@ -167,9 +144,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BGEInstruction {
         )
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

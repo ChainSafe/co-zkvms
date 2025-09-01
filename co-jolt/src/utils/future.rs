@@ -215,13 +215,7 @@ where
                 });
         }
 
-        Ok(self
-            .into_par_iter()
-            .map(|f| match f {
-                FutureVal::Ready(t) => t,
-                _ => unreachable!(),
-            })
-            .collect())
+        Ok(fufilled)
     }
 }
 
@@ -282,7 +276,7 @@ pub enum FutureOp<F: JoltField> {
     Mul(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
     B2A(Rep3BigUintShare<F>),
     A2B(Rep3PrimeFieldShare<F>),
-    RingA2B(Rep3PrimeFieldShare<F>),
+    RingA2B(Rep3RingShare<u32>),
     BitInject(Rep3RingShare<Bit>),
     CastToField(Rep3RingShare<u32>),
     CastToFieldB2A(Rep3RingShare<u32>),

@@ -31,7 +31,7 @@ impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subt
 where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
-    Instructions: JoltInstructionSet<F>,
+    Instructions: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -160,7 +160,7 @@ where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    Instructions: JoltInstructionSet<F>,
+    Instructions: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkCoordinator,
 {

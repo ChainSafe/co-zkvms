@@ -77,13 +77,13 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
 
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &NoPreprocessing,
-        ops: &mut [crate::jolt::vm::JoltTraceStep<F, Instructions>],
+        ops: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: crate::jolt::instruction::JoltInstructionSet<F>
-            + crate::jolt::instruction::Rep3JoltInstructionSet<F>,
+        Instructions: crate::jolt::instruction::JoltInstructionSet
+            + crate::jolt::instruction::Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         unimplemented!()

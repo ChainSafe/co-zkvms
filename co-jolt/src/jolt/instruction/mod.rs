@@ -30,22 +30,26 @@ use jolt_core::jolt::subtable::LassoSubtable;
 use rayon::prelude::*;
 
 #[enum_dispatch]
-pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
+pub trait JoltInstruction: 'static + Send + Sync + Debug + Clone {
     fn operands(&self) -> (u64, u64);
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F;
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F;
 
     /// The degree of the `g` polynomial described by `combine_lookups`
     fn g_poly_degree(&self, C: usize) -> usize;
 
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
-    fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
 
-    fn lookup_entry(&self) -> F;
+    fn lookup_entry<F: JoltField>(&self) -> F;
 
     fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u8>, Vec<u8>) {
         assert!(
@@ -60,10 +64,15 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
     }
     fn random(&self, rng: &mut StdRng) -> Self;
 
-    fn slice_values_ref<'a, T>(&self, vals: &'a [T], C: usize, M: usize) -> Vec<&'a [T]> {
+    fn slice_values_ref<'a, F: JoltField, T>(
+        &self,
+        vals: &'a [T],
+        C: usize,
+        M: usize,
+    ) -> Vec<&'a [T]> {
         let mut offset = 0;
         let mut slices = vec![];
-        for (_, indices) in self.subtables(C, M) {
+        for (_, indices) in self.subtables::<F>(C, M) {
             slices.push(&vals[offset..offset + indices.len()]);
             offset += indices.len();
         }
@@ -71,9 +80,14 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
         slices
     }
 
-    fn slice_values<T: Default>(&self, mut vals: Vec<T>, C: usize, M: usize) -> Vec<Vec<T>> {
+    fn slice_values<F: JoltField, T: Default>(
+        &self,
+        mut vals: Vec<T>,
+        C: usize,
+        M: usize,
+    ) -> Vec<Vec<T>> {
         let mut slices = vec![];
-        for (_, indices) in self.subtables(C, M) {
+        for (_, indices) in self.subtables::<F>(C, M) {
             slices.push(vals.drain(..indices.len()).collect());
         }
         slices
@@ -81,7 +95,7 @@ pub trait JoltInstruction<F: JoltField>: 'static + Send + Sync + Debug + Clone {
 }
 
 #[enum_dispatch]
-pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
+pub trait Rep3JoltInstruction: JoltInstruction {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand);
 
     fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>);
@@ -90,16 +104,7 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
     fn rhs(&self) -> Option<&Rep3Operand>;
 
     /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>>;
-
-    /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -107,7 +112,7 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>;
 
-    fn to_indices_intermediate(
+    fn to_indices_intermediate<F: JoltField>(
         &self,
         z: &Rep3PrimeFieldShare<F>,
     ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
@@ -121,9 +126,9 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>>;
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
@@ -133,8 +138,8 @@ pub trait Rep3JoltInstruction<F: JoltField>: JoltInstruction<F> {
     }
 }
 
-pub trait JoltInstructionSet<F: JoltField>:
-    JoltInstruction<F>
+pub trait JoltInstructionSet:
+    JoltInstruction
     + IntoEnumIterator
     + EnumCount
     + for<'a> TryFrom<&'a ELFInstruction>
@@ -152,8 +157,8 @@ pub trait JoltInstructionSet<F: JoltField>:
     }
 }
 
-pub trait Rep3JoltInstructionSet<F: JoltField>:
-    Rep3JoltInstruction<F> + IntoEnumIterator + EnumCount + AsRef<str> + Send + Sync
+pub trait Rep3JoltInstructionSet:
+    Rep3JoltInstruction + IntoEnumIterator + EnumCount + AsRef<str> + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -294,6 +299,22 @@ pub enum Rep3Operand {
 }
 
 impl Rep3Operand {
+    pub fn from_binary(share: Rep3RingShare<u32>) -> Self {
+        Rep3Operand::Shared {
+            binary: share,
+            arithmetic: None,
+            public: None,
+        }
+    }
+
+    pub fn from_arithmetic(binary: Rep3RingShare<u32>, arithmetic: Rep3RingShare<u32>) -> Self {
+        Rep3Operand::Shared {
+            binary,
+            arithmetic: Some(arithmetic),
+            public: None,
+        }
+    }
+
     pub fn as_public(&self) -> u64 {
         match self {
             Rep3Operand::Public(x)
@@ -341,6 +362,12 @@ impl From<u64> for Rep3Operand {
     }
 }
 
+impl From<u32> for Rep3Operand {
+    fn from(value: u32) -> Self {
+        Rep3Operand::Public(value as u64)
+    }
+}
+
 impl Into<u64> for Rep3Operand {
     fn into(self) -> u64 {
         match self {
@@ -350,95 +377,14 @@ impl Into<u64> for Rep3Operand {
     }
 }
 
-// impl<F: JoltField> CanonicalSerialize for Rep3Operand {
-//     fn serialize_with_mode<W: std::io::Write>(
-//         &self,
-//         mut writer: W,
-//         compress: Compress,
-//     ) -> Result<(), SerializationError> {
-//         match self {
-//             Rep3Operand::Public(x) => {
-//                 (0_u8).serialize_with_mode(&mut writer, compress)?;
-//                 x.serialize_with_mode(&mut writer, compress)?;
-//             }
-//             Rep3Operand::Shared {
-//                 binary,
-//                 arithmetic,
-//                 public,
-//                 ..
-//             } => {
-//                 (1_u8).serialize_with_mode(&mut writer, compress)?;
-//                 binary.serialize_with_mode(&mut writer, compress)?;
-//                 arithmetic.serialize_with_mode(&mut writer, compress)?;
-//                 public.serialize_with_mode(&mut writer, compress)?;
-//             }
-//         }
-//         Ok(())
-//     }
-
-//     fn serialized_size(&self, compress: Compress) -> usize {
-//         match self {
-//             Rep3Operand::Public(x) => {
-//                 (0_u8).serialized_size(compress) + x.serialized_size(compress)
-//             }
-//             Rep3Operand::Shared {
-//                 binary,
-//                 arithmetic,
-//                 public,
-//                 ..
-//             } => {
-//                 (1_u8).serialized_size(compress)
-//                     + binary.serialized_size(compress)
-//                     + arithmetic.serialized_size(compress)
-//                     + public.serialized_size(compress)
-//             }
-//         }
-//     }
-// }
-
-// impl<F: JoltField> CanonicalDeserialize for Rep3Operand {
-//     fn deserialize_with_mode<R: std::io::Read>(
-//         mut reader: R,
-//         compress: Compress,
-//         validate: Validate,
-//     ) -> Result<Self, SerializationError> {
-//         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-//         let res = match discriminant {
-//             0 => Rep3Operand::Public(u64::deserialize_with_mode(&mut reader, compress, validate)?),
-//             1 => Rep3Operand::Shared {
-//                 binary: Rep3RingShare::<F>::deserialize_with_mode(&mut reader, compress, validate)?,
-//                 arithmetic: Option::<Rep3RingShare<F>>::deserialize_with_mode(
-//                     &mut reader,
-//                     compress,
-//                     validate,
-//                 )?,
-//                 public: Option::<u64>::deserialize_with_mode(&mut reader, compress, validate)?,
-//                 _marker: PhantomData,
-//             },
-//             _ => Err(SerializationError::InvalidData)?,
-//         };
-//         Ok(res)
-//     }
-// }
-
-// impl<F: JoltField> Valid for Rep3Operand {
-//     fn check(&self) -> Result<(), SerializationError> {
-//         match self {
-//             Rep3Operand::Public(value) => value.check(),
-//             Rep3Operand::Shared {
-//                 binary,
-//                 arithmetic,
-//                 public,
-//                 ..
-//             } => {
-//                 binary.check()?;
-//                 arithmetic.check()?;
-//                 public.check()?;
-//                 Ok(())
-//             }
-//         }
-//     }
-// }
+impl Into<u32> for Rep3Operand {
+    fn into(self) -> u32 {
+        match self {
+            Rep3Operand::Public(x) => x as u32,
+            _ => panic!("Cannot convert Rep3Operand to u32"),
+        }
+    }
+}
 
 #[macro_export]
 macro_rules! instruction_set {
@@ -447,13 +393,13 @@ macro_rules! instruction_set {
             #[allow(non_camel_case_types)]
             #[repr(u8)]
             #[derive(Clone, Debug, PartialEq, EnumIter, EnumCount, AsRefStr, Serialize, Deserialize)]
-            #[enum_dispatch(JoltInstruction<F>, Rep3JoltInstruction<F>)]
+            #[enum_dispatch(JoltInstruction, Rep3JoltInstruction)]
             pub enum $enum_name {
                 $([<$alias>]($struct)),+
             }
         }
-        impl<F: JoltField> JoltInstructionSet<F> for $enum_name {}
-        impl<F: JoltField> Rep3JoltInstructionSet<F> for $enum_name {}
+        impl JoltInstructionSet for $enum_name {}
+        impl Rep3JoltInstructionSet for $enum_name {}
 
         // Need a default so that we can derive EnumIter on `JoltR1CSInputs`
         impl Default for $enum_name {

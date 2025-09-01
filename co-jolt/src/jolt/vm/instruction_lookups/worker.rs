@@ -82,7 +82,7 @@ impl<const C: usize, const M: usize, F, InstructionSet, Subtables, Network>
     Rep3InstructionLookupsProver<C, M, F, InstructionSet, Subtables, Network>
 where
     F: JoltField,
-    InstructionSet: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet + Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkWorker,
 {
@@ -647,7 +647,7 @@ where
                     InstructionSet::iter()
                         .filter_map(|instruction| {
                             let instruction_index =
-                                <InstructionSet as Rep3JoltInstructionSet<F>>::enum_index(
+                                <InstructionSet as Rep3JoltInstructionSet>::enum_index(
                                     &instruction,
                                 );
                             let memory_indices =
@@ -722,7 +722,7 @@ where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    InstructionSet: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet + Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkWorker,
 {

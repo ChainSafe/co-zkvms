@@ -28,14 +28,12 @@ pub struct AssertHalfwordAlignmentInstruction<const WORD_SIZE: usize>(
     pub Rep3Operand,
 );
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
-    for AssertHalfwordAlignmentInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> JoltInstruction for AssertHalfwordAlignmentInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups(&self, vals: &[F], _: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, _: usize) -> F {
         assert_eq!(vals.len(), 1);
         let lowest_bit = vals[0];
         F::one() - lowest_bit
@@ -45,7 +43,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         1
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(
             Box::new(LowBitSubtable::<F>::new()),
             SubtableIndices::from(C - 1),
@@ -62,7 +64,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         )
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match WORD_SIZE {
             32 => (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
                 as u64)
@@ -86,9 +88,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
-    for AssertHalfwordAlignmentInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -105,23 +105,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         Some(&self.1)
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        assert_eq!(vals.len(), 1);
-        let lowest_bit = vals[0];
-        Ok(rep3::arithmetic::sub_public_by_shared(
-            F::one(),
-            lowest_bit,
-            io_ctx.id,
-        ))
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -137,7 +121,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
             .collect::<Vec<_>>())
     }
 
-    fn to_indices_intermediate(
+    fn to_indices_intermediate<F: JoltField>(
         &self,
         _: &Rep3PrimeFieldShare<F>,
     ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
@@ -153,9 +137,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         rep3_add_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

@@ -12,7 +12,10 @@ use std::{
 
 use itertools::{izip, Itertools};
 use jolt_tracer::{RVTraceRow, RV32IM};
-use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    rep3::{self, Rep3PrimeFieldShare},
+    rep3_ring,
+};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::{ChaCha12Core, ChaCha12Rng};
 use rayon::prelude::*;
@@ -187,10 +190,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: JoltField>(
-        &mut self,
-        inputs: &[u8],
-    ) -> (JoltDevice, Vec<JoltTraceStep<F, RV32I<F>>>) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build(DEFAULT_TARGET_DIR);
 
         let elf = self.elf.as_ref().unwrap();
@@ -265,12 +265,9 @@ impl Program {
 
                 JoltTraceStep {
                     instruction_lookup,
-                    bytecode_row: BytecodeRow::from_instruction_ext::<F, RV32I<F>>(
-                        &row.instruction,
-                    ),
+                    bytecode_row: BytecodeRow::from_instruction_ext::<RV32I>(&row.instruction),
                     memory_ops: (&row).into(),
                     circuit_flags: row.instruction.to_circuit_flags(),
-                    _field: PhantomData,
                 }
             })
             .collect();
@@ -282,9 +279,9 @@ impl Program {
         &mut self,
         inputs: &[u8],
         rng: &mut R,
-    ) -> Vec<(Rep3ProgramIOInput<F>, Vec<JoltTraceStep<F, RV32I<F>>>)> {
+    ) -> Vec<(Rep3ProgramIOInput<F>, Vec<JoltTraceStep<RV32I>>)> {
         let (bytecode, memory_init) = self.decode();
-        let (program_io, trace) = self.trace::<F>(inputs);
+        let (program_io, trace) = self.trace(inputs);
 
         let program_io = Rep3ProgramIOInput::<F> {
             input: vec![],
@@ -305,8 +302,10 @@ impl Program {
                 },
                 |rng, row| {
                     let instruction_shares = if let Some(r) = row.instruction_lookup {
-                        let op1_shares =
-                            rep3::binary::generate_shares_rep3(r.lhs().as_public().into(), rng);
+                        let op1_shares = rep3_ring::binary::generate_shares_rep3(
+                            r.lhs().as_public() as u32,
+                            rng,
+                        );
                         let op2_shares = if let Some(op2) = r.rhs() {
                             match r {
                                 RV32I::SLL(..)
@@ -316,22 +315,22 @@ impl Program {
                                 | RV32I::VIRTUAL_SRA_PADDING(..) => {
                                     vec![Some(op2.clone()); 3]
                                 }
-                                _ => {
-                                    rep3::binary::generate_shares_rep3(op2.as_public().into(), rng)
-                                        .into_iter()
-                                        .map(|share| Some(Rep3Operand::from(share)))
-                                        .collect()
-                                }
+                                _ => rep3_ring::binary::generate_shares_rep3(
+                                    op2.as_public() as u32,
+                                    rng,
+                                )
+                                .into_iter()
+                                .map(|share| Some(Rep3Operand::from_binary(share)))
+                                .collect(),
                             }
                         } else {
                             vec![None; 3]
                         };
-                        let mut instruction_shares: Vec<Option<RV32I<F>>> =
-                            vec![Some(r.clone()); 3];
+                        let mut instruction_shares: Vec<Option<RV32I>> = vec![Some(r.clone()); 3];
                         izip!(instruction_shares.iter_mut(), op1_shares, op2_shares).for_each(
                             |(r, op1_share, op2_share)| {
                                 let (op1, op2) = r.as_mut().unwrap().operands_mut();
-                                *op1 = op1_share.into();
+                                *op1 = Rep3Operand::from_binary(op1_share);
                                 if let Some(op2) = op2 {
                                     *op2 = op2_share.unwrap();
                                 }
@@ -349,7 +348,6 @@ impl Program {
                             bytecode_row: row.bytecode_row.clone(),
                             memory_ops: row.memory_ops.clone(),
                             circuit_flags: row.circuit_flags.clone(),
-                            _field: PhantomData,
                         })
                         .collect()
                 },

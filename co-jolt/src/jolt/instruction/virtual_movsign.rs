@@ -31,14 +31,7 @@ use crate::utils::instruction_utils::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MOVSIGNInstruction<const WORD_SIZE: usize>(pub Rep3Operand);
 
 // Constants for 32-bit and 64-bit word sizes
@@ -47,12 +40,12 @@ const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 const SIGN_BIT_32: u64 = 0x8000_0000;
 const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVSIGNInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), 0)
     }
 
-    fn combine_lookups(&self, vals: &[F], _: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         let val = vals[0];
@@ -64,7 +57,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVSIGNInstruc
         1
     }
 
-    fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         assert!(M == 1 << 16);
         let msb_chunk_index = C - (WORD_SIZE / 16);
         vec![
@@ -85,7 +82,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVSIGNInstruc
         chunk_operand_usize(self.0.as_public(), C, log_M)
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match WORD_SIZE {
             32 => {
                 if self.0.as_public() & SIGN_BIT_32 != 0 {
@@ -114,9 +111,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MOVSIGNInstruc
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
-    for MOVSIGNInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::default())
     }
@@ -133,24 +128,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         None
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        _: usize,
-        M: usize,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        assert!(M == 1 << 16);
-        let val = vals[0];
-        let repeat = WORD_SIZE / 16;
-        Ok(concatenate_lookups_rep3(
-            &vec![val; repeat],
-            repeat,
-            log2(M) as usize,
-        ))
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         mut vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -174,9 +152,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

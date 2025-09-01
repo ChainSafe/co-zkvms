@@ -38,12 +38,12 @@ where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: TranscriptExt,
-    Self::InstructionSet: Rep3JoltInstructionSet<F>,
+    Self::InstructionSet: Rep3JoltInstructionSet,
 {
     #[tracing::instrument(skip_all, name = "Rep3Jolt::init")]
     fn init_rep3<Network: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        witness: Option<(Vec<JoltTraceStep<F, Self::InstructionSet>>, JoltDevice)>,
+        witness: Option<(Vec<JoltTraceStep<Self::InstructionSet>>, JoltDevice)>,
         network: &mut Network,
     ) -> eyre::Result<(
         UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,

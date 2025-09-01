@@ -134,12 +134,12 @@ where
 
     fn generate_witness_rep3<Instructions, Network>(
         _preprocessing: &NoPreprocessing,
-        trace: &mut [JoltTraceStep<F, Instructions>],
+        trace: &mut [JoltTraceStep<Instructions>],
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         todo!()
@@ -155,8 +155,8 @@ where
 
 pub trait R1CSPolynomialsExt<F: JoltField> {
     #[tracing::instrument(skip_all, name = "R1CSPolynomials::generate_witness")]
-    fn generate_witness<const C: usize, const M: usize, InstructionSet: JoltInstructionSet<F>>(
-        trace: &[JoltTraceStep<F, InstructionSet>],
+    fn generate_witness<const C: usize, const M: usize, InstructionSet: JoltInstructionSet>(
+        trace: &[JoltTraceStep<InstructionSet>],
     ) -> R1CSPolynomials<F> {
         let log_M = log2(M) as usize;
 
@@ -206,7 +206,7 @@ impl<F: JoltField> R1CSPolynomialsExt<F> for R1CSPolynomials<F> {}
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, PartialEq, EnumIter)]
-pub enum JoltR1CSInputs<F: JoltField> {
+pub enum JoltR1CSInputs {
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
@@ -230,13 +230,13 @@ pub enum JoltR1CSInputs<F: JoltField> {
     ChunksY(usize),
 
     OpFlags(CircuitFlags),
-    InstructionFlags(RV32I<F>),
+    InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
 
-impl_r1cs_input_lc_conversions!(JoltR1CSInputs<F>, 4);
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
 
-impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
+impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
@@ -245,7 +245,7 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
                 Self::InstructionFlags(_) => {
-                    RV32I::<F>::iter().map(Self::InstructionFlags).collect()
+                    RV32I::iter().map(Self::InstructionFlags).collect()
                 }
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
@@ -287,7 +287,7 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
             JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
             JoltR1CSInputs::InstructionFlags(i) => {
                 &jolt.instruction_lookups.instruction_flags
-                    [<RV32I<F> as JoltInstructionSet<F>>::enum_index(i)]
+                    [<RV32I as JoltInstructionSet>::enum_index(i)]
             }
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,

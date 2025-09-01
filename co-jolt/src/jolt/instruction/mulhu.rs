@@ -21,12 +21,12 @@ use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULHUInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MULHUInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for MULHUInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups(&self, vals: &[F], _: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
         concatenate_lookups(vals, vals.len(), log2(M) as usize)
     }
 
@@ -34,7 +34,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MULHUInstructi
         1
     }
 
-    fn subtables(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         assert_eq!(C * log2(M) as usize, 2 * WORD_SIZE);
         vec![(
             Box::new(IdentitySubtable::new()),
@@ -56,7 +56,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MULHUInstructi
     //     index >> WORD_SIZE
     // }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => match WORD_SIZE {
                 32 => ((*x).wrapping_mul(*y) >> 32).into(),
@@ -82,7 +82,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for MULHUInstructi
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for MULHUInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULHUInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -99,17 +99,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for MULHUInstr
         Some(&self.1)
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        _C: usize,
-        M: usize,
-        _io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(concatenate_lookups_rep3(vals, vals.len(), log2(M) as usize))
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -119,7 +109,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for MULHUInstr
         Ok(concatenate_lookups_rep3_batched(vals, C, log2(M) as usize))
     }
 
-    fn to_indices_intermediate(
+    fn to_indices_intermediate<F: JoltField>(
         &self,
         z: &Rep3PrimeFieldShare<F>,
     ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
@@ -135,9 +125,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for MULHUInstr
         rep3_multiply_and_chunk_operands(&z.unwrap(), C, log_M)
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

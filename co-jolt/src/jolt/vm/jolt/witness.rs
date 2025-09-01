@@ -56,12 +56,12 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
 
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &Preprocessing,
-        trace: &mut [JoltTraceStep<F, Instructions>],
+        trace: &mut [JoltTraceStep<Instructions>],
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker;
 
     fn combine_polynomials(
@@ -158,14 +158,14 @@ where
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        ops: &mut [JoltTraceStep<F, Instructions>],
+        ops: &mut [JoltTraceStep<Instructions>],
         M: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
-        Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(

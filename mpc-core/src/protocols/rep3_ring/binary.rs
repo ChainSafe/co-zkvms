@@ -10,10 +10,28 @@ use crate::{
 use itertools::izip;
 use mpc_types::protocols::{
     rep3::id::PartyID,
-    rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+    rep3_ring::{
+        Rep3RingShare,
+        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+    },
 };
 use num_traits::{One, Zero};
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{Rng, distributions::Standard, prelude::Distribution};
+
+pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Rep3RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let val = T::from_le_bytes(&val.cast_to_biguint().to_bytes_le());
+    let t0 = rng.r#gen::<T>();
+    let t1 = rng.r#gen::<T>();
+    let t2 = (val ^ t0) ^ t1;
+
+    let p_share_0 = Rep3RingShare::new(t0, t2);
+    let p_share_1 = Rep3RingShare::new(t1, t0);
+    let p_share_2 = Rep3RingShare::new(t2, t1);
+    vec![p_share_0, p_share_1, p_share_2]
+}
 
 /// Performs a bitwise XOR operation on two shared values.
 pub fn xor<T: IntRing2k>(a: &RingShare<T>, b: &RingShare<T>) -> RingShare<T> {

@@ -2,22 +2,22 @@ pub mod coordinator;
 pub mod witness;
 pub mod worker;
 
+use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use jolt_common::rv_trace::ELFInstruction;
-use crate::field::JoltField;
 
 pub use jolt_core::jolt::vm::bytecode::BytecodeRow;
 
 use jolt_tracer::RV32IM;
 
 pub trait BytecodeRowExt {
-    fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64
+    fn bitflags_ext<InstructionSet>(instruction: &ELFInstruction) -> u64
     where
-        InstructionSet: JoltInstructionSet<F>;
+        InstructionSet: JoltInstructionSet;
 
-    fn from_instruction_ext<F: JoltField, InstructionSet>(instruction: &ELFInstruction) -> Self
+    fn from_instruction_ext<InstructionSet>(instruction: &ELFInstruction) -> Self
     where
-        InstructionSet: JoltInstructionSet<F>;
+        InstructionSet: JoltInstructionSet;
 }
 
 impl BytecodeRowExt for BytecodeRow {
@@ -26,9 +26,9 @@ impl BytecodeRowExt for BytecodeRow {
     ///     circuit flags || instruction flags
     /// where instruction flags is a one-hot bitvector corresponding to the instruction's
     /// index in the `InstructionSet` enum.
-    fn bitflags_ext<InstructionSet, F: JoltField>(instruction: &ELFInstruction) -> u64
+    fn bitflags_ext<InstructionSet>(instruction: &ELFInstruction) -> u64
     where
-        InstructionSet: JoltInstructionSet<F>,
+        InstructionSet: JoltInstructionSet,
     {
         let mut bitvector = 0;
         for flag in instruction.to_circuit_flags() {
@@ -49,9 +49,9 @@ impl BytecodeRowExt for BytecodeRow {
         bitvector
     }
 
-    fn from_instruction_ext<F: JoltField, InstructionSet>(instruction: &ELFInstruction) -> Self
+    fn from_instruction_ext<InstructionSet>(instruction: &ELFInstruction) -> Self
     where
-        InstructionSet: JoltInstructionSet<F>,
+        InstructionSet: JoltInstructionSet,
     {
         let imm = match instruction.opcode {
             RV32IM::LW
@@ -67,7 +67,7 @@ impl BytecodeRowExt for BytecodeRow {
 
         Self {
             address: instruction.address as usize,
-            bitflags: Self::bitflags_ext::<InstructionSet, F>(instruction),
+            bitflags: Self::bitflags_ext::<InstructionSet>(instruction),
             rd: instruction.rd.unwrap_or(0) as u8,
             rs1: instruction.rs1.unwrap_or(0) as u8,
             rs2: instruction.rs2.unwrap_or(0) as u8,

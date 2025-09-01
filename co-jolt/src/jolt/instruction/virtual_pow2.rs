@@ -13,22 +13,15 @@ use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct POW2Instruction<const WORD_SIZE: usize>(pub Rep3Operand);
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for POW2Instruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for POW2Instruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), 0)
     }
 
-    fn combine_lookups(&self, _: &[F], _: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, _: &[F], _: usize, _: usize) -> F {
         F::zero()
     }
 
@@ -36,7 +29,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for POW2Instructio
         1
     }
 
-    fn subtables(&self, _: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        _: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![]
     }
 
@@ -44,7 +41,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for POW2Instructio
         vec![0; C]
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         (1 << (self.0.as_public() % WORD_SIZE as u64)).into()
     }
 
@@ -57,9 +54,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for POW2Instructio
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
-    for POW2Instruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for POW2Instruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::default())
     }
@@ -76,17 +71,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         None
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        _: &[Rep3PrimeFieldShare<F>],
-        _: usize,
-        _: usize,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(Rep3PrimeFieldShare::zero_share())
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         _: usize,
@@ -105,9 +90,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         vec![Rep3RingShare::zero_share(); C]
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

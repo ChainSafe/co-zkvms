@@ -37,7 +37,7 @@ use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 )]
 pub struct SRLInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for SRLInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -45,7 +45,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for SRLInstruction
         }
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
         assert!(vals.len() == C);
         vals.iter().sum()
@@ -55,7 +55,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for SRLInstruction
         1
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
         // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
         // which only happens at runtime).
@@ -88,7 +88,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for SRLInstruction
         }
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
                 let x = *x as u32;
@@ -108,7 +108,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F> for SRLInstruction
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for SRLInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRLInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -125,19 +125,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for SRLInstruc
         Some(&self.1)
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        _: usize,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        assert!(C <= 10);
-        assert!(vals.len() == C);
-        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()))
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -163,9 +151,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F> for SRLInstruc
         )
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

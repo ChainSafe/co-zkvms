@@ -16,28 +16,21 @@ use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct AssertValidUnsignedRemainderInstruction<const WORD_SIZE: usize>(
     pub Rep3Operand,
     pub Rep3Operand,
 );
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
+impl<const WORD_SIZE: usize> JoltInstruction
     for AssertValidUnsignedRemainderInstruction<WORD_SIZE>
 {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values_ref::<F, _>(vals, C, M);
         let ltu = vals_by_subtable[0];
         let eq = vals_by_subtable[1];
         let divisor_is_zero: F = vals_by_subtable[2].iter().product();
@@ -57,7 +50,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         C
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
             (Box::new(EqSubtable::new()), SubtableIndices::from(0..C - 1)),
@@ -72,7 +69,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         chunk_and_concatenate_operands(self.0.as_public(), self.1.as_public(), C, log_M)
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         // Same for both 32-bit and 64-bit word sizes
         let remainder = self.0.as_public();
         let divisor = self.1.as_public();
@@ -91,7 +88,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
+impl<const WORD_SIZE: usize> Rep3JoltInstruction
     for AssertValidUnsignedRemainderInstruction<WORD_SIZE>
 {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
@@ -112,63 +109,10 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
 
     #[tracing::instrument(
         skip_all,
-        name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3",
-        level = "trace"
-    )]
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
-        let ltu = vals_by_subtable[0];
-        #[cfg(not(feature = "public-eq"))]
-        let eq = vals_by_subtable[1];
-        #[cfg(feature = "public-eq")]
-        let eq = rep3::arithmetic::open_vec(vals_by_subtable[1], io_ctx)?;
-
-        #[cfg(not(feature = "public-eq"))]
-        let divisor_is_zero = rep3::arithmetic::product(vals_by_subtable[2], io_ctx)?;
-        #[cfg(feature = "public-eq")]
-        let divisor_is_zero = {
-            let divisor_is_zero_vals = rep3::arithmetic::open_vec(vals_by_subtable[2], io_ctx)?;
-            rep3::arithmetic::promote_to_trivial_share(
-                io_ctx.id,
-                divisor_is_zero_vals.iter().product::<F>(),
-            )
-        };
-
-        let mut sum = ltu[0].into_additive();
-        let mut eq_prod = eq[0];
-
-        for i in 1..C - 1 {
-            #[cfg(not(feature = "public-eq"))]
-            {
-                sum += ltu[i] * eq_prod;
-                eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
-            }
-            #[cfg(feature = "public-eq")]
-            {
-                sum += ltu[i].into_additive() * eq_prod;
-                eq_prod *= eq[i];
-            }
-        }
-        #[cfg(not(feature = "public-eq"))]
-        let ltu_sum_eq_prod = ltu[C - 1] * eq_prod;
-        #[cfg(feature = "public-eq")]
-        let ltu_sum_eq_prod = ltu[C - 1].into_additive() * eq_prod;
-
-        Ok(rep3::arithmetic::reshare_additive(sum + ltu_sum_eq_prod, io_ctx)? + divisor_is_zero)
-    }
-
-    #[tracing::instrument(
-        skip_all,
         name = "AssertValidUnsignedRemainderInstruction::combine_lookups_rep3_batched",
         level = "trace"
     )]
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -177,7 +121,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         #[cfg(feature = "public-eq")]
         let batch_size = vals_many[0].len();
-        let mut val_batches_by_subtable = self.slice_values(vals_many, C, M);
+        let mut val_batches_by_subtable = self.slice_values::<F, _>(vals_many, C, M);
 
         let ltu = std::mem::take(&mut val_batches_by_subtable[0]);
         #[cfg(not(feature = "public-eq"))]

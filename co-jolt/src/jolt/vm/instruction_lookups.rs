@@ -14,12 +14,12 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
+use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::lasso::{
     memory_checking::MultisetHashes,
     memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
 };
-use crate::field::JoltField;
 use jolt_core::jolt::subtable::JoltSubtableSet;
 pub use jolt_core::jolt::vm::instruction_lookups::{
     InstructionLookupCommitments, InstructionLookupOpenings, InstructionLookupPolynomials,
@@ -66,7 +66,7 @@ impl<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables, ProofTra
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -287,7 +287,7 @@ impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTra
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -482,7 +482,7 @@ pub struct InstructionLookupsProof<
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     Subtables: JoltSubtableSet<F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     ProofTranscript: Transcript,
 {
     _instructions: PhantomData<InstructionSet>,
@@ -511,7 +511,7 @@ impl<F, PCS, InstructionSet, Subtables, const C: usize, const M: usize, ProofTra
 where
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -733,7 +733,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness")]
     pub fn generate_witness(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        ops: &Vec<JoltTraceStep<F, InstructionSet>>,
+        ops: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> InstructionLookupPolynomials<F> {
         let m: usize = ops.len().next_power_of_two();
 
@@ -1093,7 +1093,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &[JoltTraceStep<F, InstructionSet>]) -> Vec<Vec<u16>> {
+    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<u16>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<u16>> = ops
@@ -1122,12 +1122,12 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<F, InstructionSet>>) -> Vec<u32> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<u32> {
         instructions
             .par_iter()
             .map(|op| {
                 if let Some(instr) = &op.instruction_lookup {
-                    instr.lookup_entry().to_u64().unwrap() as u32
+                    instr.lookup_entry::<F>().to_u64().unwrap() as u32
                 } else {
                     0
                 }

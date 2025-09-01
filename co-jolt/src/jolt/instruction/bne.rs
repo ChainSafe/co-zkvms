@@ -21,7 +21,7 @@ use mpc_core::protocols::rep3::{
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BNEInstruction(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField> JoltInstruction<F> for BNEInstruction {
+impl JoltInstruction for BNEInstruction {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -29,7 +29,7 @@ impl<F: JoltField> JoltInstruction<F> for BNEInstruction {
         }
     }
 
-    fn combine_lookups(&self, vals: &[F], _: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, _: usize) -> F {
         F::one() - vals.iter().product::<F>()
     }
 
@@ -37,7 +37,7 @@ impl<F: JoltField> JoltInstruction<F> for BNEInstruction {
         C
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(Box::new(EqSubtable::new()), SubtableIndices::from(0..C))]
     }
 
@@ -50,7 +50,7 @@ impl<F: JoltField> JoltInstruction<F> for BNEInstruction {
         }
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x != *y).into(),
             _ => panic!("BNEInstruction::lookup_entry called with non-public operands"),
@@ -65,7 +65,7 @@ impl<F: JoltField> JoltInstruction<F> for BNEInstruction {
     }
 }
 
-impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction {
+impl Rep3JoltInstruction for BNEInstruction {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -81,38 +81,13 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction {
     fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
-
-    #[tracing::instrument(skip_all, name = "BNEInstruction::combine_lookups", level = "trace")]
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        #[cfg(feature = "public-eq")]
-        {
-            let opened = rep3::arithmetic::open_vec(vals, io_ctx)?;
-            return Ok(rep3::arithmetic::promote_to_trivial_share(
-                io_ctx.id,
-                F::one() - opened.iter().product::<F>(),
-            ));
-        }
-
-        #[cfg(not(feature = "public-eq"))]
-        Ok(rep3::arithmetic::sub_public_by_shared(
-            F::one(),
-            rep3::arithmetic::product(vals, io_ctx)?,
-            io_ctx.network.get_id(),
-        ))
-    }
-
+    
     #[tracing::instrument(
         skip_all,
         name = "BNEInstruction::combine_lookups_rep3_batched",
         level = "trace"
     )]
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -160,9 +135,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for BNEInstruction {
         )
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

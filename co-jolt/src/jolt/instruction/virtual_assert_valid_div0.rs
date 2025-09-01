@@ -23,29 +23,17 @@ use mpc_core::protocols::{
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (divisor, quotient)
-pub struct AssertValidDiv0Instruction<const WORD_SIZE: usize>(
-    pub Rep3Operand,
-    pub Rep3Operand,
-);
+pub struct AssertValidDiv0Instruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
-    for AssertValidDiv0Instruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values_ref::<F, _>(vals, C, M);
         let divisor_is_zero: F = vals_by_subtable[0].iter().product();
         let is_valid_div_by_zero: F = vals_by_subtable[1].iter().product();
 
@@ -56,7 +44,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         C
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (
                 Box::new(LeftIsZeroSubtable::new()),
@@ -73,7 +65,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         chunk_and_concatenate_operands(self.0.as_public(), self.1.as_public(), C, log_M)
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         let divisor = self.0.as_public();
         let quotient = self.1.as_public();
         if divisor == 0 {
@@ -99,9 +91,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
-    for AssertValidDiv0Instruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertValidDiv0Instruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -120,62 +110,10 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
 
     #[tracing::instrument(
         skip_all,
-        name = "AssertValidDiv0Instruction::combine_lookups_rep3",
-        level = "trace"
-    )]
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
-
-        #[cfg(not(feature = "public-eq"))]
-        {
-            use crate::utils::instruction_utils::transpose;
-
-            let [divisor_is_zero, is_valid_div_by_zero] = rep3::arithmetic::product_many(
-                &transpose(vec![
-                    vals_by_subtable[0].to_vec(),
-                    vals_by_subtable[1].to_vec(),
-                ]),
-                io_ctx,
-            )?
-            .try_into()
-            .unwrap();
-
-            return Ok(rep3::arithmetic::sub_public_by_shared(
-                F::one(),
-                divisor_is_zero + is_valid_div_by_zero,
-                io_ctx.id,
-            ));
-        }
-
-        #[cfg(feature = "public-eq")]
-        {
-            let opened = rep3::arithmetic::open_vec(&vals_by_subtable[..2].concat(), io_ctx)?;
-
-            let (divisor_is_zero_vals, is_valid_div_by_zero_vals) =
-                opened.split_at(vals_by_subtable[0].len());
-
-            let divisor_is_zero: F = divisor_is_zero_vals.iter().product();
-            let is_valid_div_by_zero: F = is_valid_div_by_zero_vals.iter().product();
-
-            return Ok(rep3::arithmetic::promote_to_trivial_share(
-                io_ctx.id,
-                F::one() - divisor_is_zero + is_valid_div_by_zero,
-            ));
-        }
-    }
-
-    #[tracing::instrument(
-        skip_all,
         name = "AssertValidDiv0Instruction::combine_lookups_rep3_batched",
         level = "trace"
     )]
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -183,7 +121,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         let batch_size = vals_many[0].len();
-        let mut batched_vals_by_subtable = self.slice_values(vals_many, C, M);
+        let mut batched_vals_by_subtable = self.slice_values::<F, _>(vals_many, C, M);
 
         #[cfg(not(feature = "public-eq"))]
         {

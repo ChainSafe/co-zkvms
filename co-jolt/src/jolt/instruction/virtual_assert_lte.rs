@@ -26,28 +26,16 @@ use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
-pub struct ASSERTLTEInstruction<const WORD_SIZE: usize>(
-    pub Rep3Operand,
-    pub Rep3Operand,
-);
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ASSERTLTEInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
-    for ASSERTLTEInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> JoltInstruction for ASSERTLTEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0.as_public(), self.1.as_public())
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values_ref::<F, _>(vals, C, M);
         let ltu = vals_by_subtable[0];
         let eq = vals_by_subtable[1];
 
@@ -69,7 +57,11 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         C
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
             (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
             (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
@@ -80,7 +72,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
         chunk_and_concatenate_operands(self.0.as_public(), self.1.as_public(), C, log_M)
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         (self.0.as_public() <= self.1.as_public()).into()
     }
 
@@ -96,9 +88,7 @@ impl<F: JoltField, const WORD_SIZE: usize> JoltInstruction<F>
     }
 }
 
-impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
-    for ASSERTLTEInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for ASSERTLTEInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -117,55 +107,10 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
 
     #[tracing::instrument(
         skip_all,
-        name = "ASSERTLTEInstruction::combine_lookups_rep3",
-        level = "trace"
-    )]
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        let vals_by_subtable = self.slice_values_ref(vals, C, M);
-        let ltu = vals_by_subtable[0];
-        #[cfg(not(feature = "public-eq"))]
-        let eq = vals_by_subtable[1];
-        #[cfg(feature = "public-eq")]
-        let eq = rep3::arithmetic::open_vec(vals_by_subtable[1], io_ctx)?;
-
-        // Accumulator for LTU(x, y)
-        #[cfg(not(feature = "public-eq"))]
-        let mut ltu_sum = ltu[0].into_additive();
-        #[cfg(feature = "public-eq")]
-        let mut ltu_sum = ltu[0];
-        // Accumulator for EQ(x, y)
-        let mut eq_prod = eq[0];
-
-        for i in 1..C {
-            #[cfg(not(feature = "public-eq"))]
-            {
-                ltu_sum += ltu[i] * eq_prod;
-                eq_prod = rep3::arithmetic::mul(eq_prod, eq[i], io_ctx)?;
-            }
-            #[cfg(feature = "public-eq")]
-            {
-                ltu_sum += rep3::arithmetic::mul_public(ltu[i], eq_prod);
-                eq_prod *= eq[i];
-            }
-        }
-        #[cfg(not(feature = "public-eq"))]
-        return rep3::arithmetic::reshare_additive(ltu_sum + eq_prod.into_additive(), io_ctx);
-        #[cfg(feature = "public-eq")]
-        Ok(rep3::arithmetic::add_public(ltu_sum, eq_prod, io_ctx.id))
-    }
-
-    #[tracing::instrument(
-        skip_all,
         name = "ASSERTLTEInstruction::combine_lookups_rep3_batched",
         level = "trace"
     )]
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -173,7 +118,7 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         let batch_size = vals_many[0].len();
-        let mut batched_vals_by_subtable = self.slice_values(vals_many, C, M);
+        let mut batched_vals_by_subtable = self.slice_values::<F, _>(vals_many, C, M);
         let ltu = std::mem::take(&mut batched_vals_by_subtable[0]);
         #[cfg(not(feature = "public-eq"))]
         let mut eq = std::mem::take(&mut batched_vals_by_subtable[1]);
@@ -246,9 +191,9 @@ impl<F: JoltField, const WORD_SIZE: usize> Rep3JoltInstruction<F>
         )
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

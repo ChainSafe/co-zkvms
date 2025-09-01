@@ -62,16 +62,15 @@ use jolt_core::{
     },
 };
 
-#[derive(Clone, Serialize, Deserialize, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
-    pub(crate) _field: PhantomData<F>,
 }
 
-impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, InstructionSet> {
+impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
     fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,
@@ -83,7 +82,6 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
                 MemoryOp::noop_read(),  // RAM
             ],
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
-            _field: PhantomData,
         }
     }
 
@@ -96,8 +94,8 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
 
 type JoltTraceStepNative = jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I>;
 
-impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> Into<JoltTraceStepNative>
-    for JoltTraceStep<F, InstructionSet>
+impl<InstructionSet: JoltInstructionSet> Into<JoltTraceStepNative>
+    for JoltTraceStep<InstructionSet>
 {
     fn into(self) -> JoltTraceStepNative {
         jolt_core::jolt::vm::JoltTraceStep {
@@ -123,7 +121,7 @@ pub struct JoltProof<
     I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -149,7 +147,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type InstructionSet: JoltInstructionSet<F>;
+    type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
     type Constraints: R1CSConstraints<C, F>;
 
@@ -249,7 +247,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::generate_witness")]
     fn generate_witness(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         program_io: &JoltDevice,
     ) -> JoltPolynomials<F> {
         let instruction_lookups =
@@ -294,7 +292,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        mut trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<

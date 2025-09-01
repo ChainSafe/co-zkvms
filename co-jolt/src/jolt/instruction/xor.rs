@@ -22,7 +22,7 @@ use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct XORInstruction(pub Rep3Operand, pub Rep3Operand);
 
-impl<F: JoltField> JoltInstruction<F> for XORInstruction {
+impl JoltInstruction for XORInstruction {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -37,7 +37,7 @@ impl<F: JoltField> JoltInstruction<F> for XORInstruction {
         )
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         concatenate_lookups(vals, C, log2(M) as usize / 2)
     }
 
@@ -45,7 +45,11 @@ impl<F: JoltField> JoltInstruction<F> for XORInstruction {
         1
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(Box::new(XorSubtable::new()), SubtableIndices::from(0..C))]
     }
 
@@ -58,7 +62,7 @@ impl<F: JoltField> JoltInstruction<F> for XORInstruction {
         }
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => F::from(*x ^ *y),
             _ => unreachable!(),
@@ -66,7 +70,7 @@ impl<F: JoltField> JoltInstruction<F> for XORInstruction {
     }
 }
 
-impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction {
+impl Rep3JoltInstruction for XORInstruction {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -82,18 +86,8 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction {
     fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
-
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        M: usize,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        Ok(concatenate_lookups_rep3(vals, C, log2(M) as usize / 2))
-    }
-
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -121,9 +115,9 @@ impl<F: JoltField> Rep3JoltInstruction<F> for XORInstruction {
         )
     }
 
-    fn output_batched<'a, N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction<F>],
+        steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {

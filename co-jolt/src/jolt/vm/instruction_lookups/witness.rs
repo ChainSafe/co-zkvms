@@ -66,12 +66,12 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        ops: &mut [JoltTraceStep<F, Instructions>],
+        ops: &mut [JoltTraceStep<Instructions>],
         M: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
     where
-        Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         // let mut network = BiNetwork::new(io_ctx)?;
@@ -192,7 +192,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         for (j, op) in ops.iter().enumerate() {
                             if let Some(op) = &op.instruction_lookup {
                                 let memories_used = &preprocessing.instruction_to_memory_indices
-                                    [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
+                                    [<Instructions as Rep3JoltInstructionSet>::enum_index(op)];
                                 if memories_used.contains(&memory_index) {
                                     let ohv =
                                         rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
