@@ -8,7 +8,6 @@ use tokio::runtime::Runtime;
 pub mod channel;
 pub mod codecs;
 pub mod config;
-pub mod resv_demux;
 
 pub use rep3::quic::MpcNetworkHandlerWorker as MpcNetworkHandler;
 

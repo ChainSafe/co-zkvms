@@ -87,7 +87,6 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    #[tracing::instrument(skip_all, name = "JoltRep3Prover::init")]
     pub fn init(
         witness: Option<(Vec<JoltTraceStep<Instructions>>, Rep3ProgramIOInput<F>)>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
@@ -99,7 +98,9 @@ where
     {
         // let num_workers = 1 << network.log_num_workers_per_party();
         let mut io_ctx =
-            IoContextPool::init(network, rayon::current_num_threads() as u32, 1 << 10)?; // todo get from network
+            IoContextPool::init(network, rayon::current_num_threads() as u32, 1 << 10)?;
+
+        let _guard = tracing::info_span!("JoltRep3Prover::init").entered();
 
         let generate_witness = witness.is_some();
 

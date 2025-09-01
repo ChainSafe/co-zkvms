@@ -393,9 +393,6 @@ impl Rep3Network for Rep3MpcNet {
         data: &[F],
     ) -> std::io::Result<()> {
         let size = data.serialized_size(ark_serialize::Compress::No);
-        if size > 1 << 30 {
-            tracing::info!("frame size more than 1GB: {}", size);
-        }
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -698,7 +695,6 @@ pub struct IoContextPool<Network: Rep3NetworkWorker> {
 }
 
 impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
-    #[tracing::instrument(skip_all, name = "IoContextPool::init")]
     pub fn init(network: Network, num_forks: u32, forks_cap: u32) -> eyre::Result<Self> {
         let num_workers = 1 << network.log_num_workers_per_party();
         let mut main_worker = IoContext::init(network)?;

@@ -2,7 +2,6 @@ use crate::{
     channel::{BytesChannel, Channel, PerOpChannelHandle},
     codecs::BincodeCodec,
     rep3::{PartyID, PartyWorkerID},
-    resv_demux::RecvDemux,
     MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -89,7 +88,7 @@ impl Rep3QuicMpcNetWorker {
             let chan_coordinator = net_handler
                 .get_coordinator_byte_channel()
                 .await?
-                .map(ChannelHandle::manage);
+                .map(ChannelHandle::manage_bytes_quic);
 
             let mut connections = HashMap::with_capacity(net_handler.parties_connections.len() - 1);
             for (&id, conn) in net_handler.parties_connections.iter() {
@@ -123,23 +122,15 @@ impl Rep3QuicMpcNetWorker {
             //     conn_next.clone(),
             //     codec_cfg(),
             //     RUNTIME.handle().clone(),
-            //     None,
             //     fork_id,
             //     512,
             // );
 
-            // let recv_tx = RecvDemux::handle(
-            //     conn_prev.clone(),
-            //     codec_cfg(),
-            //     RUNTIME.handle().clone(),
-            //     1024,
-            // );
             // let chan_prev = PerOpChannelHandle::new(
             //     id,
             //     conn_prev.clone(),
             //     codec_cfg(),
             //     RUNTIME.handle().clone(),
-            //     Some(recv_tx),
             //     0,
             //     512,
             // );
@@ -337,55 +328,103 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         self.id.party_id()
     }
 
-    #[inline]
     fn fork(&self) -> Self {
         let fork_id = self.alloc.alloc();
-        // Self {
-        //     id: self.id.clone(),
-        //     chan_next: self.chan_next.fork(fork_id),
-        //     chan_prev: self.chan_prev.fork(fork_id),
-        //     chan_coordinator: None,
-        //     log_num_workers_per_party: self.log_num_workers_per_party.clone(),
-        //     net_handler: self.net_handler.clone(),
-        //     config: self.config.clone(),
-        //     fork_id: self.alloc.alloc(),
-        //     seq: Arc::new(AtomicU64::new(0)),
-        //     alloc: self.alloc.clone(),
-        // }
+        let config = {
+            let mut config = self.config.clone();
+            config
+                .bind_addr
+                .set_port(config.bind_addr.port() + 10 * fork_id as u16);
+            config.parties.iter_mut().for_each(|party| {
+                // party.worker = worker;
+                party.dns_name.port = party.dns_name.port + 10 * fork_id as u16;
+            });
+            config.coordinator = None;
+            config
+        };
         let id = self.id.clone();
-        let net_handler = Arc::clone(&self.net_handler);
-        let (chan_next, chan_prev) = net_handler
-            .runtime
-            .block_on(async {
-                let mut channels = net_handler.inner.get_byte_channels().await?;
 
-                let chan_next = channels
-                    .remove(&id.party_id().next_id().into())
-                    .expect("to find next channel");
-                let chan_prev = channels
-                    .remove(&id.party_id().prev_id().into())
-                    .expect("to find prev channel");
-                if !channels.is_empty() {
-                    panic!("unexpected channels found")
+        let (net_handler, chan_next, chan_prev) = RUNTIME
+            .block_on(async {
+                let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
+
+                let mut connections =
+                    HashMap::with_capacity(net_handler.parties_connections.len() - 1);
+                for (&id, conn) in net_handler.parties_connections.iter() {
+                    if id < net_handler.my_id {
+                        // we are the client, so we are the receiver
+                        let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
+                        send_stream.write_u32(net_handler.my_id as u32).await?;
+                        let their_id = recv_stream.read_u32().await?;
+                        assert!(their_id == id as u32);
+                        assert!(connections.insert(id, conn.clone()).is_none());
+                    } else {
+                        // we are the server, so we are the sender
+                        let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
+                        let their_id = recv_stream.read_u32().await?;
+                        assert!(their_id == id as u32);
+                        send_stream.write_u32(net_handler.my_id as u32).await?;
+                        assert!(connections.insert(id, conn.clone()).is_none());
+                    }
                 }
 
+                // let conn_next = connections
+                //     .get(&id.party_id().next_id().into())
+                //     .ok_or(eyre::eyre!("no next connection found"))?;
+
+                // let conn_prev = connections
+                //     .get(&id.party_id().prev_id().into())
+                //     .ok_or(eyre::eyre!("no prev connection found"))?;
+
+                // let chan_next = PerOpChannelHandle::new(
+                //     id,
+                //     conn_next.clone(),
+                //     codec_cfg(),
+                //     RUNTIME.handle().clone(),
+                //     fork_id,
+                //     512,
+                // );
+
+                // let chan_prev = PerOpChannelHandle::new(
+                //     id,
+                //     conn_prev.clone(),
+                //     codec_cfg(),
+                //     RUNTIME.handle().clone(),
+                //     fork_id,
+                //     512,
+                // );
+
+                let mut channels = net_handler.get_byte_channels().await?;
+                let chan_next = channels
+                    .remove(&id.party_id().next_id().into())
+                    .ok_or(eyre::eyre!("no next channel found"))?;
+                let chan_prev = channels
+                    .remove(&id.party_id().prev_id().into())
+                    .ok_or(eyre::eyre!("no prev channel found"))?;
+                if !channels.is_empty() {
+                    bail!("unexpected channels found")
+                }
                 let chan_next = ChannelHandle::manage(chan_next);
                 let chan_prev = ChannelHandle::manage(chan_prev);
-                Ok::<_, std::io::Error>((chan_next, chan_prev))
+
+                eyre::Ok((net_handler, chan_next, chan_prev))
             })
             .unwrap();
 
         Self {
             id,
-            net_handler,
+            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(
+                RUNTIME.handle().clone(),
+                net_handler,
+            )),
             chan_next,
             chan_prev,
             chan_coordinator: None,
-            log_num_workers_per_party: 0,
-            config: self.config.clone(),
+            log_num_workers_per_party: self.log_num_workers_per_party,
+            config,
+            alloc: self.alloc.clone(),
             fork_id,
             seq: Arc::new(AtomicU64::new(0)),
-            alloc: self.alloc.clone(),
         }
     }
 
@@ -416,7 +455,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         })
     }
 
-    #[tracing::instrument(skip_all, name = "MpcStarNetWorker::get_worker_subnets")]
+    // #[tracing::instrument(skip_all, name = "MpcStarNetWorker::get_worker_subnets")]
     fn get_worker_subnets(&self, num_workers: usize, forks_cap: u32) -> Result<Vec<Self>> {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;
@@ -818,13 +857,6 @@ impl MpcNetworkHandlerWorker {
 impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
     /// Shutdown all connections, and call [`quinn::Endpoint::wait_idle`] on all of them
     async fn shutdown(&self) -> std::io::Result<()> {
-        tracing::trace!(
-            "party {} worker {} shutting down, conns = {:?}",
-            self.my_id,
-            self.worker,
-            self.parties_connections.keys()
-        );
-
         for (id, conn) in self.parties_connections.iter() {
             if self.my_id < *id {
                 let mut send = conn.open_uni().await?;
@@ -852,7 +884,6 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
             endpoint.wait_idle().await;
             endpoint.close(VarInt::from_u32(0), &[]);
         }
-        tracing::trace!("party {} worker {} shut down", self.my_id, self.worker);
         Ok(())
     }
 }

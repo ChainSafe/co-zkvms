@@ -433,7 +433,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         .add_directive("jolt_core=info".parse().unwrap())
         .add_directive("co-snarks=info".parse().unwrap())
         .add_directive("mpc_net=info".parse().unwrap())
-        .add_directive("quinn=info".parse().unwrap());
+        .add_directive("quinn=off".parse().unwrap());
 
     let current_level = env_filter.max_level_hint().unwrap_or(LevelFilter::INFO);
     let subscriber = Registry::default().with(env_filter);
