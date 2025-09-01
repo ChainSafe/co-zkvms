@@ -82,7 +82,7 @@ impl<const C: usize, const M: usize, F, InstructionSet, Subtables, Network>
     Rep3InstructionLookupsProver<C, M, F, InstructionSet, Subtables, Network>
 where
     F: JoltField,
-    InstructionSet: JoltInstructionSet + Rep3JoltInstructionSet,
+    InstructionSet: Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkWorker,
 {
@@ -722,7 +722,7 @@ where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    InstructionSet: JoltInstructionSet + Rep3JoltInstructionSet,
+    InstructionSet: Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkWorker,
 {

@@ -1,31 +1,25 @@
 use crate::field::JoltField;
+use crate::utils::future_ring::FutureRep3Ring;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use itertools::izip;
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{PartyID, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, rep3_add_and_chunk_operands,
 };
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SUBInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
@@ -46,7 +40,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: JoltField>(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![(
             Box::new(IdentitySubtable::new()),
@@ -56,12 +54,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        match (&self.0, &self.1) {
-            (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
-                add_and_chunk_operands(*x as u128, (1u128 << WORD_SIZE) - *y as u128, C, log_M)
-            }
-            _ => panic!("SUBInstruction::to_indices called with non-public operands"),
-        }
+        add_and_chunk_operands(
+            self.0.as_public() as u128,
+            (1u128 << WORD_SIZE) - self.1.as_public() as u128,
+            C,
+            log_M,
+        )
     }
 
     fn lookup_entry<F: JoltField>(&self) -> F {
@@ -97,7 +95,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SUBInstruction<WORD_SIZE> {
     fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
-    
+
     fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
@@ -115,14 +113,21 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SUBInstruction<WORD_SIZE> {
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        z: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
-        FutureVal::a2b(*z)
+        id: PartyID,
+    ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
+        FutureRep3Ring::a2b(
+            self.lhs().as_arithmetic()
+                + rep3_ring::arithmetic::sub_public_by_shared(
+                    (1u128 << WORD_SIZE).into(),
+                    self.rhs().unwrap().as_arithmetic(),
+                    id,
+                ),
+        )
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3RingShare<u32>>,
+        z: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
@@ -134,11 +139,11 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SUBInstruction<WORD_SIZE> {
         &self,
         steps: &[&impl Rep3JoltInstruction],
         _: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {
-            *out = FutureVal::cast_to_field(
-                st.lhs().as_arithmetic_share() - st.rhs().unwrap().as_arithmetic_share(),
+            *out = FutureRep3Ring::cast_to_field(
+                st.lhs().as_arithmetic_u32() - st.rhs().unwrap().as_arithmetic_u32(),
             );
         });
         Ok(())

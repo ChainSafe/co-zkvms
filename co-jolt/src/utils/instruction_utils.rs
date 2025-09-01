@@ -6,6 +6,7 @@ use crate::field::JoltField;
 use mpc_core::protocols::{
     rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
+        casts::downcast,
         ring::{int_ring::IntRing2k, ring_impl::RingElement},
         Rep3RingShare,
     },
@@ -76,18 +77,18 @@ pub fn rep3_chunk_and_concatenate_operands(
 
 /// z = x + y (mod 2^{C*log_M}), then split z into C chunks of `log_M` bits (MSB-first).
 pub fn rep3_add_and_chunk_operands(
-    z: &Rep3RingShare<u32>,
+    z: &Rep3RingShare<u128>,
     C: usize,
     log_M: usize,
 ) -> Vec<Rep3RingShare<u32>> {
     let sum_chunk_bits: usize = log_M;
-    let sum_chunk_bit_mask = RingElement(((1 << sum_chunk_bits) - 1) as u32);
+    let sum_chunk_bit_mask = RingElement(((1 << sum_chunk_bits) - 1) as u64);
 
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * sum_chunk_bits) as u32 as usize;
 
-            (z >> shift) & sum_chunk_bit_mask.clone()
+            ((z >> shift).downcast() & sum_chunk_bit_mask.clone()).downcast()
         })
         .collect()
 }
@@ -95,16 +96,16 @@ pub fn rep3_add_and_chunk_operands(
 /// Chunks `z` into `C` chunks bitwise where `z = x * y`.
 /// `log_M` is the number of bits for each of the `C` chunks of `z`.
 pub fn rep3_multiply_and_chunk_operands(
-    z: &Rep3RingShare<u32>,
+    z: &Rep3RingShare<u128>,
     C: usize,
     log_M: usize,
 ) -> Vec<Rep3RingShare<u32>> {
     let product_chunk_bits: usize = log_M;
-    let product_chunk_bit_mask = RingElement(((1 << product_chunk_bits) - 1) as u32);
+    let product_chunk_bit_mask = RingElement(((1 << product_chunk_bits) - 1) as u128);
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * product_chunk_bits) as u32 as usize;
-            (z >> shift) & product_chunk_bit_mask.clone()
+            downcast((z >> shift) & product_chunk_bit_mask.clone())
         })
         .collect()
 }

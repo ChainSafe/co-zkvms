@@ -226,7 +226,7 @@ where
 
 /// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3.
 pub fn b2a_many<T: IntRing2k, N: Rep3Network>(
-    x: Vec<Rep3RingShare<T>>,
+    x: &[Rep3RingShare<T>],
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<Rep3RingShare<T>>>
 where
@@ -243,7 +243,7 @@ where
 
     let y_a = match io_context.id {
         PartyID::ID0 => {
-            res.iter_mut().zip(r_vec.iter()).for_each(|(res, r)| {
+            res.iter_mut().for_each(|res| {
                 let k3 = io_context
                     .rngs
                     .bitcomp2
@@ -253,7 +253,7 @@ where
             r_vec
         }
         PartyID::ID1 => {
-            res.iter_mut().zip(r_vec.iter()).for_each(|(res, r)| {
+            res.iter_mut().for_each(|res| {
                 let k2 = io_context
                     .rngs
                     .bitcomp1
@@ -289,14 +289,14 @@ where
     let y: Vec<_> = izip!(y_a, y_b)
         .map(|(a, b)| Rep3RingShare { a, b })
         .collect();
-    let z = detail::low_depth_binary_add_many(&x, &y, io_context)?;
+    let z = detail::low_depth_binary_add_many(x, &y, io_context)?;
 
     match io_context.id {
         PartyID::ID0 => {
             let z_b = z.iter().map(|z| z.b.to_owned()).collect_vec();
             let rcv = io_context.network.reshare_many(&z_b)?;
             izip!(res.iter_mut(), rcv, z).for_each(|(res, rcv, z)| {
-                res.a = (z.a ^ z.b ^ rcv).into();
+                res.a = z.a ^ z.b ^ rcv;
             });
         }
         PartyID::ID1 => {
@@ -304,7 +304,7 @@ where
                 .network
                 .recv_many::<RingElement<T>>(io_context.id.prev_id())?;
             izip!(res.iter_mut(), rcv, z).for_each(|(res, rcv, z)| {
-                res.b = (z.a ^ z.b ^ rcv).into();
+                res.b = z.a ^ z.b ^ rcv;
             });
         }
         PartyID::ID2 => {

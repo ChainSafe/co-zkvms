@@ -2,7 +2,7 @@ use itertools::izip;
 use std::iter::Sum;
 use std::ops::Shr;
 
-use crate::field::JoltField;
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -19,7 +19,7 @@ use mpc_core::protocols::{
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::{
-    future::FutureVal,
+    future::FutureRep3,
     instruction_utils::{
         assert_valid_parameters, chunk_and_concatenate_for_shift,
         rep3_chunk_and_concatenate_for_shift,
@@ -27,14 +27,7 @@ use crate::utils::{
 };
 use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SRLInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
@@ -55,7 +48,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
         // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
         // which only happens at runtime).
@@ -139,28 +136,23 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRLInstruction<WORD_SIZE> {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_and_concatenate_for_shift(
-            self.0.as_binary_share(),
-            self.1.as_binary_share(),
-            C,
-            log_M,
-        )
+        rep3_chunk_and_concatenate_for_shift(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {
-            *out = FutureVal::cast_to_field_b2a(
+            *out = FutureRep3Ring::cast_to_field_b2a(
                 st.lhs()
-                    .as_binary_share()
+                    .as_binary()
                     .shr((st.rhs().unwrap().as_public() % WORD_SIZE as u64) as usize),
             )
         });

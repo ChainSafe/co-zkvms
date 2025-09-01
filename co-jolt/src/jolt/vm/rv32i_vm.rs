@@ -2,9 +2,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::worker::JoltRep3Prover;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::inputs::JoltR1CSInputs;
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
 use enum_dispatch::enum_dispatch;
 use jolt_core::utils::transcript::Transcript;
 use rand::prelude::StdRng;
@@ -30,14 +27,14 @@ use crate::jolt::instruction::{
 };
 use crate::jolt::vm::{Jolt, JoltProof};
 use crate::r1cs::constraints::JoltRV32IMConstraints;
-use crate::utils::future::FutureVal;
+use crate::utils::future_ring::FutureRep3Ring;
 use jolt_core::jolt::subtable::LassoSubtable;
 use jolt_core::jolt::vm::rv32i_vm::RV32ISubtables;
 use paste::paste;
 
 use mpc_core::protocols::rep3::{
     network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+    PartyID, Rep3PrimeFieldShare,
 };
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 

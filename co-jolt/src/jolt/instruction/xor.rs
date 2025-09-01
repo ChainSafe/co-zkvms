@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::utils::future_ring::FutureRep3Ring;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
@@ -12,7 +13,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, rep3_chunk_and_concatenate_operands,
@@ -86,7 +87,7 @@ impl Rep3JoltInstruction for XORInstruction {
     fn rhs(&self) -> Option<&Rep3Operand> {
         Some(&self.1)
     }
-    
+
     fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
@@ -103,27 +104,22 @@ impl Rep3JoltInstruction for XORInstruction {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_and_concatenate_operands(
-            self.0.as_binary_share(),
-            self.1.as_binary_share(),
-            C,
-            log_M,
-        )
+        rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
-            *out = FutureVal::cast_to_field_b2a(
-                step.lhs().as_binary_share() ^ step.rhs().unwrap().as_binary_share(),
+            *out = FutureRep3Ring::cast_to_field_b2a(
+                step.lhs().as_binary() ^ step.rhs().unwrap().as_binary(),
             )
         });
         Ok(())

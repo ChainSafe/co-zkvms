@@ -1,4 +1,4 @@
-use std::iter;
+use std::{iter, u32};
 
 use crate::{
     field::JoltField,
@@ -9,7 +9,8 @@ use crate::{
     },
     utils::{
         self,
-        future::{FutureExt, FutureVal},
+        future::{FutureExt, FutureRep3},
+        future_ring::{FutureRep3Ring, Rep3RingFutureExt},
     },
 };
 use ark_ff::{One, Zero};
@@ -71,28 +72,60 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
     where
-        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         // let mut network = BiNetwork::new(io_ctx)?;
         let num_reads = ops.len().next_power_of_two();
+
+        // let operands = ops
+        //     .iter()
+        //     .find_map(|op| match op.instruction_lookup.as_ref() {
+        //         Some(op) => Some(op.operands_rep3()),
+        //         None => None,
+        //     })
+        //     .unwrap();
+
+        // let operands_open = vec![operands.0.as_binary_share(), operands.1.as_binary_share()]
+        //     .into_iter()
+        //     .map(|x| {
+        //         rep3_ring::binary::open(&x, io_ctx.main())
+        //             .unwrap()
+        //             .convert()
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // let operands_b2a = rep3_ring::conversion::b2a_many(
+        //     vec![operands.0.as_binary_share(), operands.1.as_binary_share()],
+        //     io_ctx.main(),
+        // )?;
+        // // let operands_b2a = vec![operands.0.as_binary_share(), operands.1.as_binary_share()]
+        // //     .into_iter()
+        // //     .map(|x| rep3_ring::conversion::b2a(&x, io_ctx.main()).unwrap())
+        // //     .collect::<Vec<_>>();
+
+        // let operands_b2a_open = rep3_ring::arithmetic::open_vec(&operands_b2a, io_ctx.main())?
+        //     .into_iter()
+        //     .map(|x| x.convert())
+        //     .collect::<Vec<_>>();
+        // let operands_check = vec![operands.0.as_public() as u32, operands.1.as_public() as u32];
+        // assert_eq!(operands_open, operands_check);
+        // assert_eq!(operands_b2a_open, operands_check);
+        // println!("Operands checks passed");
 
         Instructions::promote_public_operands_to_shared(
             ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
             io_ctx.party_id(),
         );
 
-        Instructions::operands_b2a_many(
+        Instructions::populate_operands_casts(
             ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
             io_ctx.main(),
         )?;
 
-        io_ctx.main().network.reshare(F::zero()).unwrap();
-
         let lookup_outputs = compute_lookup_outputs_rep3(&ops, num_reads, io_ctx)?;
         let subtable_lookup_indices = subtable_lookup_indices_rep3::<C, F, Network, Instructions>(
             ops,
-            &lookup_outputs,
             &mut io_ctx.main(),
             M,
         )?;
@@ -111,34 +144,32 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             })
             .collect();
 
-        let (instructions_used, access_sequences): (
-            Vec<Vec<usize>>,
-            Vec<Vec<Rep3BigUintShare<F>>>,
-        ) = (0..preprocessing.num_memories)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-                let access_sequence = &subtable_lookup_indices[dim_index];
-                ops.iter()
-                    .enumerate()
-                    .filter_map(|(j, op)| {
-                        if let Some(op) = &op.instruction_lookup {
-                            let memories_used = &preprocessing.instruction_to_memory_indices
-                                [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)];
-                            if memories_used.contains(&memory_index) {
-                                Some((j, access_sequence[j].clone()))
+        let (instructions_used, access_sequences): (Vec<Vec<usize>>, Vec<Vec<Rep3RingShare<u32>>>) =
+            (0..preprocessing.num_memories)
+                .into_par_iter()
+                .map(|memory_index| {
+                    let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                    let access_sequence = &subtable_lookup_indices[dim_index];
+                    ops.iter()
+                        .enumerate()
+                        .filter_map(|(j, op)| {
+                            if let Some(op) = &op.instruction_lookup {
+                                let memories_used = &preprocessing.instruction_to_memory_indices
+                                    [<Instructions as Rep3JoltInstructionSet>::enum_index(op)];
+                                if memories_used.contains(&memory_index) {
+                                    Some((j, access_sequence[j].clone()))
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
-                        } else {
-                            None
-                        }
-                    })
-                    .unzip()
-            })
-            .unzip();
+                        })
+                        .unzip()
+                })
+                .unzip();
 
-        let mut ohvs = Rep3LookupTable::ohv_ring_from_index_no_a2b_conversion_many(
+        let mut ohvs = Rep3LookupTable::ohv_bits_from_index_no_a2b_conversion_many(
             access_sequences.par_iter().cloned().flatten(),
             M,
             io_ctx.main(),
@@ -327,8 +358,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         let span = tracing::info_span!("compute_dim");
         let _guard = span.enter();
-        let dim: Vec<_> = rep3::conversion::b2a_many(
-            subtable_lookup_indices.iter().flatten().collect_vec(),
+        let dim: Vec<_> = rep3_ring::casts::binary_ring_to_field_many(
+            &subtable_lookup_indices.into_iter().flatten().collect_vec(),
             io_ctx.main(),
         )?
         .chunks_exact(ops.len())
@@ -342,7 +373,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         for (j, op) in ops.iter().enumerate() {
             if let Some(op) = &op.instruction_lookup {
                 instruction_flag_bitvectors
-                    [<Instructions as Rep3JoltInstructionSet<F>>::enum_index(op)][j] = 1;
+                    [<Instructions as Rep3JoltInstructionSet>::enum_index(op)][j] = 1;
             }
         }
 
@@ -501,27 +532,26 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
 #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
 fn subtable_lookup_indices_rep3<const C: usize, F, Network, Instructions>(
-    ops: &[JoltTraceStep<F, Instructions>],
-    outputs: &Rep3MultilinearPolynomial<F>,
+    ops: &[JoltTraceStep<Instructions>],
     io_ctx0: &mut IoContext<Network>,
     M: usize,
-) -> eyre::Result<Vec<Vec<Rep3BigUintShare<F>>>>
+) -> eyre::Result<Vec<Vec<Rep3RingShare<u32>>>>
 where
     F: JoltField,
     Network: Rep3Network,
-    Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+    Instructions: Rep3JoltInstructionSet,
 {
     let num_chunks = C;
     let log_M = M.log_2();
 
+    let id = io_ctx0.id;
     let futures: Vec<_> = ops
         .par_iter()
-        .enumerate()
-        .map(|(i, lookup)| {
-            if let Some(lookup) = &lookup.instruction_lookup {
-                lookup.to_indices_intermediate(outputs.get_coeff(i).as_shared_ref())
+        .map(|op| {
+            if let Some(lookup) = &op.instruction_lookup {
+                lookup.to_indices_intermediate::<F>(id)
             } else {
-                FutureVal::Ready(None)
+                FutureRep3Ring::Ready(None)
             }
         })
         .collect();
@@ -535,7 +565,7 @@ where
             if let Some(lookup) = &lookup.instruction_lookup {
                 lookup.to_indices_rep3(intermediate, C, log_M)
             } else {
-                vec![Rep3BigUintShare::zero_share(); C]
+                vec![Rep3RingShare::zero_share(); C]
             }
         })
         .collect();
@@ -555,16 +585,17 @@ where
 fn compute_lookup_outputs_rep3<
     F: JoltField,
     Network: Rep3NetworkWorker,
-    Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
+    Instructions: Rep3JoltInstructionSet,
 >(
-    ops: &[JoltTraceStep<F, Instructions>],
+    ops: &[JoltTraceStep<Instructions>],
     num_reads: usize,
     io_ctx: &mut WorkerIoContext<Network>,
 ) -> eyre::Result<Rep3MultilinearPolynomial<F>> {
-    let mut outputs_futures = vec![FutureVal::Ready(Rep3PrimeFieldShare::zero_share()); ops.len()];
+    let mut outputs_futures =
+        vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); ops.len()];
     let ops_by_instruction: (
         Vec<Vec<&Instructions>>,
-        Vec<Vec<&mut FutureVal<F, Rep3PrimeFieldShare<F>>>>,
+        Vec<Vec<&mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>>,
     ) = izip!(ops, outputs_futures.iter_mut())
         .filter_map(|(op, out)| op.instruction_lookup.as_ref().map(|op| (op, out)))
         .group_by(|(lookup, _)| Rep3JoltInstructionSet::enum_index(*lookup))

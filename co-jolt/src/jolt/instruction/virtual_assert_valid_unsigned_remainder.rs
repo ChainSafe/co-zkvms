@@ -211,15 +211,10 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_and_concatenate_operands(
-            self.0.as_binary_share(),
-            self.1.as_binary_share(),
-            C,
-            log_M,
-        )
+        rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 }

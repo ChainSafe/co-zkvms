@@ -1,7 +1,7 @@
 use ark_std::log2;
 use itertools::izip;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{PartyID, Rep3BigUintShare, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::{JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
 use crate::jolt::instruction::Rep3JoltInstruction;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, rep3_add_and_chunk_operands,
@@ -114,14 +115,14 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for ADDInstruction<WORD_SIZE> {
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        _: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
-        FutureVal::ring_a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
+        _: PartyID,
+    ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
+        FutureRep3Ring::a2b(self.0.as_arithmetic() + self.1.as_arithmetic())
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3RingShare<u32>>,
+        z: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
@@ -133,11 +134,11 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for ADDInstruction<WORD_SIZE> {
         &self,
         steps: &[&impl Rep3JoltInstruction],
         _: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
-            *out = FutureVal::cast_to_field(
-                step.lhs().as_arithmetic_share() + step.rhs().unwrap().as_arithmetic_share(),
+            *out = FutureRep3Ring::cast_to_field(
+                step.lhs().as_arithmetic_u32() + step.rhs().unwrap().as_arithmetic_u32(),
             )
         });
         Ok(())

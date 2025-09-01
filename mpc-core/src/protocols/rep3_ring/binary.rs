@@ -22,7 +22,6 @@ pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Re
 where
     Standard: Distribution<T>,
 {
-    let val = T::from_le_bytes(&val.cast_to_biguint().to_bytes_le());
     let t0 = rng.r#gen::<T>();
     let t1 = rng.r#gen::<T>();
     let t2 = (val ^ t0) ^ t1;
@@ -123,7 +122,7 @@ where
         .map(|(a, b)| {
             let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
             mask ^= mask_b;
-            (a.as_ref().a & b.as_ref().a) ^ mask
+            (a.as_ref() & b.as_ref()) ^ mask
         })
         .collect::<Vec<_>>();
     let local_b = io_context.network.reshare_many(&local_a)?;

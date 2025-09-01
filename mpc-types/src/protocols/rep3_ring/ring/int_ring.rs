@@ -14,7 +14,8 @@ use std::{
 
 /// Types implementing this trait can be used as elements of a ring Z_{2^k}
 pub trait IntRing2k:
-    std::fmt::Display
+    Clone
+    + std::fmt::Display
     + Serialize
     + for<'a> Deserialize<'a>
     + WrappingAdd

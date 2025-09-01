@@ -6,8 +6,8 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 
 use jolt_core::{
     jolt::{
@@ -145,22 +145,22 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MOVSIGNInstruction<WORD_SIZ
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_operand_usize(self.0.as_binary_share(), C, log_M)
+        rep3_chunk_operand_usize(self.0.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let t: Vec<_> = steps
             .into_iter()
-            .map(|step| step.lhs().as_binary_share() & RingElement(SIGN_BIT_32 as u32))
+            .map(|step| step.lhs().as_binary() & RingElement(SIGN_BIT_32 as u32))
             .collect();
 
         let zeros = vec![Rep3RingShare::zero_share(); t.len()];
@@ -181,7 +181,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MOVSIGNInstruction<WORD_SIZ
             .into_iter()
             .zip(out)
             .for_each(|(ready, out)| {
-                *out = FutureVal::cast_to_field_b2a(ready);
+                *out = FutureRep3Ring::cast_to_field_b2a(ready);
             });
         Ok(())
     }

@@ -7,8 +7,8 @@ use crate::protocols::rep3::IoResult;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::{One, Zero};
 use rand::{
-    Rng,
     distributions::{Distribution, Standard},
+    Rng,
 };
 use serde::{Deserialize, Serialize};
 use std::{

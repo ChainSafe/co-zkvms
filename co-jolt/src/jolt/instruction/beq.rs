@@ -4,8 +4,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
-use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 
@@ -46,7 +46,11 @@ impl JoltInstruction for BEQInstruction {
         C
     }
 
-    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(Box::new(EqSubtable::new()), SubtableIndices::from(0..C))]
     }
 
@@ -124,30 +128,25 @@ impl Rep3JoltInstruction for BEQInstruction {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_and_concatenate_operands(
-            self.0.as_binary_share(),
-            self.1.as_binary_share(),
-            C,
-            log_M,
-        )
+        rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
             .map(|st| {
                 (
-                    st.lhs().as_arithmetic_share(),
-                    st.rhs().unwrap().as_arithmetic_share(),
+                    st.lhs().as_arithmetic_u32(),
+                    st.rhs().unwrap().as_arithmetic_u32(),
                 )
             })
             .unzip();
@@ -156,7 +155,7 @@ impl Rep3JoltInstruction for BEQInstruction {
             .context("BEQInstruction::output_batched")?
             .into_iter()
             .zip(out)
-            .for_each(|(z, out)| *out = FutureVal::bit_inject_to_field(z));
+            .for_each(|(z, out)| *out = FutureRep3Ring::bit_inject_to_field(z));
 
         Ok(())
     }

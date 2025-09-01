@@ -192,7 +192,7 @@ where
                 _ => vec![instruction],
             })
             .map(|instruction| {
-                BytecodeRow::from_instruction_ext::<F, Self::InstructionSet>(&instruction)
+                BytecodeRow::from_instruction_ext::<Self::InstructionSet>(&instruction)
             })
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);

@@ -1212,6 +1212,7 @@ dependencies = [
  "mpc-core",
  "mpc-net",
  "num-bigint 0.4.6",
+ "num-traits",
  "num_cpus",
  "once_cell",
  "paste",

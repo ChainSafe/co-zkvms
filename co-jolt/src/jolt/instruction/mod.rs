@@ -1,5 +1,6 @@
 use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::chunk_operand;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -7,8 +8,10 @@ use ark_serialize::{
 use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring;
+use mpc_core::protocols::rep3_ring::casts::downcast;
+use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+use mpc_core::protocols::rep3_ring::{self, arithmetic};
 use mpc_core::protocols::{
     rep3::{
         self,
@@ -17,6 +20,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::Rep3RingShare,
 };
+use num_traits::AsPrimitive;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -114,14 +118,14 @@ pub trait Rep3JoltInstruction: JoltInstruction {
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        z: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
-        FutureVal::Ready(None)
+        id: PartyID,
+    ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
+        FutureRep3Ring::Ready(None)
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3RingShare<u32>>,
+        z: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>>;
@@ -130,7 +134,7 @@ pub trait Rep3JoltInstruction: JoltInstruction {
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         Err(eyre::eyre!(
             "output_batched not implemented for instruction"
@@ -158,7 +162,7 @@ pub trait JoltInstructionSet:
 }
 
 pub trait Rep3JoltInstructionSet:
-    Rep3JoltInstruction + IntoEnumIterator + EnumCount + AsRef<str> + Send + Sync
+    JoltInstructionSet + Rep3JoltInstruction + IntoEnumIterator + EnumCount + AsRef<str> + Send + Sync
 {
     fn enum_index(lookup: &Self) -> usize {
         let byte = unsafe { *(lookup as *const Self as *const u8) };
@@ -180,30 +184,30 @@ pub trait Rep3JoltInstructionSet:
                     ),
                     arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
                         id,
-                        RingElement(*x as u32),
+                        RingElement(*x as u128),
                     )),
                     public: Some(*x),
                 };
             }
 
-            if let Some(Rep3Operand::Public(x)) = op2 {
+            if let Some(Rep3Operand::Public(y)) = op2 {
                 *op2.unwrap() = Rep3Operand::Shared {
                     binary: rep3_ring::binary::promote_to_trivial_share(
                         id,
-                        &RingElement(*x as u32),
+                        &RingElement(*y as u32),
                     ),
                     arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
                         id,
-                        RingElement(*x as u32),
+                        RingElement(*y as u128),
                     )),
-                    public: Some(*x),
+                    public: Some(*y),
                 };
             }
         });
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::operands_to_binary")]
-    fn operands_b2a_many<'a, N: Rep3Network>(
+    #[tracing::instrument(skip_all, name = "Rep3JoltInstructionSet::populate_operands_casts")]
+    fn populate_operands_casts<'a, N: Rep3Network>(
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
@@ -257,18 +261,16 @@ pub trait Rep3JoltInstructionSet:
         if inputs.iter().flatten().next().is_none() {
             return Ok(());
         }
-        let mut outputs = rep3_ring::conversion::a2b_many(
-            &inputs.into_iter().flatten().collect::<Vec<_>>(),
-            io_ctx,
-        )?;
+
+        let binary_inputs = inputs.into_iter().flatten().collect::<Vec<_>>();
+        let mut arith_outputs = rep3_ring::casts::upcast_many_from_binary(&binary_inputs, io_ctx)?;
         for operands in field_operands.into_iter() {
-            for (output, operand) in outputs.drain(..operands.len()).zip(operands) {
+            for (output, operand) in arith_outputs.drain(..operands.len()).zip(operands) {
                 match operand {
                     Rep3Operand::Shared {
                         arithmetic: None,
                         binary,
                         public,
-                        ..
                     } => {
                         *operand = Rep3Operand::Shared {
                             binary: std::mem::take(binary),
@@ -292,13 +294,27 @@ pub trait Rep3JoltInstructionSet:
 pub enum Rep3Operand {
     Shared {
         binary: Rep3RingShare<u32>,
-        arithmetic: Option<Rep3RingShare<u32>>,
+        arithmetic: Option<Rep3RingShare<u128>>,
         public: Option<u64>, // Some for trivial shares
     },
     Public(u64),
 }
 
 impl Rep3Operand {
+    // TODO remove
+    // pub fn insert_public(&mut self, p: u64) {
+    //     match self {
+    //         Rep3Operand::Shared {
+    //             binary,
+    //             arithmetic,
+    //             public,
+    //         } => {
+    //             public.insert(p);
+    //         }
+    //         Rep3Operand::Public(_) => {}
+    //     };
+    // }
+
     pub fn from_binary(share: Rep3RingShare<u32>) -> Self {
         Rep3Operand::Shared {
             binary: share,
@@ -307,7 +323,7 @@ impl Rep3Operand {
         }
     }
 
-    pub fn from_arithmetic(binary: Rep3RingShare<u32>, arithmetic: Rep3RingShare<u32>) -> Self {
+    pub fn from_arithmetic(binary: Rep3RingShare<u32>, arithmetic: Rep3RingShare<u128>) -> Self {
         Rep3Operand::Shared {
             binary,
             arithmetic: Some(arithmetic),
@@ -325,14 +341,38 @@ impl Rep3Operand {
         }
     }
 
-    pub fn as_arithmetic_share(&self) -> Rep3RingShare<u32> {
+    pub fn as_arithmetic<T: IntRing2k>(&self) -> Rep3RingShare<T>
+    where
+        u128: AsPrimitive<T>,
+    {
         match self {
-            Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
+            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
             _ => panic!("Not an arithmetic operand"),
         }
     }
 
-    pub fn as_binary_share(&self) -> Rep3RingShare<u32> {
+    pub fn as_arithmetic_u32(&self) -> Rep3RingShare<u32> {
+        match self {
+            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
+            _ => panic!("Not an arithmetic operand"),
+        }
+    }
+
+    pub fn as_arithmetic_u64(&self) -> Rep3RingShare<u64> {
+        match self {
+            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
+            _ => panic!("Not an arithmetic operand"),
+        }
+    }
+
+    pub fn as_arithmetic_u128(&self) -> Rep3RingShare<u128> {
+        match self {
+            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
+            _ => panic!("Not an arithmetic operand"),
+        }
+    }
+
+    pub fn as_binary(&self) -> Rep3RingShare<u32> {
         match self {
             Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),

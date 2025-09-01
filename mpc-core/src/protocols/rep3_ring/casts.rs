@@ -123,6 +123,36 @@ where
     conversion::b2a(&binary, io_context)
 }
 
+/// An upcast of a Rep3RingShare from a smaller ring to a larger ring
+/// Does require network interaction
+pub fn upcast_many_from_binary<T, U, N>(
+    binary: &[Rep3RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> std::io::Result<Vec<Rep3RingShare<U>>>
+where
+    T: IntRing2k + AsPrimitive<U>,
+    U: IntRing2k,
+    N: Rep3Network,
+    Standard: Distribution<T> + Distribution<U>,
+{
+    assert!(T::K < U::K);
+
+    // A special case for Bit
+    if TypeId::of::<T>() == TypeId::of::<Bit>() {
+        unimplemented!()
+    }
+
+    let binary_upcasted = binary
+        .iter()
+        .map(|s| Rep3RingShare {
+            a: RingElement(s.a.0.as_()),
+            b: RingElement(s.b.0.as_()),
+        })
+        .collect::<Vec<_>>();
+
+    conversion::b2a_many(&binary_upcasted, io_context)
+}
+
 /// A cast of a Rep3RingShare from a ring to another ring. In case of a downcast, the excess bits are just truncated.
 pub fn cast_a2b<T, U, N>(
     share: Rep3RingShare<T>,

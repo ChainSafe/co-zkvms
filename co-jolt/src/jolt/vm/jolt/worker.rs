@@ -80,7 +80,7 @@ impl<
     > JoltRep3Prover<F, C, M, Instructions, Subtables, Constraints, PCS, ProofTranscript, Network>
 where
     F: JoltField,
-    Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
+    Instructions: Rep3JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Constraints: R1CSConstraints<C, F>,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,

@@ -5,17 +5,20 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::{field::JoltField, utils::instruction_utils::rep3_add_and_chunk_operands};
+use crate::{
+    field::JoltField,
+    utils::{future_ring::FutureRep3Ring, instruction_utils::rep3_add_and_chunk_operands},
+};
 use mpc_core::protocols::{
     rep3::{
         self,
         network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
 
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
 use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters};
 
@@ -123,14 +126,14 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        _: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
-        FutureVal::ring_a2b(self.0.as_arithmetic_share() + self.1.as_arithmetic_share())
+        _: PartyID,
+    ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
+        FutureRep3Ring::a2b(self.0.as_arithmetic() + self.1.as_arithmetic())
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3RingShare<u32>>,
+        z: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
@@ -141,7 +144,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
         //         as u64)
@@ -149,17 +152,12 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
 
         let (x, y): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|st| {
-                (
-                    st.lhs().as_binary_share(),
-                    st.rhs().unwrap().as_binary_share(),
-                )
-            })
+            .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_binary()))
             .unzip();
         let z = rep3_ring::binary::add_many(&x, &y, io_ctx)?; // TODO: % 2
         let is_zero = rep3_ring::binary::is_zero_many(&z, io_ctx)?;
         izip!(is_zero, out.into_iter()).for_each(|(r, out)| {
-            *out = FutureVal::bit_inject_to_field(r);
+            *out = FutureRep3Ring::bit_inject_to_field(r);
         });
         Ok(())
     }

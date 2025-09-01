@@ -8,25 +8,19 @@ use serde::{Deserialize, Serialize};
 
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, PartyID, Rep3BigUintShare, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
     concatenate_lookups_rep3_batched, multiply_and_chunk_operands,
     rep3_multiply_and_chunk_operands,
 };
 
-#[derive(
-    Clone,
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MULUInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
 impl<const WORD_SIZE: usize> JoltInstruction for MULUInstruction<WORD_SIZE> {
@@ -46,7 +40,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULUInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: JoltField>(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![(
             Box::new(IdentitySubtable::new()),
@@ -86,8 +84,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for MULUInstruction<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULUInstruction<WORD_SIZE>
-{
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULUInstruction<WORD_SIZE> {
     fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
@@ -120,14 +117,14 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULUInstruction<WORD_SIZE>
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        z: &Rep3PrimeFieldShare<F>,
-    ) -> FutureVal<F, Option<Rep3RingShare<u32>>> {
-        FutureVal::a2b(*z)
+        _: PartyID,
+    ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
+        FutureRep3Ring::mul_a2b(self.0.as_arithmetic(), self.1.as_arithmetic())
     }
 
     fn to_indices_rep3(
         &self,
-        z: Option<Rep3RingShare<u32>>,
+        z: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
@@ -138,14 +135,14 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULUInstruction<WORD_SIZE>
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .into_iter()
             .map(|st| {
                 (
-                    st.lhs().as_arithmetic_share(),
-                    st.rhs().unwrap().as_arithmetic_share(),
+                    st.lhs().as_arithmetic_u32(),
+                    st.rhs().unwrap().as_arithmetic_u32(),
                 )
             })
             .unzip();
@@ -155,7 +152,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MULUInstruction<WORD_SIZE>
             .into_iter()
             .zip(out)
             .for_each(|(ready, out)| {
-                *out = FutureVal::cast_to_field(ready);
+                *out = FutureRep3Ring::cast_to_field(ready);
             });
 
         Ok(())

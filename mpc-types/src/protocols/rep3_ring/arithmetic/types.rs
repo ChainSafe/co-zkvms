@@ -2,7 +2,7 @@ use crate::protocols::{
     rep3::id::PartyID,
     rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
-use num_traits::Zero;
+use num_traits::{AsPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 
 /// This type represents a replicated shared value. Since a replicated share of a ring element contains additive shares of two parties, this type contains two ring elements.
@@ -68,6 +68,19 @@ impl<T: IntRing2k> Rep3RingShare<T> {
         Rep3RingShare {
             a: RingElement(Bit::new(self.a.get_bit(index).0 == T::one())),
             b: RingElement(Bit::new(self.b.get_bit(index).0 == T::one())),
+        }
+    }
+
+    pub fn downcast<U: IntRing2k>(&self) -> Rep3RingShare<U>
+    where
+        T: AsPrimitive<U>,
+        U: IntRing2k,
+    {
+        assert!(T::K >= U::K);
+
+        Rep3RingShare {
+            a: RingElement(self.a.0.as_()),
+            b: RingElement(self.b.0.as_()),
         }
     }
 }

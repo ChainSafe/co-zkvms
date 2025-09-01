@@ -14,12 +14,12 @@ use mpc_core::protocols::{
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3_batched,
     rep3_chunk_and_concatenate_operands,
 };
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use crate::{
     jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
     utils::instruction_utils::concatenate_lookups_rep3,
@@ -45,7 +45,11 @@ impl JoltInstruction for ANDInstruction {
         1
     }
 
-    fn subtables<F: JoltField>(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![(Box::new(AndSubtable::new()), SubtableIndices::from(0..C))]
     }
 
@@ -106,39 +110,29 @@ impl Rep3JoltInstruction for ANDInstruction {
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_and_concatenate_operands(
-            self.0.as_binary_share(),
-            self.1.as_binary_share(),
-            C,
-            log_M,
-        )
+        rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (x, y): (Vec<_>, Vec<_>) = steps
             .into_iter()
-            .map(|st| {
-                (
-                    st.lhs().as_binary_share(),
-                    st.rhs().unwrap().as_binary_share(),
-                )
-            })
+            .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_binary()))
             .unzip();
 
         rep3_ring::binary::and_many(&x, &y, io_ctx)
             .context("AND")?
             .into_iter()
             .zip(out)
-            .for_each(|(z, out)| *out = FutureVal::cast_to_field_b2a(z));
+            .for_each(|(z, out)| *out = FutureRep3Ring::cast_to_field_b2a(z));
         Ok(())
     }
 }

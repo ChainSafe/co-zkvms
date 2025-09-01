@@ -6,7 +6,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
-use crate::utils::future::FutureVal;
+use crate::utils::future::FutureRep3;
+use crate::utils::future_ring::FutureRep3Ring;
 use jolt_core::jolt::subtable::LassoSubtable;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
@@ -85,7 +86,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for RightShiftPaddingInstructio
 
     fn to_indices_rep3(
         &self,
-        _: Option<Rep3RingShare<u32>>,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         _: usize,
     ) -> Vec<Rep3RingShare<u32>> {
@@ -96,12 +97,12 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for RightShiftPaddingInstructio
         &self,
         steps: &[&impl Rep3JoltInstruction],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureVal<F, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(step, out)| {
             let shift = step.lhs().as_public() % WORD_SIZE as u64;
             let ones = (1 << shift) - 1;
-            *out = FutureVal::Ready(
+            *out = FutureRep3Ring::Ready(
                 rep3::arithmetic::promote_to_trivial_share(
                     io_ctx.id,
                     F::from(ones << (WORD_SIZE as u64 - shift)),

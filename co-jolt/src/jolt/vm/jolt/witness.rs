@@ -61,7 +61,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker;
 
     fn combine_polynomials(
@@ -165,7 +165,7 @@ where
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
-        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(

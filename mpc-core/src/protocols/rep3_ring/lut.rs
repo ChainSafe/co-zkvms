@@ -24,6 +24,7 @@ use mpc_types::protocols::{
         ring::{bit::Bit, int_ring::IntRing2k},
     },
 };
+use num_traits::AsPrimitive;
 use rand::{distributions::Standard, prelude::Distribution};
 
 use rayon::prelude::*;
@@ -342,6 +343,23 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
         gadgets::ohv::ohv_many(k, bits, io_ctx)
     }
 
+    #[tracing::instrument(skip_all)]
+    fn ohv_from_ring_index_internal_many<U: IntRing2k, T: IntRing2k>(
+        index: impl IntoParallelIterator<Item = Rep3RingShare<T>>,
+        k: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>>
+    where
+        T: AsPrimitive<U>,
+    {
+        let bits = index
+            .into_par_iter()
+            .map(|index| super::casts::downcast::<T, U>(index))
+            .collect::<Vec<_>>();
+
+        gadgets::ohv::ohv_many(k, bits, io_ctx)
+    }
+
     /// Creates a shared one-hot-encoded vector from a given shared index
     pub fn ohv_from_index<F: PrimeField>(
         &mut self,
@@ -441,22 +459,25 @@ impl<N: Rep3Network> Rep3LookupTable<N> {
 
     /// Creates a shared one-hot-encoded vector from a given shared index
     #[tracing::instrument(skip_all, level = "trace")]
-    pub fn ohv_ring_from_index_no_a2b_conversion_many<F: PrimeField>(
-        index: impl IntoParallelIterator<Item = Rep3BigUintShare<F>>,
+    pub fn ohv_bits_from_index_no_a2b_conversion_many<T: IntRing2k>(
+        index: impl IntoParallelIterator<Item = Rep3RingShare<T>>,
         len: usize,
         io_ctx: &mut IoContext<N>,
-    ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>> {
+    ) -> IoResult<Vec<Vec<Rep3RingShare<Bit>>>>
+    where
+        T: AsPrimitive<Bit> + AsPrimitive<u8> + AsPrimitive<u16> + AsPrimitive<u32>,
+    {
         let bits = index;
         let k = len.next_power_of_two().ilog2() as usize;
 
         let e = if k == 1 {
-            Self::ohv_from_index_internal_many::<Bit, _>(bits, k, io_ctx)?
+            Self::ohv_from_ring_index_internal_many::<Bit, _>(bits, k, io_ctx)?
         } else if k <= 8 {
-            Self::ohv_from_index_internal_many::<u8, _>(bits, k, io_ctx)?
+            Self::ohv_from_ring_index_internal_many::<u8, _>(bits, k, io_ctx)?
         } else if k <= 16 {
-            Self::ohv_from_index_internal_many::<u16, _>(bits, k, io_ctx)?
+            Self::ohv_from_ring_index_internal_many::<u16, _>(bits, k, io_ctx)?
         } else if k <= 32 {
-            Self::ohv_from_index_internal_many::<u32, _>(bits, k, io_ctx)?
+            Self::ohv_from_ring_index_internal_many::<u32, _>(bits, k, io_ctx)?
         } else {
             panic!("Table is too large")
         };

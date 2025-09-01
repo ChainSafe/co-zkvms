@@ -1,4 +1,5 @@
 use super::dense_interleaved_poly::Rep3DenseInterleavedPolynomial;
+use crate::field::JoltField;
 use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::poly::Rep3DensePolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedGrandProductLayerWorker;
@@ -6,17 +7,14 @@ use crate::subprotocols::sumcheck::{Rep3BatchedCubicSumcheckWorker, Rep3Bindable
 use crate::subprotocols::{
     grand_product::Rep3BatchedGrandProductLayer, sumcheck::Rep3BatchedCubicSumcheck,
 };
-use crate::utils::future::{FutureExt, FutureVal};
-use crate::field::JoltField;
+use crate::utils::future::{FutureExt, FutureRep3};
 
 use ark_ff::Zero;
 use eyre::Context;
 use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
 };
-use jolt_core::{
-    utils::{math::Math, transcript::Transcript},
-};
+use jolt_core::utils::{math::Math, transcript::Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
@@ -148,7 +146,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 .worker(0)
                 .par_iter(&self.coeffs, None, |segment, io_ctx| {
                     let mut output_segment: Vec<
-                        FutureVal<F, SparseCoefficient<Rep3PrimeFieldShare<F>>, usize>,
+                        FutureRep3<F, SparseCoefficient<Rep3PrimeFieldShare<F>>, usize>,
                     > = Vec::with_capacity(segment.len());
                     let mut next_index_to_process = 0usize;
                     for (j, coeff) in segment.iter().enumerate() {
@@ -164,7 +162,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                                 .unwrap_or((coeff.index + 1, one_share).into());
                             if right.index == coeff.index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_segment.push(FutureVal::mul_args(
+                                output_segment.push(FutureRep3::mul_args(
                                     right.value,
                                     coeff.value,
                                     coeff.index / 2,
@@ -172,14 +170,14 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                             } else {
                                 // Corresponding right node not found, so it must be 1
                                 output_segment
-                                    .push(FutureVal::Ready((coeff.index / 2, coeff.value).into()));
+                                    .push(FutureRep3::Ready((coeff.index / 2, coeff.value).into()));
                             }
                             next_index_to_process = coeff.index + 2;
                         } else {
                             // Right node; corresponding left node was not encountered in
                             // previous iteration, so it must have value 1
                             output_segment
-                                .push(FutureVal::Ready((coeff.index / 2, coeff.value).into()));
+                                .push(FutureRep3::Ready((coeff.index / 2, coeff.value).into()));
                             next_index_to_process = coeff.index + 1;
                         }
                     }

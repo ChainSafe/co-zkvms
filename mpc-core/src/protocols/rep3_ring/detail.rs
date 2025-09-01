@@ -65,8 +65,9 @@ fn kogge_stone_inner_many<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
+    let s = p.to_vec();
     kogge_stone_loop_many(&mut p.to_owned(), g, io_context)?;
-    izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| {
+    izip!(g.iter_mut(), s.iter()).for_each(|(g, p)| {
         *g <<= 1;
         *g ^= p;
     });

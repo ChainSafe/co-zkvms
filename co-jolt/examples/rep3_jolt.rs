@@ -199,8 +199,9 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2(), 1 << 10)
             .unwrap();
 
-    let (program_io, trace): (Rep3ProgramIOInput<F>, Vec<JoltTraceStep<F, RV32I<F>>>) =
-        network.receive_request()?;
+    let program_io: Rep3ProgramIOInput<F> = network.receive_request()?;
+    let trace: Vec<JoltTraceStep<RV32I>> =
+        bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -252,7 +253,7 @@ pub fn run_coordinator(
     let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace::<F>(&inputs);
+    let (program_io, trace) = program.trace(&inputs);
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -295,7 +296,8 @@ pub fn run_coordinator(
     //
 
     let mut rng = test_rng();
-    let shares = program.generate_trace_shares::<F, _>(&inputs, &mut rng);
+    let (program_io_shares, trace_shares) =
+        program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
     let mut network = Rep3QuicNetCoordinator::new(
         config.extend_with_workers(args.num_workers_per_party),
@@ -303,7 +305,14 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
-    network.send_requests(shares);
+    network.send_requests(program_io_shares);
+    network.send_requests_blocking(
+        trace_shares
+            .into_iter()
+            .map(|s| bincode::serialize(&s))
+            .collect::<bincode::Result<Vec<_>>>()
+            .context("while serializing trace shares")?,
+    )?;
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(
         &preprocessing.shared,
@@ -323,18 +332,21 @@ pub fn run_coordinator(
         .instruction_lookups;
 
     assert_eq!(polys.lookup_outputs, check.lookup_outputs);
-    izip!(polys.dim, check.dim).for_each(|(poly, check)| {
-        let poly = poly.coeffs_as_field_elements();
-        let check = check.coeffs_as_field_elements();
-        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-        if let Some(pos) = p {
-            panic!(
-                "lookup_outputs mismatch at position {:?} != {:?}",
-                &poly[pos..pos + 5],
-                &check[pos..pos + 5]
-            );
-        }
-    });
+    izip!(polys.dim, check.dim)
+        .enumerate()
+        .for_each(|(i, (poly, check))| {
+            let poly = poly.coeffs_as_field_elements();
+            let check = check.coeffs_as_field_elements();
+            let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+            if let Some(pos) = p {
+                panic!(
+                    "dim {i} mismatch at position {} {:?} != {:?}",
+                    pos,
+                    &poly[pos..pos + 5],
+                    &check[pos..pos + 5]
+                );
+            }
+        });
     izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
         let poly = poly.coeffs_as_field_elements();
         let check = check.coeffs_as_field_elements();
@@ -395,8 +407,8 @@ pub fn run_coordinator(
     Ok(())
 }
 
-fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
-    instruction_trace: &[JoltTraceStep<F, Instructions>],
+fn print_used_instructions<Instructions: JoltInstructionSet>(
+    instruction_trace: &[JoltTraceStep<Instructions>],
 ) {
     let opcodes_used = instruction_trace
         .par_iter()

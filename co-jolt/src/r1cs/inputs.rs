@@ -139,7 +139,7 @@ where
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: JoltInstructionSet + Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         todo!()
@@ -244,9 +244,7 @@ impl ConstraintInput for JoltR1CSInputs {
                 Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
-                Self::InstructionFlags(_) => {
-                    RV32I::iter().map(Self::InstructionFlags).collect()
-                }
+                Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
