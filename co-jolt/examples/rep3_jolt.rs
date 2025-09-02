@@ -330,68 +330,68 @@ pub fn run_coordinator(
         network.receive_responses()?,
     )?;
 
-    // let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io)
-    //     .instruction_lookups;
+    let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io)
+        .instruction_lookups;
 
-    // assert_eq!(polys.lookup_outputs, check.lookup_outputs);
-    // izip!(polys.dim, check.dim)
-    //     .enumerate()
-    //     .for_each(|(i, (poly, check))| {
-    //         let poly = poly.coeffs_as_field_elements();
-    //         let check = check.coeffs_as_field_elements();
-    //         let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-    //         if let Some(pos) = p {
-    //             panic!(
-    //                 "dim {i} mismatch at position {} {:?} != {:?}",
-    //                 pos,
-    //                 &poly[pos..pos + 5],
-    //                 &check[pos..pos + 5]
-    //             );
-    //         }
-    //     });
-    // izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
-    //     let poly = poly.coeffs_as_field_elements();
-    //     let check = check.coeffs_as_field_elements();
-    //     let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-    //     if let Some(pos) = p {
-    //         panic!(
-    //             "final_cts mismatch at position {} {:?} != {:?}",
-    //             pos,
-    //             &poly[pos..pos + 5],
-    //             &check[pos..pos + 5]
-    //         );
-    //     }
-    // });
-    // izip!(polys.read_cts, check.read_cts)
-    //     .enumerate()
-    //     .for_each(|(i, (poly, check))| {
-    //         let poly = poly.coeffs_as_field_elements();
-    //         let check = check.coeffs_as_field_elements();
-    //         let p = izip!(&poly, &check).position(|(f, check)| *f != *check);
-    //         if let Some(pos) = p {
-    //             panic!(
-    //                 "read_cts[{}] mismatch at position {} {:?} != {:?}",
-    //                 i,
-    //                 pos,
-    //                 &poly[pos..],
-    //                 &check[pos..]
-    //             );
-    //         }
-    //     });
+    assert_eq!(polys.lookup_outputs, check.lookup_outputs);
+    izip!(polys.dim, check.dim)
+        .enumerate()
+        .for_each(|(i, (poly, check))| {
+            let poly = poly.coeffs_as_field_elements();
+            let check = check.coeffs_as_field_elements();
+            let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+            if let Some(pos) = p {
+                panic!(
+                    "dim {i} mismatch at position {} {:?} != {:?}",
+                    pos,
+                    &poly[pos..pos + 5],
+                    &check[pos..pos + 5]
+                );
+            }
+        });
+    izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
+        let poly = poly.coeffs_as_field_elements();
+        let check = check.coeffs_as_field_elements();
+        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+        if let Some(pos) = p {
+            panic!(
+                "final_cts mismatch at position {} {:?} != {:?}",
+                pos,
+                &poly[pos..pos + 5],
+                &check[pos..pos + 5]
+            );
+        }
+    });
+    izip!(polys.read_cts, check.read_cts)
+        .enumerate()
+        .for_each(|(i, (poly, check))| {
+            let poly = poly.coeffs_as_field_elements();
+            let check = check.coeffs_as_field_elements();
+            let p = izip!(&poly, &check).position(|(f, check)| *f != *check);
+            if let Some(pos) = p {
+                panic!(
+                    "read_cts[{}] mismatch at position {} {:?} != {:?}",
+                    i,
+                    pos,
+                    &poly[pos..],
+                    &check[pos..]
+                );
+            }
+        });
 
-    // izip!(polys.E_polys, check.E_polys).for_each(|(poly, check)| {
-    //     let poly = poly.coeffs_as_field_elements();
-    //     let check = check.coeffs_as_field_elements();
-    //     let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-    //     if let Some(pos) = p {
-    //         panic!(
-    //             "E_polys mismatch at position {} {:?} != {:?}",
-    //             pos,
-    //             &poly[pos..pos + 5],
-    //             &check[pos..pos + 5]
-    //         );
-    //     }
-    // });
+    izip!(polys.E_polys, check.E_polys).for_each(|(poly, check)| {
+        let poly = poly.coeffs_as_field_elements();
+        let check = check.coeffs_as_field_elements();
+        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+        if let Some(pos) = p {
+            panic!(
+                "E_polys mismatch at position {} {:?} != {:?}",
+                pos,
+                &poly[pos..pos + 5],
+                &check[pos..pos + 5]
+            );
+        }
+    });
 
     // let (proof, commitments) = RV32IJoltVM::prove_rep3(
     //     meta,

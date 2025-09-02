@@ -186,7 +186,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     .zip_eq(ohvs_by_memory),
                 None,
                 |(memory_index, ohvs), io_ctx| {
+                    let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                    let access_sequence = &subtable_lookup_indices[dim_index];
 
                     let mut final_cts_i = vec![Rep3RingShare::zero_share(); M];
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
@@ -207,8 +209,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     //     io_ctx,
                     // )?;
 
-                    // let (r, e_r) = rep3_ring::gadgets::ohv::rand_ohv::<u32, _>(M, io_ctx)?;
-                    // let rand_ohv = rep3_ring::conversion::bit_inject_from_bits_many(&e_r, io_ctx)?;
+                    let (r, e_r) = rep3_ring::gadgets::ohv::rand_ohv::<u32, _>(16, io_ctx)?;
+                    let rand_ohv =
+                        rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(&e_r, io_ctx)?;
 
                     let mut used_ops = Vec::with_capacity(ohvs.len());
                     let mut read_cts_i_local_a = Vec::with_capacity(ohvs.len());
@@ -223,34 +226,34 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             let memories_used = &preprocessing.instruction_to_memory_indices
                                 [<Instructions as Rep3JoltInstructionSet>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
-                                // let memory_address = access_sequence[j];
-                                let ohv =
-                                    rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
-                                        &ohvs.next().unwrap(),
-                                        io_ctx,
-                                    )?;
+                                let memory_address = access_sequence[j];
+                                // let ohv =
+                                //     rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
+                                //         &ohvs.next().unwrap(),
+                                //         io_ctx,
+                                //     )?;
+
                                 // let ohv = ohvs.drain(..M).collect::<Vec<_>>();
-                                // let c = rep3_ring::binary::open(&(r ^ memory_address), io_ctx)?;
-                                // let c: usize = (c.0 as usize) & ((1 << M) - 1); // Mask potential overflows from non-well-defined input
+                                let c = rep3_ring::binary::open(&(r ^ memory_address), io_ctx)?
+                                    .convert() as usize;
 
                                 let _guard = tracing::trace_span!("luts_rw_local").entered();
                                 let mut counter =
                                     io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
                                 for (i, l) in final_cts_i.iter_mut().enumerate() {
-                                    // let e = rand_ohv[i ^ c];
-                                    let e = ohv[i];
+                                    let e = rand_ohv[i ^ c];
+                                    // let e = ohv[i];
                                     counter += e * *l;
                                     *l += e; // ohv_bit (either 0 or 1)
                                 }
-                                // let mut subtable_lookup =
-                                //     io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
-                                let mut subtable_lookup = RingElement::zero();
+                                let mut subtable_lookup =
+                                    io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
                                 for (i, l) in materialized_subtable_luts[subtable_index]
                                     .iter()
                                     .enumerate()
                                 {
-                                    // let e = rand_ohv[i ^ c];
-                                    let e = ohv[i];
+                                    let e = rand_ohv[i ^ c];
+                                    // let e = ohv[i];
                                     subtable_lookup += e * *l;
                                 }
 
