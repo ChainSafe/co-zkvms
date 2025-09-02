@@ -271,12 +271,10 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
     };
 
     // reshare y
-    let _guard = tracing::trace_span!("reshare_many").entered();
     let y_b: Vec<_> = io_context.network.reshare_many(&y_a)?;
     let y: Vec<_> = izip!(y_a, y_b)
         .map(|(a, b)| BinaryShare::new(a, b))
         .collect();
-    drop(_guard);
 
     let z = detail::low_depth_binary_add_mod_p_many::<F, N>(
         x,

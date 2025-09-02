@@ -197,7 +197,8 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for ASSERTLTEInstruction<WORD_S
             .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_binary()))
             .unzip();
 
-        rep3_ring::arithmetic::lt_many(&a, &b, io_ctx)
+        // a <= b is equivalent to b >= a
+        rep3_ring::arithmetic::ge_many(&b, &a, io_ctx)
             .context("ASSERTLTEInstruction::output_batched")?
             .into_iter()
             .zip(out)

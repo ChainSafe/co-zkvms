@@ -262,6 +262,23 @@ pub fn open<F: PrimeField, N: Rep3Network>(
     Ok(&a.a ^ &a.b ^ c)
 }
 
+/// Performs the opening of a shared value and returns the equivalent public value.
+pub fn open_vec<F: PrimeField, N: Rep3Network, T: TryFrom<BigUint>>(
+    a: Vec<BinaryShare<F>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<T>> {
+    let a_b = a.iter().map(|a| a.b.clone()).collect::<Vec<_>>();
+    let c = io_context.network.reshare_many(&a_b)?;
+    izip!(a, c)
+        .map(|(a, c)| {
+            (&a.a ^ &a.b ^ c).try_into().or(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to convert BigUint",
+            )))
+        })
+        .collect()
+}
+
 /// Transforms a public value into a shared value: \[a\] = a.
 pub fn promote_to_trivial_share<F: PrimeField>(
     id: PartyID,

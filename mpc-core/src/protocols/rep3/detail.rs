@@ -14,7 +14,6 @@ use itertools::izip;
 use num_bigint::BigUint;
 use std::any::TypeId;
 
-#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>(
     x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
@@ -40,7 +39,6 @@ pub(crate) fn low_depth_binary_add_many<'a, F: PrimeField, N: Rep3Network>(
     Ok(g)
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
 fn kogge_stone_inner_many<F: PrimeField, N: Rep3Network>(
     p: &mut [Rep3BigUintShare<F>],
     g: &mut [Rep3BigUintShare<F>],
@@ -261,7 +259,6 @@ fn ceil_log2(x: usize) -> usize {
 }
 
 #[expect(clippy::type_complexity)]
-#[tracing::instrument(skip_all, level = "trace")]
 fn and_twice_many_iter<F: PrimeField, N: Rep3Network>(
     a: impl Iterator<Item = Rep3BigUintShare<F>>,
     b1: impl Iterator<Item = Rep3BigUintShare<F>>,

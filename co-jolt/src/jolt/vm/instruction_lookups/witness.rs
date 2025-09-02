@@ -198,9 +198,22 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         ));
                     }
 
-                    let (r, e_r) = rep3_ring::gadgets::ohv::rand_ohv::<u32, _>(16, io_ctx)?;
-                    let rand_ohv =
-                        rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(&e_r, io_ctx)?;
+                    // TODO: don't reuse rand OHV, preprocess for ops bound
+                    let _guard = tracing::trace_span!("rand_ohv").entered();
+                    let (r, rand_ohv) = {
+                        let (r, e) = rep3_ring::gadgets::ohv::rand_ohv::<u32, _>(16, io_ctx)?;
+                        let rand_ohv =
+                            rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(&e, io_ctx)?;
+                        (r, rand_ohv)
+                    };
+                    drop(_guard);
+
+                    let _guard = tracing::trace_span!("open_c").entered();
+                    let memory_addresses_c = rep3_ring::binary::open_vec(
+                        memory_addresses.iter().map(|addr| &r ^ addr).collect(),
+                        io_ctx,
+                    )?;
+                    drop(_guard);
 
                     let mut read_cts_i_local_a = vec![RingElement::zero(); num_reads];
                     let mut lookup_subtables_local_a = vec![RingElement::zero(); num_reads];
@@ -210,9 +223,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
                             .entered();
                     for i in 0..num_reads {
-                        let memory_address = memory_addresses[i];
-                        let c = rep3_ring::binary::open(&(r ^ memory_address), io_ctx)?.convert()
-                            as usize;
+                        let c = memory_addresses_c[i];
 
                         let _guard = tracing::trace_span!("luts_rw_local").entered();
                         let mut counter = io_ctx.rngs.rand.masking_element::<RingElement<u32>>();

@@ -5,7 +5,7 @@
 use ark_ff::{One, PrimeField, Zero};
 use itertools::{Itertools, izip};
 use mpc_types::protocols::{
-    rep3::Rep3PrimeFieldShare,
+    rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
         Rep3RingShare,
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
@@ -53,7 +53,7 @@ where
 pub fn rand_ohv_to_field<F: PrimeField, N: Rep3Network>(
     len: usize,
     io_context: &mut IoContext<N>,
-) -> IoResult<(Rep3PrimeFieldShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
+) -> IoResult<(Rep3BigUintShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
     let k = len.next_power_of_two().ilog2() as usize;
 
     let (r, e) = if k == 1 {
@@ -74,9 +74,12 @@ pub fn rand_ohv_to_field<F: PrimeField, N: Rep3Network>(
 fn rand_ohv_to_field_inner<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     k: usize,
     io_context: &mut IoContext<N>,
-) -> IoResult<(Rep3PrimeFieldShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
+) -> IoResult<(Rep3BigUintShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
     let (r, e) = rand_ohv::<Bit, _>(k, io_context)?;
-    let r = rep3_ring::casts::ring_to_field_selector(r, io_context)?;
+    let r = Rep3BigUintShare::new(
+        r.a.convert().cast_to_biguint(),
+        r.b.convert().cast_to_biguint(),
+    );
     let e = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&e, io_context)?;
     Ok((r, e))
 }
