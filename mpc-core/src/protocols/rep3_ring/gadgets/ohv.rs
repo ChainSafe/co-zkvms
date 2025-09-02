@@ -2,11 +2,14 @@
 //!
 //! This module contains some algorithms to create a random one-hot encoded vector for the Rep3 protocol.
 
-use ark_ff::{One, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use itertools::{Itertools, izip};
-use mpc_types::protocols::rep3_ring::{
-    Rep3RingShare,
-    ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+use mpc_types::protocols::{
+    rep3::Rep3PrimeFieldShare,
+    rep3_ring::{
+        Rep3RingShare,
+        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+    },
 };
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
@@ -15,7 +18,7 @@ use crate::{
     IoResult,
     protocols::{
         rep3::network::{IoContext, Rep3Network},
-        rep3_ring::binary,
+        rep3_ring::{self, binary},
     },
 };
 
@@ -42,6 +45,40 @@ where
     let e = ohv(k, bits, io_context)?;
 
     Ok((bits, e))
+}
+
+/// Generates a random one-hot-encoded vector of size k bits.
+/// The output is (r, e), where r is a binary sharing of the index of the set bit, wheras e is a vector of size 2^k with all bits zero except at index r.
+/// The algorithm is a rewrite of Protocol 5 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.
+pub fn rand_ohv_to_field<F: PrimeField, N: Rep3Network>(
+    len: usize,
+    io_context: &mut IoContext<N>,
+) -> IoResult<(Rep3PrimeFieldShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
+    let k = len.next_power_of_two().ilog2() as usize;
+
+    let (r, e) = if k == 1 {
+        rand_ohv_to_field_inner::<Bit, _, _>(k, io_context)?
+    } else if k <= 8 {
+        rand_ohv_to_field_inner::<u8, _, _>(k, io_context)?
+    } else if k <= 16 {
+        rand_ohv_to_field_inner::<u16, _, _>(k, io_context)?
+    } else if k <= 32 {
+        rand_ohv_to_field_inner::<u32, _, _>(k, io_context)?
+    } else {
+        panic!("Table is too large")
+    };
+
+    Ok((r, e))
+}
+
+fn rand_ohv_to_field_inner<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    k: usize,
+    io_context: &mut IoContext<N>,
+) -> IoResult<(Rep3PrimeFieldShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
+    let (r, e) = rand_ohv::<Bit, _>(k, io_context)?;
+    let r = rep3_ring::casts::ring_to_field_selector(r, io_context)?;
+    let e = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&e, io_context)?;
+    Ok((r, e))
 }
 
 /// Generates a one-hot-encoded vector of size k bits from a given secret shared index which is already decomposed into shared bits.
