@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
@@ -56,7 +58,8 @@ pub trait MpcStarNetWorker: Sized + Clone {
     fn log_num_workers_per_party(&self) -> usize;
     // fn rank(&self) -> usize;
 
-    fn total_bandwidth_used(&self) -> (u64, u64);
+    fn io_stats_total(&self) -> (u64, u64);
+    fn io_stats_per_party(&self) -> BTreeMap<usize, (u64, u64)>;
 
     fn party_id(&self) -> PartyID;
     fn worker_idx(&self) -> usize;

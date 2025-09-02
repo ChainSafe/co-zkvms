@@ -1,11 +1,12 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{multizip, Itertools};
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use itertools::{izip, multizip, Itertools};
+use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
+use crate::utils::future_ring::FutureRep3Ring;
 use jolt_core::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
@@ -216,5 +217,26 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
+    }
+
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
+        &self,
+        steps: &[&impl Rep3JoltInstruction],
+        io_ctx: &mut IoContext<N>,
+        out: impl IntoIterator<
+            Item = &'a mut crate::utils::future_ring::FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>,
+        >,
+    ) -> eyre::Result<()> {
+        let (remainders, divisors): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_arithmetic_u32()))
+            .unzip();
+        let remainder_is_zero = rep3_ring::binary::is_zero_many(&remainders, io_ctx)?;
+        let rem_lt_div = rep3_ring::arithmetic::lt_many(&remainders, &divisors, io_ctx)?;
+        let res = rep3_ring::binary::or_many(&remainder_is_zero, &rem_lt_div, io_ctx)?;
+        izip!(out, res).for_each(|(out, res)| {
+            *out = FutureRep3Ring::bit_inject_to_field(res);
+        });
+        Ok(())
     }
 }

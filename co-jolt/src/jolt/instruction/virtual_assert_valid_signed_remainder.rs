@@ -191,4 +191,16 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction
     ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
+
+    // fn output_batched<'a, F: JoltField, N: Rep3Network>(
+    //     &self,
+    //     steps: &[&impl Rep3JoltInstruction],
+    //     io_ctx: &mut IoContext<N>,
+    //     out: impl IntoIterator<
+    //         Item = &'a mut crate::utils::future_ring::FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>,
+    //     >,
+    // ) -> eyre::Result<()> {
+
+    //     Ok(())
+    // }
 }

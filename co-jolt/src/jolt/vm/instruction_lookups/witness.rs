@@ -137,7 +137,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .map(|subtable| {
                 subtable
                     .iter()
-                    .map(|v| rep3::arithmetic::promote_to_trivial_share(id, F::from_u32(*v)))
+                    .map(|v| rep3_ring::arithmetic::promote_to_trivial_share(id, (*v).into()))
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -188,12 +188,15 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 |(memory_index, ohvs), io_ctx| {
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
 
-                    let mut final_cts_i = vec![Rep3PrimeFieldShare::zero_share(); M];
+                    let mut final_cts_i = vec![Rep3RingShare::zero_share(); M];
                     let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); num_reads];
                     if ohvs.is_empty() {
                         return Ok((
-                            Rep3MultilinearPolynomial::from(final_cts_i),
+                            Rep3MultilinearPolynomial::from(vec![
+                                Rep3PrimeFieldShare::zero_share();
+                                M
+                            ]),
                             Rep3MultilinearPolynomial::from(read_cts_i),
                             Rep3MultilinearPolynomial::from(subtable_lookups),
                         ));
@@ -203,6 +206,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     //     &ohvs.into_par_iter().flatten().collect::<Vec<_>>(),
                     //     io_ctx,
                     // )?;
+
+                    // let (r, e_r) = rep3_ring::gadgets::ohv::rand_ohv::<u32, _>(M, io_ctx)?;
+                    // let rand_ohv = rep3_ring::conversion::bit_inject_from_bits_many(&e_r, io_ctx)?;
 
                     let mut used_ops = Vec::with_capacity(ohvs.len());
                     let mut read_cts_i_local_a = Vec::with_capacity(ohvs.len());
@@ -217,26 +223,35 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             let memories_used = &preprocessing.instruction_to_memory_indices
                                 [<Instructions as Rep3JoltInstructionSet>::enum_index(op)];
                             if memories_used.contains(&memory_index) {
+                                // let memory_address = access_sequence[j];
                                 let ohv =
-                                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(
+                                    rep3_ring::conversion::bit_inject_from_bits_many::<u32, _>(
                                         &ohvs.next().unwrap(),
                                         io_ctx,
                                     )?;
                                 // let ohv = ohvs.drain(..M).collect::<Vec<_>>();
+                                // let c = rep3_ring::binary::open(&(r ^ memory_address), io_ctx)?;
+                                // let c: usize = (c.0 as usize) & ((1 << M) - 1); // Mask potential overflows from non-well-defined input
 
                                 let _guard = tracing::trace_span!("luts_rw_local").entered();
-                                let mut counter = io_ctx.rngs.rand.masking_field_element::<F>();
-                                for (l, e) in final_cts_i.iter_mut().zip(ohv.iter()) {
-                                    counter += (*e * *l).into_fe();
+                                let mut counter =
+                                    io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                for (i, l) in final_cts_i.iter_mut().enumerate() {
+                                    // let e = rand_ohv[i ^ c];
+                                    let e = ohv[i];
+                                    counter += e * *l;
                                     *l += e; // ohv_bit (either 0 or 1)
                                 }
-                                let mut subtable_lookup =
-                                    io_ctx.rngs.rand.masking_field_element::<F>();
-                                for (l, e) in materialized_subtable_luts[subtable_index]
+                                // let mut subtable_lookup =
+                                //     io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                let mut subtable_lookup = RingElement::zero();
+                                for (i, l) in materialized_subtable_luts[subtable_index]
                                     .iter()
-                                    .zip(ohv.iter())
+                                    .enumerate()
                                 {
-                                    subtable_lookup += (*e * *l).into_fe();
+                                    // let e = rand_ohv[i ^ c];
+                                    let e = ohv[i];
+                                    subtable_lookup += e * *l;
                                 }
 
                                 read_cts_i_local_a.push(counter);
@@ -253,16 +268,35 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
                     drop(_guard);
 
+                    let used_read_cts_i = izip!(read_cts_i_local_a, read_cts_i_b)
+                        .map(|(a, b)| Rep3RingShare { a, b })
+                        .collect::<Vec<_>>();
+                    let used_subtable_lookups = izip!(lookup_subtables_local_a, lookup_subtables_b)
+                        .map(|(a, b)| Rep3RingShare { a, b })
+                        .collect::<Vec<_>>();
+
+                    let used_read_cts_i =
+                        rep3_ring::casts::ring_to_field_many_selector(&used_read_cts_i, io_ctx)
+                            .unwrap();
+                    let final_cts_i =
+                        rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx)
+                            .unwrap();
+                    let used_subtable_lookups = rep3_ring::casts::ring_to_field_many_selector(
+                        &used_subtable_lookups,
+                        io_ctx,
+                    )
+                    .unwrap();
+
                     izip!(
                         used_ops,
-                        read_cts_i_local_a,
-                        read_cts_i_b,
-                        lookup_subtables_local_a,
-                        lookup_subtables_b
+                        // read_cts_i_local_a,
+                        used_read_cts_i,
+                        // lookup_subtables_local_a,
+                        used_subtable_lookups,
                     )
-                    .for_each(|(j, cts_a, cts_b, e_a, e_b)| {
-                        read_cts_i[j] = Rep3PrimeFieldShare::new(cts_a, cts_b);
-                        subtable_lookups[j] = Rep3PrimeFieldShare::new(e_a, e_b);
+                    .for_each(|(j, cts, e)| {
+                        read_cts_i[j] = cts;
+                        subtable_lookups[j] = e;
                     });
 
                     Ok((

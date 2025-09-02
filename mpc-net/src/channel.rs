@@ -178,8 +178,8 @@ where
         FramedRead<R, C>: Stream<Item = Result<MRecv, io::Error>> + Send,
         FramedWrite<W, C>: Sink<MSend, Error = io::Error> + Send,
     {
-        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<MSend>>(1024);
-        let (read_send, mut read_recv) = mpsc::channel::<ReadJob<MRecv>>(1024);
+        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<MSend>>(8192);
+        let (read_send, mut read_recv) = mpsc::channel::<ReadJob<MRecv>>(8192);
 
         let (mut write, mut read) = chan.split();
 
@@ -222,7 +222,7 @@ where
                             // we don't really care if the receiver for a write job is gone, as this is a common case
                             // therefore we only emit a trace message
                             if write_job.ret.send(Ok(())).is_err() {
-                                // tracing::trace!("Debug: Write Job finished but receiver is gone!");
+                                tracing::trace!("Debug: Write Job finished but receiver is gone!");
                             }
 
                             // workaround to free capacity after sending large frames (witness shares)
@@ -232,7 +232,7 @@ where
                             }
                         }
                         Err(err) => {
-                            // tracing::error!("Write job failed: {err}");
+                            tracing::error!("Write job failed: {err}");
                         }
                     }
                 }
@@ -353,8 +353,8 @@ impl ChannelHandle<Bytes, BytesMut> {
         }
 
         // job queues remain bounded; outer pipeline enforces per-actor sequencing
-        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(1024);
-        let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(1024);
+        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(8192);
+        let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(8192);
 
         // Prefetch buffer: keep reading frames to free QUIC conn window.
         // Bound memory with a byte-budget semaphore + small item queue.

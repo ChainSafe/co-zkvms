@@ -4,9 +4,12 @@
 
 use crate::{
     IoResult,
-    protocols::rep3::{
-        network::{IoContext, Rep3Network},
-        rngs::Rep3CorrelatedRng,
+    protocols::{
+        rep3::{
+            network::{IoContext, Rep3Network},
+            rngs::Rep3CorrelatedRng,
+        },
+        rep3_ring::binary::add_many,
     },
 };
 use itertools::{Itertools, izip};
@@ -262,6 +265,22 @@ where
     let b_min_a = sub(truthy, falsy);
     let d = mul(cond, b_min_a, io_context)?;
     Ok(add(falsy, d))
+}
+
+/// Computes a CMUX: If cond is 1, returns truthy, otherwise returns falsy.
+/// Implementations should not overwrite this method.
+pub fn cmux_many<T: IntRing2k, N: Rep3Network>(
+    cond: &[RingShare<T>],
+    truthy: &[RingShare<T>],
+    falsy: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let b_min_a = izip!(truthy, falsy).map(|(a, b)| a - b).collect::<Vec<_>>();
+    let d = mul_vec(cond, &b_min_a, io_context)?;
+    Ok(izip!(falsy, d).map(|(a, b)| a + &b).collect())
 }
 
 /// Convenience method for \[a\] + \[b\] * c
@@ -588,6 +607,20 @@ where
     Ok(x.0.convert())
 }
 
+// /// Outputs whether a shared value is zero (true) or not (false).
+// pub fn is_zero_many<T: IntRing2k, N: Rep3Network>(
+//     a: RingShare<T>,
+//     io_context: &mut IoContext<N>,
+// ) -> IoResult<bool>
+// where
+//     Standard: Distribution<T>,
+// {
+//     let zero_share = RingShare::default();
+//     let res = eq(zero_share, a, io_context)?;
+//     let x = open_bit(res, io_context)?;
+//     Ok(x.0.convert())
+// }
+
 /// Computes `shared*2^public`. This is the same as `shared << public`.
 ///
 /// #Panics
@@ -653,9 +686,7 @@ where
         a.push(res_a);
     }
 
-    let _guard = tracing::trace_span!("reshare_many").entered();
     let b = io_context.network.reshare_many(&a)?;
-    drop(_guard);
     let res = a
         .into_iter()
         .zip(b)

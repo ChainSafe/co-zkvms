@@ -461,14 +461,11 @@ where
         }
     };
 
-    let _guard =
-        tracing::trace_span!("arithmetic_xor_many_d", party = io_context.id as usize).entered();
+    // let _guard =
+    //     tracing::trace_span!("arithmetic_xor_many", party = io_context.id as usize).entered();
     let d = arithmetic::arithmetic_xor_many(&b0, &b1, io_context)?;
-    drop(_guard);
-    let _guard =
-        tracing::trace_span!("arithmetic_xor_many_r", party = io_context.id as usize).entered();
     let r = arithmetic::arithmetic_xor_many(&d, &b2, io_context)?;
-    drop(_guard);
+    // drop(_guard);
     Ok(r)
 }
 

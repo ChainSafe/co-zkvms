@@ -6,6 +6,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
 use bytes::Bytes;
+use bytesize::ByteSize;
 use eyre::Context;
 use mpc_net::channel::ChannelHandle;
 use std::collections::BTreeMap;
@@ -789,5 +790,32 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         self.main().network.receive_request::<bool>()?;
         self.main().network.send_response(true)?;
         Ok(())
+    }
+    /// Prints the connection statistics.
+    pub fn log_connection_stats(&self) {
+        let acc_io = self.workers[0]
+            .forks
+            .iter()
+            .map(|io_ctx| io_ctx.network.io_stats_per_party())
+            .fold(
+                self.workers[0].main.network.io_stats_per_party(),
+                |mut acc, stats| {
+                    acc.iter_mut().for_each(|(id, (tx, rx))| {
+                        let (tx_, rx_) = stats.get(id).unwrap();
+                        *tx += tx_;
+                        *rx += rx_;
+                    });
+                    acc
+                },
+            );
+        for (i, (tx, rx)) in acc_io {
+            tracing::info!(
+                "IO: P{}->P{} | SENT: {} bytes | RECV: {} bytes",
+                self.id as usize,
+                i,
+                ByteSize(tx),
+                ByteSize(rx)
+            );
+        }
     }
 }

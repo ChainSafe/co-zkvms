@@ -32,7 +32,9 @@ use clap::{Parser, Subcommand};
 use co_spartan::setup::CoordinatorKey;
 use crossbeam::thread;
 use itertools::{merge, Itertools};
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker, WorkerIoContext};
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3NetworkWorker, WorkerIoContext,
+};
 use mpc_core::protocols::rep3::{
     arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
 };
@@ -251,7 +253,7 @@ where
     .prove(&pk, witness_share, &mut random, active, &mut io_ctx.network)
     .unwrap();
 
-    let (send_bytes, recv_bytes) = io_ctx.network.total_bandwidth_used();
+    let (send_bytes, recv_bytes) = io_ctx.network.io_stats_total();
     tracing::info!(
         "bandwidth used: send {}, recv {}",
         ByteSize(send_bytes as u64),

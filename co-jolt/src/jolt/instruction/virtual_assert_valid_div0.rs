@@ -1,23 +1,28 @@
 use std::mem;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
+use rayon::iter;
 use serde::{Deserialize, Serialize};
 
-use crate::field::JoltField;
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use jolt_core::{
     jolt::subtable::LassoSubtable,
     jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use mpc_core::protocols::{
     rep3::{
         self,
         network::{IoContext, Rep3Network},
     },
-    rep3_ring::Rep3RingShare,
+    rep3_ring::{ring::bit::Bit, Rep3RingShare},
+};
+use mpc_core::protocols::{
+    rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3_ring,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
@@ -188,5 +193,41 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertValidDiv0Instruction<
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
         rep3_chunk_and_concatenate_operands(self.0.as_binary(), self.1.as_binary(), C, log_M)
+    }
+
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
+        &self,
+        steps: &[&impl Rep3JoltInstruction],
+        io_ctx: &mut IoContext<N>,
+        out: impl IntoIterator<
+            Item = &'a mut crate::utils::future_ring::FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>,
+        >,
+    ) -> eyre::Result<()> {
+        let (devisors, quotients): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_arithmetic_u32()))
+            .unzip();
+        // let one = rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, 1u32.into());
+        let one = rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, Bit::one().into());
+        let max = rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, u32::MAX.into());
+        // let devisor_is_zero = rep3_ring::conversion::bit_inject_many(
+        //     &rep3_ring::binary::is_zero_many(&devisors, io_ctx)?,
+        //     io_ctx,
+        // )?;
+        let devisor_is_zero = rep3_ring::binary::is_zero_many(&devisors, io_ctx)?;
+        let quotient_eq_max =
+            rep3_ring::arithmetic::eq_many(&quotients, &vec![max; quotients.len()], io_ctx)?;
+
+        let res = rep3_ring::binary::cmux_many(
+            &devisor_is_zero,
+            &quotient_eq_max,
+            &vec![one; quotients.len()],
+            io_ctx,
+        )?;
+        izip!(out, res).for_each(|(out, res)| {
+            *out = FutureRep3Ring::bit_inject_to_field(res);
+        });
+
+        Ok(())
     }
 }

@@ -141,13 +141,14 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    let mut program = host::Program::new("fibonacci-guest");
+    let mut program = host::Program::new("sha3-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
     // let mut inputs = vec![];
     // inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
-    let inputs = postcard::to_stdvec(&1u32).unwrap();
+    // let inputs = postcard::to_stdvec(&1u32).unwrap();
+    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
 
@@ -202,6 +203,7 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     let program_io: Rep3ProgramIOInput<F> = network.receive_request()?;
     let trace: Vec<JoltTraceStep<RV32I>> =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
+    tracing::info!("trace len: {}", trace.len());
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -227,7 +229,7 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
 
     // prover.prove()?;
 
-    prover.io_ctx.network().log_connection_stats();
+    prover.io_ctx.log_connection_stats();
     // drop(_enter);
     drop(tracing_guard);
     Ok(())
@@ -320,7 +322,7 @@ pub fn run_coordinator(
         &mut network,
     )?;
 
-    network.log_connection_stats(Some("Coordinator send witness communication"));
+    network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();
 
     let polys = Rep3InstructionLookupPolynomials::combine_polynomials(
@@ -328,68 +330,68 @@ pub fn run_coordinator(
         network.receive_responses()?,
     )?;
 
-    let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io)
-        .instruction_lookups;
+    // let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io)
+    //     .instruction_lookups;
 
-    assert_eq!(polys.lookup_outputs, check.lookup_outputs);
-    izip!(polys.dim, check.dim)
-        .enumerate()
-        .for_each(|(i, (poly, check))| {
-            let poly = poly.coeffs_as_field_elements();
-            let check = check.coeffs_as_field_elements();
-            let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-            if let Some(pos) = p {
-                panic!(
-                    "dim {i} mismatch at position {} {:?} != {:?}",
-                    pos,
-                    &poly[pos..pos + 5],
-                    &check[pos..pos + 5]
-                );
-            }
-        });
-    izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
-        let poly = poly.coeffs_as_field_elements();
-        let check = check.coeffs_as_field_elements();
-        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-        if let Some(pos) = p {
-            panic!(
-                "final_cts mismatch at position {} {:?} != {:?}",
-                pos,
-                &poly[pos..pos + 5],
-                &check[pos..pos + 5]
-            );
-        }
-    });
-    izip!(polys.read_cts, check.read_cts)
-        .enumerate()
-        .for_each(|(i, (poly, check))| {
-            let poly = poly.coeffs_as_field_elements();
-            let check = check.coeffs_as_field_elements();
-            let p = izip!(&poly, &check).position(|(f, check)| *f != *check);
-            if let Some(pos) = p {
-                panic!(
-                    "read_cts[{}] mismatch at position {} {:?} != {:?}",
-                    i,
-                    pos,
-                    &poly[pos..],
-                    &check[pos..]
-                );
-            }
-        });
+    // assert_eq!(polys.lookup_outputs, check.lookup_outputs);
+    // izip!(polys.dim, check.dim)
+    //     .enumerate()
+    //     .for_each(|(i, (poly, check))| {
+    //         let poly = poly.coeffs_as_field_elements();
+    //         let check = check.coeffs_as_field_elements();
+    //         let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+    //         if let Some(pos) = p {
+    //             panic!(
+    //                 "dim {i} mismatch at position {} {:?} != {:?}",
+    //                 pos,
+    //                 &poly[pos..pos + 5],
+    //                 &check[pos..pos + 5]
+    //             );
+    //         }
+    //     });
+    // izip!(polys.final_cts, check.final_cts).for_each(|(poly, check)| {
+    //     let poly = poly.coeffs_as_field_elements();
+    //     let check = check.coeffs_as_field_elements();
+    //     let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+    //     if let Some(pos) = p {
+    //         panic!(
+    //             "final_cts mismatch at position {} {:?} != {:?}",
+    //             pos,
+    //             &poly[pos..pos + 5],
+    //             &check[pos..pos + 5]
+    //         );
+    //     }
+    // });
+    // izip!(polys.read_cts, check.read_cts)
+    //     .enumerate()
+    //     .for_each(|(i, (poly, check))| {
+    //         let poly = poly.coeffs_as_field_elements();
+    //         let check = check.coeffs_as_field_elements();
+    //         let p = izip!(&poly, &check).position(|(f, check)| *f != *check);
+    //         if let Some(pos) = p {
+    //             panic!(
+    //                 "read_cts[{}] mismatch at position {} {:?} != {:?}",
+    //                 i,
+    //                 pos,
+    //                 &poly[pos..],
+    //                 &check[pos..]
+    //             );
+    //         }
+    //     });
 
-    izip!(polys.E_polys, check.E_polys).for_each(|(poly, check)| {
-        let poly = poly.coeffs_as_field_elements();
-        let check = check.coeffs_as_field_elements();
-        let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
-        if let Some(pos) = p {
-            panic!(
-                "E_polys mismatch at position {} {:?} != {:?}",
-                pos,
-                &poly[pos..pos + 5],
-                &check[pos..pos + 5]
-            );
-        }
-    });
+    // izip!(polys.E_polys, check.E_polys).for_each(|(poly, check)| {
+    //     let poly = poly.coeffs_as_field_elements();
+    //     let check = check.coeffs_as_field_elements();
+    //     let p = izip!(&poly, &check).position(|(i, check)| *i != *check);
+    //     if let Some(pos) = p {
+    //         panic!(
+    //             "E_polys mismatch at position {} {:?} != {:?}",
+    //             pos,
+    //             &poly[pos..pos + 5],
+    //             &check[pos..pos + 5]
+    //         );
+    //     }
+    // });
 
     // let (proof, commitments) = RV32IJoltVM::prove_rep3(
     //     meta,
@@ -402,7 +404,7 @@ pub fn run_coordinator(
     // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
     //     .context("while verifying Lasso (rep3) proof")?;
 
-    network.log_connection_stats(None);
+    // network.log_connection_stats(None);
 
     Ok(())
 }

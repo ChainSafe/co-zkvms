@@ -6,7 +6,7 @@ use crate::{
     IoResult,
     protocols::{
         rep3::network::{IoContext, Rep3Network},
-        rep3_ring::{binary, conversion, gadgets},
+        rep3_ring::{arithmetic::RingShare, binary, conversion, gadgets},
     },
 };
 use ark_ff::PrimeField;
@@ -144,6 +144,51 @@ where
     }
     Ok(t)
 }
+
+// #[tracing::instrument(skip_all, level = "trace")]
+// pub fn lut_wip_low_depth<T: IntRing2k, N: Rep3Network>(
+//     lut: &mut [RingShare<T>],
+//     index: Rep3RingShare<T>,
+//     io_context: &mut IoContext<N>,
+// ) -> IoResult<()>
+// where
+//     Standard: Distribution<T>,
+// {
+//     let n = lut.len();
+//     let mut k = n.next_power_of_two().ilog2() as usize;
+
+//     if k & 1 == 1 {
+//         k += 1; // Make even
+//         // TODO is it possible to not needing to do that?
+//     }
+//     assert!(k <= T::K);
+//     // let k2 = k >> 1;
+
+//     // create two ohv's with half the bitsize in parallel
+//     let (r, e_r) = gadgets::ohv::rand_ohv::<T, _>(k, io_context)?;
+//     let e_r = conversion::bit_inject_from_bits_many(&e_r, io_context)?;
+//     // Open the xor of the index and r
+//     let c = binary::open(&(r ^ index), io_context)?;
+//     let c: usize =
+//         c.0.try_into()
+//             .expect("This transformation should work, otherwise we have another issue")
+//             & ((1 << k) - 1); // Mask potential overflows from non-well-defined input
+
+//     // Start the result with a random mask (for potential resharing later)
+//     let (mut t, mask_b) = io_context
+//         .rngs
+//         .rand
+//         .random_biguint(usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize"));
+//     t ^= mask_b;
+//     let mut read_ct = Rep3RingShare::<T>::zero_share();
+//     let m = lut.len();
+//     for i in 0..m {
+//         let e = e_r[i ^ c]; // E[i]
+//         read_ct += e * lut[i]; // inner product term
+//         final_cts[i] += e; // final_cts[index] += 1 via one-hot add
+//     }
+//     Ok(t)
+// }
 
 /// Takes many public lookup tables containing field elements, and a replicated binary share of an index and returns a non-replicated binary sharing of the looked up value lut`\[`index`\]`. The table sizes needs to be a power of two where the power is even. If this is not the case, the table is implicitly padded with 0.
 /// The algorithm is a rewrite of Protocol 10 from [https://eprint.iacr.org/2024/1317.pdf](https://eprint.iacr.org/2024/1317.pdf) for rep3.

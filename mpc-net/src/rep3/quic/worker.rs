@@ -232,12 +232,7 @@ impl Rep3QuicMpcNetWorker {
         Ok(data)
     }
 
-    /// Print the connection stats of the network
-    pub fn print_connection_stats(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.net_handler.inner.print_connection_stats(out)
-    }
-
-    /// Print the connection stats of the network
+    /// Print the IO stats of **fork** subnetwork. Don't use if forks create new connections.
     pub fn log_connection_stats(&self) {
         // hack: wait arbitrary time for all send/recv tasks till now to complete
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -306,7 +301,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         self.log_num_workers_per_party
     }
 
-    fn total_bandwidth_used(&self) -> (u64, u64) {
+    fn io_stats_total(&self) -> (u64, u64) {
         let sent_bytes = self
             .net_handler
             .inner
@@ -324,6 +319,18 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         (sent_bytes, recv_bytes)
     }
 
+    fn io_stats_per_party(&self) -> BTreeMap<usize, (u64, u64)> {
+        self.net_handler
+            .inner
+            .parties_connections
+            .iter()
+            .map(|(id, conn)| {
+                let stats = conn.stats();
+                (*id, (stats.udp_tx.bytes, stats.udp_rx.bytes))
+            })
+            .collect()
+    }
+
     fn party_id(&self) -> PartyID {
         self.id.party_id()
     }
@@ -336,7 +343,6 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                 .bind_addr
                 .set_port(config.bind_addr.port() + 10 * fork_id as u16);
             config.parties.iter_mut().for_each(|party| {
-                // party.worker = worker;
                 party.dns_name.port = party.dns_name.port + 10 * fork_id as u16;
             });
             config.coordinator = None;
@@ -737,25 +743,13 @@ impl MpcNetworkHandlerWorker {
         Ok((stats.udp_tx.bytes, stats.udp_rx.bytes))
     }
 
-    /// Prints the connection statistics.
-    pub fn print_connection_stats(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
-        for (i, conn) in &self.parties_connections {
-            let stats = conn.stats();
-            writeln!(
-                out,
-                "Connection {} stats:\n\tSENT: {} bytes\n\tRECV: {} bytes",
-                i, stats.udp_tx.bytes, stats.udp_rx.bytes
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Prints the connection statistics.
+    /// Prints the IO statistics for connections in fork. Don't use if forks create new connections.
     pub fn log_connection_stats(&self) {
         for (i, conn) in &self.parties_connections {
             let stats = conn.stats();
             tracing::info!(
-                "Connection {} stats: SENT: {} bytes RECV: {} bytes",
+                "IO: P{}->P{} | SENT: {} bytes | RECV: {} bytes",
+                self.my_id,
                 i,
                 ByteSize(stats.udp_tx.bytes),
                 ByteSize(stats.udp_rx.bytes)
@@ -765,7 +759,8 @@ impl MpcNetworkHandlerWorker {
         if let Some(conn) = self.coordinator_connection.as_ref() {
             let stats = conn.stats();
             tracing::info!(
-                "Coordinator connection stats: SENT: {} bytes RECV: {} bytes",
+                "IO: P{}->C | SENT: {} bytes | RECV: {} bytes",
+                self.my_id,
                 ByteSize(stats.udp_tx.bytes),
                 ByteSize(stats.udp_rx.bytes)
             );

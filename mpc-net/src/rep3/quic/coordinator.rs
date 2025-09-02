@@ -287,9 +287,9 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             let id = PartyWorkerID::from_global_worker_id(*i);
             let stats = conn.stats();
             tracing::info!(
-                "{}: connection with {} | stats: SENT: {} bytes | RECV: {} bytes",
+                "{}: C->P{} | stats: SENT: {} bytes | RECV: {} bytes",
                 label.unwrap_or("Coordinator stats"),
-                id,
+                id.party_id() as usize,
                 ByteSize(stats.udp_tx.bytes - self.stats_checkpoints[*i].0),
                 ByteSize(stats.udp_rx.bytes - self.stats_checkpoints[*i].1)
             );
@@ -297,8 +297,8 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         drop(net_handler);
         let (sent_bytes, recv_bytes) = self.total_bandwidth_used();
         tracing::info!(
-            "{} total: SENT: {} bytes RECV: {} bytes",
-            label.unwrap_or("Coordinator stats"),
+            "{}: total | SENT: {} bytes | RECV: {} bytes",
+            label.unwrap_or("IO"),
             ByteSize(sent_bytes),
             ByteSize(recv_bytes)
         );

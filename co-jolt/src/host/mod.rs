@@ -210,20 +210,19 @@ impl Program {
         let trace = raw_trace
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
-                RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
-                RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
-                RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
-                RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
-                RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
-                RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
-                RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
-                RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
-                RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
-                RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
-                RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
-                RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
-                _ => vec![row],
-
+                // RV32IM::MULH => MULHInstruction::<32>::virtual_trace(row),
+                // RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_trace(row),
+                // RV32IM::DIV => DIVInstruction::<32>::virtual_trace(row),
+                // RV32IM::DIVU => DIVUInstruction::<32>::virtual_trace(row),
+                // RV32IM::REM => REMInstruction::<32>::virtual_trace(row),
+                // RV32IM::REMU => REMUInstruction::<32>::virtual_trace(row),
+                // RV32IM::SH => SHInstruction::<32>::virtual_trace(row),
+                // RV32IM::SB => SBInstruction::<32>::virtual_trace(row),
+                // RV32IM::LBU => LBUInstruction::<32>::virtual_trace(row),
+                // RV32IM::LHU => LHUInstruction::<32>::virtual_trace(row),
+                // RV32IM::LB => LBInstruction::<32>::virtual_trace(row),
+                // RV32IM::LH => LHInstruction::<32>::virtual_trace(row),
+                // _ => vec![row],
                 // ["ADD", "AND", "BEQ", "BGEU", "BNE", "MUL", "OR", "SLL", "SLT", "SLTU", "SRA", "SRL", "SUB", "VIRTUAL_ADVICE", "XOR"]
                 // RV32IM::ADD
                 // | RV32IM::AND
@@ -233,6 +232,14 @@ impl Program {
                 // | RV32IM::BGEU
                 // | RV32IM::BNE
                 // | RV32IM::SUB => vec![row],
+
+                // ["ADD", "AND", "BEQ", "BGEU", "BNE", "MUL", "MULU", "OR", "SLL", "SLT", "SLTU", "SRA", "SRL", "SUB", "VIRTUAL_ADVICE",
+                // "VIRTUAL_ASSERT_LTE", "VIRTUAL_ASSERT_VALID_DIV0", "VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER", "VIRTUAL_MOVE", "XOR"]
+                RV32IM::ADD
+                // | RV32IM::VIRTUAL_ASSERT_LTE
+                // | RV32IM::VIRTUAL_ASSERT_VALID_DIV0
+                // | RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER
+                => vec![row],
                 _ => vec![],
             })
             .map(|row| {
