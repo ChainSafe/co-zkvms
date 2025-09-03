@@ -173,6 +173,7 @@ where
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(
             &preprocessing.instruction_lookups,
             ops,
+            program_io,
             M,
             io_ctx,
         )?;
@@ -180,6 +181,7 @@ where
         let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
             &ConstantPreprocessing::<C>,
             ops,
+            program_io,
             M,
             io_ctx,
         )?;

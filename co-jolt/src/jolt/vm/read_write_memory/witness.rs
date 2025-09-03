@@ -1,3 +1,5 @@
+use std::mem;
+
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::witness::Rep3Polynomials;
@@ -6,6 +8,7 @@ use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use crate::utils::transpose;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
+use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::rv_trace::{MemoryLayout, MemoryOp};
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, remap_address, ReadWriteMemoryPolynomials,
@@ -24,12 +27,19 @@ use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
 
+const RS1: usize = 0;
+const RS2: usize = 1;
+const RD: usize = 2;
+const RAM: usize = 3;
+
 pub type Rep3ReadWriteMemoryPolynomials<F> = ReadWriteMemoryStuff<Rep3MultilinearPolynomial<F>>;
 
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3ProgramIO<F: JoltField> {
     pub v_io: Rep3MultilinearPolynomial<F>,
     pub memory_layout: MemoryLayout,
+    pub memory_size: usize,
+    input_words_len: usize,
 }
 
 impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
@@ -126,15 +136,164 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
 
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &ReadWriteMemoryPreprocessing,
-        ops: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
+        trace: &mut [JoltTraceStep<Instructions>],
+        program_io: &Rep3ProgramIO<F>,
         M: usize,
-        network: &mut WorkerIoContext<Network>,
+        io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: crate::jolt::instruction::JoltInstructionSet
-            + crate::jolt::instruction::Rep3JoltInstructionSet,
+        Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
+        let m = trace.len();
+        assert!(m.is_power_of_two());
+
+        let memory_size = program_io.memory_size;
+        let mut v_init: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
+        // Copy bytecode
+        let v_init_index = memory_address_to_witness_index(
+            preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        );
+        let v_inputs_index = v_init_index + preprocessing.bytecode_words.len();
+        v_init[v_init_index..v_inputs_index]
+            .par_iter_mut()
+            .zip_eq(preprocessing.bytecode_words)
+            .for_each(|(v_init, word)| {
+                *v_init =
+                    rep3::arithmetic::promote_to_trivial_share(io_ctx.party_id(), F::from_u32(word))
+            });
+        // Copy input bytes
+        let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
+        v_init[v_inputs_range]
+            .par_iter_mut()
+            .zip_eq(&program_io.v_io.as_shared().coeffs_ref()[v_inputs_range])
+            .for_each(|(v_init, word)| {
+                *v_init = *word;
+            });
+
+        let mut a_ram: Vec<u32> = Vec::with_capacity(m);
+
+        let mut v_read_rs1: Vec<_> = Vec::with_capacity(m);
+        let mut v_read_rs2: Vec<_> = Vec::with_capacity(m);
+        let mut v_read_rd: Vec<_> = Vec::with_capacity(m);
+        let mut v_read_ram: Vec<_> = Vec::with_capacity(m);
+
+        let mut t_read_rs1: Vec<u32> = Vec::with_capacity(m);
+        let mut t_read_rs2: Vec<u32> = Vec::with_capacity(m);
+        let mut t_read_rd: Vec<u32> = Vec::with_capacity(m);
+        let mut t_read_ram: Vec<u32> = Vec::with_capacity(m);
+
+        let mut v_write_rd: Vec<_> = Vec::with_capacity(m);
+        let mut v_write_ram: Vec<_> = Vec::with_capacity(m);
+
+        let mut t_final = vec![0; memory_size];
+        let mut v_final = v_init.clone();
+
+        let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
+        let _enter = span.enter();
+
+        for (i, step) in trace.iter().enumerate() {
+            let timestamp = i as u32;
+
+            match step.memory_ops[RS1] {
+                MemoryOp::Read(a) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v = v_final[a];
+
+                    v_read_rs1.push(v);
+                    t_read_rs1.push(t_final[a]);
+                    t_final[a] = timestamp;
+                }
+                MemoryOp::Write(a, v) => {
+                    panic!("Unexpected rs1 MemoryOp::Write({a}, {v})");
+                }
+            };
+
+            match step.memory_ops[RS2] {
+                MemoryOp::Read(a) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v = v_final[a];
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((a, v, t_final[a]));
+                        write_tuples.insert((a, v, timestamp));
+                    }
+
+                    v_read_rs2.push(v);
+                    t_read_rs2.push(t_final[a]);
+                    t_final[a] = timestamp;
+                }
+                MemoryOp::Write(a, v) => {
+                    panic!("Unexpected rs2 MemoryOp::Write({a}, {v})")
+                }
+            };
+
+            match step.memory_ops[RD] {
+                MemoryOp::Read(a) => {
+                    panic!("Unexpected rd MemoryOp::Read({a})")
+                }
+                MemoryOp::Write(a, v_new) => {
+                    assert!(a < REGISTER_COUNT);
+                    let a = a as usize;
+                    let v_old = v_final[a];
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((a, v_old, t_final[a]));
+                        write_tuples.insert((a, v_new as u32, timestamp));
+                    }
+
+                    v_read_rd.push(v_old);
+                    t_read_rd.push(t_final[a]);
+                    v_write_rd.push(v_new as u32);
+                    v_final[a] = v_new as u32;
+                    t_final[a] = timestamp;
+                }
+            };
+
+            match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => {
+                    debug_assert!(a % 4 == 0);
+                    let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v = v_final[remapped_a];
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((remapped_a, v, t_final[remapped_a]));
+                        write_tuples.insert((remapped_a, v, timestamp));
+                    }
+
+                    a_ram.push(remapped_a as u32);
+                    v_read_ram.push(v);
+                    t_read_ram.push(t_final[remapped_a]);
+                    v_write_ram.push(v);
+                    t_final[remapped_a] = timestamp;
+                }
+                MemoryOp::Write(a, v_new) => {
+                    debug_assert!(a % 4 == 0);
+                    let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v_old = v_final[remapped_a];
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((remapped_a, v_old, t_final[remapped_a]));
+                        write_tuples.insert((remapped_a, v_new as u32, timestamp));
+                    }
+
+                    a_ram.push(remapped_a as u32);
+                    v_read_ram.push(v_old);
+                    t_read_ram.push(t_final[remapped_a]);
+                    v_write_ram.push(v_new as u32);
+                    v_final[remapped_a] = v_new as u32;
+                    t_final[remapped_a] = timestamp;
+                }
+            }
+        }
+
         todo!()
     }
 
@@ -194,14 +353,14 @@ impl<F: JoltField> Rep3ProgramIO<F> {
     pub fn generate_witness_rep3<Network, Instruction>(
         program_io: Rep3ProgramIOInput,
         trace: &[JoltTraceStep<Instruction>],
-        program_io: &Rep3ProgramIO<F>,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Network: Rep3NetworkWorker,
         Instruction: JoltInstructionSet,
     {
-        const RAM: usize = 3;
+        assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
+        assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
         let Rep3ProgramIOInput {
             inputs,
@@ -219,7 +378,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             .max()
             .unwrap();
 
-        let padded_memory_size = max_trace_address.next_power_of_two() as usize;
+        let memory_size = max_trace_address.next_power_of_two() as usize;
         let input_words_len = inputs.len() / 4;
         let output_words_len = outputs.len() / 4;
 
@@ -251,7 +410,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         .try_into()
         .unwrap();
 
-        let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); padded_memory_size];
+        let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
         let input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -275,6 +434,8 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         Ok(Self {
             v_io: Rep3MultilinearPolynomial::from(v_io),
             memory_layout,
+            memory_size,
+            input_words_len,
         })
     }
 

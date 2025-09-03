@@ -5,7 +5,7 @@ pub mod worker;
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    jolt::vm::bytecode::BytecodeRowExt,
+    jolt::{trace::mem_op::MemoryOp, vm::bytecode::BytecodeRowExt},
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -19,7 +19,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{MemoryLayout, MemoryOp, NUM_CIRCUIT_FLAGS},
+    rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS},
 };
 use jolt_tracer::{ELFInstruction, JoltDevice};
 use serde::{Deserialize, Serialize};

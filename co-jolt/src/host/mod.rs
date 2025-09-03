@@ -24,12 +24,16 @@ use jolt_common::{
     self as common,
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+        MEMORY_OPS_PER_INSTRUCTION,
     },
     rv_trace::JoltDevice,
 };
 pub use jolt_tracer::{self as tracer, ELFInstruction};
 
-use crate::{field::JoltField, jolt::vm::read_write_memory::witness::Rep3ProgramIOInput};
+use crate::{
+    field::JoltField,
+    jolt::{trace::mem_op::MemoryOp, vm::read_write_memory::witness::Rep3ProgramIOInput},
+};
 use crate::{
     jolt::{
         instruction::{Rep3JoltInstruction, Rep3Operand},
@@ -321,12 +325,21 @@ impl Program {
                         vec![None; 3]
                     };
 
-                    instruction_shares
-                        .into_iter()
-                        .map(|instruction_lookup| JoltTraceStep {
+                    let mut memory_ops_shares =
+                        vec![[MemoryOp::Read(0); MEMORY_OPS_PER_INSTRUCTION]; 3];
+
+                    for i in 0..MEMORY_OPS_PER_INSTRUCTION {
+                        let shares = MemoryOp::generate_shares_rep3(row.memory_ops[i], rng);
+                        for j in 0..3 {
+                            memory_ops_shares[j][i] = shares[j];
+                        }
+                    }
+
+                    izip!(instruction_shares, memory_ops_shares)
+                        .map(|(instruction_lookup, memory_ops)| JoltTraceStep {
                             instruction_lookup,
                             bytecode_row: row.bytecode_row.clone(),
-                            memory_ops: row.memory_ops.clone(),
+                            memory_ops,
                             circuit_flags: row.circuit_flags.clone(),
                         })
                         .collect()

@@ -88,7 +88,7 @@ where
     Network: Rep3NetworkWorker,
 {
     pub fn init(
-        witness: Option<(Vec<JoltTraceStep<Instructions>>, Rep3ProgramIOInput<F>)>,
+        witness: Option<(Vec<JoltTraceStep<Instructions>>, Rep3ProgramIOInput)>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         network: Network,
     ) -> eyre::Result<Self>
@@ -118,6 +118,7 @@ where
                 let polynomials = Rep3JoltPolynomials::generate_witness_rep3(
                     &preprocessing.shared,
                     &mut trace,
+                    &program_io,
                     M,
                     io_ctx.worker(0),
                 )?;

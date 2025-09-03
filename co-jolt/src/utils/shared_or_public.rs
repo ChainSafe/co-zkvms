@@ -1,6 +1,6 @@
+use crate::field::JoltField;
 use ark_ff::Zero;
 use eyre::Context;
-use crate::field::JoltField;
 use mpc_core::protocols::{
     additive::{self, AdditiveShare},
     rep3::{
