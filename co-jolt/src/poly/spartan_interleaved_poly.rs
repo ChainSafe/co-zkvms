@@ -14,7 +14,7 @@ use super::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::field::JoltField;
 use crate::r1cs::ops::LinearCombinationExt;
 use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
-use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicParIter};
+use crate::utils::types::{Rep3Value, SharedOrPublicParIter};
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 
@@ -24,12 +24,12 @@ pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {
     /// polynomials used in the first Spartan sumcheck. Before the polynomial is bound
     /// TODO: make SharedOrPublic<F> support i128
     /// ~~the first time, all the coefficients can be represented by `i128`s.~~
-    pub(crate) unbound_coeffs_shards: Vec<Vec<SparseCoefficient<SharedOrPublic<F>>>>,
+    pub(crate) unbound_coeffs_shards: Vec<Vec<SparseCoefficient<Rep3Value<F>>>>,
 
     /// The bound coefficients for the Az, Bz, Cz polynomials. Will be populated in the streaming round
-    pub(crate) bound_coeffs: Vec<SparseCoefficient<SharedOrPublic<F>>>,
+    pub(crate) bound_coeffs: Vec<SparseCoefficient<Rep3Value<F>>>,
 
-    binding_scratch_space: Vec<SparseCoefficient<SharedOrPublic<F>>>,
+    binding_scratch_space: Vec<SparseCoefficient<Rep3Value<F>>>,
     /// The length of one of the Az, Bz, or Cz polynomials if it were represented by
     /// a single dense vector.
     dense_len: usize,
@@ -54,7 +54,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
         // let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {
         let unbound_coeffs_shards_iter = (0..num_chunks).into_par_iter().map(|chunk_index| {
-            let mut coeffs: Vec<SparseCoefficient<SharedOrPublic<F>>> =
+            let mut coeffs: Vec<SparseCoefficient<Rep3Value<F>>> =
                 Vec::with_capacity(chunk_size * padded_num_constraints * 3);
             for step_index in chunk_size * chunk_index..chunk_size * (chunk_index + 1) {
                 // Uniform constraints
@@ -62,7 +62,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     let global_index = 3 * (step_index * padded_num_constraints + constraint_index);
 
                     // Az
-                    let mut az_coeff = SharedOrPublic::zero_public();
+                    let mut az_coeff = Rep3Value::zero_public();
                     if !constraint.a.terms().is_empty() {
                         az_coeff = constraint.a.evaluate_row_rep3_mixed(
                             flattened_polynomials,
@@ -74,7 +74,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         }
                     }
                     // Bz
-                    let mut bz_coeff = SharedOrPublic::zero_public();
+                    let mut bz_coeff = Rep3Value::zero_public();
                     if !constraint.b.terms().is_empty() {
                         bz_coeff = constraint.b.evaluate_row_rep3_mixed(
                             flattened_polynomials,
@@ -89,12 +89,12 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     // Cz = Az ⊙ Bz
 
                     match (az_coeff, bz_coeff) {
-                        (SharedOrPublic::Public(x), SharedOrPublic::Public(y))
+                        (Rep3Value::Public(x), Rep3Value::Public(y))
                             if x.is_zero() && y.is_zero() =>
                         {
                             continue;
                         }
-                        (SharedOrPublic::Shared(_), SharedOrPublic::Shared(_)) => {
+                        (Rep3Value::Shared(_), Rep3Value::Shared(_)) => {
                             // If both Az and Bz are shared, then Cz is also shared, to avoid communication we can compute Cz via evaluation
                             let cz_coeff = constraint.c.evaluate_row_rep3_mixed(
                                 flattened_polynomials,
@@ -143,7 +143,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     let az_coeff = eq_a_eval.sub(&eq_b_eval, party_id);
                     coeffs.push((global_index, az_coeff).into());
                     // If Az != 0 and not shared, then the condition must be false (i.e. Bz = 0)
-                    if matches!(az_coeff, SharedOrPublic::Public(f) if !f.is_zero()) {
+                    if matches!(az_coeff, Rep3Value::Public(f) if !f.is_zero()) {
                         continue;
                     }
                     // Otherwise, Bz could be != 0, so we need to compute it
@@ -207,9 +207,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .unbound_coeffs_shards
             .par_iter()
             .map(|shard_coeffs| {
-                let mut shard_eval_point_infty = SharedOrPublic::zero_additive();
+                let mut shard_eval_point_infty = Rep3Value::zero_additive();
 
-                let mut current_shard_inner_sums = SharedOrPublic::zero_additive();
+                let mut current_shard_inner_sums = Rep3Value::zero_additive();
                 let mut current_shard_prev_x_out = 0;
 
                 for sparse_block in shard_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
@@ -224,16 +224,16 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                             &current_shard_inner_sums.mul_public(eq_poly.E_out_current()[current_shard_prev_x_out]),
                             party_id,
                         );
-                        current_shard_inner_sums = SharedOrPublic::zero_additive();
+                        current_shard_inner_sums = Rep3Value::zero_additive();
                         current_shard_prev_x_out = x_out;
                     }
 
                     // This holds the az0, az1, bz0, bz1 evals. No need for cz0, cz1 since we only need
                     // the eval at infinity.
-                    let mut az0 = SharedOrPublic::zero_public();
-                    let mut az1 = SharedOrPublic::zero_public();
-                    let mut bz0 = SharedOrPublic::zero_public();
-                    let mut bz1 = SharedOrPublic::zero_public();
+                    let mut az0 = Rep3Value::zero_public();
+                    let mut az1 = Rep3Value::zero_public();
+                    let mut bz0 = Rep3Value::zero_public();
+                    let mut bz1 = Rep3Value::zero_public();
                     for coeff in sparse_block {
                         let local_idx = coeff.index % 6;
                         if local_idx == 0 {
@@ -249,7 +249,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     let az_infty = az1.sub(&az0, party_id);
                     let bz_infty = bz1.sub(&bz0, party_id);
 
-                    if matches!((az_infty, bz_infty), (SharedOrPublic::Public(x), SharedOrPublic::Public(y)) if x.is_zero() && y.is_zero()) {
+                    if matches!((az_infty, bz_infty), (Rep3Value::Public(x), Rep3Value::Public(y)) if x.is_zero() && y.is_zero()) {
                         continue;
                     }
 
@@ -289,7 +289,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         unsafe {
             self.bound_coeffs.set_len(total_output_len);
         }
-        let mut output_slices: Vec<&mut [SparseCoefficient<SharedOrPublic<F>>]> =
+        let mut output_slices: Vec<&mut [SparseCoefficient<Rep3Value<F>>]> =
             Vec::with_capacity(self.unbound_coeffs_shards.len());
         let mut remainder = self.bound_coeffs.as_mut_slice();
         for slice_len in output_sizes {
@@ -309,12 +309,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 for block in unbound_coeffs_in_shard.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
-                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
-                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
+                    let mut az_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
+                    let mut bz_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
+                    let mut cz_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
 
                     for coeff in block {
                         match coeff.index % 6 {
@@ -329,8 +326,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if az_coeff != (None, None) {
                         let (low, high) = (
-                            az_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            az_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            az_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            az_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         output_slice_for_shard[output_index] = (
                             3 * block_index,
@@ -341,8 +338,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if bz_coeff != (None, None) {
                         let (low, high) = (
-                            bz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            bz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            bz_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            bz_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         output_slice_for_shard[output_index] = (
                             3 * block_index + 1,
@@ -353,8 +350,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if cz_coeff != (None, None) {
                         let (low, high) = (
-                            cz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            cz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            cz_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            cz_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         output_slice_for_shard[output_index] = (
                             3 * block_index + 2,
@@ -417,7 +414,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         .chunk_by(|x, y| x.index / 6 == y.index / 6)
                         .map(|sparse_block| {
                             let block_index = sparse_block[0].index / 6;
-                            let mut block = [SharedOrPublic::zero_additive(); 6];
+                            let mut block = [Rep3Value::zero_additive(); 6];
                             for coeff in sparse_block {
                                 block[coeff.index % 6] = coeff.value;
                             }
@@ -432,10 +429,12 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                             let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
-                                (az.0.mul(&bz.0).into_additive(party_id) - cz0.into_additive(party_id)) * eq_evals,
-                                az_eval_infty.mul(&bz_eval_infty).into_additive(party_id) * eq_evals,
+                                (az.0.mul(&bz.0).into_additive(party_id)
+                                    - cz0.into_additive(party_id))
+                                    * eq_evals,
+                                az_eval_infty.mul(&bz_eval_infty).into_additive(party_id)
+                                    * eq_evals,
                             )
-                            
                         })
                 })
                 .reduce(
@@ -475,7 +474,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                             prev_x_out = x_out;
                         }
 
-                        let mut block = [SharedOrPublic::zero_public(); 6];
+                        let mut block = [Rep3Value::zero_public(); 6];
                         for coeff in sparse_block {
                             block[coeff.index % 6] = coeff.value;
                         }
@@ -522,7 +521,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             self.binding_scratch_space.set_len(total_output_len);
         }
 
-        let mut output_slices: Vec<&mut [SparseCoefficient<SharedOrPublic<F>>]> =
+        let mut output_slices: Vec<&mut [SparseCoefficient<Rep3Value<F>>]> =
             Vec::with_capacity(chunks.len());
         let mut remainder = self.binding_scratch_space.as_mut_slice();
         for slice_len in output_sizes {
@@ -542,12 +541,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 for block in coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                     let block_index = block[0].index / 6;
 
-                    let mut az_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
-                    let mut bz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
-                    let mut cz_coeff: (Option<SharedOrPublic<F>>, Option<SharedOrPublic<F>>) =
-                        (None, None);
+                    let mut az_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
+                    let mut bz_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
+                    let mut cz_coeff: (Option<Rep3Value<F>>, Option<Rep3Value<F>>) = (None, None);
 
                     for coeff in block {
                         match coeff.index % 6 {
@@ -562,8 +558,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if az_coeff != (None, None) {
                         let (low, high) = (
-                            az_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            az_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            az_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            az_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         //  low + r_i * (high - low)
                         output_slice[output_index] = (
@@ -575,8 +571,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if bz_coeff != (None, None) {
                         let (low, high) = (
-                            bz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            bz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            bz_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            bz_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         output_slice[output_index] = (
                             3 * block_index + 1,
@@ -587,8 +583,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     }
                     if cz_coeff != (None, None) {
                         let (low, high) = (
-                            cz_coeff.0.unwrap_or(SharedOrPublic::zero_public()),
-                            cz_coeff.1.unwrap_or(SharedOrPublic::zero_public()),
+                            cz_coeff.0.unwrap_or(Rep3Value::zero_public()),
+                            cz_coeff.1.unwrap_or(Rep3Value::zero_public()),
                         );
                         output_slice[output_index] = (
                             3 * block_index + 2,
@@ -669,7 +665,7 @@ pub fn eval_offset_lc_rep3_mixed<F: JoltField>(
     step: usize,
     next_step_m: Option<usize>,
     party_id: PartyID,
-) -> SharedOrPublic<F> {
+) -> Rep3Value<F> {
     if !offset.0 {
         offset
             .1
@@ -679,6 +675,6 @@ pub fn eval_offset_lc_rep3_mixed<F: JoltField>(
             .1
             .evaluate_row_rep3_mixed(flattened_polynomials, next_step, party_id)
     } else {
-        SharedOrPublic::Public(F::from_i128(offset.1.constant_term_field()))
+        Rep3Value::Public(F::from_i128(offset.1.constant_term_field()))
     }
 }

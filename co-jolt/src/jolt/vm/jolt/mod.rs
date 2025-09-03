@@ -101,7 +101,7 @@ impl<InstructionSet: JoltInstructionSet> Into<JoltTraceStepNative>
         jolt_core::jolt::vm::JoltTraceStep {
             instruction_lookup: None,
             bytecode_row: self.bytecode_row,
-            memory_ops: self.memory_ops,
+            memory_ops: self.memory_ops.map(|op| op.into()),
             circuit_flags: self.circuit_flags,
         }
     }

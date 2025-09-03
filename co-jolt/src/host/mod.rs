@@ -257,7 +257,7 @@ impl Program {
                 JoltTraceStep {
                     instruction_lookup,
                     bytecode_row: BytecodeRow::from_instruction_ext::<RV32I>(&row.instruction),
-                    memory_ops: (&row).into(),
+                    memory_ops: MemoryOp::from_trace_row(&row),
                     circuit_flags: row.instruction.to_circuit_flags(),
                 }
             })

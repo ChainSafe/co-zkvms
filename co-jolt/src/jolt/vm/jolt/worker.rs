@@ -151,11 +151,6 @@ where
                     io_ctx.network().send_response(meta)?;
                 }
 
-                let program_io = Rep3ProgramIO {
-                    v_io: Rep3MultilinearPolynomial::public_zero(1),
-                    memory_layout,
-                };
-
                 (polynomials, program_io, trace_length)
             }
             None => {

@@ -28,8 +28,8 @@ use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck;
-use crate::utils::shared_or_public::SharedOrPublic;
-use crate::utils::shared_or_public::SharedOrPublicIter;
+use crate::utils::types::Rep3Value;
+use crate::utils::types::SharedOrPublicIter;
 use jolt_core::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::r1cs::inputs::ConstraintInput;
 
@@ -133,8 +133,8 @@ where
         let binding_span = span!(Level::INFO, "binding_z_and_shift_z");
         let binding_guard = binding_span.enter();
 
-        let mut bind_z = vec![SharedOrPublic::zero_public(); num_vars_uniform * 2];
-        let mut bind_shift_z = vec![SharedOrPublic::zero_public(); num_vars_uniform * 2];
+        let mut bind_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
+        let mut bind_shift_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
 
         flattened_polys
             .par_iter()
@@ -160,7 +160,7 @@ where
 
         let mut polys = vec![poly_ABC, poly_z];
 
-        let comb_func = |poly_evals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
+        let comb_func = |poly_evals: &[Rep3Value<F>]| -> AdditiveShare<F> {
             assert_eq!(poly_evals.len(), 2);
             poly_evals[0].mul(&poly_evals[1]).into_additive(party_id)
         };
@@ -187,7 +187,7 @@ where
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
-        let mut bind_z_ry_var: Vec<SharedOrPublic<F>> = Vec::with_capacity(num_steps);
+        let mut bind_z_ry_var: Vec<Rep3Value<F>> = Vec::with_capacity(num_steps);
 
         let bind_span = span!(Level::INFO, "bind_z_ry_var");
         let bind_guard = bind_span.enter();

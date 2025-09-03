@@ -8,10 +8,7 @@ use crate::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::{
-        shared_or_public::SharedOrPublic, transcript::Transcript, transpose_flatten,
-        transpose_hashmap,
-    },
+    utils::{transcript::Transcript, transpose_flatten, transpose_hashmap, types::Rep3Value},
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
@@ -370,8 +367,8 @@ where
     ) -> eyre::Result<(
         Vec<F>,
         F,
-        Vec<SharedOrPublic<F>>,
-        Vec<SharedOrPublic<F>>,
+        Vec<Rep3Value<F>>,
+        Vec<Rep3Value<F>>,
         Rep3PrimeFieldShare<F>,
     )> {
         // Check all polys are the same size

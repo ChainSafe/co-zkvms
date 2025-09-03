@@ -3,7 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::unipoly::unipoly_from_additive_evals;
-use crate::utils::shared_or_public::SharedOrPublic;
+use crate::utils::types::Rep3Value;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
@@ -175,12 +175,12 @@ pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
 ) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)>
 where
     F: JoltField,
-    Poly: PolynomialBinding<F, SharedOrPublic<F>>
-        + PolynomialEvaluation<F, SharedOrPublic<F>>
+    Poly: PolynomialBinding<F, Rep3Value<F>>
+        + PolynomialEvaluation<F, Rep3Value<F>>
         + PolyDegree
         + Send
         + Sync,
-    Func: Fn(&[SharedOrPublic<F>]) -> AdditiveShare<F> + std::marker::Sync,
+    Func: Fn(&[Rep3Value<F>]) -> AdditiveShare<F> + std::marker::Sync,
     Network: Rep3NetworkWorker,
 {
     let mut previous_claim = *claim;

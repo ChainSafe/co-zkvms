@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicIter};
+use crate::utils::types::{Rep3Value, SharedOrPublicIter};
 
 pub use jolt_core::r1cs::ops::*;
 
@@ -12,7 +12,7 @@ pub trait LinearCombinationExt<F: JoltField> {
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
         row: usize,
         party_id: PartyID,
-    ) -> SharedOrPublic<F>;
+    ) -> Rep3Value<F>;
 }
 
 impl<F: JoltField> LinearCombinationExt<F> for LC {
@@ -21,7 +21,7 @@ impl<F: JoltField> LinearCombinationExt<F> for LC {
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
         row: usize,
         party_id: PartyID,
-    ) -> SharedOrPublic<F> {
+    ) -> Rep3Value<F> {
         self.terms()
             .iter()
             .map(|term| match term.0 {

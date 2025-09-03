@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
+use crate::field::JoltField;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
-use crate::utils::shared_or_public::SharedOrPublic;
-use crate::field::JoltField;
+use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
@@ -93,7 +93,7 @@ where
         let write_leaves: Vec<_> = read_leaves
             .par_iter()
             .map(|leaf| {
-                SharedOrPublic::Shared(*leaf)
+                Rep3Value::Shared(*leaf)
                     .add_public(gamma_terms[6], io_ctx.id)
                     .as_shared()
             })

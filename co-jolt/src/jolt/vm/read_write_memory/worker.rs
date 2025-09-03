@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use crate::field::JoltField;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
@@ -8,9 +9,8 @@ use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
-use crate::utils::shared_or_public::SharedOrPublic;
 use crate::utils::transcript::TranscriptExt;
-use crate::field::JoltField;
+use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     RegisterAddressOpenings,
@@ -147,7 +147,7 @@ where
 
         // (v_final - v_io) * eq * io_witness_range
         let party_id = io_ctx.id;
-        let output_check_fn = |vals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
+        let output_check_fn = |vals: &[Rep3Value<F>]| -> AdditiveShare<F> {
             vals[2]
                 .sub(&vals[3], party_id)
                 .mul_public(vals[0].as_public() * vals[1].as_public())
