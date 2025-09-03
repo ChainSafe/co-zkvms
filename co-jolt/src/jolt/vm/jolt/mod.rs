@@ -261,16 +261,16 @@ where
                 ProofTranscript,
             >::generate_witness(&preprocessing.instruction_lookups, &trace);
 
-        // let r1cs = R1CSPolynomials::generate_witness::<C, M, Self::InstructionSet>(&trace);
+        let r1cs = R1CSPolynomials::generate_witness::<C, M, Self::InstructionSet>(&trace);
 
-        // let mut trace: Vec<JoltTraceStepNative> =
-        //     trace.into_iter().map(|step| step.into()).collect();
+        let mut trace: Vec<JoltTraceStepNative> =
+            trace.into_iter().map(|step| step.into()).collect();
 
-        // let read_write_memory = ReadWriteMemoryPolynomials::generate_witness(
-        //     program_io,
-        //     &preprocessing.read_write_memory,
-        //     &trace,
-        // );
+        let read_write_memory = ReadWriteMemoryPolynomials::generate_witness(
+            program_io,
+            &preprocessing.read_write_memory,
+            &trace,
+        );
         // let timestamp_range_check =
         //     TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(&read_write_memory);
 
@@ -281,9 +281,9 @@ where
 
         JoltPolynomials {
             instruction_lookups,
-            // read_write_memory,
+            read_write_memory,
             // timestamp_range_check,
-            // r1cs,
+            r1cs,
             // bytecode,
             ..Default::default()
         }

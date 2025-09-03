@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::{field::JoltField, jolt::vm::read_write_memory::witness::Rep3ProgramIO};
 
 use jolt_core::{
     jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff},
@@ -78,6 +78,7 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &NoPreprocessing,
         ops: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
+        _: &Rep3ProgramIO<F>,
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>

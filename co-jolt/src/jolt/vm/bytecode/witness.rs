@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    jolt::vm::witness::Rep3Polynomials,
+    jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::Rep3Polynomials},
     poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial},
 };
 use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff};
@@ -69,6 +69,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
+        _: &Rep3ProgramIO<F>,
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>

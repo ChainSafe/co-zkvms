@@ -18,7 +18,10 @@ use crate::{
     IoResult,
     protocols::{
         rep3::network::{IoContext, Rep3Network},
-        rep3_ring::{self, binary},
+        rep3_ring::{
+            self,
+            binary::{self, pack_bits, pack_bits_many, unpack_bits, unpack_bits_many},
+        },
     },
 };
 
@@ -165,28 +168,6 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     Ok(f)
 }
 
-fn unpack<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShare<Bit>> {
-    debug_assert!(len <= T::K);
-    let mut res = Vec::with_capacity(len);
-    for i in 0..len {
-        res.push(input.get_bit(i));
-    }
-    res
-}
-
-fn unpack_many<T: IntRing2k>(
-    input_a: Vec<RingElement<T>>,
-    input_b: Vec<RingElement<T>>,
-    len: usize,
-) -> Vec<Vec<Rep3RingShare<Bit>>> {
-    debug_assert!(len <= T::K);
-    input_a
-        .into_par_iter()
-        .zip(input_b.into_par_iter())
-        .map(|(a, b)| unpack(Rep3RingShare::new_ring(a, b), len))
-        .collect()
-}
-
 fn and_pre_bit<T: IntRing2k, N: Rep3Network>(
     a: &Rep3RingShare<T>,
     b: &Rep3RingShare<Bit>,
@@ -222,34 +203,34 @@ fn pack_and<N: Rep3Network>(
                 vec![binary::and(&input[0], rhs, io_context)?]
             }
             2 | 4 | 8 => {
-                let packed = pack::<u8>(input);
+                let packed = pack_bits::<u8>(input);
                 let local_a = and_pre_bit(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare(local_a)?;
-                unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                unpack_bits(Rep3RingShare::new_ring(local_a, local_b), len)
             }
             16 => {
-                let packed = pack::<u16>(input);
+                let packed = pack_bits::<u16>(input);
                 let local_a = and_pre_bit(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare(local_a)?;
-                unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                unpack_bits(Rep3RingShare::new_ring(local_a, local_b), len)
             }
             32 => {
-                let packed = pack::<u32>(input);
+                let packed = pack_bits::<u32>(input);
                 let local_a = and_pre_bit(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare(local_a)?;
-                unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                unpack_bits(Rep3RingShare::new_ring(local_a, local_b), len)
             }
             64 => {
-                let packed = pack::<u64>(input);
+                let packed = pack_bits::<u64>(input);
                 let local_a = and_pre_bit(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare(local_a)?;
-                unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                unpack_bits(Rep3RingShare::new_ring(local_a, local_b), len)
             }
             128 => {
-                let packed = pack::<u128>(input);
+                let packed = pack_bits::<u128>(input);
                 let local_a = and_pre_bit(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare(local_a)?;
-                unpack(Rep3RingShare::new_ring(local_a, local_b), len)
+                unpack_bits(Rep3RingShare::new_ring(local_a, local_b), len)
             }
             _ => {
                 unreachable!()
@@ -263,7 +244,7 @@ fn pack_and<N: Rep3Network>(
         let mut result = Vec::with_capacity(len);
         let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
         for els in input.chunks(BITLEN) {
-            let packed = pack::<Packtype>(els);
+            let packed = pack_bits::<Packtype>(els);
             let u64_a = and_pre_bit(&packed, rhs, io_context);
             to_send.push(u64_a);
         }
@@ -272,7 +253,7 @@ fn pack_and<N: Rep3Network>(
         let mut remeining = len;
         for (a, b) in to_send.into_iter().zip(received) {
             let rcv = std::cmp::min(BITLEN, remeining);
-            result.extend(unpack(Rep3RingShare::new_ring(a, b), rcv));
+            result.extend(unpack_bits(Rep3RingShare::new_ring(a, b), rcv));
             remeining -= rcv;
         }
         debug_assert_eq!(remeining, 0);
@@ -303,38 +284,38 @@ fn pack_and_many<'a, N: Rep3Network>(
             .map(|x| vec![x])
             .collect::<Vec<_>>(),
             2 | 4 | 8 => {
-                let packed = pack_many::<u8>(inputs);
+                let packed = pack_bits_many::<u8>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare_many(&local_a)?;
-                unpack_many(local_a, local_b, len)
+                unpack_bits_many(local_a, local_b, len)
             }
             16 => {
                 // let packed = pack::<u16>(inputs);
                 // let local_a = and_pre_bit(&packed, rhs, io_context);
                 // let local_b = io_context.network.reshare(local_a)?;
                 // unpack(Rep3RingShare::new_ring(local_a, local_b), len)
-                let packed = pack_many::<u16>(inputs);
+                let packed = pack_bits_many::<u16>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare_many(&local_a)?;
-                unpack_many(local_a, local_b, len)
+                unpack_bits_many(local_a, local_b, len)
             }
             32 => {
-                let packed = pack_many::<u32>(inputs);
+                let packed = pack_bits_many::<u32>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare_many(&local_a)?;
-                unpack_many(local_a, local_b, len)
+                unpack_bits_many(local_a, local_b, len)
             }
             64 => {
-                let packed = pack_many::<u64>(inputs);
+                let packed = pack_bits_many::<u64>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare_many(&local_a)?;
-                unpack_many(local_a, local_b, len)
+                unpack_bits_many(local_a, local_b, len)
             }
             128 => {
-                let packed = pack_many::<u128>(inputs);
+                let packed = pack_bits_many::<u128>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
                 let local_b = io_context.network.reshare_many(&local_a)?;
-                unpack_many(local_a, local_b, len)
+                unpack_bits_many(local_a, local_b, len)
             }
             _ => unreachable!(),
         };
@@ -354,7 +335,7 @@ fn pack_and_many<'a, N: Rep3Network>(
         let input_chunks = transpose(input_chunked);
 
         for els in input_chunks {
-            let packed = pack_many::<Packtype>(els);
+            let packed = pack_bits_many::<Packtype>(els);
             let u64_a = and_pre_bit_many(&packed, rhs, io_context);
             to_send.push(u64_a);
         }
@@ -368,7 +349,7 @@ fn pack_and_many<'a, N: Rep3Network>(
                 .zip_eq(a)
                 .zip_eq(b)
                 .for_each(|((result, a), b)| {
-                    result.extend(unpack(Rep3RingShare::new_ring(a, b), rcv));
+                    result.extend(unpack_bits(Rep3RingShare::new_ring(a, b), rcv));
                 });
             remaining -= rcv;
         });
@@ -378,7 +359,7 @@ fn pack_and_many<'a, N: Rep3Network>(
     }
 }
 
-pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
+fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
 where
     I: IntoIterator<Item = Vec<T>>,
 {
@@ -403,23 +384,6 @@ where
         }
     }
     out
-}
-
-fn pack<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
-    let mut share_a = RingElement::<T>::zero();
-    let mut share_b = RingElement::<T>::zero();
-    for (i, bit) in input.iter().enumerate() {
-        share_a |= RingElement(T::from(bit.a.convert().convert()) << i);
-        share_b |= RingElement(T::from(bit.b.convert().convert()) << i);
-    }
-    Rep3RingShare::new_ring(share_a, share_b)
-}
-
-#[inline]
-fn pack_many<'a, T: IntRing2k>(
-    inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
-) -> Vec<Rep3RingShare<T>> {
-    inputs.into_par_iter().map(|input| pack(&input)).collect()
 }
 
 #[inline]

@@ -2,7 +2,7 @@ use std::{iter, u32};
 
 use crate::{
     field::JoltField,
-    jolt::{instruction::sub, trace},
+    jolt::{instruction::sub, trace, vm::read_write_memory::witness::Rep3ProgramIO},
     poly::{
         combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
         Rep3MultilinearPolynomial,
@@ -67,7 +67,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
-        ops: &mut [JoltTraceStep<Instructions>],
+        trace: &mut [JoltTraceStep<Instructions>],
+        _: &Rep3ProgramIO<F>,
         M: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
@@ -75,21 +76,21 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
-        let m = ops.len().next_power_of_two();
+        let m = trace.len().next_power_of_two();
 
         Instructions::promote_public_operands_to_shared(
-            ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
+            trace.par_iter_mut().map(|op| &mut op.instruction_lookup),
             io_ctx.party_id(),
         );
 
         Instructions::populate_operands_casts(
-            ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
+            trace.par_iter_mut().map(|op| &mut op.instruction_lookup),
             io_ctx.main(),
         )?;
 
-        let lookup_outputs = compute_lookup_outputs_rep3(&ops, m, io_ctx)?;
+        let lookup_outputs = compute_lookup_outputs_rep3(&trace, m, io_ctx)?;
         let subtable_lookup_indices = subtable_lookup_indices_rep3::<C, F, Network, Instructions>(
-            ops,
+            trace,
             &mut io_ctx.main(),
             M,
         )?;
@@ -115,7 +116,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                     let access_sequence = &subtable_lookup_indices[dim_index];
 
-                    let (used_ops, memory_addresses): (Vec<_>, Vec<_>) = ops
+                    let (used_ops, memory_addresses): (Vec<_>, Vec<_>) = trace
                         .iter()
                         .enumerate()
                         .filter_map(|(j, op)| {
@@ -250,7 +251,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .flat_map(|(indices, dim)| {
                 indices
                     .into_par_iter()
-                    .zip(ops.par_iter())
+                    .zip(trace.par_iter())
                     .zip(dim.par_iter_mut())
                     .filter_map(|((index, op), dim)| {
                         if op.instruction_lookup.is_some() {
@@ -282,7 +283,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Instructions::COUNT];
 
-        for (j, op) in ops.iter().enumerate() {
+        for (j, op) in trace.iter().enumerate() {
             if let Some(op) = &op.instruction_lookup {
                 instruction_flag_bitvectors
                     [<Instructions as Rep3JoltInstructionSet>::enum_index(op)][j] = 1;

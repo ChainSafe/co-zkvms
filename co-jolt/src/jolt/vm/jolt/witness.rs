@@ -1,11 +1,11 @@
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
-use crate::jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials;
+use crate::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials};
 use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::r1cs::inputs::Rep3R1CSPolynomials;
+use crate::r1cs::inputs::{ConstantPreprocessing, Rep3R1CSPolynomials};
 use crate::utils::shared_or_public::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
@@ -57,6 +57,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &Preprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
+        program_io: &Rep3ProgramIO<F>,
         M: usize,
         network: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
@@ -122,7 +123,7 @@ where
             network,
         )?;
 
-        Rep3R1CSPolynomials::stream_secret_shares(&NoPreprocessing, r1cs, rng, network)?;
+        Rep3R1CSPolynomials::stream_secret_shares(&ConstantPreprocessing::<C>, r1cs, rng, network)?;
 
         Ok(())
     }
@@ -144,7 +145,7 @@ where
             Rep3TimestampRangeCheckPolynomials::receive_witness_share(&NoPreprocessing, io_ctx)?;
         let bytecode =
             Rep3BytecodePolynomials::receive_witness_share(&_preprocessing.bytecode, io_ctx)?;
-        let r1cs = Rep3R1CSPolynomials::receive_witness_share(&NoPreprocessing, io_ctx)?;
+        let r1cs = Rep3R1CSPolynomials::receive_witness_share(&ConstantPreprocessing::<C>, io_ctx)?;
 
         Ok(Self {
             instruction_lookups,
@@ -159,6 +160,7 @@ where
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         ops: &mut [JoltTraceStep<Instructions>],
+        program_io: &Rep3ProgramIO<F>,
         M: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
@@ -175,8 +177,16 @@ where
             io_ctx,
         )?;
 
+        let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
+            &ConstantPreprocessing::<C>,
+            ops,
+            M,
+            io_ctx,
+        )?;
+
         Ok(Self {
             instruction_lookups,
+            r1cs,
             ..Default::default()
         })
     }

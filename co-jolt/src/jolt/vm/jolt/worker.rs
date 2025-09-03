@@ -109,6 +109,12 @@ where
                 JoltTraceStep::pad(&mut trace);
                 let memory_layout = program_io.memory_layout;
 
+                let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
+                    program_io,
+                    &trace,
+                    io_ctx.worker(0),
+                )?;
+
                 let polynomials = Rep3JoltPolynomials::generate_witness_rep3(
                     &preprocessing.shared,
                     &mut trace,

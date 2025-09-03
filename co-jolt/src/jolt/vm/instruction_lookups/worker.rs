@@ -9,9 +9,8 @@ use crate::{
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
     utils::{
-        instruction_utils::{transpose_flatten, transpose_hashmap},
-        shared_or_public::SharedOrPublic,
-        transcript::Transcript,
+        shared_or_public::SharedOrPublic, transcript::Transcript, transpose_flatten,
+        transpose_hashmap,
     },
 };
 use color_eyre::eyre::Result;

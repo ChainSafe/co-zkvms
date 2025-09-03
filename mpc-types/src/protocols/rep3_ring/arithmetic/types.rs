@@ -87,6 +87,36 @@ impl<T: IntRing2k> Rep3RingShare<T> {
     pub fn is_even(&self) -> Rep3RingShare<Bit> {
         !self.get_bit(0)
     }
+
+    /// Converts the share to a vector of bytes in little-endian order, padding with zeros if necessary.
+    pub fn to_le_bytes(&self) -> Vec<Rep3RingShare<u8>> {
+        todo!()
+    }
+
+    /// Converts a vector of bits in little-endian order to a share.
+    pub fn from_le_bytes(bytes: &[Rep3RingShare<u8>]) -> Self {
+        assert_eq!(bytes.len(), T::K / 8);
+
+        // let mut acc = Self::zero_share();
+        // let mut i = 0;
+        // for byte in bytes {
+        //     acc |= *byte << (8 * i);
+        //     i += 1;
+        // }
+
+        let mut a_bytes = vec![0u8; T::K / 8];
+        let mut b_bytes = vec![0u8; T::K / 8];
+
+        for (i, byte_share) in bytes.iter().enumerate() {
+            a_bytes[i] = byte_share.a.0;
+            b_bytes[i] = byte_share.b.0;
+        }
+
+        Self {
+            a: RingElement(T::from_le_bytes(&a_bytes)),
+            b: RingElement(T::from_le_bytes(&b_bytes)),
+        }
+    }
 }
 
 impl<T: IntRing2k> AsRef<Rep3RingShare<T>> for Rep3RingShare<T> {

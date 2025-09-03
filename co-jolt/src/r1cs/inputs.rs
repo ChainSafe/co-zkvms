@@ -14,16 +14,20 @@ use jolt_core::r1cs::inputs::{
 use mpc_core::protocols::rep3::network::{
     IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
+use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
+use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{
     generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
 };
+use crate::utils::{transpose, transpose_par_from_flat};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use jolt_common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
@@ -31,9 +35,11 @@ use std::fmt::Debug;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+pub struct ConstantPreprocessing<const C: usize>;
+
 pub type Rep3R1CSPolynomials<F> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
 
-impl<F> Rep3Polynomials<F, NoPreprocessing> for Rep3R1CSPolynomials<F>
+impl<const C: usize, F> Rep3Polynomials<F, ConstantPreprocessing<C>> for Rep3R1CSPolynomials<F>
 where
     F: JoltField,
 {
@@ -45,7 +51,7 @@ where
         level = "trace"
     )]
     fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
-        _preprocessing: &NoPreprocessing,
+        _preprocessing: &ConstantPreprocessing<C>,
         polynomials: Self::PublicPolynomials,
         rng: &mut R,
         network: &mut Network,
@@ -115,7 +121,7 @@ where
         level = "trace"
     )]
     fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _: &NoPreprocessing,
+        _: &ConstantPreprocessing<C>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self> {
         let mut partial_polys: Self = io_ctx.network().receive_request()?;
@@ -133,20 +139,85 @@ where
     }
 
     fn generate_witness_rep3<Instructions, Network>(
-        _preprocessing: &NoPreprocessing,
+        _: &ConstantPreprocessing<C>,
         trace: &mut [JoltTraceStep<Instructions>],
+        _: &Rep3ProgramIO<F>,
         M: usize,
-        network: &mut WorkerIoContext<Network>,
+        io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
-        todo!()
+        let m = trace.len();
+        let log_M = log2(M) as usize;
+
+        let mut chunks_x = vec![Rep3RingShare::zero_share(); C * m];
+        let mut chunks_y = vec![Rep3RingShare::zero_share(); C * m];
+        let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m];
+
+        trace
+            .into_par_iter()
+            .zip(chunks_x.par_chunks_mut(C))
+            .zip(chunks_y.par_chunks_mut(C))
+            .zip(circuit_flags.par_iter_mut())
+            .for_each(|(((step, chunks_x), chunks_y), circuit_flags)| {
+                if let Some(instr) = &step.instruction_lookup {
+                    let (x, y) = instr.operand_chunks_rep3(C, log_M);
+                    for i in 0..C {
+                        chunks_x[i] = x[i];
+
+                        chunks_y[i] = y[i];
+                    }
+                }
+
+                for j in 0..NUM_CIRCUIT_FLAGS {
+                    if step.circuit_flags[j] {
+                        circuit_flags[j] = 1;
+                    }
+                }
+            });
+
+        let chunks_x = transpose_par_from_flat(
+            io_ctx.par_chunks(chunks_x, None, |chunk, io_ctx| {
+                rep3_ring::casts::ring_to_field_many_selector(&chunk, io_ctx)
+            })?,
+            m,
+            C,
+        )
+        .into_iter()
+        .map(Rep3MultilinearPolynomial::from)
+        .collect();
+
+        let chunks_y = transpose_par_from_flat(
+            io_ctx.par_chunks(chunks_y, None, |chunk, io_ctx| {
+                rep3_ring::casts::ring_to_field_many_selector(&chunk, io_ctx)
+            })?,
+            m,
+            C,
+        )
+        .into_iter()
+        .map(Rep3MultilinearPolynomial::from)
+        .collect();
+
+        let circuit_flags = transpose(circuit_flags)
+            .into_iter()
+            .map(Rep3MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        Ok(Self {
+            chunks_x: chunks_x,
+            chunks_y: chunks_y,
+            circuit_flags: circuit_flags,
+            // Actual aux variable polynomials will be computed afterwards
+            aux: AuxVariableStuff::initialize(&C),
+        })
     }
 
     fn combine_polynomials(
-        _preprocessing: &NoPreprocessing,
+        _preprocessing: &ConstantPreprocessing<C>,
         polynomials_shares: Vec<Self>,
     ) -> eyre::Result<Self::PublicPolynomials> {
         todo!()
@@ -164,7 +235,6 @@ pub trait R1CSPolynomialsExt<F: JoltField> {
         let mut chunks_y = vec![vec![0u8; trace.len()]; C];
         let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
-        // TODO(moodlezoup): Can be parallelized
         for (step_index, step) in trace.iter().enumerate() {
             if let Some(instr) = &step.instruction_lookup {
                 let (x, y) = instr.operand_chunks(C, log_M);

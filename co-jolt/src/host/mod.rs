@@ -14,7 +14,7 @@ use itertools::{izip, Itertools};
 use jolt_tracer::{RVTraceRow, RV32IM};
 use mpc_core::protocols::{
     rep3::{self, Rep3PrimeFieldShare},
-    rep3_ring,
+    rep3_ring::{self, Rep3RingShare},
 };
 use rand::{RngCore, SeedableRng};
 use rand_chacha::{ChaCha12Core, ChaCha12Rng};
@@ -40,7 +40,7 @@ use crate::{
             JoltTraceStep,
         },
     },
-    utils::instruction_utils::transpose,
+    utils::transpose,
 };
 
 // use self::analyze::ProgramSummary;
@@ -266,18 +266,11 @@ impl Program {
         &mut self,
         inputs: &[u8],
         rng: &mut R,
-    ) -> (Vec<Rep3ProgramIOInput<F>>, Vec<Vec<JoltTraceStep<RV32I>>>) {
+    ) -> (Vec<Rep3ProgramIOInput>, Vec<Vec<JoltTraceStep<RV32I>>>) {
         let (bytecode, memory_init) = self.decode();
         let (program_io, trace) = self.trace(inputs);
 
-        let program_io = Rep3ProgramIOInput::<F> {
-            input: vec![],
-            output: vec![],
-            panic: Rep3PrimeFieldShare::zero_share(),
-            memory_layout: program_io.memory_layout,
-        };
-
-        let program_io_shares = vec![program_io; 3];
+        let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
 
         let root = rng.next_u64();
         let trace_shares = trace

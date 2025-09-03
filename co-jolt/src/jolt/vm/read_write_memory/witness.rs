@@ -1,11 +1,15 @@
 use crate::field::JoltField;
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::vm::witness::Rep3Polynomials;
+use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
+use crate::utils::transpose;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_common::rv_trace::MemoryLayout;
+use itertools::izip;
+use jolt_common::rv_trace::{MemoryLayout, MemoryOp};
 use jolt_core::jolt::vm::read_write_memory::{
-    memory_address_to_witness_index, ReadWriteMemoryPolynomials, ReadWriteMemoryPreprocessing,
-    ReadWriteMemoryStuff,
+    memory_address_to_witness_index, remap_address, ReadWriteMemoryPolynomials,
+    ReadWriteMemoryPreprocessing, ReadWriteMemoryStuff,
 };
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 
@@ -14,6 +18,11 @@ use mpc_core::protocols::rep3::network::{
     IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
 use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::ring::bit::Bit;
+use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
+use serde::{Deserialize, Serialize};
+
+use rayon::prelude::*;
 
 pub type Rep3ReadWriteMemoryPolynomials<F> = ReadWriteMemoryStuff<Rep3MultilinearPolynomial<F>>;
 
@@ -40,7 +49,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         network: &mut Network,
     ) -> eyre::Result<()> {
         let public_polynomials = (0..3)
-            .map(|i| Rep3ReadWriteMemoryPolynomials {
+            .map(|_| Rep3ReadWriteMemoryPolynomials {
                 a_ram: Rep3MultilinearPolynomial::public(polynomials.a_ram.clone()),
                 v_read_rd: Default::default(),
                 v_read_rs1: Default::default(),
@@ -137,24 +146,136 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
     }
 }
 
-#[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Rep3ProgramIOInput<F: JoltField> {
-    pub input: Vec<Rep3BigUintShare<F>>,
-    pub output: Vec<Rep3BigUintShare<F>>,
-    pub panic: Rep3PrimeFieldShare<F>, // 0 if not panicked, 1 if panicked
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Rep3ProgramIOInput {
+    pub inputs: Vec<Rep3RingShare<u8>>,
+    pub outputs: Vec<Rep3RingShare<u8>>,
+    pub panic: Rep3RingShare<Bit>, // 0 if not panicked, 1 if panicked
     pub memory_layout: MemoryLayout,
 }
 
+impl Rep3ProgramIOInput {
+    pub fn generate_secret_shares<R: rand::Rng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
+        let JoltDevice {
+            inputs,
+            outputs,
+            panic,
+            memory_layout,
+        } = program_io;
+
+        let inputs = transpose(
+            inputs
+                .into_iter()
+                .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
+                .collect::<Vec<_>>(),
+        );
+
+        let outputs = transpose(
+            outputs
+                .into_iter()
+                .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
+                .collect::<Vec<_>>(),
+        );
+
+        let panic = rep3_ring::binary::generate_shares_rep3(panic.into(), rng);
+
+        izip!(inputs, outputs, panic)
+            .map(|(inputs, outputs, panic)| Self {
+                inputs,
+                outputs,
+                panic,
+                memory_layout,
+            })
+            .collect()
+    }
+}
+
 impl<F: JoltField> Rep3ProgramIO<F> {
-    pub fn generate_witness_rep3<Network>(
-        preprocessing: &ReadWriteMemoryPreprocessing,
-        program_io: Rep3ProgramIOInput<F>,
-        network: &mut IoContext<Network>,
+    pub fn generate_witness_rep3<Network, Instruction>(
+        program_io: Rep3ProgramIOInput,
+        trace: &[JoltTraceStep<Instruction>],
+        program_io: &Rep3ProgramIO<F>,
+        io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
-        Network: Rep3Network,
+        Network: Rep3NetworkWorker,
+        Instruction: JoltInstructionSet,
     {
-        todo!()
+        const RAM: usize = 3;
+
+        let Rep3ProgramIOInput {
+            inputs,
+            outputs,
+            panic,
+            memory_layout,
+        } = program_io;
+
+        let max_trace_address = trace
+            .par_iter()
+            .map(|step| match step.memory_ops[RAM] {
+                MemoryOp::Read(a) => remap_address(a, &program_io.memory_layout),
+                MemoryOp::Write(a, _) => remap_address(a, &program_io.memory_layout),
+            })
+            .max()
+            .unwrap();
+
+        let padded_memory_size = max_trace_address.next_power_of_two() as usize;
+        let input_words_len = inputs.len() / 4;
+        let output_words_len = outputs.len() / 4;
+
+        // Convert input bytes into words and populate `v_io`
+        let input_words = inputs
+            .par_chunks(4)
+            .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
+
+        // Convert output bytes into words and populate `v_io`
+        let output_words = outputs
+            .par_chunks(4)
+            .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
+
+        let (mut input_shares, mut output_shares) = {
+            let mut words =
+                io_ctx.par_chunks(input_words.chain(output_words), None, |words, io_ctx| {
+                    rep3_ring::casts::binary_ring_to_field_many(&words, io_ctx)
+                })?;
+            let output_words = words.split_off(input_words_len);
+            assert_eq!(output_words.len(), output_words_len);
+            (words, output_words)
+        };
+
+        let termination_bits = [panic, !panic];
+        let [panic, termination] = rep3_ring::conversion::bit_inject_from_bits_to_field_many(
+            &termination_bits,
+            io_ctx.main(),
+        )?
+        .try_into()
+        .unwrap();
+
+        let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); padded_memory_size];
+        let input_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        );
+        let output_index = memory_address_to_witness_index(
+            program_io.memory_layout.output_start,
+            &program_io.memory_layout,
+        );
+        v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_shares[..]);
+        v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_shares[..]);
+
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.panic,
+            &program_io.memory_layout,
+        )] = panic;
+        v_io[memory_address_to_witness_index(
+            program_io.memory_layout.termination,
+            &program_io.memory_layout,
+        )] = termination;
+
+        Ok(Self {
+            v_io: Rep3MultilinearPolynomial::from(v_io),
+            memory_layout,
+        })
     }
 
     pub fn generate_secret_shares<R: rand::Rng>(

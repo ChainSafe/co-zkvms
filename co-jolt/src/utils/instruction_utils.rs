@@ -1,6 +1,7 @@
 use ark_ff::{One, Zero};
 use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
+use num_traits::AsPrimitive;
 
 use crate::field::JoltField;
 use mpc_core::protocols::{
@@ -135,102 +136,22 @@ pub fn rep3_chunk_and_concatenate_for_shift(
 }
 
 /// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `usize`, each representing a
-/// `chunk_len`-bit chunk. Only different from `chunk_operand` in that it returns `usize` instead of
-/// `u64`.
-pub fn rep3_chunk_operand_usize(
+/// `chunk_len`-bit chunk.
+pub fn rep3_chunk_operand<U: IntRing2k>(
     x: Rep3RingShare<u32>,
     C: usize,
     chunk_len: usize,
-) -> Vec<Rep3RingShare<u32>> {
+) -> Vec<Rep3RingShare<U>>
+where
+    u32: AsPrimitive<U>,
+{
     let bit_mask = RingElement(((1 << chunk_len) - 1) as u32);
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * chunk_len) as u32 as usize;
-            x.clone().shr(shift) & bit_mask.clone()
+            downcast(x.clone().shr(shift) & bit_mask.clone())
         })
         .collect()
-}
-
-pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
-where
-    I: IntoIterator<Item = Vec<T>>,
-{
-    let mut it = matrix.into_iter();
-    let first_row = match it.next() {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-    let cols = first_row.len();
-    let (low, _) = it.size_hint();
-    let mut out: Vec<Vec<T>> = (0..cols).map(|_| Vec::with_capacity(low + 1)).collect();
-
-    // push first row
-    for (c, v) in first_row.into_iter().enumerate() {
-        out[c].push(v);
-    }
-    // push remaining rows
-    for row in it {
-        assert_eq!(row.len(), cols, "ragged matrix");
-        for (c, v) in row.into_iter().enumerate() {
-            out[c].push(v);
-        }
-    }
-    out
-}
-
-pub fn transpose_flatten<I, T>(matrix: I) -> Vec<Vec<T>>
-where
-    I: IntoIterator<Item = Vec<Vec<T>>>, // [R][C][D] with D possibly var-length
-{
-    let mut rows = matrix.into_iter();
-    let first = match rows.next() {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-    let cols = first.len();
-    let (low, _) = rows.size_hint();
-    // estimate avg depth from first row
-    let avg_depth = if cols > 0 {
-        first.iter().map(Vec::len).sum::<usize>() / cols
-    } else {
-        0
-    };
-    // pre-allocate each column to (rows_est × avg_depth)
-    let mut out: Vec<Vec<T>> = (0..cols)
-        .map(|_| Vec::with_capacity((low + 1) * avg_depth))
-        .collect();
-
-    // flatten first row
-    for (c, dv) in first.into_iter().enumerate() {
-        out[c].extend(dv);
-    }
-    // flatten remaining rows
-    for row in rows {
-        assert_eq!(row.len(), cols, "ragged cols");
-        for (c, dv) in row.into_iter().enumerate() {
-            out[c].extend(dv);
-        }
-    }
-    out
-}
-
-pub fn transpose_hashmap<T>(rows: Vec<HashMap<usize, T>>) -> HashMap<usize, Vec<T>> {
-    let mut out: HashMap<usize, Vec<T>> = HashMap::new();
-    for (_, row) in rows.into_iter().enumerate() {
-        for (k, v) in row {
-            out.entry(k).or_default().push(v);
-        }
-    }
-    out
-}
-
-pub fn chunks_take_nth<'a, T>(
-    data: &'a [T],
-    chunk_len: usize,
-    step: usize,
-) -> impl Iterator<Item = impl Iterator<Item = &'a T>> {
-    // for each offset 0‥step-1 build a strided view
-    (0..step).map(move |off| data.iter().skip(off).step_by(step).take(chunk_len))
 }
 
 #[cfg(test)]
@@ -251,36 +172,6 @@ mod test {
         let indices_alt = chunk_and_concatenate_operands_alt(x, y, C, log_M);
         assert_eq!(indices, indices_alt);
         println!("{:?}", indices);
-    }
-
-    #[test]
-    fn test_transpose() {
-        let matrix = vec![
-            vec![vec![1; 4], vec![2; 4]],
-            vec![vec![3; 4], vec![4; 4]],
-            vec![vec![5; 4], vec![6; 4]],
-        ];
-        let transposed = transpose(matrix);
-        println!("{:?}", transposed);
-        let x = transpose(transposed[1].clone());
-        println!("\n{:?}", x);
-    }
-
-    #[test]
-    fn test_transpose_flatten() {
-        let matrix = vec![vec![vec![(); 8]; 4], vec![vec![(); 8]; 4]];
-        let transposed = transpose_flatten(matrix);
-        assert_eq!(
-            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
-            vec![16; 4]
-        );
-
-        let matrix = vec![vec![vec![(); 7]; 4], vec![vec![(); 8]; 4]];
-        let transposed = transpose_flatten(matrix);
-        assert_eq!(
-            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
-            vec![15; 4]
-        );
     }
 
     fn chunk_and_concatenate_operands_alt(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {

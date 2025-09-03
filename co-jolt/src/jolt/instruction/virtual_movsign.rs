@@ -26,7 +26,7 @@ use mpc_core::protocols::{
 };
 
 use crate::utils::instruction_utils::{
-    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand_usize,
+    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
@@ -149,7 +149,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for MOVSIGNInstruction<WORD_SIZ
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_operand_usize(self.0.as_binary(), C, log_M)
+        rep3_chunk_operand(self.0.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(

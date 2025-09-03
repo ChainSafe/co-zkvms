@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::utils::future::FutureRep3;
 use crate::utils::future_ring::FutureRep3Ring;
-use crate::utils::instruction_utils::chunk_operand;
+use crate::utils::instruction_utils::{chunk_operand, rep3_chunk_operand};
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -139,6 +139,22 @@ pub trait Rep3JoltInstruction: JoltInstruction {
         Err(eyre::eyre!(
             "output_batched not implemented for instruction"
         ))
+    }
+
+    fn operand_chunks_rep3(
+        &self,
+        C: usize,
+        log_M: usize,
+    ) -> (Vec<Rep3RingShare<u8>>, Vec<Rep3RingShare<u8>>) {
+        assert!(
+            log_M % 2 == 0,
+            "log_M must be even for operand_chunks to work"
+        );
+        let (x, y) = self.operands_rep3();
+        (
+            rep3_chunk_operand(x.as_arithmetic(), C, log_M / 2),
+            rep3_chunk_operand(y.as_arithmetic(), C, log_M / 2),
+        )
     }
 }
 

@@ -20,7 +20,7 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     chunk_operand_usize, concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
-    rep3_chunk_operand_usize,
+    rep3_chunk_operand,
 };
 use jolt_core::utils::instruction_utils::concatenate_lookups;
 
@@ -119,7 +119,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for ADVICEInstruction<WORD_SIZE
         C: usize,
         log_M: usize,
     ) -> Vec<Rep3RingShare<u32>> {
-        rep3_chunk_operand_usize(self.0.as_binary(), C, log_M)
+        rep3_chunk_operand(self.0.as_binary(), C, log_M)
     }
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(

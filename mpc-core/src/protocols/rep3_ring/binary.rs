@@ -18,6 +18,8 @@ use mpc_types::protocols::{
 use num_traits::{One, Zero};
 use rand::{Rng, distributions::Standard, prelude::Distribution};
 
+use rayon::prelude::*;
+
 pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Rep3RingShare<T>>
 where
     Standard: Distribution<T>,
@@ -358,4 +360,46 @@ where
             b: RingElement(Bit::new((x.b & RingElement::one()) == RingElement::one())),
         })
         .collect())
+}
+
+pub fn pack_bits<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
+    let mut share_a = RingElement::<T>::zero();
+    let mut share_b = RingElement::<T>::zero();
+    for (i, bit) in input.iter().enumerate() {
+        share_a |= RingElement(T::from(bit.a.convert().convert()) << i);
+        share_b |= RingElement(T::from(bit.b.convert().convert()) << i);
+    }
+    Rep3RingShare::new_ring(share_a, share_b)
+}
+
+#[inline]
+pub fn pack_bits_many<'a, T: IntRing2k>(
+    inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
+) -> Vec<Rep3RingShare<T>> {
+    inputs
+        .into_par_iter()
+        .map(|input| pack_bits(&input))
+        .collect()
+}
+
+pub fn unpack_bits<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShare<Bit>> {
+    debug_assert!(len <= T::K);
+    let mut res = Vec::with_capacity(len);
+    for i in 0..len {
+        res.push(input.get_bit(i));
+    }
+    res
+}
+
+pub fn unpack_bits_many<T: IntRing2k>(
+    input_a: Vec<RingElement<T>>,
+    input_b: Vec<RingElement<T>>,
+    len: usize,
+) -> Vec<Vec<Rep3RingShare<Bit>>> {
+    debug_assert!(len <= T::K);
+    input_a
+        .into_par_iter()
+        .zip(input_b.into_par_iter())
+        .map(|(a, b)| unpack_bits(Rep3RingShare::new_ring(a, b), len))
+        .collect()
 }
