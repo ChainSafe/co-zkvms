@@ -197,8 +197,8 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2(), 1 << 10)
             .unwrap();
 
-    let program_io: Rep3ProgramIOInput<F> = network.receive_request()?;
-    let trace: Vec<JoltTraceStep<RV32I>> =
+    // let program_io: Rep3ProgramIOInput = network.receive_request()?;
+    let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
     tracing::info!("trace len: {}", trace.len());
 
@@ -304,10 +304,10 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
-    network.send_requests(program_io_shares);
     network.send_requests_blocking(
         trace_shares
             .into_iter()
+            .zip(program_io_shares)
             .map(|s| bincode::serialize(&s))
             .collect::<bincode::Result<Vec<_>>>()
             .context("while serializing trace shares")?,

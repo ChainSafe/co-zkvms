@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use itertools::Itertools;
 use mpc_core::protocols::{
     rep3::{
-        network::{IoContext, Rep3Network},
+        network::{IoContext, Rep3Network, Rep3NetworkWorker, WorkerIoContext},
         Rep3PrimeFieldShare,
     },
     rep3_ring::{
@@ -31,38 +31,47 @@ pub enum FutureOp<R: IntRing2k> {
     // Out: Rep3RingShare<R>
     RingMulA2B(Rep3RingShare<R>, Rep3RingShare<R>), // TODO: make recursive
     RingA2B(Rep3RingShare<R>),
+
+    Fulfilled,
 }
 
-impl<R: IntRing2k, T> FutureRep3Ring<R, T> {
+impl<R: IntRing2k, T, Args: Default> FutureRep3Ring<R, T, Args> {
     // ===== Into Field Ops =====
 
     pub fn cast_to_field(a: Rep3RingShare<R>) -> Self {
-        FutureRep3Ring::Pending(FutureOp::CastToField(a), ())
+        FutureRep3Ring::Pending(FutureOp::CastToField(a), Default::default())
     }
 
     pub fn cast_to_field_b2a(a: Rep3RingShare<R>) -> Self {
-        FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(a), ())
+        FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(a), Default::default())
     }
 
     pub fn bit_inject_to_field(a: Rep3RingShare<Bit>) -> Self {
-        FutureRep3Ring::Pending(FutureOp::BitInject(a), ())
+        FutureRep3Ring::Pending(FutureOp::BitInject(a), Default::default())
     }
 
     // ===== Into Ring Ops =====
 
     pub fn a2b(a: Rep3RingShare<R>) -> Self {
-        FutureRep3Ring::Pending(FutureOp::RingA2B(a), ())
+        FutureRep3Ring::Pending(FutureOp::RingA2B(a), Default::default())
     }
 
     pub fn mul_a2b(a: Rep3RingShare<R>, b: Rep3RingShare<R>) -> Self {
-        FutureRep3Ring::Pending(FutureOp::RingMulA2B(a, b), ())
+        FutureRep3Ring::Pending(FutureOp::RingMulA2B(a, b), Default::default())
+    }
+}
+
+impl<R: IntRing2k, T> FutureRep3Ring<R, T, Option<usize>> {
+    // Workeraround to allow reusing fulfilled values
+    pub fn fulfilled(index: usize) -> Self {
+        FutureRep3Ring::Pending(FutureOp::Fulfilled, Some(index))
     }
 }
 
 pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args> {
-    fn fufill_batched<N: Rep3Network, MapFn: Fn(U, Args) -> T + Send>(
+    fn fufill_batched<N: Rep3NetworkWorker, MapFn: Fn(U, Args) -> T + Send>(
         self,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where
@@ -76,10 +85,14 @@ where
     Args: Send + Copy,
     Standard: Distribution<R>,
 {
-    #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
-    fn fufill_batched<N: Rep3Network, MapFn>(
+    #[tracing::instrument(
+        skip_all,
+        name = "FutureRep3Ring::fufill_batched_to_field",
+        level = "trace"
+    )]
+    fn fufill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where
@@ -91,6 +104,7 @@ where
         let (mut cast_x, mut fut_cast, mut cast_args) = (Vec::new(), Vec::new(), Vec::new());
         let (mut cast_b2a_x, mut fut_cast_b2a, mut cast_b2a_args) =
             (Vec::new(), Vec::new(), Vec::new());
+        let (mut fut_fulfilled, mut fulfilled_index) = (Vec::new(), Vec::new());
 
         self.into_iter()
             .zip_eq(fufilled.iter_mut())
@@ -110,6 +124,10 @@ where
                     fut_cast_b2a.push(fufilled);
                     cast_b2a_args.push(args);
                 }
+                FutureRep3Ring::Pending(FutureOp::Fulfilled, args) => {
+                    fut_fulfilled.push(fufilled);
+                    fulfilled_index.push(args);
+                }
                 FutureRep3Ring::Ready(x) => {
                     *fufilled = x;
                 }
@@ -119,7 +137,9 @@ where
         // Bit Inject
         {
             let c = if !bit_inject_x.is_empty() {
-                rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)?
+                io_ctx.par_chunks(bit_inject_x, None, |bit_inject_x, io_ctx| {
+                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)
+                })?
             } else {
                 vec![]
             };
@@ -136,7 +156,9 @@ where
         // Cast
         {
             let c = if !cast_x.is_empty() {
-                rep3_ring::casts::ring_to_field_many_selector(&cast_x, io_ctx)?
+                io_ctx.par_chunks(cast_x, None, |cast_x, io_ctx| {
+                    rep3_ring::casts::ring_to_field_many_selector(&cast_x, io_ctx)
+                })?
             } else {
                 vec![]
             };
@@ -153,7 +175,9 @@ where
         // Cast B2A
         {
             let shares = if !cast_b2a_x.is_empty() {
-                rep3_ring::casts::binary_ring_to_field_many(&cast_b2a_x, io_ctx)?
+                io_ctx.par_chunks(cast_b2a_x, None, |cast_b2a_x, io_ctx| {
+                    rep3_ring::casts::binary_ring_to_field_many(&cast_b2a_x, io_ctx)
+                })?
             } else {
                 vec![]
             };
@@ -167,6 +191,16 @@ where
                 });
         }
 
+        // Fulfilled
+        {
+            if !fulfilled_index.is_empty() {
+                fut_fulfilled
+                    .into_par_iter()
+                    .zip_eq(fulfilled_index)
+                    .for_each(|(f, index)| *f = map(Default::default(), index));
+            }
+        }
+
         Ok(fufilled)
     }
 }
@@ -178,10 +212,14 @@ where
     Args: Send + Copy,
     Standard: Distribution<R>,
 {
-    #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
-    fn fufill_batched<N: Rep3Network, MapFn>(
+    #[tracing::instrument(
+        skip_all,
+        name = "FutureRep3Ring::fufill_batched_to_ring",
+        level = "trace"
+    )]
+    fn fufill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where
@@ -215,8 +253,8 @@ where
         // Mul + A2B
         {
             let c = if !mul_a2b_x.is_empty() && !mul_a2b_y.is_empty() {
-                let t = rep3_ring::arithmetic::mul_vec(&mul_a2b_x, &mul_a2b_y, io_ctx)?;
-                rep3_ring::conversion::a2b_many(&t, io_ctx)?
+                let t = rep3_ring::arithmetic::mul_vec(&mul_a2b_x, &mul_a2b_y, io_ctx.main())?;
+                rep3_ring::conversion::a2b_many(&t, io_ctx.main())?
             } else {
                 vec![]
             };
@@ -233,7 +271,7 @@ where
         // A2B
         {
             let c = if !a2b_x.is_empty() {
-                rep3_ring::conversion::a2b_many(&a2b_x, io_ctx)?
+                rep3_ring::conversion::a2b_many(&a2b_x, io_ctx.main())?
             } else {
                 vec![]
             };

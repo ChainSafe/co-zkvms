@@ -89,11 +89,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         )?;
 
         let lookup_outputs = compute_lookup_outputs_rep3(&trace, m, io_ctx)?;
-        let subtable_lookup_indices = subtable_lookup_indices_rep3::<C, F, Network, Instructions>(
-            trace,
-            &mut io_ctx.main(),
-            M,
-        )?;
+        let subtable_lookup_indices =
+            subtable_lookup_indices_rep3::<C, F, Network, Instructions>(trace, io_ctx, M)?;
 
         let id = io_ctx.main().id;
         let materialized_subtable_luts: Vec<Vec<_>> = preprocessing
@@ -446,18 +443,18 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
 fn subtable_lookup_indices_rep3<const C: usize, F, Network, Instructions>(
     ops: &[JoltTraceStep<Instructions>],
-    io_ctx0: &mut IoContext<Network>,
+    io_ctx0: &mut WorkerIoContext<Network>,
     M: usize,
 ) -> eyre::Result<Vec<Vec<Rep3RingShare<u32>>>>
 where
     F: JoltField,
-    Network: Rep3Network,
+    Network: Rep3NetworkWorker,
     Instructions: Rep3JoltInstructionSet,
 {
     let num_chunks = C;
     let log_M = M.log_2();
 
-    let id = io_ctx0.id;
+    let id = io_ctx0.party_id();
     let futures: Vec<_> = ops
         .par_iter()
         .map(|op| {
@@ -530,7 +527,7 @@ fn compute_lookup_outputs_rep3<
     )?;
     drop(_guard);
 
-    let mut outputs = outputs_futures.fufill_batched(io_ctx.main(), |res, _| res)?;
+    let mut outputs = outputs_futures.fufill_batched(io_ctx, |res, _| res)?;
 
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
     Ok(Rep3MultilinearPolynomial::from(outputs))
