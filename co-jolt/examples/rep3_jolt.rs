@@ -131,8 +131,7 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        // .num_threads(num_cpus::get())
-        .num_threads(8)
+        .num_threads(num_cpus::get())
         .build_global()
         .expect("set global Rayon pool");
 
@@ -141,16 +140,14 @@ fn main() -> Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    let mut program = host::Program::new("sha3-guest");
+    let mut program = host::Program::new("sha2-chain-guest");
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
-    // let mut inputs = vec![];
-    // inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
-    let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-
-    // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
+    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;

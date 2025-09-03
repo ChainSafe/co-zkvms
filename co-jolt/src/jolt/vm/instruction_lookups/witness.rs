@@ -75,43 +75,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
-        // let mut network = BiNetwork::new(io_ctx)?;
-        let num_reads_total = ops.len().next_power_of_two();
-
-        // let operands = ops
-        //     .iter()
-        //     .find_map(|op| match op.instruction_lookup.as_ref() {
-        //         Some(op) => Some(op.operands_rep3()),
-        //         None => None,
-        //     })
-        //     .unwrap();
-
-        // let operands_open = vec![operands.0.as_binary_share(), operands.1.as_binary_share()]
-        //     .into_iter()
-        //     .map(|x| {
-        //         rep3_ring::binary::open(&x, io_ctx.main())
-        //             .unwrap()
-        //             .convert()
-        //     })
-        //     .collect::<Vec<_>>();
-
-        // let operands_b2a = rep3_ring::conversion::b2a_many(
-        //     vec![operands.0.as_binary_share(), operands.1.as_binary_share()],
-        //     io_ctx.main(),
-        // )?;
-        // // let operands_b2a = vec![operands.0.as_binary_share(), operands.1.as_binary_share()]
-        // //     .into_iter()
-        // //     .map(|x| rep3_ring::conversion::b2a(&x, io_ctx.main()).unwrap())
-        // //     .collect::<Vec<_>>();
-
-        // let operands_b2a_open = rep3_ring::arithmetic::open_vec(&operands_b2a, io_ctx.main())?
-        //     .into_iter()
-        //     .map(|x| x.convert())
-        //     .collect::<Vec<_>>();
-        // let operands_check = vec![operands.0.as_public() as u32, operands.1.as_public() as u32];
-        // assert_eq!(operands_open, operands_check);
-        // assert_eq!(operands_b2a_open, operands_check);
-        // println!("Operands checks passed");
+        let m = ops.len().next_power_of_two();
 
         Instructions::promote_public_operands_to_shared(
             ops.par_iter_mut().map(|op| &mut op.instruction_lookup),
@@ -123,7 +87,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             io_ctx.main(),
         )?;
 
-        let lookup_outputs = compute_lookup_outputs_rep3(&ops, num_reads_total, io_ctx)?;
+        let lookup_outputs = compute_lookup_outputs_rep3(&ops, m, io_ctx)?;
         let subtable_lookup_indices = subtable_lookup_indices_rep3::<C, F, Network, Instructions>(
             ops,
             &mut io_ctx.main(),
@@ -141,21 +105,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     .collect::<Vec<_>>()
             })
             .collect();
-
-        // let access_sequences: Vec<Vec<_>> = (0..preprocessing.num_memories)
-        //     .into_par_iter()
-        //     .map(|memory_index| {
-        //         let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-        //         let access_sequence = &subtable_lookup_indices[dim_index];
-
-        //     })
-        //     .collect();
-
-        // let mut ohvs_by_memory = Vec::with_capacity(preprocessing.num_memories);
-        // instructions_used
-        //     .iter()
-        //     .for_each(|js| ohvs_by_memory.push(ohvs.drain(..js.len()).collect_vec()));
-        // assert!(ohvs.is_empty());
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter(
@@ -185,9 +134,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                         .unzip();
 
                     let mut final_cts_i = vec![Rep3RingShare::zero_share(); M];
-                    let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); num_reads_total];
-                    let mut subtable_lookups =
-                        vec![Rep3PrimeFieldShare::zero_share(); num_reads_total];
+                    let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); m];
+                    let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); m];
 
                     let num_reads = used_ops.len();
                     if num_reads == 0 {
@@ -217,7 +165,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
                     let mut read_cts_i_local_a = vec![RingElement::zero(); num_reads];
                     let mut lookup_subtables_local_a = vec![RingElement::zero(); num_reads];
-                    // let mut ohvs = ohvs.into_iter();
 
                     let _guard =
                         tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
@@ -225,11 +172,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     for i in 0..num_reads {
                         let c = memory_addresses_c[i];
 
-                        let _guard = tracing::trace_span!("luts_rw_local").entered();
                         let mut counter = io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
                         for (i, l) in final_cts_i.iter_mut().enumerate() {
                             let e = rand_ohv[i ^ c];
-                            // let e = ohv[i];
                             counter += e * *l;
                             *l += e; // ohv_bit (either 0 or 1)
                         }
@@ -240,7 +185,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             .enumerate()
                         {
                             let e = rand_ohv[i ^ c];
-                            // let e = ohv[i];
                             subtable_lookup += e * *l;
                         }
 
@@ -299,17 +243,44 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         let span = tracing::info_span!("compute_dim");
         let _guard = span.enter();
-        let dim: Vec<_> = rep3_ring::casts::binary_ring_to_field_many(
-            &subtable_lookup_indices.into_iter().flatten().collect_vec(),
-            io_ctx.main(),
-        )?
-        .chunks_exact(ops.len())
-        .map(|c| Rep3MultilinearPolynomial::from_shared_coeffs(c.to_vec()))
-        .collect();
+        let mut dim = vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); m]; C];
+        let (dim_muts, used_subtable_lookup_indices): (Vec<_>, Vec<_>) = subtable_lookup_indices
+            .into_par_iter()
+            .zip(dim.par_iter_mut())
+            .flat_map(|(indices, dim)| {
+                indices
+                    .into_par_iter()
+                    .zip(ops.par_iter())
+                    .zip(dim.par_iter_mut())
+                    .filter_map(|((index, op), dim)| {
+                        if op.instruction_lookup.is_some() {
+                            Some((dim, index))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unzip();
+
+        io_ctx
+            .par_chunks(used_subtable_lookup_indices, None, |chunk, io_ctx| {
+                rep3_ring::casts::binary_ring_to_field_many::<_, F, _>(&chunk, io_ctx)
+            })?
+            .into_par_iter()
+            .zip_eq(dim_muts)
+            .for_each(|(dim, dim_mut): (_, &mut _)| {
+                *dim_mut = dim;
+            });
+
+        let dim = dim
+            .into_iter()
+            .map(Rep3MultilinearPolynomial::from)
+            .collect();
+
         drop(_guard);
 
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
-            vec![vec![0u64; num_reads_total]; Instructions::COUNT];
+            vec![vec![0u64; m]; Instructions::COUNT];
 
         for (j, op) in ops.iter().enumerate() {
             if let Some(op) = &op.instruction_lookup {
@@ -534,6 +505,7 @@ fn compute_lookup_outputs_rep3<
 ) -> eyre::Result<Rep3MultilinearPolynomial<F>> {
     let mut outputs_futures =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); ops.len()];
+    let _guard = tracing::info_span!("group_by_instruction").entered();
     let ops_by_instruction: (
         Vec<Vec<&Instructions>>,
         Vec<Vec<&mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>>,
@@ -543,7 +515,9 @@ fn compute_lookup_outputs_rep3<
         .into_iter()
         .map(|(_, g)| g.unzip())
         .unzip();
+    drop(_guard);
 
+    let _guard = tracing::info_span!("trace_outputs_batched").entered();
     let _ = io_ctx.par_chunks(
         ops_by_instruction, // TODO: sort to distribute work evenly
         None,
@@ -553,6 +527,7 @@ fn compute_lookup_outputs_rep3<
                 .collect::<eyre::Result<Vec<_>>>()
         },
     )?;
+    drop(_guard);
 
     let mut outputs = outputs_futures.fufill_batched(io_ctx.main(), |res, _| res)?;
 

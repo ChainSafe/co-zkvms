@@ -83,6 +83,10 @@ impl<T: IntRing2k> Rep3RingShare<T> {
             b: RingElement(self.b.0.as_()),
         }
     }
+
+    pub fn is_even(&self) -> Rep3RingShare<Bit> {
+        !self.get_bit(0)
+    }
 }
 
 impl<T: IntRing2k> AsRef<Rep3RingShare<T>> for Rep3RingShare<T> {

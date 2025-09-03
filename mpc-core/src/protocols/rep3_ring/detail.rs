@@ -25,7 +25,6 @@ where
     kogge_stone_inner(&p, &g, io_context)
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
 pub(super) fn low_depth_binary_add_many<T: IntRing2k, N: Rep3Network>(
     x1: &[Rep3RingShare<T>],
     x2: &[Rep3RingShare<T>],

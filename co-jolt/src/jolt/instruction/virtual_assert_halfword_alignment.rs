@@ -154,9 +154,9 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
             .into_iter()
             .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_binary()))
             .unzip();
-        let z = rep3_ring::binary::add_many(&x, &y, io_ctx)?; // TODO: % 2
-        let is_zero = rep3_ring::binary::is_zero_many(&z, io_ctx)?;
-        izip!(is_zero, out.into_iter()).for_each(|(r, out)| {
+        let z = rep3_ring::binary::add_many(&x, &y, io_ctx)?;
+        let z_is_even = z.iter().map(|z| z.is_even()).collect::<Vec<_>>();
+        izip!(z_is_even, out.into_iter()).for_each(|(r, out)| {
             *out = FutureRep3Ring::bit_inject_to_field(r);
         });
         Ok(())

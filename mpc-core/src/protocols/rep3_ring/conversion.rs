@@ -225,6 +225,7 @@ where
 }
 
 /// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3.
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn b2a_many<T: IntRing2k, N: Rep3Network>(
     x: &[Rep3RingShare<T>],
     io_context: &mut IoContext<N>,

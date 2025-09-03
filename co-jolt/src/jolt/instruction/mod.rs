@@ -211,77 +211,67 @@ pub trait Rep3JoltInstructionSet:
         ops: impl ParallelIterator<Item = &'a mut Option<Self>>,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
-        let (inputs, field_operands): (Vec<Vec<Rep3RingShare<u32>>>, Vec<Vec<&mut Rep3Operand>>) =
-            ops.filter_map(|op| op.as_mut())
-                .map(|op| {
-                    let (op1, op2) = op.operands_mut();
-                    match (&op1, &op2) {
-                        (
-                            Rep3Operand::Shared {
-                                arithmetic: None,
-                                binary: x,
-                                ..
-                            },
-                            Some(Rep3Operand::Shared {
-                                arithmetic: None,
-                                binary: y,
-                                ..
-                            }),
-                        ) => {
-                            let res = vec![x.clone(), y.clone()];
-                            (res, vec![op1, op2.unwrap()])
-                        }
-                        (
-                            Rep3Operand::Shared {
-                                arithmetic: None,
-                                binary: x,
-                                ..
-                            },
-                            _,
-                        ) => {
-                            let res = vec![x.clone()];
-                            (res, vec![op1])
-                        }
-                        (
-                            _,
-                            Some(Rep3Operand::Shared {
-                                arithmetic: None,
-                                binary: y,
-                                ..
-                            }),
-                        ) => {
-                            let res = vec![y.clone()];
-                            (res, vec![op2.unwrap()])
-                        }
-                        _ => (vec![], vec![]),
-                    }
-                })
-                .unzip();
+        let (binary, field_operands): (Vec<Rep3RingShare<u32>>, Vec<&mut Rep3Operand>) = ops
+            .filter_map(|op| op.as_mut())
+            .flat_map(|op| {
+                let (op1, op2) = op.operands_mut();
+                match (&op1, &op2) {
+                    (
+                        Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: x,
+                            ..
+                        },
+                        Some(Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: y,
+                            ..
+                        }),
+                    ) => (vec![x.clone(), y.clone()], vec![op1, op2.unwrap()]),
+                    (
+                        Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: x,
+                            ..
+                        },
+                        _,
+                    ) => (vec![x.clone()], vec![op1]),
+                    (
+                        _,
+                        Some(Rep3Operand::Shared {
+                            arithmetic: None,
+                            binary: y,
+                            ..
+                        }),
+                    ) => (vec![y.clone()], vec![op2.unwrap()]),
+                    _ => (vec![], vec![]),
+                }
+            })
+            .unzip();
 
-        if inputs.iter().flatten().next().is_none() {
+        if binary.is_empty() {
             return Ok(());
         }
 
-        let binary_inputs = inputs.into_iter().flatten().collect::<Vec<_>>();
-        let mut arith_outputs = rep3_ring::casts::upcast_many_from_binary(&binary_inputs, io_ctx)?;
-        for operands in field_operands.into_iter() {
-            for (output, operand) in arith_outputs.drain(..operands.len()).zip(operands) {
-                match operand {
-                    Rep3Operand::Shared {
-                        arithmetic: None,
-                        binary,
-                        public,
-                    } => {
-                        *operand = Rep3Operand::Shared {
-                            binary: std::mem::take(binary),
-                            arithmetic: Some(output),
-                            public: std::mem::take(public),
-                        };
-                    }
-                    _ => panic!("Expected shared operand"),
+        let arithmetic = rep3_ring::casts::upcast_many_from_binary(&binary, io_ctx)?;
+
+        field_operands
+            .into_par_iter()
+            .zip_eq(arithmetic)
+            .for_each(|(operand, arithmetic)| match operand {
+                Rep3Operand::Shared {
+                    arithmetic: None,
+                    binary,
+                    public,
+                } => {
+                    *operand = Rep3Operand::Shared {
+                        binary: std::mem::take(binary),
+                        arithmetic: Some(arithmetic),
+                        public: std::mem::take(public),
+                    };
                 }
-            }
-        }
+                _ => panic!("Expected shared operand"),
+            });
         Ok(())
     }
 
@@ -301,20 +291,6 @@ pub enum Rep3Operand {
 }
 
 impl Rep3Operand {
-    // TODO remove
-    // pub fn insert_public(&mut self, p: u64) {
-    //     match self {
-    //         Rep3Operand::Shared {
-    //             binary,
-    //             arithmetic,
-    //             public,
-    //         } => {
-    //             public.insert(p);
-    //         }
-    //         Rep3Operand::Public(_) => {}
-    //     };
-    // }
-
     pub fn from_binary(share: Rep3RingShare<u32>) -> Self {
         Rep3Operand::Shared {
             binary: share,
@@ -386,16 +362,6 @@ impl Default for Rep3Operand {
     }
 }
 
-// impl<F: JoltField> From<Rep3BigUintShare<F>> for Rep3Operand {
-//     fn from(value: Rep3BigUintShare<F>) -> Self {
-//         Rep3Operand::Shared {
-//             binary: value,
-//             arithmetic: None,
-//             public: None,
-//         }
-//     }
-// }
-
 impl From<u64> for Rep3Operand {
     fn from(value: u64) -> Self {
         Rep3Operand::Public(value)
@@ -459,6 +425,8 @@ pub mod bge;
 pub mod bgeu;
 pub mod bne;
 pub mod mul;
+pub mod mulhu;
+pub mod mulu;
 pub mod or;
 pub mod sll;
 pub mod slt;
@@ -466,9 +434,6 @@ pub mod sltu;
 pub mod sra;
 pub mod srl;
 pub mod sub;
-// pub mod sw;
-pub mod mulhu;
-pub mod mulu;
 pub mod virtual_advice;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
@@ -480,30 +445,3 @@ pub mod virtual_movsign;
 pub mod virtual_pow2;
 pub mod virtual_right_shift_padding;
 pub mod xor;
-
-// instruction_set!(
-//   TestLookups,
-//   Range256: range_check::RangeLookup<256, F>,
-//   Range320: range_check::RangeLookup<320, F>
-// );
-
-// impl<F: JoltField> TryFrom<&ELFInstruction> for TestLookups<F> {
-//     type Error = &'static str;
-
-//     fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
-//         unimplemented!()
-//     }
-// }
-
-// instruction_set!(
-//   TestInstructions,
-//   XOR: xor::XORInstruction<F>
-// );
-
-// impl<F: JoltField> TryFrom<&ELFInstruction> for TestInstructions<F> {
-//     type Error = &'static str;
-
-//     fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
-//         unimplemented!()
-//     }
-// }

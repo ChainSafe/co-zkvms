@@ -91,6 +91,7 @@ pub fn a2b<F: PrimeField, N: Rep3Network>(
 }
 
 /// Transforms the provided replicated shared values from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3. Reduces the mul-depth by batching all elements together.
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn a2b_many<F: PrimeField, N: Rep3Network>(
     x: &[Rep3PrimeFieldShare<F>],
     io_context: &mut IoContext<N>,

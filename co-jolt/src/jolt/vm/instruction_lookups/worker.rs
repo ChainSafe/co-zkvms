@@ -579,7 +579,7 @@ where
                     .collect();
                 drop(_span_enter);
 
-                Ok(evaluations_in_chunk)
+                eyre::Ok(evaluations_in_chunk)
             })?
             .into_par_iter()
             .reduce_with(|a, b| {

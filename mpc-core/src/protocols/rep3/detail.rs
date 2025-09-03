@@ -24,7 +24,6 @@ pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>
     low_depth_sub_p_cmux_many::<F, N>(&x, io_context, bitlen + 1)
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
 pub(crate) fn low_depth_binary_add_many<'a, F: PrimeField, N: Rep3Network>(
     x1: impl IntoIterator<Item = &'a BinaryShare<F>>,
     x2: &[BinaryShare<F>],
@@ -125,7 +124,6 @@ fn kogge_stone_inner<F: PrimeField, N: Rep3Network>(
     Ok(g)
 }
 
-#[tracing::instrument(skip_all, level = "trace")]
 fn low_depth_sub_p_cmux_many<F: PrimeField, N: Rep3Network>(
     x: &[Rep3BigUintShare<F>],
     io_context: &mut IoContext<N>,

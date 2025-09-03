@@ -19,6 +19,7 @@ use mpc_types::protocols::{
 use num_bigint::BigUint;
 use num_traits::AsPrimitive;
 use rand::{distributions::Standard, prelude::Distribution};
+use rayon::prelude::*;
 use std::any::TypeId;
 
 /// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the ring cast. In case of a downcast, the excess bits are just truncated.
@@ -125,6 +126,7 @@ where
 
 /// An upcast of a Rep3RingShare from a smaller ring to a larger ring
 /// Does require network interaction
+#[tracing::instrument(skip_all, level = "trace")]
 pub fn upcast_many_from_binary<T, U, N>(
     binary: &[Rep3RingShare<T>],
     io_context: &mut IoContext<N>,
@@ -143,7 +145,7 @@ where
     }
 
     let binary_upcasted = binary
-        .iter()
+        .par_iter()
         .map(|s| Rep3RingShare {
             a: RingElement(s.a.0.as_()),
             b: RingElement(s.b.0.as_()),

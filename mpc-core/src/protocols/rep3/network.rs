@@ -23,6 +23,7 @@ use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::rngs::RngForker;
 use crate::{IoResult, RngType};
 
+use rayon::iter::Either;
 use rayon::prelude::*;
 
 use super::{
@@ -635,42 +636,42 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
     ///
     /// The `chunk_size` is the size of each chunk.
     /// If `None`, the chunk size is the number of inputs divided by the number of available forks.
-    pub fn par_chunks<T, R, MapFn>(
+    pub fn par_chunks<T, R, MapFn, Err>(
         &mut self,
         inputs: impl IntoParallelIterator<Item = T, Iter: IndexedParallelIterator>,
         chunk_size: Option<usize>,
         map: MapFn,
     ) -> eyre::Result<Vec<R>>
     where
-        MapFn: Fn(Vec<T>, &mut IoContext<Network>) -> eyre::Result<Vec<R>> + Sync + Send,
+        MapFn: Fn(Vec<T>, &mut IoContext<Network>) -> Result<Vec<R>, Err> + Sync + Send,
         T: Sized + Send,
-        R: Sync + Send,
+        R: Sync + Send + Clone,
+        eyre::Report: From<Err>,
+        Err: Send + Sync,
     {
         let inputs_iter = inputs.into_par_iter();
         let len = inputs_iter.len();
 
         if self.forks.len() == 0 {
-            return map(inputs_iter.collect(), self.main());
+            return Ok(map(inputs_iter.collect(), self.main())?);
         }
 
         let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
         assert!(chunk_size != 0);
         if len <= chunk_size {
-            return map(inputs_iter.collect(), self.main());
+            return Ok(map(inputs_iter.collect(), self.main())?);
         }
         let forks = len.div_ceil(chunk_size);
 
-        Ok(inputs_iter
+        inputs_iter
             .into_par_iter()
             .chunks(chunk_size)
             .zip_eq(self.forks(forks).par_iter_mut())
-            .flat_map_iter(|(chunk, mut ctx)| {
-                map(chunk, &mut ctx)
-                    // .map(|r| r.into_iter().map(|r| Ok(r)))
-                    // .map_err(|e| iter::once(e))
-                    .unwrap()
+            .flat_map(|(chunk, mut ctx)| match map(chunk, &mut ctx) {
+                Ok(result) => Either::Left(result.into_par_iter().map(|r| eyre::Ok(r))),
+                Err(err) => Either::Right(rayon::iter::once(Err(eyre::Error::from(err)))),
             })
-            .collect::<Vec<_>>())
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
@@ -726,7 +727,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         let workers = rayon::iter::once(main_worker)
             .chain(workers)
             .enumerate()
-            .map(|(worker_id, mut worker)| {
+            .map(|(worker_id, worker)| {
                 let forks = iter::repeat_with(|| worker.fork())
                     .take(num_forks as usize)
                     .collect::<Result<Vec<_>, _>>()?;
