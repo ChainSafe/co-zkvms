@@ -5,14 +5,14 @@
 )]
 
 use jolt_core::jolt::vm::JoltStuff;
-use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
+use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
 
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rayon::prelude::*;
@@ -69,7 +69,7 @@ where
         } = polynomials.aux;
 
         let public_polys = (0..3)
-            .map(|i| Rep3R1CSPolynomials {
+            .map(|_| Rep3R1CSPolynomials {
                 chunks_x: Default::default(),
                 chunks_y: Default::default(),
                 circuit_flags: Rep3MultilinearPolynomial::public_vec(
@@ -218,7 +218,7 @@ where
 
     fn combine_polynomials(
         _preprocessing: &ConstantPreprocessing<C>,
-        polynomials_shares: Vec<Self>,
+        _: Vec<Self>,
     ) -> eyre::Result<Self::PublicPolynomials> {
         todo!()
     }

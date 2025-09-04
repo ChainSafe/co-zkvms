@@ -101,6 +101,14 @@ impl<F: JoltField> Rep3Value<F> {
         }
     }
 
+    pub fn into_rep3_local(self, party_id: PartyID) -> Rep3PrimeFieldShare<F> {
+        match self {
+            Rep3Value::Public(x) => rep3::arithmetic::promote_to_trivial_share(party_id, x),
+            Rep3Value::Shared(x) => x,
+            _ => panic!("Cannot convert additive share to Rep3PrimeFieldShare locally"),
+        }
+    }
+
     pub fn add(&self, other: &Self, party_id: PartyID) -> Self {
         match (self, other) {
             (Rep3Value::Shared(x), Rep3Value::Shared(y)) => Rep3Value::Shared(x + y),

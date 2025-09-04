@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
+use crate::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::utils::math::Math;
@@ -30,7 +31,6 @@ use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck;
 use crate::utils::types::Rep3Value;
 use crate::utils::types::SharedOrPublicIter;
-use jolt_core::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::r1cs::inputs::ConstraintInput;
 
 use rayon::prelude::*;
@@ -84,7 +84,7 @@ where
         let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly =
-            compute_spartan_Az_Bz_Cz(constraint_builder, &flattened_polys, party_id);
+            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys, party_id);
 
         let (outer_sumcheck_r, _outer_sumcheck_claims) =
             prove_spartan_cubic_sumcheck(num_rounds_x, &mut eq_tau, &mut az_bz_cz_poly, io_ctx)?;
@@ -297,21 +297,6 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
     io_ctx.network().send_response(final_evals.to_vec())?;
 
     Ok((r, final_evals))
-}
-
-#[tracing::instrument(skip_all)]
-pub fn compute_spartan_Az_Bz_Cz<const C: usize, F: JoltField, I: ConstraintInput>(
-    constraint_builder: &CombinedUniformBuilder<C, F, I>,
-    flattened_polynomials: &[&Rep3MultilinearPolynomial<F>], // N variables of (S steps)
-    party_id: PartyID,
-) -> Rep3SpartanInterleavedPolynomial<F> {
-    Rep3SpartanInterleavedPolynomial::new(
-        &constraint_builder.uniform_builder.constraints,
-        &constraint_builder.offset_equality_constraints,
-        flattened_polynomials,
-        constraint_builder.padded_rows_per_step(),
-        party_id,
-    )
 }
 
 // pub fn compute_aux_poly<const C: usize, I: ConstraintInput, F: JoltField>(

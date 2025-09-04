@@ -12,7 +12,10 @@ use crate::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
         Rep3MultilinearPolynomial,
     },
-    r1cs::spartan::worker::Rep3UniformSpartanProver,
+    r1cs::{
+        builder::CombinedUniformBuilder, constraints::R1CSConstraints,
+        spartan::worker::Rep3UniformSpartanProver,
+    },
     utils::transcript::{Transcript, TranscriptExt},
 };
 use eyre::Context;
@@ -31,11 +34,9 @@ use crate::jolt::{
         Jolt, JoltTraceStep,
     },
 };
-use jolt_core::r1cs::constraints::R1CSConstraints;
 use jolt_core::{
-    jolt::subtable::JoltSubtableSet,
-    jolt::vm::JoltProverPreprocessing,
-    r1cs::{builder::CombinedUniformBuilder, key::UniformSpartanKey},
+    jolt::subtable::JoltSubtableSet, jolt::vm::JoltProverPreprocessing,
+    r1cs::key::UniformSpartanKey,
 };
 
 pub struct JoltRep3Prover<
@@ -164,7 +165,7 @@ where
             trace_length.next_power_of_two(),
             program_io.memory_layout.input_start,
         );
-        let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
+        let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
         if generate_witness {
             // polynomials.compute_aux::<C, Constraints::Inputs>(&r1cs_builder);

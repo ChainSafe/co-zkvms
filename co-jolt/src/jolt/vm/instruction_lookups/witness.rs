@@ -466,7 +466,7 @@ where
         })
         .collect();
 
-    let intermediate = futures.fufill_batched(io_ctx0, |res, _| Some(res))?;
+    let intermediate = futures.fulfill_batched(io_ctx0, |res, _| Some(res))?;
 
     let indices: Vec<_> = ops
         .into_par_iter()
@@ -527,7 +527,7 @@ fn compute_lookup_outputs_rep3<
     )?;
     drop(_guard);
 
-    let mut outputs = outputs_futures.fufill_batched(io_ctx, |res, _| res)?;
+    let mut outputs = outputs_futures.fulfill_batched(io_ctx, |res, _| res)?;
 
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
     Ok(Rep3MultilinearPolynomial::from(outputs))

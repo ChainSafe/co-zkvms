@@ -316,11 +316,6 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     }
 
     fn take_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F>;
-
-    fn compute_aux<const C: usize, I: ConstraintInput>(
-        &mut self,
-        constraint_builder: &CombinedUniformBuilder<C, F, I>,
-    );
 }
 
 type JoltMaybeSharedCommitments<
@@ -434,19 +429,5 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
             },
             ..Default::default()
         }
-    }
-
-    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::compute_aux", level = "trace")]
-    fn compute_aux<const C: usize, I: ConstraintInput>(
-        &mut self,
-        constraint_builder: &CombinedUniformBuilder<C, F, I>,
-    ) {
-        // use crate::r1cs::spartan::worker::compute_aux_poly;
-        // let flattened_vars = I::flatten::<C>();
-        // for (aux_index, aux_compute) in constraint_builder.uniform_builder.aux_computations.iter() {
-        //     *flattened_vars[*aux_index].get_ref_mut(self) =
-        //         aux_compute.compute_aux_poly::<C, I>(self, constraint_builder.uniform_repeat);
-        // }
-        todo!()
     }
 }

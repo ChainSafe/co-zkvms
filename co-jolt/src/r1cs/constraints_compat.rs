@@ -1,14 +1,11 @@
 use jolt_common::{constants::REGISTER_COUNT, rv_trace::CircuitFlags};
 use strum::IntoEnumIterator;
 
-use crate::{
-    field::JoltField,
-    r1cs::builder::{CombinedUniformBuilder, R1CSBuilder},
-};
+use crate::{field::JoltField, r1cs::constraints::JoltRV32IMConstraints};
 
 use jolt_core::r1cs::{
-    builder::OffsetEqConstraint,
-    constraints::{LOG_M, OPERAND_SIZE, PC_NOOP_SHIFT, PC_START_ADDRESS},
+    builder::{OffsetEqConstraint, R1CSBuilder},
+    constraints::{R1CSConstraints, LOG_M, OPERAND_SIZE, PC_NOOP_SHIFT, PC_START_ADDRESS},
     inputs::{AuxVariable, ConstraintInput},
     ops::Variable,
 };
@@ -16,61 +13,17 @@ use jolt_core::r1cs::{
 use crate::{
     jolt::{
         instruction::{
-            add::ADDInstruction,
-            mul::MULInstruction,
-            mulhu::MULHUInstruction,
-            mulu::MULUInstruction,
-            sll::SLLInstruction,
-            sra::SRAInstruction,
-            srl::SRLInstruction,
+            add::ADDInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+            mulu::MULUInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction,
             sub::SUBInstruction,
             virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
-            virtual_move::MOVEInstruction,
-            virtual_movsign::MOVSIGNInstruction, // mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction,
-                                                 // virtual_assert_halfword_alignment::AssertHalfwordAlignmentInstruction,
-                                                 // virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
+            virtual_move::MOVEInstruction, virtual_movsign::MOVSIGNInstruction,
         },
         vm::rv32i_vm::RV32I,
     },
     r1cs::inputs::JoltR1CSInputs,
 };
 
-pub trait R1CSConstraints<const C: usize, F: JoltField> {
-    type Inputs: ConstraintInput;
-    #[tracing::instrument(
-        skip_all,
-        name = "R1CSConstraints::construct_constraints",
-        level = "trace"
-    )]
-    fn construct_constraints(
-        padded_trace_length: usize,
-        memory_start: u64,
-    ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
-        let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
-        Self::uniform_constraints(&mut uniform_builder, memory_start);
-        let cross_step_constraints = Self::cross_step_constraints();
-
-        CombinedUniformBuilder::construct(
-            uniform_builder,
-            padded_trace_length,
-            cross_step_constraints,
-        )
-    }
-    /// Constructs Jolt's uniform constraints.
-    /// Uniform constraints are constraints that hold for each step of
-    /// the execution trace.
-    fn uniform_constraints(builder: &mut R1CSBuilder<C, F, Self::Inputs>, memory_start: u64);
-
-    /// Construct's Jolt's cross-step constraints.
-    /// Cross-step constraints are constraints whose inputs involve witness
-    /// values from multiple steps of the execution trace.
-    /// Currently, all of Jolt's cross-step constraints are of the form
-    ///     if condition { some constraint on steps i and i+1 }
-    /// This structure is captured in `OffsetEqConstraint`.
-    fn cross_step_constraints() -> Vec<OffsetEqConstraint>;
-}
-
-pub struct JoltRV32IMConstraints;
 impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstraints {
     type Inputs = JoltR1CSInputs;
 
@@ -259,8 +212,6 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
     }
 
     fn cross_step_constraints() -> Vec<OffsetEqConstraint> {
-        // If the next instruction's ELF address is not zero (i.e. it's
-        // not padding), then check the PC update.
         let pc_constraint = OffsetEqConstraint::new(
             (JoltR1CSInputs::Bytecode_ELFAddress, true),
             (JoltR1CSInputs::Aux(AuxVariable::NextPC), false),
@@ -269,14 +220,6 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
                 true,
             ),
         );
-
-        // If the current instruction is virtual, check that the next instruction
-        // in the trace is the next instruction in bytecode. Virtual sequences
-        // do not involve jumps or branches, so this should always hold,
-        // EXCEPT if we encounter a virtual instruction followed by a padding
-        // instruction. But that should never happen because the execution
-        // trace should always end with some return handling, which shouldn't involve
-        // any virtual sequences.
         let virtual_sequence_constraint = OffsetEqConstraint::new(
             (JoltR1CSInputs::OpFlags(CircuitFlags::Virtual), false),
             (JoltR1CSInputs::Bytecode_A, true),
@@ -284,6 +227,5 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
         );
 
         vec![pc_constraint, virtual_sequence_constraint]
-        // vec![]
     }
 }

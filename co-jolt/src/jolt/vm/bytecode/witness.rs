@@ -147,7 +147,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
                 *imm = FutureRep3Ring::cast_to_field_b2a(*step.bytecode_row.imm.as_shared())
             });
 
-        let imm: Vec<Rep3PrimeFieldShare<F>> = imm.fufill_batched(io_ctx, |res, _: ()| res)?;
+        let imm: Vec<Rep3PrimeFieldShare<F>> = imm.fulfill_batched(io_ctx, |res, _: ()| res)?;
 
         let v_read_write = [
             Rep3MultilinearPolynomial::from(address),

@@ -270,7 +270,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             }
         }
 
-        let v_final = v_final.fufill_batched(io_ctx, |res, _| res)?;
+        let v_final = v_final.fulfill_batched(io_ctx, |res, _| res)?;
         let v_read_rd = v_read_rd
             .into_par_iter()
             .map(|addr| v_final[addr])

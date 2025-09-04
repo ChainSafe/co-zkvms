@@ -69,7 +69,7 @@ impl<R: IntRing2k, T> FutureRep3Ring<R, T, Option<usize>> {
 }
 
 pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args = ()> {
-    fn fufill_batched<N: Rep3NetworkWorker, MapFn: Fn(U, Args) -> T + Send>(
+    fn fulfill_batched<N: Rep3NetworkWorker, MapFn: Fn(U, Args) -> T + Send>(
         self,
         io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,
@@ -87,10 +87,10 @@ where
 {
     #[tracing::instrument(
         skip_all,
-        name = "FutureRep3Ring::fufill_batched_to_field",
+        name = "FutureRep3Ring::fulfill_batched_to_field",
         level = "trace"
     )]
-    fn fufill_batched<N: Rep3NetworkWorker, MapFn>(
+    fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
         io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,
@@ -214,10 +214,10 @@ where
 {
     #[tracing::instrument(
         skip_all,
-        name = "FutureRep3Ring::fufill_batched_to_ring",
+        name = "FutureRep3Ring::fulfill_batched_to_ring",
         level = "trace"
     )]
-    fn fufill_batched<N: Rep3NetworkWorker, MapFn>(
+    fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
         io_ctx: &mut WorkerIoContext<N>,
         map: MapFn,

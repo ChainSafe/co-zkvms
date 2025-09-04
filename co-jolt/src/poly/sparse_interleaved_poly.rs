@@ -181,7 +181,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                             next_index_to_process = coeff.index + 1;
                         }
                     }
-                    output_segment.fufill_batched(io_ctx, |c, index| (index, c).into())
+                    output_segment.fulfill_batched(io_ctx, |c, index| (index, c).into())
                 })
                 .context("while computing layer output")?;
 

@@ -18,6 +18,11 @@ pub enum FutureRep3<F: JoltField, T, Args = ()> {
 enum FutureOp<F: JoltField> {
     // Out: Rep3PrimeFieldShare<F>
     Mul(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
+    Cmux(
+        Rep3PrimeFieldShare<F>,
+        Rep3PrimeFieldShare<F>,
+        Rep3PrimeFieldShare<F>,
+    ),
     B2A(Rep3BigUintShare<F>),
 
     // Out: Rep3BigUintShare<F>
@@ -44,6 +49,18 @@ impl<F: JoltField, T> FutureRep3<F, T> {
         FutureRep3::Pending(FutureOp::B2A(a), ())
     }
 
+    pub fn mul(a: Rep3PrimeFieldShare<F>, b: Rep3PrimeFieldShare<F>) -> Self {
+        FutureRep3::Pending(FutureOp::Mul(a, b), ())
+    }
+
+    pub fn cmux(
+        cond: Rep3PrimeFieldShare<F>,
+        truthy: Rep3PrimeFieldShare<F>,
+        falsy: Rep3PrimeFieldShare<F>,
+    ) -> Self {
+        FutureRep3::Pending(FutureOp::Cmux(cond, truthy, falsy), ())
+    }
+
     // ===== BigUint Ops =====
 
     pub fn a2b(a: Rep3PrimeFieldShare<F>) -> Self {
@@ -52,7 +69,7 @@ impl<F: JoltField, T> FutureRep3<F, T> {
 }
 
 pub trait FutureExt<F: JoltField, U, T, Args> {
-    fn fufill_batched<N: Rep3Network, MapFn: Fn(U, Args) -> T + Send>(
+    fn fulfill_batched<N: Rep3Network, MapFn: Fn(U, Args) -> T + Send>(
         self,
         io_ctx: &mut IoContext<N>,
         map: MapFn,
@@ -67,8 +84,8 @@ where
     T: Clone + Default + Send,
     Args: Send + Copy,
 {
-    #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
-    fn fufill_batched<N: Rep3Network, MapFn>(
+    #[tracing::instrument(skip_all, name = "FutureVals::fulfill_batched", level = "trace")]
+    fn fulfill_batched<N: Rep3Network, MapFn>(
         self,
         io_ctx: &mut IoContext<N>,
         map: MapFn,
@@ -144,8 +161,8 @@ where
     T: Send,
     Args: Send + Copy,
 {
-    #[tracing::instrument(skip_all, name = "FutureVals::fufill_batched", level = "trace")]
-    fn fufill_batched<N: Rep3Network, MapFn>(
+    #[tracing::instrument(skip_all, name = "FutureVals::fulfill_batched", level = "trace")]
+    fn fulfill_batched<N: Rep3Network, MapFn>(
         mut self,
         io_ctx: &mut IoContext<N>,
         map: MapFn,
