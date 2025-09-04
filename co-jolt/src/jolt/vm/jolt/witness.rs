@@ -186,10 +186,28 @@ where
             io_ctx,
         )?;
 
+        let read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_witness_rep3(
+            &preprocessing.read_write_memory,
+            ops,
+            program_io,
+            M,
+            io_ctx,
+        )?;
+
+        let bytecode = Rep3BytecodePolynomials::generate_witness_rep3(
+            &preprocessing.bytecode,
+            ops,
+            program_io,
+            M,
+            io_ctx,
+        )?;
+
         Ok(Self {
             instruction_lookups,
             r1cs,
-            ..Default::default()
+            read_write_memory,
+            bytecode,
+            ..Default::default() // timestamp polynomials are public
         })
     }
 
@@ -297,9 +315,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         Ok(commitments)
     }
 
-    fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F>;
-
-    fn get_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F>;
+    fn take_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F>;
 
     fn compute_aux<const C: usize, I: ConstraintInput>(
         &mut self,
@@ -394,34 +410,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         io_ctx.network().send_response(commitments)
     }
 
-    fn get_timestamp_range_check_polynomials(&mut self) -> TimestampRangeCheckPolynomials<F> {
-        let TimestampRangeCheckStuff {
-            read_cts_read_timestamp,
-            read_cts_global_minus_read,
-            final_cts_read_timestamp,
-            final_cts_global_minus_read,
-            identity,
-        } = std::mem::take(&mut self.timestamp_range_check);
-
-        let read_cts_read_timestamp = read_cts_read_timestamp.map(|poly| poly.try_into().unwrap());
-        let read_cts_global_minus_read =
-            read_cts_global_minus_read.map(|poly| poly.try_into().unwrap());
-        let final_cts_read_timestamp =
-            final_cts_read_timestamp.map(|poly| poly.try_into().unwrap());
-        let final_cts_global_minus_read =
-            final_cts_global_minus_read.map(|poly| poly.try_into().unwrap());
-
-        let identity = identity.map(|poly| poly.try_into().unwrap());
-        TimestampRangeCheckPolynomials {
-            read_cts_read_timestamp,
-            read_cts_global_minus_read,
-            final_cts_read_timestamp,
-            final_cts_global_minus_read,
-            identity,
-        }
-    }
-
-    fn get_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F> {
+    fn take_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F> {
         let t_read_rd = std::mem::take(&mut self.read_write_memory.t_read_rd)
             .try_into()
             .unwrap();

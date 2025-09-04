@@ -32,17 +32,15 @@ pub use jolt_tracer::{self as tracer, ELFInstruction};
 
 use crate::{
     field::JoltField,
-    jolt::{trace::mem_op::MemoryOp, vm::read_write_memory::witness::Rep3ProgramIOInput},
+    jolt::{
+        trace::mem_op::MemoryOp,
+        vm::{bytecode::witness::BytecodeRow, read_write_memory::witness::Rep3ProgramIOInput},
+    },
 };
 use crate::{
     jolt::{
         instruction::{Rep3JoltInstruction, Rep3Operand},
-        vm::{
-            bytecode::{BytecodeRow, BytecodeRowExt},
-            instruction_lookups,
-            rv32i_vm::RV32I,
-            JoltTraceStep,
-        },
+        vm::{rv32i_vm::RV32I, JoltTraceStep},
     },
     utils::transpose,
 };
@@ -256,7 +254,7 @@ impl Program {
 
                 JoltTraceStep {
                     instruction_lookup,
-                    bytecode_row: BytecodeRow::from_instruction_ext::<RV32I>(&row.instruction),
+                    bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
                     memory_ops: MemoryOp::from_trace_row(&row),
                     circuit_flags: row.instruction.to_circuit_flags(),
                 }
@@ -271,7 +269,6 @@ impl Program {
         inputs: &[u8],
         rng: &mut R,
     ) -> (Vec<Rep3ProgramIOInput>, Vec<Vec<JoltTraceStep<RV32I>>>) {
-        let (bytecode, memory_init) = self.decode();
         let (program_io, trace) = self.trace(inputs);
 
         let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);

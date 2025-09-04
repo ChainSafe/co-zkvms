@@ -691,6 +691,16 @@ impl<F: JoltField> From<Vec<u32>> for Rep3MultilinearPolynomial<F> {
     }
 }
 
+impl<F: JoltField> From<Vec<u64>> for Rep3MultilinearPolynomial<F> {
+    fn from(coeffs: Vec<u64>) -> Self {
+        let poly = MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs));
+        Self::Public {
+            poly,
+            trivial_share: None,
+        }
+    }
+}
+
 impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = eyre::Error;
 

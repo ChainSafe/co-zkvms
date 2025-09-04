@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use crate::field::JoltField;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
+use crate::jolt::vm::timestamp_range_check;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
@@ -83,9 +84,13 @@ where
                 ProverOpeningAccumulator::<F, ProofTranscript>::new();
 
             let timestamp_range_check_polynomials =
-                polynomials.get_timestamp_range_check_polynomials();
+                timestamp_range_check::get_timestamp_range_check_polynomials::<
+                    F,
+                    PCS,
+                    ProofTranscript,
+                >(&mut polynomials.read_write_memory);
             let jolt_polynomials =
-                polynomials.get_exogenous_polynomials_for_timestamp_range_check();
+                polynomials.take_exogenous_polynomials_for_timestamp_range_check();
 
             let timestamp_validity_proof = TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
                 pcs_setup,

@@ -68,7 +68,7 @@ impl<R: IntRing2k, T> FutureRep3Ring<R, T, Option<usize>> {
     }
 }
 
-pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args> {
+pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args = ()> {
     fn fufill_batched<N: Rep3NetworkWorker, MapFn: Fn(U, Args) -> T + Send>(
         self,
         io_ctx: &mut WorkerIoContext<N>,

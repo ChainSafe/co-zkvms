@@ -5,7 +5,7 @@ pub mod worker;
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    jolt::{trace::mem_op::MemoryOp, vm::bytecode::BytecodeRowExt},
+    jolt::{trace::mem_op::MemoryOp, vm::bytecode::witness::BytecodeRow},
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -15,7 +15,6 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -26,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use snarks_core::math::Math;
 use strum::EnumCount;
 
-use super::bytecode::BytecodeRow;
 use crate::field::JoltField;
 use crate::jolt::{
     instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
@@ -100,7 +98,7 @@ impl<InstructionSet: JoltInstructionSet> Into<JoltTraceStepNative>
     fn into(self) -> JoltTraceStepNative {
         jolt_core::jolt::vm::JoltTraceStep {
             instruction_lookup: None,
-            bytecode_row: self.bytecode_row,
+            bytecode_row: self.bytecode_row.into(),
             memory_ops: self.memory_ops.map(|op| op.into()),
             circuit_flags: self.circuit_flags,
         }
@@ -174,7 +172,7 @@ where
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         use jolt_tracer as tracer;
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
+        let bytecode_rows: Vec<_> = bytecode
             .into_iter()
             .flat_map(|instruction| match instruction.opcode {
                 tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
@@ -192,7 +190,7 @@ where
                 _ => vec![instruction],
             })
             .map(|instruction| {
-                BytecodeRow::from_instruction_ext::<Self::InstructionSet>(&instruction)
+                BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction).into()
             })
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
@@ -271,21 +269,20 @@ where
             &preprocessing.read_write_memory,
             &trace,
         );
-        // let timestamp_range_check =
-        //     TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(&read_write_memory);
+        let timestamp_range_check =
+            TimestampValidityProof::<F, PCS, ProofTranscript>::generate_witness(&read_write_memory);
 
-        // let bytecode = BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
-        //     &preprocessing.bytecode,
-        //     &mut trace,
-        // );
+        let bytecode = BytecodeProof::<F, PCS, ProofTranscript>::generate_witness(
+            &preprocessing.bytecode,
+            &mut trace,
+        );
 
         JoltPolynomials {
             instruction_lookups,
             read_write_memory,
-            // timestamp_range_check,
+            timestamp_range_check,
             r1cs,
-            // bytecode,
-            ..Default::default()
+            bytecode,
         }
     }
 
