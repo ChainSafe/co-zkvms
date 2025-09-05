@@ -173,6 +173,7 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
 
     let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
+    println!("Network initialized");
 
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
