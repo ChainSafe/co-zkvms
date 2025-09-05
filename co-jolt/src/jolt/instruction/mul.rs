@@ -16,8 +16,7 @@ use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use crate::{
     jolt::instruction::Rep3JoltInstruction,
     utils::instruction_utils::{
-        concatenate_lookups_rep3_batched,
-        rep3_multiply_and_chunk_operands,
+        concatenate_lookups_rep3_batched, rep3_multiply_and_chunk_operands,
     },
 };
 

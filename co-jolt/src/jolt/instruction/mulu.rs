@@ -13,9 +13,8 @@ use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups,
-    concatenate_lookups_rep3_batched, multiply_and_chunk_operands,
-    rep3_multiply_and_chunk_operands,
+    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3_batched,
+    multiply_and_chunk_operands, rep3_multiply_and_chunk_operands,
 };
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]

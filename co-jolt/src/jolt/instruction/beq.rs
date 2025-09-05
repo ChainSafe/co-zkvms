@@ -10,7 +10,8 @@ use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 use mpc_core::protocols::{
     rep3::{
         self,
-        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };

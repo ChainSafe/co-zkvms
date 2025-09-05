@@ -17,14 +17,9 @@ use mpc_core::protocols::{
     rep3::network::{IoContext, Rep3Network},
     rep3_ring::{ring::ring_impl::RingElement, Rep3RingShare},
 };
-use mpc_core::protocols::{
-    rep3::Rep3PrimeFieldShare,
-    rep3_ring,
-};
+use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring};
 
-use crate::utils::instruction_utils::{
-    concatenate_lookups_rep3_batched, rep3_chunk_operand,
-};
+use crate::utils::instruction_utils::{concatenate_lookups_rep3_batched, rep3_chunk_operand};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 

@@ -48,7 +48,6 @@ where
         let r_eq = transcript.challenge_vector::<F>(num_ops.log_2());
         network.broadcast_request(r_eq)?;
 
-
         let num_rounds = num_ops.log_2();
 
         let primary_sumcheck_proof =

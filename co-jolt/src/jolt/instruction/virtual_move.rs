@@ -16,9 +16,7 @@ use mpc_core::protocols::{
     rep3_ring::Rep3RingShare,
 };
 
-use crate::utils::instruction_utils::{
-    concatenate_lookups_rep3_batched, rep3_chunk_operand,
-};
+use crate::utils::instruction_utils::{concatenate_lookups_rep3_batched, rep3_chunk_operand};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 

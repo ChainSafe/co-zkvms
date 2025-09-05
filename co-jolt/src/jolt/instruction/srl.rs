@@ -10,16 +10,16 @@ use serde::{Deserialize, Serialize};
 use mpc_core::protocols::{
     rep3::{
         self,
-        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
     },
     rep3_ring::Rep3RingShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::utils::instruction_utils::{
-        assert_valid_parameters, chunk_and_concatenate_for_shift,
-        rep3_chunk_and_concatenate_for_shift,
-    };
+    assert_valid_parameters, chunk_and_concatenate_for_shift, rep3_chunk_and_concatenate_for_shift,
+};
 use jolt_core::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

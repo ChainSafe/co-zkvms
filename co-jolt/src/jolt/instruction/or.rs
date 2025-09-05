@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::{
     rep3::{
-        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::utils::instruction_utils::{
-    chunk_and_concatenate_operands, concatenate_lookups,
-    rep3_chunk_and_concatenate_operands,
+    chunk_and_concatenate_operands, concatenate_lookups, rep3_chunk_and_concatenate_operands,
 };
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use crate::{

@@ -1,4 +1,3 @@
-
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::jolt::trace::mem_op::MemoryOp;
@@ -12,8 +11,8 @@ use itertools::izip;
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::{
-    memory_address_to_witness_index, remap_address,
-    ReadWriteMemoryPreprocessing, ReadWriteMemoryStuff,
+    memory_address_to_witness_index, remap_address, ReadWriteMemoryPreprocessing,
+    ReadWriteMemoryStuff,
 };
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 

@@ -1,9 +1,10 @@
 use crate::{
-    field::JoltField,
-    jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials,
+    field::JoltField, jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials,
 };
 
-use jolt_core::jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff};
+use jolt_core::jolt::vm::timestamp_range_check::{
+    TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
+};
 
 use crate::poly::Rep3MultilinearPolynomial;
 

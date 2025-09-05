@@ -1,7 +1,8 @@
 use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3MultilinearPolynomial, Rep3PolysConversion,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},

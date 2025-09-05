@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use mpc_core::protocols::{
     rep3::{
         self,
-        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
     },
     rep3_ring::Rep3RingShare,
 };

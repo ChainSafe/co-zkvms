@@ -18,15 +18,10 @@ use jolt_core::{
 };
 use mpc_core::protocols::{
     rep3::{
-        network::{
-            IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker,
-        }, Rep3PrimeFieldShare,
+        network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker},
+        Rep3PrimeFieldShare,
     },
-    rep3_ring::{
-        self,
-        ring::ring_impl::RingElement,
-        Rep3RingShare,
-    },
+    rep3_ring::{self, ring::ring_impl::RingElement, Rep3RingShare},
 };
 
 use rayon::prelude::*;

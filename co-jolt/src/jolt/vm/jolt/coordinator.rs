@@ -2,8 +2,7 @@ use std::marker::PhantomData;
 
 use crate::{
     jolt::vm::{
-        read_write_memory::coordinator::Rep3ReadWriteMemoryCoordinator,
-        witness::JoltWitnessMeta,
+        read_write_memory::coordinator::Rep3ReadWriteMemoryCoordinator, witness::JoltWitnessMeta,
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},

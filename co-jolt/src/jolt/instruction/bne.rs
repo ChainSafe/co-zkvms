@@ -13,7 +13,8 @@ use crate::{field::JoltField, jolt::instruction::Rep3Operand};
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
+    network::{IoContext, Rep3Network},
+    Rep3PrimeFieldShare,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

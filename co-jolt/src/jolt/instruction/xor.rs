@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};
 use crate::utils::instruction_utils::{
-    chunk_and_concatenate_operands, concatenate_lookups,
-    concatenate_lookups_rep3_batched, rep3_chunk_and_concatenate_operands,
+    chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3_batched,
+    rep3_chunk_and_concatenate_operands,
 };
 use jolt_core::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 

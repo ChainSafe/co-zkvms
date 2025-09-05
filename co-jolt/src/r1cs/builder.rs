@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    marker::PhantomData,
-};
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use jolt_core::r1cs::{
     builder::{Constraint, OffsetEqConstraint},

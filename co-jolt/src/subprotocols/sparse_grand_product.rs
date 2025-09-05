@@ -472,115 +472,119 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
-            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) = (0..self
-                .fingerprints
-                .len())
-                .into_par_iter()
-                .map(|batch_index| {
-                    // Computes:
-                    //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
-                    // for the evaluation points {0, 2, 3}
+            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) =
+                (0..self.fingerprints.len())
+                    .into_par_iter()
+                    .map(|batch_index| {
+                        // Computes:
+                        //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
+                        // for the evaluation points {0, 2, 3}
 
-                    let fingerprints = &self.fingerprints[batch_index];
-                    let flag_indices = &self.flag_indices[batch_index / 2];
+                        let fingerprints = &self.fingerprints[batch_index];
+                        let flag_indices = &self.flag_indices[batch_index / 2];
 
-                    let unbound = self.flag_values.is_empty();
-                    let mut delta = (
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                    );
+                        let unbound = self.flag_values.is_empty();
+                        let mut delta = (
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                            AdditiveShare::<F>::zero(),
+                        );
 
-                    let mut next_index_to_process = 0usize;
-                    for (j, index) in flag_indices.iter().enumerate() {
-                        if *index < next_index_to_process {
-                            // This node was already processed in a previous iteration
-                            continue;
+                        let mut next_index_to_process = 0usize;
+                        for (j, index) in flag_indices.iter().enumerate() {
+                            if *index < next_index_to_process {
+                                // This node was already processed in a previous iteration
+                                continue;
+                            }
+
+                            let (flags, fingerprints) = if index % 2 == 0 {
+                                let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
+                                let flags = if neighbor == index + 1 {
+                                    // Neighbor is flag's sibling
+                                    if unbound {
+                                        (F::one(), F::one())
+                                    } else {
+                                        (
+                                            self.flag_values[batch_index / 2][j],
+                                            self.flag_values[batch_index / 2][j + 1],
+                                        )
+                                    }
+                                } else {
+                                    // This flag's sibling wasn't found, so it must have value 0.
+                                    if unbound {
+                                        (F::one(), F::zero())
+                                    } else {
+                                        (self.flag_values[batch_index / 2][j], F::zero())
+                                    }
+                                };
+                                let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
+
+                                next_index_to_process = index + 2;
+                                (flags, fingerprints)
+                            } else {
+                                // This flag's sibling wasn't encountered in a previous iteration,
+                                // so it must have had value 0.
+                                let flags = if unbound {
+                                    (F::zero(), F::one())
+                                } else {
+                                    (F::zero(), self.flag_values[batch_index / 2][j])
+                                };
+                                let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
+
+                                next_index_to_process = index + 1;
+                                (flags, fingerprints)
+                            };
+
+                            let m_flag = flags.1 - flags.0;
+                            let m_fingerprint = fingerprints.1 - fingerprints.0;
+
+                            // If flags are still unbound, flag evals will mostly be 0s and 1s
+                            // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
+                            let flag_eval_2 = flags.1 + m_flag;
+                            let flag_eval_3 = flag_eval_2 + m_flag;
+
+                            let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
+                            let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+
+                            let block_index = (self.layer_len * batch_index) / 4 + index / 2;
+                            let eq_evals = eq_evals[block_index];
+
+                            delta.0 += additive::sub_shared_by_public(
+                                fingerprints
+                                    .0
+                                    .into_additive()
+                                    .mul_public_01_optimized(flags.0),
+                                flags.0,
+                                party_id,
+                            ) * eq_evals.0;
+                            delta.1 += additive::sub_shared_by_public(
+                                fingerprint_eval_2
+                                    .into_additive()
+                                    .mul_public_01_optimized(flag_eval_2),
+                                flag_eval_2,
+                                party_id,
+                            ) * eq_evals.1;
+                            delta.2 += additive::sub_shared_by_public(
+                                fingerprint_eval_3
+                                    .into_additive()
+                                    .mul_public_01_optimized(flag_eval_3),
+                                flag_eval_3,
+                                party_id,
+                            ) * eq_evals.2;
                         }
 
-                        let (flags, fingerprints) = if index % 2 == 0 {
-                            let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
-                            let flags = if neighbor == index + 1 {
-                                // Neighbor is flag's sibling
-                                if unbound {
-                                    (F::one(), F::one())
-                                } else {
-                                    (
-                                        self.flag_values[batch_index / 2][j],
-                                        self.flag_values[batch_index / 2][j + 1],
-                                    )
-                                }
-                            } else {
-                                // This flag's sibling wasn't found, so it must have value 0.
-                                if unbound {
-                                    (F::one(), F::zero())
-                                } else {
-                                    (self.flag_values[batch_index / 2][j], F::zero())
-                                }
-                            };
-                            let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
-
-                            next_index_to_process = index + 2;
-                            (flags, fingerprints)
-                        } else {
-                            // This flag's sibling wasn't encountered in a previous iteration,
-                            // so it must have had value 0.
-                            let flags = if unbound {
-                                (F::zero(), F::one())
-                            } else {
-                                (F::zero(), self.flag_values[batch_index / 2][j])
-                            };
-                            let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
-
-                            next_index_to_process = index + 1;
-                            (flags, fingerprints)
-                        };
-
-                        let m_flag = flags.1 - flags.0;
-                        let m_fingerprint = fingerprints.1 - fingerprints.0;
-
-                        // If flags are still unbound, flag evals will mostly be 0s and 1s
-                        // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
-                        let flag_eval_2 = flags.1 + m_flag;
-                        let flag_eval_3 = flag_eval_2 + m_flag;
-
-                        let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
-                        let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
-
-                        let block_index = (self.layer_len * batch_index) / 4 + index / 2;
-                        let eq_evals = eq_evals[block_index];
-
-                        delta.0 += additive::sub_shared_by_public(
-                            fingerprints.0.into_additive().mul_public_01_optimized(flags.0),
-                            flags.0,
-                            party_id,
-                        ) * eq_evals.0;
-                        delta.1 += additive::sub_shared_by_public(
-                            fingerprint_eval_2.into_additive()
-                                .mul_public_01_optimized(flag_eval_2),
-                            flag_eval_2,
-                            party_id,
-                        ) * eq_evals.1;
-                        delta.2 += additive::sub_shared_by_public(
-                            fingerprint_eval_3.into_additive()
-                                .mul_public_01_optimized(flag_eval_3),
-                            flag_eval_3,
-                            party_id,
-                        ) * eq_evals.2;
-                    }
-
-                    (delta.0, delta.1, delta.2)
-                })
-                .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                );
+                        (delta.0, delta.1, delta.2)
+                    })
+                    .reduce(
+                        || {
+                            (
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                                AdditiveShare::<F>::zero(),
+                            )
+                        },
+                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    );
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
             //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
             (
@@ -713,17 +717,24 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let x1 = block_index & x1_bitmask;
 
                         inner_sum.0 += additive::sub_shared_by_public(
-                            fingerprints.0.into_additive().mul_public_01_optimized(flags.0),
+                            fingerprints
+                                .0
+                                .into_additive()
+                                .mul_public_01_optimized(flags.0),
                             flags.0,
                             party_id,
                         ) * E1_evals[x1].0;
                         inner_sum.1 += additive::sub_shared_by_public(
-                            fingerprint_eval_2.into_additive().mul_public_01_optimized(flag_eval_2),
+                            fingerprint_eval_2
+                                .into_additive()
+                                .mul_public_01_optimized(flag_eval_2),
                             flag_eval_2,
                             party_id,
                         ) * E1_evals[x1].1;
                         inner_sum.2 += additive::sub_shared_by_public(
-                            fingerprint_eval_3.into_additive().mul_public_01_optimized(flag_eval_3),
+                            fingerprint_eval_3
+                                .into_additive()
+                                .mul_public_01_optimized(flag_eval_3),
                             flag_eval_3,
                             party_id,
                         ) * E1_evals[x1].2;

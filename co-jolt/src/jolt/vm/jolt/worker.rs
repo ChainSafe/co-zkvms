@@ -8,9 +8,7 @@ use crate::{
         },
     },
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
-    },
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
     r1cs::{
         builder::CombinedUniformBuilder, constraints::R1CSConstraints,
         spartan::worker::Rep3UniformSpartanProver,
