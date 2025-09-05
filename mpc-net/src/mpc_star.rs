@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
@@ -46,7 +48,7 @@ pub trait MpcStarNetCoordinator: Sized {
     fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
 }
 
-pub trait MpcStarNetWorker: Sized {
+pub trait MpcStarNetWorker: Sized + Clone {
     fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: T,
@@ -56,11 +58,13 @@ pub trait MpcStarNetWorker: Sized {
     fn log_num_workers_per_party(&self) -> usize;
     // fn rank(&self) -> usize;
 
-    fn total_bandwidth_used(&self) -> (u64, u64);
+    fn io_stats_total(&self) -> (u64, u64);
+    fn io_stats_per_party(&self) -> BTreeMap<usize, (u64, u64)>;
 
     fn party_id(&self) -> PartyID;
     fn worker_idx(&self) -> usize;
 
+    fn fork(&self) -> Self;
     fn fork_with_coordinator(&mut self) -> Result<Self>;
     fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>>;
 }

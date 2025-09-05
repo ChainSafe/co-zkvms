@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
-use mpc_core::protocols::rep3::{
+use crate::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };

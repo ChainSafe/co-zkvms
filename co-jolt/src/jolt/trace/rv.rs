@@ -26,9 +26,8 @@ use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, mul::MULInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
 use jolt_common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
-use crate::field::JoltField;
 
-impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
+impl TryFrom<&ELFInstruction> for RV32I {
     type Error = &'static str;
 
     #[rustfmt::skip] // keep matches pretty
@@ -80,11 +79,11 @@ impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32, F>::default().into()),
-            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32, F>::default().into()),
-            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32, F>::default().into()),
-            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32, F>::default().into()),
-            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32, F>::default().into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>::default().into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>::default().into()),
+            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>::default().into()),
 
 
             _ => Err("No corresponding RV32I instruction")
@@ -92,7 +91,7 @@ impl<F: JoltField> TryFrom<&ELFInstruction> for RV32I<F> {
     }
 }
 
-impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
+impl TryFrom<&RVTraceRow> for RV32I {
     type Error = &'static str;
 
     #[rustfmt::skip] // keep matches pretty
@@ -143,11 +142,11 @@ impl<F: JoltField> TryFrom<&RVTraceRow> for RV32I<F> {
             RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => Ok(AssertValidUnsignedRemainderInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER => Ok(AssertValidSignedRemainderInstruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
             RV32IM::VIRTUAL_ASSERT_VALID_DIV0 => Ok(AssertValidDiv0Instruction(row.register_state.rs1_val.unwrap().into(), row.register_state.rs2_val.unwrap().into()).into()),
-            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32, F>(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
-            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32, F>(row.register_state.rs1_val.unwrap().into()).into()),
-            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32, F>(row.imm_u64().into()).into()),
-            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32, F>(row.register_state.rs1_val.unwrap().into()).into()),
-            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32, F>(row.imm_u64().into()).into()),
+            RV32IM::VIRTUAL_ASSERT_HALFWORD_ALIGNMENT => Ok(AssertHalfwordAlignmentInstruction::<32>(row.register_state.rs1_val.unwrap().into(), (row.imm_u32() as u64).into()).into()),
+            RV32IM::VIRTUAL_POW2 => Ok(POW2Instruction::<32>(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_POW2I => Ok(POW2Instruction::<32>(row.imm_u64().into()).into()),
+            RV32IM::VIRTUAL_SRA_PAD => Ok(RightShiftPaddingInstruction::<32>(row.register_state.rs1_val.unwrap().into()).into()),
+            RV32IM::VIRTUAL_SRA_PADI => Ok(RightShiftPaddingInstruction::<32>(row.imm_u64().into()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

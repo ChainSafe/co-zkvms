@@ -3,7 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::unipoly::unipoly_from_additive_evals;
-use crate::utils::shared_or_public::SharedOrPublic;
+use crate::utils::types::Rep3Value;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
@@ -175,12 +175,12 @@ pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
 ) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)>
 where
     F: JoltField,
-    Poly: PolynomialBinding<F, SharedOrPublic<F>>
-        + PolynomialEvaluation<F, SharedOrPublic<F>>
+    Poly: PolynomialBinding<F, Rep3Value<F>>
+        + PolynomialEvaluation<F, Rep3Value<F>>
         + PolyDegree
         + Send
         + Sync,
-    Func: Fn(&[SharedOrPublic<F>]) -> AdditiveShare<F> + std::marker::Sync,
+    Func: Fn(&[Rep3Value<F>]) -> AdditiveShare<F> + std::marker::Sync,
     Network: Rep3NetworkWorker,
 {
     let mut previous_claim = *claim;
@@ -234,12 +234,12 @@ where
         polys
             .par_iter_mut()
             .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.id);
+        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.party_id());
     }
 
     let final_evals = polys
         .iter()
-        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
+        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.party_id()))
         .collect();
 
     Ok((r, final_evals))

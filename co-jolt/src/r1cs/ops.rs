@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::utils::shared_or_public::{SharedOrPublic, SharedOrPublicIter};
+use crate::utils::types::{Rep3Value, SharedOrPublicIter};
 
 pub use jolt_core::r1cs::ops::*;
 
@@ -12,7 +12,7 @@ pub trait LinearCombinationExt<F: JoltField> {
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
         row: usize,
         party_id: PartyID,
-    ) -> SharedOrPublic<F>;
+    ) -> Rep3Value<F>;
 }
 
 impl<F: JoltField> LinearCombinationExt<F> for LC {
@@ -21,7 +21,7 @@ impl<F: JoltField> LinearCombinationExt<F> for LC {
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
         row: usize,
         party_id: PartyID,
-    ) -> SharedOrPublic<F> {
+    ) -> Rep3Value<F> {
         self.terms()
             .iter()
             .map(|term| match term.0 {
@@ -40,13 +40,13 @@ impl<F: JoltField> LinearCombinationExt<F> for LC {
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
     ($ConcreteInput:ty, $C:expr) => {
-        impl<F: JoltField> Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
+        impl Into<$crate::r1cs::ops::Variable> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Variable {
                 $crate::r1cs::ops::Variable::Input(self.to_index::<$C>())
             }
         }
 
-        impl<F: JoltField> Into<$crate::r1cs::ops::Term> for $ConcreteInput {
+        impl Into<$crate::r1cs::ops::Term> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Term {
                 $crate::r1cs::ops::Term(
                     $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
@@ -55,7 +55,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl<F: JoltField> Into<$crate::r1cs::ops::LC> for $ConcreteInput {
+        impl Into<$crate::r1cs::ops::LC> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::LC {
                 $crate::r1cs::ops::Term(
                     $crate::r1cs::ops::Variable::Input(self.to_index::<$C>()),
@@ -65,15 +65,15 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl<F: JoltField> $ConcreteInput {
-            fn lc_from_vec(inputs: Vec<$ConcreteInput>) -> $crate::r1cs::ops::LC {
-                let terms: Vec<$crate::r1cs::ops::Term> =
-                    inputs.into_iter().map(Into::into).collect();
-                $crate::r1cs::ops::LC::new(terms)
-            }
-        }
+        // impl $ConcreteInput {
+        //     fn lc_from_vec(inputs: Vec<$ConcreteInput>) -> $crate::r1cs::ops::LC {
+        //         let terms: Vec<$crate::r1cs::ops::Term> =
+        //             inputs.into_iter().map(Into::into).collect();
+        //         $crate::r1cs::ops::LC::new(terms)
+        //     }
+        // }
 
-        impl<F: JoltField, T: Into<$crate::r1cs::ops::LC>> std::ops::Add<T> for $ConcreteInput {
+        impl<T: Into<$crate::r1cs::ops::LC>> std::ops::Add<T> for $ConcreteInput {
             type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: T) -> Self::Output {
@@ -83,7 +83,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl<F: JoltField, T: Into<$crate::r1cs::ops::LC>> std::ops::Sub<T> for $ConcreteInput {
+        impl<T: Into<$crate::r1cs::ops::LC>> std::ops::Sub<T> for $ConcreteInput {
             type Output = $crate::r1cs::ops::LC;
 
             fn sub(self, rhs: T) -> Self::Output {
@@ -93,7 +93,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl<F: JoltField> std::ops::Mul<i64> for $ConcreteInput {
+        impl std::ops::Mul<i64> for $ConcreteInput {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: i64) -> Self::Output {
@@ -104,7 +104,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl<F: JoltField> std::ops::Mul<$ConcreteInput> for i64 {
+        impl std::ops::Mul<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::Term;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
@@ -114,7 +114,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 )
             }
         }
-        impl<F: JoltField> std::ops::Add<$ConcreteInput> for i64 {
+        impl std::ops::Add<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::LC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {

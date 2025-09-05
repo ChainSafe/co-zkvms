@@ -1,7 +1,13 @@
-use ark_ff::{Field, UniformRand};
+#[cfg(feature = "debug")]
+mod debug;
+
+#[cfg(feature = "debug")]
+use debug::*;
+
 use ark_std::test_rng;
 use clap::Parser;
-use co_jolt::field::JoltField;
+use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
+use co_jolt::poly::commitment::pst13::PST13;
 use co_jolt::utils::math::Math;
 use co_jolt::{
     host,
@@ -10,29 +16,19 @@ use co_jolt::{
         vm::{
             coordinator::JoltRep3,
             rv32i_vm::{RV32IJoltRep3Prover, RV32IJoltVM, RV32I},
-            witness::{Rep3JoltPolynomials, Rep3Polynomials},
-            worker::JoltRep3Prover,
             Jolt, JoltTraceStep,
         },
     },
-    poly::{
-        commitment::mock::MockCommitScheme,
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
-    },
-    utils::transcript::{KeccakTranscript, Transcript},
+    poly::commitment::mock::MockCommitScheme,
+    utils::transcript::KeccakTranscript,
 };
-use co_jolt::{lasso::memory_checking::StructuredPolynomialData, poly::commitment::pst13::PST13};
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
 use itertools::Itertools;
-use jolt_core::{jolt::vm::JoltProverPreprocessing, msm::icicle_init};
-use jolt_tracer::JoltDevice;
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-};
+use jolt_core::jolt::vm::JoltProverPreprocessing;
+
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::MpcStarNetWorker,
@@ -41,14 +37,13 @@ use mpc_net::{
     mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
 };
-use std::env;
+
 use std::path::{Path, PathBuf};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_forest::util::LevelFilter;
 
-use clap::Subcommand;
 use tracing_forest::ForestLayer;
-use tracing_subscriber::{prelude::*, util::SubscriberInitExt, EnvFilter, Registry};
+use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
 const C: usize = co_jolt::jolt::vm::rv32i_vm::C;
 type F = ark_bn254::Fr;
@@ -57,7 +52,6 @@ type E = ark_bn254::Bn254;
 type CommitmentScheme = PST13<E>;
 // type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Parser)]
@@ -137,26 +131,20 @@ fn main() -> Result<()> {
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
-
-    // println!("f_inv: {:?}", F::from(2).inverse().into_bigint());
+    // let inputs = postcard::to_stdvec(&1u32).unwrap();
+    // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs)?;
     } else {
-        run_party(args, config, program, inputs)?;
+        run_party(args, config, program)?;
     }
 
     Ok(())
 }
 
-pub fn run_party(
-    args: Args,
-    config: NetworkConfig,
-    mut program: host::Program,
-    inputs: Vec<u8>,
-) -> Result<()> {
+pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace::<F>(&inputs);
 
     let my_id = config.my_id;
     let file = format!(
@@ -164,10 +152,6 @@ pub fn run_party(
         my_id,
         args.num_iterations,
         num_cpus::get(),
-        // std::time::SystemTime::now()
-        //     .duration_since(std::time::UNIX_EPOCH)
-        //     .unwrap()
-        //     .as_secs()
     );
 
     let tracing_guard = match args.trace_parties {
@@ -182,20 +166,17 @@ pub fn run_party(
         _ => None,
     };
 
-    // let span = tracing::info_span!("run_party", id = my_id);
-    // let _enter = span.enter();
-
-    // if args.debug {
-    //     return Ok(());
-    // }
-
     if args.debug {
         return Ok(());
     }
-    icicle_init();
 
-    let network =
+    let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
+
+    // let program_io: Rep3ProgramIOInput = network.receive_request()?;
+    let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
+        bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
+    tracing::info!("trace len: {}", trace.len());
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -209,15 +190,15 @@ pub fn run_party(
     );
 
     let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
-        None,
+        trace,
+        program_io,
         preprocessing,
         network,
     )?;
 
     prover.prove()?;
 
-    prover.io_ctx.network().log_connection_stats();
-    // drop(_enter);
+    prover.io_ctx.log_connection_stats();
     drop(tracing_guard);
     Ok(())
 }
@@ -233,16 +214,12 @@ pub fn run_coordinator(
         "trace_coordinator_sha2-chain-{}_{}CPU.json",
         args.num_iterations,
         num_cpus::get(),
-        // std::time::SystemTime::now()
-        //     .duration_since(std::time::UNIX_EPOCH)
-        //     .unwrap()
-        //     .as_secs()
     );
 
     let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace::<F>(&inputs);
+    let (program_io, trace) = program.trace(&inputs);
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -256,7 +233,6 @@ pub fn run_coordinator(
         tracing::warn!("Witness solving disabled");
     }
 
-    // use jolt_core::poly::commitment::mock::MockCommitScheme;
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
@@ -282,6 +258,11 @@ pub fn run_coordinator(
     //     .context("while verifying Lasso proof")?;
     //     return Ok(());
     // }
+    //
+
+    let mut rng = test_rng();
+    let (program_io_shares, trace_shares) =
+        program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
     let mut network = Rep3QuicNetCoordinator::new(
         config.extend_with_workers(args.num_workers_per_party),
@@ -289,13 +270,18 @@ pub fn run_coordinator(
     )
     .unwrap();
     network.trim_subnets(1).unwrap();
-    let (spartan_key, meta) = RV32IJoltVM::init_rep3(
-        &preprocessing.shared,
-        Some((trace, program_io.clone())),
-        &mut network,
+    network.send_requests_blocking(
+        program_io_shares
+            .into_iter()
+            .zip(trace_shares)
+            .map(|s| bincode::serialize(&s))
+            .collect::<bincode::Result<Vec<_>>>()
+            .context("while serializing trace shares")?,
     )?;
 
-    network.log_connection_stats(Some("Coordinator send witness communication"));
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
+
+    network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();
 
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
@@ -306,8 +292,6 @@ pub fn run_coordinator(
         &mut network,
     )?;
 
-    
-
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
 
@@ -316,8 +300,8 @@ pub fn run_coordinator(
     Ok(())
 }
 
-fn print_used_instructions<F: JoltField, Instructions: JoltInstructionSet<F>>(
-    instruction_trace: &[JoltTraceStep<F, Instructions>],
+fn print_used_instructions<Instructions: JoltInstructionSet>(
+    instruction_trace: &[JoltTraceStep<Instructions>],
 ) {
     let opcodes_used = instruction_trace
         .par_iter()
@@ -342,7 +326,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         .add_directive("jolt_core=info".parse().unwrap())
         .add_directive("co-snarks=info".parse().unwrap())
         .add_directive("mpc_net=info".parse().unwrap())
-        .add_directive("quinn=info".parse().unwrap());
+        .add_directive("quinn=off".parse().unwrap());
 
     let current_level = env_filter.max_level_hint().unwrap_or(LevelFilter::INFO);
     let subscriber = Registry::default().with(env_filter);
@@ -361,6 +345,10 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         })
     } else {
         let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));
+        // let _ = tracing::subscriber::set_global_default(
+        //     subscriber.with(fmt::layer().with_writer(std::io::stderr)),
+        // );
+
         None
     }
 }

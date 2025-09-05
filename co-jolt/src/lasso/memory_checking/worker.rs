@@ -149,7 +149,7 @@ where
             r_read_write.to_vec(),
             &read_write_evals
                 .iter()
-                .map(|x| x.into_additive(io_ctx.id))
+                .map(|x| x.into_additive(io_ctx.party_id()))
                 .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
@@ -164,7 +164,7 @@ where
             r_init_final.to_vec(),
             &init_final_evals
                 .iter()
-                .map(|x| x.into_additive(io_ctx.id))
+                .map(|x| x.into_additive(io_ctx.party_id()))
                 .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;

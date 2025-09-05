@@ -1,27 +1,30 @@
-use std::iter::Sum;
+use itertools::izip;
+use std::ops::Shr;
 
-use crate::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3PrimeFieldShare,
+    },
+    rep3_ring::Rep3RingShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
+use crate::utils::instruction_utils::{
+    assert_valid_parameters, chunk_and_concatenate_for_shift, rep3_chunk_and_concatenate_for_shift,
+};
+use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use jolt_core::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct SRAInstruction<const WORD_SIZE: usize, F: JoltField>(
-    pub Rep3Operand<F>,
-    pub Rep3Operand<F>,
-);
+pub struct SRAInstruction<const WORD_SIZE: usize>(pub Rep3Operand, pub Rep3Operand);
 
-impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction<WORD_SIZE, F> {
+impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => (*x, *y),
@@ -29,7 +32,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction
         }
     }
 
-    fn combine_lookups(&self, vals: &[F], C: usize, _: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
         assert_eq!(vals.len(), C + 1);
         vals.iter().sum()
@@ -39,7 +42,11 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction
         1
     }
 
-    fn subtables(&self, C: usize, _: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+    fn subtables<F: JoltField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         // We have to pre-define subtables in this way because `CHUNK_INDEX` needs to be a constant,
         // i.e. known at compile time (so we cannot do a `map` over the range of `C`,
         // which only happens at runtime).
@@ -79,7 +86,7 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction
         }
     }
 
-    fn lookup_entry(&self) -> F {
+    fn lookup_entry<F: JoltField>(&self) -> F {
         match (&self.0, &self.1) {
             (Rep3Operand::Public(x), Rep3Operand::Public(y)) => {
                 let x = *x as i32;
@@ -98,28 +105,24 @@ impl<const WORD_SIZE: usize, F: JoltField> JoltInstruction<F> for SRAInstruction
     }
 }
 
-impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruction<WORD_SIZE, F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRAInstruction<WORD_SIZE> {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), self.1.clone())
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
         (&mut self.0, Some(&mut self.1))
     }
 
-    fn combine_lookups_rep3<N: Rep3Network>(
-        &self,
-        vals: &[Rep3PrimeFieldShare<F>],
-        C: usize,
-        _: usize,
-        _: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        assert!(C <= 10);
-        assert_eq!(vals.len(), C + 1);
-        Ok(Rep3PrimeFieldShare::<F>::sum(vals.iter().copied()))
+    fn lhs(&self) -> &Rep3Operand {
+        &self.0
     }
 
-    fn combine_lookups_rep3_batched<N: Rep3Network>(
+    fn rhs(&self) -> Option<&Rep3Operand> {
+        Some(&self.1)
+    }
+
+    fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
@@ -133,26 +136,26 @@ impl<const WORD_SIZE: usize, F: JoltField> Rep3JoltInstruction<F> for SRAInstruc
 
     fn to_indices_rep3(
         &self,
+        _: Option<Rep3RingShare<u128>>,
         C: usize,
         log_M: usize,
-    ) -> Vec<mpc_core::protocols::rep3::Rep3BigUintShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SRAInstruction::to_indices called with non-binary operands"),
-        }
+    ) -> Vec<Rep3RingShare<u32>> {
+        rep3_chunk_and_concatenate_for_shift(self.0.as_binary(), self.1.as_binary(), C, log_M)
     }
 
-    fn output<N: Rep3Network>(
+    fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-        match (&self.0, &self.1) {
-            (Rep3Operand::Binary(x), Rep3Operand::Binary(y)) => {
-                unimplemented!()
-            }
-            _ => panic!("SRAInstruction::output called with non-binary operands"),
-        }
+        steps: &[&impl Rep3JoltInstruction],
+        _: &mut IoContext<N>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()> {
+        izip!(steps, out).for_each(|(st, out)| {
+            *out = FutureRep3Ring::cast_to_field_b2a(
+                st.lhs()
+                    .as_binary() // TODO: as i32
+                    .shr((st.rhs().unwrap().as_public() as u32 % WORD_SIZE as u32) as usize),
+            )
+        });
+        Ok(())
     }
 }

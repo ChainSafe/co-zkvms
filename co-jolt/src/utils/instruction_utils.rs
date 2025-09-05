@@ -1,10 +1,17 @@
 use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
+use num_traits::AsPrimitive;
 
 use crate::field::JoltField;
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
-use num_bigint::BigUint;
-use std::{collections::HashMap, ops::Shr};
+use mpc_core::protocols::{
+    rep3::{self, Rep3PrimeFieldShare},
+    rep3_ring::{
+        casts::downcast,
+        ring::{int_ring::IntRing2k, ring_impl::RingElement},
+        Rep3RingShare,
+    },
+};
+use std::ops::Shr;
 
 pub fn concatenate_lookups_rep3<F: JoltField>(
     vals: &[Rep3PrimeFieldShare<F>],
@@ -46,15 +53,15 @@ pub fn concatenate_lookups_rep3_batched<F: JoltField>(
     sums
 }
 
-pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
-    x: Rep3BigUintShare<F>,
-    y: Rep3BigUintShare<F>,
+pub fn rep3_chunk_and_concatenate_operands(
+    x: Rep3RingShare<u32>,
+    y: Rep3RingShare<u32>,
     C: usize,
     log_M: usize,
-) -> Vec<Rep3BigUintShare<F>> {
+) -> Vec<Rep3RingShare<u32>> {
     let operand_bits: usize = log_M / 2;
 
-    let operand_bit_mask = BigUint::from(((1 << operand_bits) - 1) as u64);
+    let operand_bit_mask = RingElement(((1 << operand_bits) - 1) as u32);
     (0..C)
         .map(|i| {
             let shift = (C - i - 1) * operand_bits;
@@ -67,112 +74,87 @@ pub fn rep3_chunk_and_concatenate_operands<F: JoltField>(
         .collect()
 }
 
-pub fn transpose<I, T>(matrix: I) -> Vec<Vec<T>>
-where
-    I: IntoIterator<Item = Vec<T>>,
-{
-    let mut it = matrix.into_iter();
-    let first_row = match it.next() {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-    let cols = first_row.len();
-    let (low, _) = it.size_hint();
-    let mut out: Vec<Vec<T>> = (0..cols).map(|_| Vec::with_capacity(low + 1)).collect();
+/// z = x + y (mod 2^{C*log_M}), then split z into C chunks of `log_M` bits (MSB-first).
+pub fn rep3_add_and_chunk_operands(
+    z: &Rep3RingShare<u128>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3RingShare<u32>> {
+    let sum_chunk_bits: usize = log_M;
+    let sum_chunk_bit_mask = RingElement(((1 << sum_chunk_bits) - 1) as u64);
 
-    // push first row
-    for (c, v) in first_row.into_iter().enumerate() {
-        out[c].push(v);
-    }
-    // push remaining rows
-    for row in it {
-        assert_eq!(row.len(), cols, "ragged matrix");
-        for (c, v) in row.into_iter().enumerate() {
-            out[c].push(v);
-        }
-    }
-    out
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * sum_chunk_bits) as u32 as usize;
+
+            ((z >> shift).downcast() & sum_chunk_bit_mask.clone()).downcast()
+        })
+        .collect()
 }
 
-pub fn transpose_flatten<I, T>(matrix: I) -> Vec<Vec<T>>
-where
-    I: IntoIterator<Item = Vec<Vec<T>>>, // [R][C][D] with D possibly var-length
-{
-    let mut rows = matrix.into_iter();
-    let first = match rows.next() {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-    let cols = first.len();
-    let (low, _) = rows.size_hint();
-    // estimate avg depth from first row
-    let avg_depth = if cols > 0 {
-        first.iter().map(Vec::len).sum::<usize>() / cols
-    } else {
-        0
-    };
-    // pre-allocate each column to (rows_est × avg_depth)
-    let mut out: Vec<Vec<T>> = (0..cols)
-        .map(|_| Vec::with_capacity((low + 1) * avg_depth))
-        .collect();
-
-    // flatten first row
-    for (c, dv) in first.into_iter().enumerate() {
-        out[c].extend(dv);
-    }
-    // flatten remaining rows
-    for row in rows {
-        assert_eq!(row.len(), cols, "ragged cols");
-        for (c, dv) in row.into_iter().enumerate() {
-            out[c].extend(dv);
-        }
-    }
-    out
+/// Chunks `z` into `C` chunks bitwise where `z = x * y`.
+/// `log_M` is the number of bits for each of the `C` chunks of `z`.
+pub fn rep3_multiply_and_chunk_operands(
+    z: &Rep3RingShare<u128>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3RingShare<u32>> {
+    let product_chunk_bits: usize = log_M;
+    let product_chunk_bit_mask = RingElement(((1 << product_chunk_bits) - 1) as u128);
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * product_chunk_bits) as u32 as usize;
+            downcast((z >> shift) & product_chunk_bit_mask.clone())
+        })
+        .collect()
 }
 
-pub fn transpose_hashmap<T>(rows: Vec<HashMap<usize, T>>) -> HashMap<usize, Vec<T>> {
-    let mut out: HashMap<usize, Vec<T>> = HashMap::new();
-    for (_, row) in rows.into_iter().enumerate() {
-        for (k, v) in row {
-            out.entry(k).or_default().push(v);
-        }
-    }
-    out
+/// Chunks and concatenates two 64-bit unsigned integers `x` and `y` into a vector of concatenated chunks,
+/// where the second half of each concatenated chunk is always `y_0`, the last chunk of `y` (from left to right).
+pub fn rep3_chunk_and_concatenate_for_shift(
+    x: Rep3RingShare<u32>,
+    y: Rep3RingShare<u32>,
+    C: usize,
+    log_M: usize,
+) -> Vec<Rep3RingShare<u32>> {
+    let operand_bits: usize = log_M / 2;
+    let operand_bit_mask = RingElement(((1 << operand_bits) - 1) as u32);
+
+    let y_lowest_chunk = y & operand_bit_mask.clone();
+
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * operand_bits) as u32 as usize;
+            let left = x.clone().shr(shift) & operand_bit_mask.clone();
+            // (left << operand_bits) | y_lowest_chunk
+            // since we performed left shift the right part are all zero bits so we can do XOR instead of OR
+            (left << operand_bits) ^ y_lowest_chunk.clone()
+        })
+        .collect()
 }
 
-pub fn chunks_take_nth<'a, T>(
-    data: &'a [T],
+/// Splits a 64-bit unsigned integer `x` into a `C`-length vector of `usize`, each representing a
+/// `chunk_len`-bit chunk.
+pub fn rep3_chunk_operand<U: IntRing2k>(
+    x: Rep3RingShare<u32>,
+    C: usize,
     chunk_len: usize,
-    step: usize,
-) -> impl Iterator<Item = impl Iterator<Item = &'a T>> {
-    // for each offset 0‥step-1 build a strided view
-    (0..step).map(move |off| data.iter().skip(off).step_by(step).take(chunk_len))
+) -> Vec<Rep3RingShare<U>>
+where
+    u32: AsPrimitive<U>,
+{
+    let bit_mask = RingElement(((1 << chunk_len) - 1) as u32);
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * chunk_len) as u32 as usize;
+            downcast(x.clone().shr(shift) & bit_mask.clone())
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use ark_std::test_rng;
-
-    type F = ark_bn254::Fr;
-
-    #[test]
-    fn test_transpose_flatten() {
-        let matrix = vec![vec![vec![(); 8]; 4], vec![vec![(); 8]; 4]];
-        let transposed = transpose_flatten(matrix);
-        assert_eq!(
-            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
-            vec![16; 4]
-        );
-
-        let matrix = vec![vec![vec![(); 7]; 4], vec![vec![(); 8]; 4]];
-        let transposed = transpose_flatten(matrix);
-        assert_eq!(
-            transposed.iter().map(|v| v.len()).collect::<Vec<_>>(),
-            vec![15; 4]
-        );
-    }
 
     #[test]
     fn test_chunk_and_concatenate_operands() {
@@ -210,18 +192,5 @@ mod test {
                 ((left << operand_bits) ^ right) as usize
             })
             .collect()
-    }
-
-    #[test]
-    fn test_transpose() {
-        let matrix = vec![
-            vec![vec![1; 4], vec![2; 4]],
-            vec![vec![3; 4], vec![4; 4]],
-            vec![vec![5; 4], vec![6; 4]],
-        ];
-        let transposed = transpose(matrix);
-        println!("{:?}", transposed);
-        let x = transpose(transposed[1].clone());
-        println!("\n{:?}", x);
     }
 }

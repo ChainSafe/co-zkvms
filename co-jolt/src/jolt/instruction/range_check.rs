@@ -1,6 +1,6 @@
+use crate::field::JoltField;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::field::JoltField;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
@@ -21,7 +21,7 @@ use crate::jolt::{
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct RangeLookup<const BOUND: u64, F: JoltField>(Rep3Operand<F>);
+pub struct RangeLookup<const BOUND: u64, F: JoltField>(Rep3Operand);
 impl<const BOUND: u64, F: JoltField> RangeLookup<BOUND, F> {
     pub fn public(value: u64) -> Self {
         Self(Rep3Operand::Public(value))
@@ -107,12 +107,20 @@ impl<const BOUND: u64, F: JoltField> JoltInstruction<F> for RangeLookup<BOUND, F
 }
 
 impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUND, F> {
-    fn operands_rep3(&self) -> (Rep3Operand<F>, Rep3Operand<F>) {
+    fn operands_rep3(&self) -> (Rep3Operand, Rep3Operand) {
         (self.0.clone(), Rep3Operand::Public(0))
     }
 
-    fn operands_mut(&mut self) -> (&mut Rep3Operand<F>, Option<&mut Rep3Operand<F>>) {
-        (&mut self.0, None)
+    fn operands_mut(&mut self) -> (&mut Rep3Operand, Option<&mut Rep3Operand>) {
+        (&mut self.0, Some(&mut self.1))
+    }
+
+    fn lhs(&self) -> &Rep3Operand {
+        &self.0
+    }
+
+    fn rhs(&self) -> Option<&Rep3Operand> {
+        None
     }
 
     fn combine_lookups_rep3<N: Rep3Network>(
@@ -142,7 +150,7 @@ impl<const BOUND: u64, F: JoltField> Rep3JoltInstruction<F> for RangeLookup<BOUN
         }
     }
 
-    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3BigUintShare<F>> {
+    fn to_indices_rep3(&self, C: usize, log_M: usize) -> Vec<Rep3RingShare<u32>> {
         let input = match &self.0 {
             Rep3Operand::Binary(value) => value.clone(),
             _ => panic!("RangeLookup::to_indices must be called on binary shared value"),

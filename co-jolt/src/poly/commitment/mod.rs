@@ -1,11 +1,11 @@
 use crate::field::JoltField;
 use crate::{
     poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial},
-    utils::shared_or_public::MaybeShared,
+    utils::types::MaybeShared,
 };
 use jolt_core::utils::transcript::KeccakTranscript;
-use jolt_core::{    poly::commitment::commitment_scheme::CommitmentScheme,
-    utils::transcript::Transcript,
+use jolt_core::{
+    poly::commitment::commitment_scheme::CommitmentScheme, utils::transcript::Transcript,
 };
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
 use std::borrow::Borrow;

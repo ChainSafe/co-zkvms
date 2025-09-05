@@ -725,9 +725,9 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "async-trait"
-version = "0.1.88"
+version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e539d3fca749fcee5236ab05e93a52867dd549cc157c8cb7f99595f3cedffdb5"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -858,7 +858,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1198,6 +1198,7 @@ dependencies = [
  "ark-poly-commit",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
+ "bincode",
  "clap",
  "color-eyre",
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
@@ -1208,9 +1209,10 @@ dependencies = [
  "icicle-runtime",
  "itertools 0.12.1",
  "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
- "mpc-core 0.1.0",
+ "mpc-core",
  "mpc-net",
  "num-bigint 0.4.6",
+ "num-traits",
  "num_cpus",
  "once_cell",
  "paste",
@@ -1253,7 +1255,7 @@ dependencies = [
  "eyre",
  "itertools 0.12.1",
  "mimalloc",
- "mpc-core 0.1.0",
+ "mpc-core",
  "mpc-net",
  "noir-r1cs",
  "num-bigint 0.4.6",
@@ -1346,7 +1348,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "ark-serialize 0.5.0",
  "serde",
@@ -1664,6 +1666,19 @@ dependencies = [
  "darling_core",
  "quote",
  "syn 2.0.104",
+]
+
+[[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -2953,15 +2968,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3002,7 +3008,7 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3113,7 +3119,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3141,7 +3147,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "proc-macro2",
@@ -3273,7 +3279,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.53.3",
 ]
 
 [[package]]
@@ -3450,49 +3456,27 @@ dependencies = [
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
- "eyre",
- "itertools 0.12.1",
- "mpc-core 0.9.0",
- "mpc-net",
- "mpc-types",
- "num-bigint 0.4.6",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "rayon",
- "snarks-core",
- "tracing",
-]
-
-[[package]]
-name = "mpc-core"
-version = "0.9.0"
-source = "git+https://github.com/nulltea/co-snarks#8dccfe4a1a2c539eb80baf33dfe20bd508859b7d"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-grumpkin",
- "ark-serialize 0.5.0",
  "async-trait",
  "bytes",
+ "bytesize",
  "eyre",
  "fancy-garbling",
- "hex",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "mpc-net",
  "mpc-types",
  "nom",
  "num-bigint 0.4.6",
  "num-traits",
+ "parking_lot",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
  "scuttlebutt",
  "serde",
  "sha3",
+ "snarks-core",
  "subtle",
  "thiserror 2.0.12",
- "tokio",
  "tracing",
 ]
 
@@ -3506,6 +3490,7 @@ dependencies = [
  "bytesize",
  "clap",
  "color-eyre",
+ "dashmap",
  "eyre",
  "futures",
  "mpc-types",
@@ -4067,6 +4052,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "parking_lot"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
+dependencies = [
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "redox_syscall",
+ "smallvec",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4538,6 +4546,15 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "yasna",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]
@@ -6158,7 +6175,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#cd50b476c0a0e2768783fb14e2ae2a59e9ff2821"
+source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "clap",
  "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
@@ -6631,7 +6648,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

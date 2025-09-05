@@ -23,7 +23,6 @@ use crate::{
     utils::transcript::Transcript,
 };
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// An opening computed by the prover.
@@ -381,8 +380,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let evals: Vec<(AdditiveShare<F>, AdditiveShare<F>)> = self
             .openings
             .par_iter()
-            .zip(coeffs.par_iter())
-            .map(|(opening, coeff)| {
+            .map(|opening| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
                     let eval_0 = (0..mle_half)

@@ -38,10 +38,9 @@ use jolt_core::{
 };
 use tracing::trace_span;
 
-use super::{LassoPolynomials, InstructionLookupsPreprocessing};
+use super::{InstructionLookupsPreprocessing, LassoPolynomials};
 use crate::{instructions::LookupSet, subtables::SubtableSet};
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -357,7 +356,8 @@ where
                 let mut inner_sum = vec![F::zero(); num_eval_points];
                 for instruction in Lookups::iter() {
                     let instruction_index = Lookups::enum_index(&instruction);
-                    let memory_indices = &preprocessing.instruction_to_memory_indices[instruction_index];
+                    let memory_indices =
+                        &preprocessing.instruction_to_memory_indices[instruction_index];
 
                     for eval_index in 0..num_eval_points {
                         let flag_eval = multi_flag_evals[eval_index][instruction_index];
@@ -536,7 +536,13 @@ where
             transcript,
         )?;
 
-        Self::verify_memory_checking(preprocessing, &setup, proof.memory_checking, commitment, transcript)?;
+        Self::verify_memory_checking(
+            preprocessing,
+            &setup,
+            proof.memory_checking,
+            commitment,
+            transcript,
+        )?;
 
         Ok(())
     }
@@ -695,7 +701,6 @@ where
 
         (read_write_hashes, init_final_hashes)
     }
-
 
     fn uninterleave_hashes(
         preprocessing: &Self::Preprocessing,
@@ -899,7 +904,6 @@ where
             .collect()
     }
 }
-
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionReadWriteOpenings<F>

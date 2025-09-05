@@ -1,16 +1,17 @@
 use std::marker::PhantomData;
 
+use crate::field::JoltField;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
+use crate::jolt::vm::timestamp_range_check;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
-use crate::utils::shared_or_public::SharedOrPublic;
 use crate::utils::transcript::TranscriptExt;
-use crate::field::JoltField;
+use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     RegisterAddressOpenings,
@@ -83,9 +84,13 @@ where
                 ProverOpeningAccumulator::<F, ProofTranscript>::new();
 
             let timestamp_range_check_polynomials =
-                polynomials.get_timestamp_range_check_polynomials();
+                timestamp_range_check::get_timestamp_range_check_polynomials::<
+                    F,
+                    PCS,
+                    ProofTranscript,
+                >(&mut polynomials.read_write_memory);
             let jolt_polynomials =
-                polynomials.get_exogenous_polynomials_for_timestamp_range_check();
+                polynomials.take_exogenous_polynomials_for_timestamp_range_check();
 
             let timestamp_validity_proof = TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
                 pcs_setup,
@@ -146,8 +151,8 @@ where
         ];
 
         // (v_final - v_io) * eq * io_witness_range
-        let party_id = io_ctx.id;
-        let output_check_fn = |vals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
+        let party_id = io_ctx.party_id();
+        let output_check_fn = |vals: &[Rep3Value<F>]| -> AdditiveShare<F> {
             vals[2]
                 .sub(&vals[3], party_id)
                 .mul_public(vals[0].as_public() * vals[1].as_public())
@@ -231,7 +236,7 @@ where
         let t_read_rd: &CompactPolynomial<u32, F> = (&polynomials.t_read_rd).try_into().unwrap();
         let t_read_ram: &CompactPolynomial<u32, F> = (&polynomials.t_read_ram).try_into().unwrap();
 
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
 
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
             vec![Rep3PrimeFieldShare::zero_share(); 2 * MEMORY_OPS_PER_INSTRUCTION * num_ops];

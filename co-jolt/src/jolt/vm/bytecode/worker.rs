@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
+use crate::field::JoltField;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
-use crate::utils::shared_or_public::SharedOrPublic;
-use crate::field::JoltField;
+use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
 use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
@@ -72,6 +72,7 @@ where
         let v_imm = &polynomials.v_read_write[5];
         let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
 
+        let party_id = io_ctx.party_id();
         let read_leaves: Vec<_> = (0..num_ops)
             .into_par_iter()
             .map(|i| {
@@ -85,7 +86,7 @@ where
                     - tau;
                 v_imm
                     .get_coeff(i)
-                    .add_public(public_term, io_ctx.id)
+                    .add_public(public_term, party_id)
                     .as_shared()
             })
             .collect();
@@ -93,8 +94,8 @@ where
         let write_leaves: Vec<_> = read_leaves
             .par_iter()
             .map(|leaf| {
-                SharedOrPublic::Shared(*leaf)
-                    .add_public(gamma_terms[6], io_ctx.id)
+                Rep3Value::Shared(*leaf)
+                    .add_public(gamma_terms[6], party_id)
                     .as_shared()
             })
             .collect();
@@ -131,8 +132,10 @@ where
             .map(|(i, leaf)| *leaf + t_final[i].field_mul(gamma_terms[6]))
             .collect();
 
-        let init_leaves = rep3::arithmetic::promote_to_trivial_shares(init_leaves, io_ctx.id);
-        let final_leaves = rep3::arithmetic::promote_to_trivial_shares(final_leaves, io_ctx.id);
+        let init_leaves =
+            rep3::arithmetic::promote_to_trivial_shares(init_leaves, io_ctx.party_id());
+        let final_leaves =
+            rep3::arithmetic::promote_to_trivial_shares(final_leaves, io_ctx.party_id());
 
         // TODO(moodlezoup): avoid concat
         Ok((

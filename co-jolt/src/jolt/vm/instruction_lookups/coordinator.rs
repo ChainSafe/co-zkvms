@@ -31,7 +31,7 @@ impl<F, const C: usize, const M: usize, PCS, ProofTranscript, Instructions, Subt
 where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
-    Instructions: JoltInstructionSet<F>,
+    Instructions: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -47,7 +47,6 @@ where
 
         let r_eq = transcript.challenge_vector::<F>(num_ops.log_2());
         network.broadcast_request(r_eq)?;
-
 
         let num_rounds = num_ops.log_2();
 
@@ -160,7 +159,7 @@ where
     F: JoltField,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    Instructions: JoltInstructionSet<F>,
+    Instructions: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     Network: Rep3NetworkCoordinator,
 {

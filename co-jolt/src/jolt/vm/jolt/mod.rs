@@ -5,7 +5,7 @@ pub mod worker;
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    jolt::vm::bytecode::BytecodeRowExt,
+    jolt::{trace::mem_op::MemoryOp, vm::bytecode::witness::BytecodeRow},
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -18,19 +18,23 @@ use crate::{
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{MemoryLayout, MemoryOp, NUM_CIRCUIT_FLAGS},
+    rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS},
 };
 use jolt_tracer::{ELFInstruction, JoltDevice};
 use serde::{Deserialize, Serialize};
 use snarks_core::math::Math;
 use strum::EnumCount;
 
-use super::bytecode::BytecodeRow;
 use crate::field::JoltField;
 use crate::jolt::{
     instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
+use jolt_core::{
+    jolt::subtable::JoltSubtableSet,
+    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
+    utils::transcript::AppendToTranscript,
+};
 use jolt_core::{
     jolt::{
         instruction::{
@@ -55,22 +59,16 @@ use jolt_core::{
         spartan::{self, UniformSpartanProof},
     },
 };
-use jolt_core::{
-    jolt::subtable::JoltSubtableSet,
-    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
-    utils::transcript::AppendToTranscript,
-};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct JoltTraceStep<F: JoltField, InstructionSet: JoltInstructionSet<F>> {
+pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
     pub circuit_flags: [bool; NUM_CIRCUIT_FLAGS],
-    pub(crate) _field: PhantomData<F>,
 }
 
-impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, InstructionSet> {
+impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
     fn no_op() -> Self {
         JoltTraceStep {
             instruction_lookup: None,
@@ -82,11 +80,10 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
                 MemoryOp::noop_read(),  // RAM
             ],
             circuit_flags: [false; NUM_CIRCUIT_FLAGS],
-            _field: PhantomData,
         }
     }
 
-    fn pad(trace: &mut Vec<Self>) {
+    pub fn pad(trace: &mut Vec<Self>) {
         let unpadded_length = trace.len();
         let padded_length = unpadded_length.next_power_of_two();
         trace.resize(padded_length, Self::no_op());
@@ -95,14 +92,14 @@ impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> JoltTraceStep<F, Instr
 
 type JoltTraceStepNative = jolt_core::jolt::vm::JoltTraceStep<jolt_core::jolt::vm::rv32i_vm::RV32I>;
 
-impl<F: JoltField, InstructionSet: JoltInstructionSet<F>> Into<JoltTraceStepNative>
-    for JoltTraceStep<F, InstructionSet>
+impl<InstructionSet: JoltInstructionSet> Into<JoltTraceStepNative>
+    for JoltTraceStep<InstructionSet>
 {
     fn into(self) -> JoltTraceStepNative {
         jolt_core::jolt::vm::JoltTraceStep {
             instruction_lookup: None,
-            bytecode_row: self.bytecode_row,
-            memory_ops: self.memory_ops,
+            bytecode_row: self.bytecode_row.into(),
+            memory_ops: self.memory_ops.map(|op| op.into()),
             circuit_flags: self.circuit_flags,
         }
     }
@@ -122,7 +119,7 @@ pub struct JoltProof<
     I: ConstraintInput,
     F: JoltField,
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
-    InstructionSet: JoltInstructionSet<F>,
+    InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
     ProofTranscript: Transcript,
 {
@@ -148,7 +145,7 @@ where
     PCS: CommitmentScheme<ProofTranscript, Field = F>,
     ProofTranscript: Transcript,
 {
-    type InstructionSet: JoltInstructionSet<F>;
+    type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
     type Constraints: R1CSConstraints<C, F>;
 
@@ -175,7 +172,7 @@ where
         let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         use jolt_tracer as tracer;
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
+        let bytecode_rows: Vec<_> = bytecode
             .into_iter()
             .flat_map(|instruction| match instruction.opcode {
                 tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(instruction),
@@ -193,7 +190,7 @@ where
                 _ => vec![instruction],
             })
             .map(|instruction| {
-                BytecodeRow::from_instruction_ext::<F, Self::InstructionSet>(&instruction)
+                BytecodeRow::from_instruction::<Self::InstructionSet>(&instruction).into()
             })
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
@@ -248,7 +245,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::generate_witness")]
     fn generate_witness(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         program_io: &JoltDevice,
     ) -> JoltPolynomials<F> {
         let instruction_lookups =
@@ -292,7 +289,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        mut trace: Vec<JoltTraceStep<F, Self::InstructionSet>>,
+        mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
     ) -> (
         JoltProof<

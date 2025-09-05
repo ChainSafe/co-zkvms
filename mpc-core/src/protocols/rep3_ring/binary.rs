@@ -1,0 +1,423 @@
+//! Binary
+//!
+//! This module contains operations with binary shares
+
+use super::arithmetic::RingShare;
+use crate::{
+    IoResult,
+    protocols::rep3::network::{IoContext, Rep3Network},
+};
+use itertools::izip;
+use mpc_types::protocols::{
+    rep3::id::PartyID,
+    rep3_ring::{
+        Rep3RingShare, Rep3RingSignedShare,
+        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+    },
+};
+use num_traits::{AsPrimitive, One, Signed, Zero};
+use rand::{Rng, distributions::Standard, prelude::Distribution};
+
+use rayon::prelude::*;
+
+pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Rep3RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let t0 = rng.r#gen::<T>();
+    let t1 = rng.r#gen::<T>();
+    let t2 = (val ^ t0) ^ t1;
+
+    let p_share_0 = Rep3RingShare::new(t0, t2);
+    let p_share_1 = Rep3RingShare::new(t1, t0);
+    let p_share_2 = Rep3RingShare::new(t2, t1);
+    vec![p_share_0, p_share_1, p_share_2]
+}
+
+pub fn generate_signed_shares_rep3<T: IntRing2k, R: Rng>(
+    val: T::Signed,
+    rng: &mut R,
+) -> Vec<Rep3RingSignedShare<T>>
+where
+    Standard: Distribution<T>,
+    T::Signed: num_traits::Signed,
+{
+    let abs: T = val.abs().as_();
+    let sign = Bit::new(val.is_positive());
+    izip!(
+        generate_shares_rep3(abs, rng),
+        generate_shares_rep3::<Bit, _>(sign, rng)
+    )
+    .map(|(abs, sign)| Rep3RingSignedShare::new(abs, sign))
+    .collect()
+}
+
+/// Performs a bitwise XOR operation on two shared values.
+pub fn xor<T: IntRing2k>(a: &RingShare<T>, b: &RingShare<T>) -> RingShare<T> {
+    a ^ b
+}
+
+/// Performs a bitwise XOR operation on a shared value and a public value.
+pub fn xor_public<T: IntRing2k>(
+    shared: &RingShare<T>,
+    public: &RingElement<T>,
+    id: PartyID,
+) -> RingShare<T> {
+    let mut res = shared.to_owned();
+    match id {
+        PartyID::ID0 => res.a ^= public,
+        PartyID::ID1 => res.b ^= public,
+        PartyID::ID2 => {}
+    }
+    res
+}
+
+/// Performs a bitwise OR operation on two shared values.
+pub fn or<T: IntRing2k, N: Rep3Network>(
+    a: &RingShare<T>,
+    b: &RingShare<T>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let xor = a ^ b;
+    let and = and(a, b, io_context)?;
+    Ok(xor ^ and)
+}
+
+/// Performs a bitwise OR operation on two shared values.
+pub fn or_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let xor = izip!(a, b).map(|(a, b)| a ^ b).collect::<Vec<_>>();
+    let and = and_many(a, b, io_context)?;
+    Ok(izip!(xor, and)
+        .map(|(xor, and)| xor ^ and)
+        .collect::<Vec<_>>())
+}
+
+/// Performs a bitwise OR operation on a shared value and a public value.
+pub fn or_public<T: IntRing2k>(
+    shared: &RingShare<T>,
+    public: &RingElement<T>,
+    id: PartyID,
+) -> RingShare<T> {
+    let tmp = shared & public;
+    let xor = xor_public(shared, public, id);
+    xor ^ tmp
+}
+
+/// Performs a bitwise AND operation on two shared values.
+pub fn and<T: IntRing2k, N: Rep3Network>(
+    a: &RingShare<T>,
+    b: &RingShare<T>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
+    mask ^= mask_b;
+    let local_a = (a & b) ^ mask;
+    let local_b = io_context.network.reshare(local_a)?;
+    Ok(RingShare::new_ring(local_a, local_b))
+}
+
+/// Performs a bitwise AND operation on multiple shared values.
+pub fn and_many<'a, T: IntRing2k, N: Rep3Network>(
+    a: impl IntoIterator<Item = impl AsRef<RingShare<T>>>,
+    b: impl IntoIterator<Item = impl AsRef<RingShare<T>>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let local_a = izip!(a, b)
+        .map(|(a, b)| {
+            let (mut mask, mask_b) = io_context.rngs.rand.random_elements::<RingElement<T>>();
+            mask ^= mask_b;
+            (a.as_ref() & b.as_ref()) ^ mask
+        })
+        .collect::<Vec<_>>();
+    let local_b = io_context.network.reshare_many(&local_a)?;
+    Ok(izip!(local_a, local_b)
+        .map(|(a, b)| RingShare::new_ring(a, b))
+        .collect())
+}
+
+/// Performs a bitwise AND operation on a shared value and a public value.
+pub fn and_with_public<T: IntRing2k>(
+    shared: &RingShare<T>,
+    public: &RingElement<T>,
+) -> RingShare<T> {
+    shared & public
+}
+
+/// Shifts a share by a public value `F` to the right.
+///
+/// # Panics
+/// This method panics if `public` is larger than the of bits of
+/// the underlying `PrimeField`'s modulus'.
+pub fn shift_r_public<T: IntRing2k>(shared: &RingShare<T>, public: RingElement<T>) -> RingShare<T> {
+    // some special casing
+    if public.is_zero() {
+        return shared.to_owned();
+    }
+    let shift: usize = public
+        .0
+        .try_into()
+        .expect("can cast shift operand to usize");
+    shared >> shift
+}
+
+/// Shifts a share by a public value `F` to the left.
+///
+/// # Panics
+/// This method panics if `public` is larger than the of bits of
+/// the underlying `PrimeField`'s modulus'.
+pub fn shift_l_public<T: IntRing2k>(shared: &RingShare<T>, public: RingElement<T>) -> RingShare<T> {
+    // some special casing
+    if public.is_zero() {
+        return shared.to_owned();
+    }
+    let shift: usize = public
+        .0
+        .try_into()
+        .expect("can cast shift operand to usize");
+    shared << shift
+}
+
+/// Performs the opening of a shared value and returns the equivalent public value.
+pub fn open<T: IntRing2k, N: Rep3Network>(
+    a: &RingShare<T>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingElement<T>> {
+    let c = io_context.network.reshare(a.b)?;
+    Ok(a.a ^ a.b ^ c)
+}
+
+/// Performs the opening of a shared value and returns the equivalent public value.
+pub fn open_vec<T: IntRing2k, N: Rep3Network>(
+    a: Vec<RingShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<usize>> {
+    let a_b = a.iter().map(|a| a.b.clone()).collect::<Vec<_>>();
+    let c = io_context.network.reshare_many(&a_b)?;
+    izip!(a, c)
+        .map(|(a, c)| {
+            (a.a ^ a.b ^ c)
+                .convert()
+                .try_into()
+                .or(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to convert BigUint",
+                )))
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+/// Transforms a public value into a shared value: \[a\] = a.
+pub fn promote_to_trivial_share<T: IntRing2k>(
+    id: PartyID,
+    public_value: &RingElement<T>,
+) -> RingShare<T> {
+    match id {
+        PartyID::ID0 => RingShare::new_ring(public_value.to_owned(), RingElement::zero()),
+        PartyID::ID1 => RingShare::new_ring(RingElement::zero(), public_value.to_owned()),
+        PartyID::ID2 => RingShare::zero_share(),
+    }
+}
+
+pub fn add_many<T: IntRing2k, N: Rep3Network>(
+    a: &[RingShare<T>],
+    b: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    super::detail::low_depth_binary_add_many(a, b, io_context)
+}
+
+/// Computes a CMUX: If `c` is `1`, returns `x_t`, otherwise returns `x_f`.
+pub fn cmux<T: IntRing2k, N: Rep3Network>(
+    c: &RingShare<T>,
+    x_t: &RingShare<T>,
+    x_f: &RingShare<T>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let xor = x_f ^ x_t;
+    let mut and = and(c, &xor, io_context)?;
+    and ^= x_f;
+    Ok(and)
+}
+
+/// Computes a CMUX: If `c` is `1`, returns `x_t`, otherwise returns `x_f`.
+pub fn cmux_many<T: IntRing2k, N: Rep3Network>(
+    c: &[RingShare<T>],
+    x_t: &[RingShare<T>],
+    x_f: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    // let xor = x_f ^ x_t;
+    let xor = izip!(x_f, x_t).map(|(a, b)| a ^ b).collect::<Vec<_>>();
+    let mut and = and_many(c, &xor, io_context)?;
+    // and ^= x_f;
+    izip!(and.iter_mut(), x_f.iter()).for_each(|(and, x_f)| *and ^= x_f);
+    Ok(and)
+}
+
+//TODO most likely the inputs here are only one bit therefore we
+//do not have to perform an or over the whole length of prime field
+//but only one bit.
+//Do we want that to be configurable? Semms like a waste?
+/// Compute a OR tree of the input vec
+pub fn or_tree<T: IntRing2k, N: Rep3Network>(
+    mut inputs: Vec<RingShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingShare<T>>
+where
+    Standard: Distribution<T>,
+{
+    let mut num = inputs.len();
+
+    tracing::debug!("starting or tree over {} elements", inputs.len());
+    while num > 1 {
+        tracing::trace!("binary tree still has {} elements", num);
+        let mod_ = num & 1;
+        num >>= 1;
+
+        let (a_vec, tmp) = inputs.split_at(num);
+        let (b_vec, leftover) = tmp.split_at(num);
+
+        let mut res = Vec::with_capacity(num);
+        // TODO WE WANT THIS BATCHED!!!
+        // THIS IS SUPER BAD
+        for (a, b) in izip!(a_vec.iter(), b_vec.iter()) {
+            res.push(or(a, b, io_context)?);
+        }
+
+        res.extend_from_slice(leftover);
+        inputs = res;
+
+        num += mod_;
+    }
+    let result = inputs[0];
+    tracing::debug!("we did it!");
+    Ok(result)
+}
+
+/// Computes a binary circuit to check whether the replicated binary-shared input x is zero or not. The output is a binary sharing of one bit.
+pub fn is_zero<T: IntRing2k, N: Rep3Network>(
+    x: &RingShare<T>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<RingShare<Bit>>
+where
+    Standard: Distribution<T>,
+{
+    // negate
+    let mut x = !x;
+
+    // do ands in a tree
+    // TODO: Make and tree more communication efficient, ATM we send the full element for each level, even though they halve in size
+    let mut len = T::K;
+    debug_assert!(len.is_power_of_two());
+    while len > 1 {
+        // if len % 2 == 1 // Does not happen, we are in a ring with 2^k
+        len >>= 1;
+        let mask = (RingElement::one() << len) - RingElement::one();
+        let y = x >> len;
+        x = and(&(x & mask), &(y & mask), io_context)?;
+    }
+    // extract LSB
+    Ok(RingShare {
+        a: RingElement(Bit::new((x.a & RingElement::one()) == RingElement::one())),
+        b: RingElement(Bit::new((x.b & RingElement::one()) == RingElement::one())),
+    })
+}
+
+/// Computes a binary circuit to check whether the replicated binary-shared input x is zero or not. The output is a binary sharing of one bit.
+pub fn is_zero_many<T: IntRing2k, N: Rep3Network>(
+    x: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    // negate
+    let mut x = x.iter().map(|s| !s).collect::<Vec<_>>();
+
+    // do ands in a tree
+    // TODO: Make and tree more communication efficient, ATM we send the full element for each level, even though they halve in size
+    let mut len = T::K;
+    debug_assert!(len.is_power_of_two());
+    while len > 1 {
+        // if len % 2 == 1 // Does not happen, we are in a ring with 2^k
+        len >>= 1;
+        let mask = (RingElement::one() << len) - RingElement::one();
+        let a = x.iter().map(|s| *s & mask);
+        let b = x.iter().map(|s| (s >> len) & mask);
+        x = and_many(a, b, io_context)?;
+    }
+    // extract LSB
+    Ok(x.into_iter()
+        .map(|x| RingShare {
+            a: RingElement(Bit::new((x.a & RingElement::one()) == RingElement::one())),
+            b: RingElement(Bit::new((x.b & RingElement::one()) == RingElement::one())),
+        })
+        .collect())
+}
+
+pub fn pack_bits<T: IntRing2k>(input: &[Rep3RingShare<Bit>]) -> Rep3RingShare<T> {
+    let mut share_a = RingElement::<T>::zero();
+    let mut share_b = RingElement::<T>::zero();
+    for (i, bit) in input.iter().enumerate() {
+        share_a |= RingElement(T::from(bit.a.convert().convert()) << i);
+        share_b |= RingElement(T::from(bit.b.convert().convert()) << i);
+    }
+    Rep3RingShare::new_ring(share_a, share_b)
+}
+
+#[inline]
+pub fn pack_bits_many<'a, T: IntRing2k>(
+    inputs: impl IntoParallelIterator<Item = &'a [Rep3RingShare<Bit>]>,
+) -> Vec<Rep3RingShare<T>> {
+    inputs
+        .into_par_iter()
+        .map(|input| pack_bits(&input))
+        .collect()
+}
+
+pub fn unpack_bits<T: IntRing2k>(input: Rep3RingShare<T>, len: usize) -> Vec<Rep3RingShare<Bit>> {
+    debug_assert!(len <= T::K);
+    let mut res = Vec::with_capacity(len);
+    for i in 0..len {
+        res.push(input.get_bit(i));
+    }
+    res
+}
+
+pub fn unpack_bits_many<T: IntRing2k>(
+    input_a: Vec<RingElement<T>>,
+    input_b: Vec<RingElement<T>>,
+    len: usize,
+) -> Vec<Vec<Rep3RingShare<Bit>>> {
+    debug_assert!(len <= T::K);
+    input_a
+        .into_par_iter()
+        .zip(input_b.into_par_iter())
+        .map(|(a, b)| unpack_bits(Rep3RingShare::new_ring(a, b), len))
+        .collect()
+}

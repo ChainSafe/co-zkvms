@@ -23,12 +23,11 @@ use std::{borrow::Borrow, marker::PhantomData};
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
 use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
-use crate::utils::shared_or_public::MaybeShared;
+use crate::utils::types::MaybeShared;
 
 #[derive(Clone)]
 pub struct PST13<E: Pairing> {
@@ -475,19 +474,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::iter;
-
-    use crate::poly::Rep3DensePolynomial;
     use ark_ff::UniformRand;
-    use ark_poly::DenseMultilinearExtension;
-    use ark_poly::MultilinearExtension;
-    use ark_poly::Polynomial;
     use itertools::Itertools;
-    use jolt_core::poly::dense_mlpoly::DensePolynomial;
     use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
-    use jolt_core::utils::math::Math;
     use jolt_core::utils::transcript::KeccakTranscript;
-    use mpc_core::protocols::rep3;
+    use std::iter;
 
     use super::*;
 

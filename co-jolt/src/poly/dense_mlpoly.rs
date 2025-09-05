@@ -10,14 +10,13 @@ use rand::{Rng, SeedableRng};
 use std::ops::Index;
 use std::sync::Arc;
 
-use crate::poly::Rep3MultilinearPolynomial;
 use crate::field::JoltField;
+use crate::poly::Rep3MultilinearPolynomial;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, Default, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
@@ -174,9 +173,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.coeffs_ref()
             .par_iter()
             .zip_eq(chis.par_iter())
-            .map(|(&eval, &chi)| {
-                eval.into_additive().mul_public_01_optimized(chi)
-            })
+            .map(|(&eval, &chi)| eval.into_additive().mul_public_01_optimized(chi))
             .sum()
     }
 
@@ -658,23 +655,4 @@ pub fn unsafe_allocate_zero_share_vec<F: JoltField + Sized>(
         result = Vec::from_raw_parts(ptr, size, size);
     }
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use ark_ff::{Field, One};
-    use ark_std::test_rng;
-
-    use super::*;
-
-    type F = ark_bn254::Fr;
-
-    // #[test]
-    // fn test_share_and_combine_poly_rep3() {
-    //     let mut rng = test_rng();
-    //     let poly = DensePolynomial::<F>::rand(10, &mut rng);
-    //     let shares = generate_poly_shares_rep3(&poly, &mut rng);
-    //     let combined = combine_poly_shares_rep3(vec![shares.0, shares.1, shares.2]);
-    //     assert_eq!(poly, combined);
-    // }
 }

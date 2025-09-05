@@ -18,13 +18,12 @@ use std::{borrow::Borrow, marker::PhantomData};
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
-use crate::poly::{combine_poly_shares_rep3, Rep3DensePolynomial, Rep3MultilinearPolynomial};
 use crate::field::JoltField;
-use crate::utils::shared_or_public::MaybeShared;
+use crate::poly::{combine_poly_shares_rep3, Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use crate::utils::types::MaybeShared;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField, ProofTranscript: Transcript> {

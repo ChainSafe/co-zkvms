@@ -7,11 +7,12 @@ use crate::protocols::rep3::IoResult;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::{One, Zero};
 use rand::{
-    Rng,
     distributions::{Distribution, Standard},
+    Rng,
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    iter::Sum,
     mem::ManuallyDrop,
     ops::{
         Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Mul,
@@ -206,6 +207,12 @@ impl<T: IntRing2k> Neg for RingElement<T> {
 
     fn neg(self) -> Self::Output {
         Self(self.0.wrapping_neg())
+    }
+}
+
+impl<T: IntRing2k> Sum for RingElement<T> {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 

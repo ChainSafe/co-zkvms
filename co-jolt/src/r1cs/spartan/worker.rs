@@ -3,11 +3,11 @@ use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
-use mpc_core::protocols::rep3::PartyID;
 use std::marker::PhantomData;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
+use crate::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::utils::math::Math;
@@ -28,9 +28,8 @@ use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck;
-use crate::utils::shared_or_public::SharedOrPublic;
-use crate::utils::shared_or_public::SharedOrPublicIter;
-use jolt_core::r1cs::builder::CombinedUniformBuilder;
+use crate::utils::types::Rep3Value;
+use crate::utils::types::SharedOrPublicIter;
 use jolt_core::r1cs::inputs::ConstraintInput;
 
 use rayon::prelude::*;
@@ -67,7 +66,7 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
         let flattened_polys: Vec<&Rep3MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
@@ -84,7 +83,7 @@ where
         let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
 
         let mut az_bz_cz_poly =
-            compute_spartan_Az_Bz_Cz(constraint_builder, &flattened_polys, party_id);
+            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys, party_id);
 
         let (outer_sumcheck_r, _outer_sumcheck_claims) =
             prove_spartan_cubic_sumcheck(num_rounds_x, &mut eq_tau, &mut az_bz_cz_poly, io_ctx)?;
@@ -133,8 +132,8 @@ where
         let binding_span = span!(Level::INFO, "binding_z_and_shift_z");
         let binding_guard = binding_span.enter();
 
-        let mut bind_z = vec![SharedOrPublic::zero_public(); num_vars_uniform * 2];
-        let mut bind_shift_z = vec![SharedOrPublic::zero_public(); num_vars_uniform * 2];
+        let mut bind_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
+        let mut bind_shift_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
 
         flattened_polys
             .par_iter()
@@ -160,7 +159,7 @@ where
 
         let mut polys = vec![poly_ABC, poly_z];
 
-        let comb_func = |poly_evals: &[SharedOrPublic<F>]| -> AdditiveShare<F> {
+        let comb_func = |poly_evals: &[Rep3Value<F>]| -> AdditiveShare<F> {
             assert_eq!(poly_evals.len(), 2);
             poly_evals[0].mul(&poly_evals[1]).into_additive(party_id)
         };
@@ -187,7 +186,7 @@ where
         let eq_ry_var = EqPolynomial::evals(&ry_var);
         let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
-        let mut bind_z_ry_var: Vec<SharedOrPublic<F>> = Vec::with_capacity(num_steps);
+        let mut bind_z_ry_var: Vec<Rep3Value<F>> = Vec::with_capacity(num_steps);
 
         let bind_span = span!(Level::INFO, "bind_z_ry_var");
         let bind_guard = bind_span.enter();
@@ -292,26 +291,11 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
         }
     }
 
-    let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.id);
+    let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.party_id());
 
     io_ctx.network().send_response(final_evals.to_vec())?;
 
     Ok((r, final_evals))
-}
-
-#[tracing::instrument(skip_all)]
-pub fn compute_spartan_Az_Bz_Cz<const C: usize, F: JoltField, I: ConstraintInput>(
-    constraint_builder: &CombinedUniformBuilder<C, F, I>,
-    flattened_polynomials: &[&Rep3MultilinearPolynomial<F>], // N variables of (S steps)
-    party_id: PartyID,
-) -> Rep3SpartanInterleavedPolynomial<F> {
-    Rep3SpartanInterleavedPolynomial::new(
-        &constraint_builder.uniform_builder.constraints,
-        &constraint_builder.offset_equality_constraints,
-        flattened_polynomials,
-        constraint_builder.padded_rows_per_step(),
-        party_id,
-    )
 }
 
 // pub fn compute_aux_poly<const C: usize, I: ConstraintInput, F: JoltField>(

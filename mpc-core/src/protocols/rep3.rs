@@ -3,8 +3,10 @@ pub mod binary;
 pub mod network;
 pub mod poly;
 pub mod rngs;
-
-pub use mpc_core::protocols::rep3::{conversion, gadgets, pointshare, yao};
+pub mod conversion;
+pub mod detail;
+pub mod yao;
+// pub mod gadgets;
 
 pub use mpc_types::protocols::rep3::{
     Rep3BigUintShare, Rep3PointShare, Rep3PrimeFieldShare, combine_binary_element,

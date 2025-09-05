@@ -14,7 +14,8 @@ use std::{
 
 /// Types implementing this trait can be used as elements of a ring Z_{2^k}
 pub trait IntRing2k:
-    std::fmt::Display
+    Clone
+    + std::fmt::Display
     + Serialize
     + for<'a> Deserialize<'a>
     + WrappingAdd
@@ -94,6 +95,8 @@ pub trait IntRing2k:
     fn wrapping_mul_assign(&mut self, rhs: &Self) {
         *self = self.wrapping_mul(rhs);
     }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self;
 }
 
 impl IntRing2k for Bit {
@@ -121,6 +124,10 @@ impl IntRing2k for Bit {
 
     fn cast_from_biguint(biguint: &BigUint) -> Self {
         biguint.iter_u64_digits().next().unwrap_or_default().as_()
+    }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        Self(bytes[0] == 1)
     }
 }
 
@@ -153,6 +160,10 @@ impl IntRing2k for u8 {
     fn cast_from_biguint(biguint: &BigUint) -> Self {
         biguint.iter_u64_digits().next().unwrap_or_default() as Self
     }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        bytes[0]
+    }
 }
 
 impl IntRing2k for u16 {
@@ -183,6 +194,10 @@ impl IntRing2k for u16 {
 
     fn cast_from_biguint(biguint: &BigUint) -> Self {
         biguint.iter_u64_digits().next().unwrap_or_default() as Self
+    }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        u16::from_le_bytes(bytes.try_into().unwrap())
     }
 }
 
@@ -215,6 +230,10 @@ impl IntRing2k for u32 {
     fn cast_from_biguint(biguint: &BigUint) -> Self {
         biguint.iter_u64_digits().next().unwrap_or_default() as Self
     }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        u32::from_le_bytes(bytes.try_into().unwrap())
+    }
 }
 
 impl IntRing2k for u64 {
@@ -245,6 +264,10 @@ impl IntRing2k for u64 {
 
     fn cast_from_biguint(biguint: &BigUint) -> Self {
         biguint.iter_u64_digits().next().unwrap_or_default() as Self
+    }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        u64::from_le_bytes(bytes.try_into().unwrap())
     }
 }
 
@@ -279,5 +302,9 @@ impl IntRing2k for u128 {
         let x0 = iter.next().unwrap_or_default();
         let x1 = iter.next().unwrap_or_default();
         ((x1 as u128) << 64) | x0 as u128
+    }
+
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        u128::from_le_bytes(bytes.try_into().unwrap())
     }
 }

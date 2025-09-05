@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
+use crate::field::JoltField;
 use crate::lasso::memory_checking::Rep3MemoryCheckingProver;
 use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
-use crate::field::JoltField;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;

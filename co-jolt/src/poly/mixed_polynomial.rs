@@ -1,8 +1,8 @@
 use std::ops::Index;
 
-use crate::poly::PolyDegree;
-use crate::utils::shared_or_public::SharedOrPublic;
 use crate::field::JoltField;
+use crate::poly::PolyDegree;
+use crate::utils::types::Rep3Value;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
@@ -10,14 +10,14 @@ use mpc_core::protocols::rep3::PartyID;
 use snarks_core::math::Math;
 
 pub struct MixedPolynomial<F: JoltField> {
-    pub evals: Vec<SharedOrPublic<F>>,
+    pub evals: Vec<Rep3Value<F>>,
     num_vars: usize,
     len: usize,
     party_id: PartyID,
 }
 
 impl<F: JoltField> MixedPolynomial<F> {
-    pub fn new(evals: Vec<SharedOrPublic<F>>, party_id: PartyID) -> Self {
+    pub fn new(evals: Vec<Rep3Value<F>>, party_id: PartyID) -> Self {
         Self {
             num_vars: evals.len().log_2(),
             len: evals.len(),
@@ -42,11 +42,11 @@ impl<F: JoltField> MixedPolynomial<F> {
         degree: usize,
         order: BindingOrder,
         party_id: PartyID,
-    ) -> Vec<SharedOrPublic<F>> {
+    ) -> Vec<Rep3Value<F>> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
 
-        let mut evals = vec![SharedOrPublic::zero_public(); degree];
+        let mut evals = vec![Rep3Value::zero_public(); degree];
         match order {
             BindingOrder::HighToLow => {
                 evals[0] = self.evals[index];
@@ -104,7 +104,7 @@ impl<F: JoltField> MixedPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for MixedPolynomial<F> {
+impl<F: JoltField> PolynomialBinding<F, Rep3Value<F>> for MixedPolynomial<F> {
     fn is_bound(&self) -> bool {
         unimplemented!()
     }
@@ -120,17 +120,17 @@ impl<F: JoltField> PolynomialBinding<F, SharedOrPublic<F>> for MixedPolynomial<F
         todo!()
     }
 
-    fn final_sumcheck_claim(&self) -> SharedOrPublic<F> {
+    fn final_sumcheck_claim(&self) -> Rep3Value<F> {
         self.evals[0]
     }
 }
 
-impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for MixedPolynomial<F> {
-    fn evaluate(&self, _r: &[F]) -> SharedOrPublic<F> {
+impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for MixedPolynomial<F> {
+    fn evaluate(&self, _r: &[F]) -> Rep3Value<F> {
         todo!()
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<SharedOrPublic<F>>, Vec<F>) {
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> (Vec<Rep3Value<F>>, Vec<F>) {
         todo!()
     }
 
@@ -139,11 +139,11 @@ impl<F: JoltField> PolynomialEvaluation<F, SharedOrPublic<F>> for MixedPolynomia
         index: usize,
         degree: usize,
         order: BindingOrder,
-    ) -> Vec<SharedOrPublic<F>> {
+    ) -> Vec<Rep3Value<F>> {
         debug_assert!(degree > 0);
         debug_assert!(index < self.len() / 2);
 
-        let mut evals = vec![SharedOrPublic::zero_public(); degree];
+        let mut evals = vec![Rep3Value::zero_public(); degree];
         match order {
             BindingOrder::HighToLow => {
                 evals[0] = self.evals[index];
@@ -185,7 +185,7 @@ impl<F: JoltField> PolyDegree for MixedPolynomial<F> {
 }
 
 impl<F: JoltField> Index<usize> for MixedPolynomial<F> {
-    type Output = SharedOrPublic<F>;
+    type Output = Rep3Value<F>;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.evals[index]

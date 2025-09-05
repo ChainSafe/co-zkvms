@@ -5,25 +5,26 @@
 )]
 
 use jolt_core::jolt::vm::JoltStuff;
-use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
+use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
 
-use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
-};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::impl_r1cs_input_lc_conversions;
 use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
+use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::jolt::vm::JoltTraceStep;
-use crate::poly::{
-    generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
-};
+use crate::poly::Rep3MultilinearPolynomial;
+use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
+use crate::utils::{transpose, transpose_par_from_flat};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use jolt_common::rv_trace::{CircuitFlags, NUM_CIRCUIT_FLAGS};
@@ -31,132 +32,182 @@ use std::fmt::Debug;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+pub struct ConstantPreprocessing<const C: usize>;
+
 pub type Rep3R1CSPolynomials<F> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
 
-impl<F> Rep3Polynomials<F, NoPreprocessing> for Rep3R1CSPolynomials<F>
+impl<const C: usize, F> Rep3Polynomials<F, ConstantPreprocessing<C>> for Rep3R1CSPolynomials<F>
 where
     F: JoltField,
 {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = R1CSPolynomials<F>;
 
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3R1CSPolynomials::stream_secret_shares",
-        level = "trace"
-    )]
-    fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
-        _preprocessing: &NoPreprocessing,
-        polynomials: Self::PublicPolynomials,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let AuxVariableStuff {
-            left_lookup_operand,
-            right_lookup_operand,
-            product,
-            relevant_y_chunks,
-            write_lookup_output_to_rd,
-            write_pc_to_rd,
-            next_pc_jump,
-            should_branch,
-            next_pc,
-        } = polynomials.aux;
-
-        let public_polys = (0..3)
-            .map(|i| Rep3R1CSPolynomials {
-                chunks_x: Default::default(),
-                chunks_y: Default::default(),
-                circuit_flags: Rep3MultilinearPolynomial::public_vec(
-                    polynomials.circuit_flags.to_vec(),
-                )
-                .try_into()
-                .unwrap(),
-                aux: AuxVariableStuff {
-                    left_lookup_operand: Default::default(),
-                    right_lookup_operand: Default::default(),
-                    product: Default::default(),
-                    relevant_y_chunks: Default::default(),
-                    write_lookup_output_to_rd: Rep3MultilinearPolynomial::public(
-                        write_lookup_output_to_rd.clone(),
-                    ),
-                    write_pc_to_rd: Rep3MultilinearPolynomial::public(write_pc_to_rd.clone()),
-                    next_pc_jump: Default::default(),
-                    should_branch: Default::default(),
-                    next_pc: Default::default(),
-                },
-            })
-            .collect();
-        network.send_requests(public_polys)?;
-        let chunks_x_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_x, rng);
-        network.send_requests(chunks_x_shares)?;
-        let chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
-        network.send_requests(chunks_y_shares)?;
-        let left_lookup_operand_shares = generate_poly_shares_rep3(&left_lookup_operand, rng);
-        network.send_requests(left_lookup_operand_shares)?;
-        let right_lookup_operand_shares = generate_poly_shares_rep3(&right_lookup_operand, rng);
-        network.send_requests(right_lookup_operand_shares)?;
-        let product_shares = generate_poly_shares_rep3(&product, rng);
-        network.send_requests(product_shares)?;
-        let relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
-        network.send_requests(relevant_y_chunks_shares)?;
-        let next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
-        network.send_requests(next_pc_jump_shares)?;
-        let should_branch_shares = generate_poly_shares_rep3(&should_branch, rng);
-        network.send_requests(should_branch_shares)?;
-        let next_pc_shares = generate_poly_shares_rep3(&next_pc, rng);
-        network.send_requests(next_pc_shares)?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3R1CSPolynomials::receive_witness_share",
-        level = "trace"
-    )]
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _: &NoPreprocessing,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self> {
-        let mut partial_polys: Self = io_ctx.network().receive_request()?;
-        partial_polys.chunks_x = io_ctx.network().receive_request()?;
-        partial_polys.chunks_y = io_ctx.network().receive_request()?;
-        partial_polys.aux.left_lookup_operand = io_ctx.network().receive_request()?;
-        partial_polys.aux.right_lookup_operand = io_ctx.network().receive_request()?;
-        partial_polys.aux.product = io_ctx.network().receive_request()?;
-        partial_polys.aux.relevant_y_chunks = io_ctx.network().receive_request()?;
-        partial_polys.aux.next_pc_jump = io_ctx.network().receive_request()?;
-        partial_polys.aux.should_branch = io_ctx.network().receive_request()?;
-        partial_polys.aux.next_pc = io_ctx.network().receive_request()?;
-
-        Ok(partial_polys)
-    }
-
+    #[tracing::instrument(skip_all, name = "R1CS::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
-        _preprocessing: &NoPreprocessing,
-        trace: &mut [JoltTraceStep<F, Instructions>],
+        _: &ConstantPreprocessing<C>,
+        trace: &mut [JoltTraceStep<Instructions>],
+        _: &Rep3ProgramIO<F>,
         M: usize,
-        network: IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: JoltInstructionSet<F> + Rep3JoltInstructionSet<F>,
-        Network: mpc_core::protocols::rep3::network::Rep3Network,
+        Instructions: Rep3JoltInstructionSet,
+        Network: Rep3NetworkWorker,
     {
-        todo!()
+        let m = trace.len();
+        let log_M = log2(M) as usize;
+
+        let mut chunks_x =
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
+        let mut chunks_y =
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
+        let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m];
+
+        let id = io_ctx.party_id();
+        trace
+            .into_par_iter()
+            .zip(chunks_x.par_chunks_mut(C))
+            .zip(chunks_y.par_chunks_mut(C))
+            .zip(circuit_flags.par_iter_mut())
+            .for_each(|(((step, chunks_x), chunks_y), circuit_flags)| {
+                if let Some(instr) = &step.instruction_lookup {
+                    let (x, y) = instr.operand_chunks_rep3(C, log_M, id);
+                    for i in 0..C {
+                        chunks_x[i] = FutureRep3Ring::cast_to_field_b2a(x[i]);
+                        chunks_y[i] = FutureRep3Ring::cast_to_field_b2a(y[i]);
+                    }
+                }
+
+                for j in 0..NUM_CIRCUIT_FLAGS {
+                    if step.circuit_flags[j] {
+                        circuit_flags[j] = 1;
+                    }
+                }
+            });
+
+        let _guard = tracing::trace_span!("cast_chunks_x").entered();
+        let chunks_x = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
+            chunks_x.fulfill_batched(io_ctx, |res, _: ()| res)?,
+            m,
+            C,
+        )
+        .into_iter()
+        .map(Rep3MultilinearPolynomial::from)
+        .collect();
+        drop(_guard);
+
+        let _guard = tracing::trace_span!("cast_chunks_y").entered();
+
+        let chunks_y = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
+            chunks_y.fulfill_batched(io_ctx, |res, _: ()| res)?,
+            m,
+            C,
+        )
+        .into_iter()
+        .map(Rep3MultilinearPolynomial::from)
+        .collect();
+        drop(_guard);
+
+        let circuit_flags = transpose(circuit_flags)
+            .into_iter()
+            .map(Rep3MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        Ok(Self {
+            chunks_x: chunks_x,
+            chunks_y: chunks_y,
+            circuit_flags: circuit_flags,
+            // Actual aux variable polynomials will be computed afterwards
+            aux: AuxVariableStuff::initialize(&C),
+        })
     }
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
-        _preprocessing: &NoPreprocessing,
+        _: &ConstantPreprocessing<C>,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        todo!()
+    ) -> Self::PublicPolynomials {
+        let [share1, share2, share3] = polynomials_shares
+            .try_into()
+            .map_err(|_| "expected 3 shares")
+            .unwrap();
+
+        let chunks_x = multizip((share1.chunks_x, share2.chunks_x, share3.chunks_x))
+            .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+            .collect_vec();
+
+        let chunks_y = multizip((share1.chunks_y, share2.chunks_y, share3.chunks_y))
+            .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+            .collect_vec();
+
+        let circuit_flags = share1.circuit_flags.map(|p| p.try_into().unwrap());
+
+        let mut aux = AuxVariableStuff::initialize(&C);
+
+        aux.left_lookup_operand = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.left_lookup_operand,
+            share2.aux.left_lookup_operand,
+            share3.aux.left_lookup_operand,
+        ]);
+        aux.right_lookup_operand = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.right_lookup_operand,
+            share2.aux.right_lookup_operand,
+            share3.aux.right_lookup_operand,
+        ]);
+        aux.product = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.product,
+            share2.aux.product,
+            share3.aux.product,
+        ]);
+        aux.relevant_y_chunks = multizip((
+            share1.aux.relevant_y_chunks,
+            share2.aux.relevant_y_chunks,
+            share3.aux.relevant_y_chunks,
+        ))
+        .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+        .collect_vec();
+        aux.write_lookup_output_to_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.write_lookup_output_to_rd,
+            share2.aux.write_lookup_output_to_rd,
+            share3.aux.write_lookup_output_to_rd,
+        ]);
+        aux.write_pc_to_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.write_pc_to_rd,
+            share2.aux.write_pc_to_rd,
+            share3.aux.write_pc_to_rd,
+        ]);
+        aux.next_pc_jump = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.next_pc_jump,
+            share2.aux.next_pc_jump,
+            share3.aux.next_pc_jump,
+        ]);
+        aux.should_branch = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.should_branch,
+            share2.aux.should_branch,
+            share3.aux.should_branch,
+        ]);
+        aux.next_pc = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.next_pc,
+            share2.aux.next_pc,
+            share3.aux.next_pc,
+        ]);
+
+        Self::PublicPolynomials {
+            chunks_x,
+            chunks_y,
+            circuit_flags,
+            aux,
+        }
     }
 }
 
 pub trait R1CSPolynomialsExt<F: JoltField> {
     #[tracing::instrument(skip_all, name = "R1CSPolynomials::generate_witness")]
-    fn generate_witness<const C: usize, const M: usize, InstructionSet: JoltInstructionSet<F>>(
-        trace: &[JoltTraceStep<F, InstructionSet>],
+    fn generate_witness<const C: usize, const M: usize, InstructionSet: JoltInstructionSet>(
+        trace: &[JoltTraceStep<InstructionSet>],
     ) -> R1CSPolynomials<F> {
         let log_M = log2(M) as usize;
 
@@ -164,7 +215,6 @@ pub trait R1CSPolynomialsExt<F: JoltField> {
         let mut chunks_y = vec![vec![0u8; trace.len()]; C];
         let mut circuit_flags = vec![vec![0u8; trace.len()]; NUM_CIRCUIT_FLAGS];
 
-        // TODO(moodlezoup): Can be parallelized
         for (step_index, step) in trace.iter().enumerate() {
             if let Some(instr) = &step.instruction_lookup {
                 let (x, y) = instr.operand_chunks(C, log_M);
@@ -206,7 +256,7 @@ impl<F: JoltField> R1CSPolynomialsExt<F> for R1CSPolynomials<F> {}
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, PartialEq, EnumIter)]
-pub enum JoltR1CSInputs<F: JoltField> {
+pub enum JoltR1CSInputs {
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
@@ -230,13 +280,13 @@ pub enum JoltR1CSInputs<F: JoltField> {
     ChunksY(usize),
 
     OpFlags(CircuitFlags),
-    InstructionFlags(RV32I<F>),
+    InstructionFlags(RV32I),
     Aux(AuxVariable),
 }
 
-impl_r1cs_input_lc_conversions!(JoltR1CSInputs<F>, 4);
+impl_r1cs_input_lc_conversions!(JoltR1CSInputs, 4);
 
-impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
+impl ConstraintInput for JoltR1CSInputs {
     fn flatten<const C: usize>() -> Vec<Self> {
         JoltR1CSInputs::iter()
             .flat_map(|variant| match variant {
@@ -244,9 +294,7 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
                 Self::ChunksX(_) => (0..C).map(Self::ChunksX).collect(),
                 Self::ChunksY(_) => (0..C).map(Self::ChunksY).collect(),
                 Self::OpFlags(_) => CircuitFlags::iter().map(Self::OpFlags).collect(),
-                Self::InstructionFlags(_) => {
-                    RV32I::<F>::iter().map(Self::InstructionFlags).collect()
-                }
+                Self::InstructionFlags(_) => RV32I::iter().map(Self::InstructionFlags).collect(),
                 Self::Aux(_) => AuxVariable::iter()
                     .flat_map(|aux| match aux {
                         AuxVariable::RelevantYChunk(_) => (0..C)
@@ -287,7 +335,7 @@ impl<F: JoltField> ConstraintInput for JoltR1CSInputs<F> {
             JoltR1CSInputs::OpFlags(i) => &jolt.r1cs.circuit_flags[*i as usize],
             JoltR1CSInputs::InstructionFlags(i) => {
                 &jolt.instruction_lookups.instruction_flags
-                    [<RV32I<F> as JoltInstructionSet<F>>::enum_index(i)]
+                    [<RV32I as JoltInstructionSet>::enum_index(i)]
             }
             Self::Aux(aux) => match aux {
                 AuxVariable::LeftLookupOperand => &aux_polynomials.left_lookup_operand,

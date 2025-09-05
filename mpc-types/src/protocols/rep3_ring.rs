@@ -2,7 +2,7 @@
 //!
 //! This module implements the rep3 share and combine operations for rings
 
-use rand::{CryptoRng, Rng, distributions::Standard, prelude::Distribution};
+use rand::{distributions::Standard, prelude::Distribution, CryptoRng, Rng};
 use ring::{int_ring::IntRing2k, ring_impl::RingElement};
 
 pub mod arithmetic;
@@ -11,7 +11,7 @@ pub mod ring;
 
 /// Shorthand type for a secret shared bit.
 pub type Rep3BitShare = Rep3RingShare<ring::bit::Bit>;
-pub use arithmetic::types::Rep3RingShare;
+pub use arithmetic::types::{Rep3RingShare, Rep3RingSignedShare};
 
 /// Secret shares a ring element using replicated secret sharing and the provided random number generator. The ring element is split into three additive shares, where each party holds two. The outputs are of type [`Rep3RingShare`].
 pub fn share_ring_element<T: IntRing2k, R: Rng + CryptoRng>(
