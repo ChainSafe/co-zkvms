@@ -42,18 +42,6 @@ pub type Rep3JoltPolynomials<F> = JoltStuff<Rep3MultilinearPolynomial<F>>;
 pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     type PublicPolynomials;
 
-    fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
-        _preprocessing: &Preprocessing,
-        polynomials: Self::PublicPolynomials,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()>;
-
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _preprocessing: &Preprocessing,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self>;
-
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &Preprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
@@ -65,6 +53,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
         Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker;
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
         preprocessing: &Preprocessing,
         polynomials_shares: Vec<Self>,
@@ -79,82 +68,6 @@ where
     ProofTranscript: Transcript,
 {
     type PublicPolynomials = JoltPolynomials<F>;
-
-    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::stream_secret_shares")]
-    fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        polynomials: Self::PublicPolynomials,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let JoltPolynomials {
-            instruction_lookups,
-            read_write_memory,
-            timestamp_range_check,
-            r1cs,
-            bytecode,
-        } = polynomials;
-
-        Rep3InstructionLookupPolynomials::stream_secret_shares(
-            &preprocessing.instruction_lookups,
-            instruction_lookups,
-            rng,
-            network,
-        )?;
-
-        Rep3ReadWriteMemoryPolynomials::stream_secret_shares(
-            &preprocessing.read_write_memory,
-            read_write_memory,
-            rng,
-            network,
-        )?;
-
-        Rep3TimestampRangeCheckPolynomials::stream_secret_shares(
-            &NoPreprocessing,
-            timestamp_range_check,
-            rng,
-            network,
-        )?;
-
-        Rep3BytecodePolynomials::stream_secret_shares(
-            &preprocessing.bytecode,
-            bytecode,
-            rng,
-            network,
-        )?;
-
-        Rep3R1CSPolynomials::stream_secret_shares(&ConstantPreprocessing::<C>, r1cs, rng, network)?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::receive_witness_share")]
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self> {
-        let instruction_lookups = Rep3InstructionLookupPolynomials::receive_witness_share(
-            &_preprocessing.instruction_lookups,
-            io_ctx,
-        )?;
-        let read_write_memory = Rep3ReadWriteMemoryPolynomials::receive_witness_share(
-            &_preprocessing.read_write_memory,
-            io_ctx,
-        )?;
-        let timestamp_range_check =
-            Rep3TimestampRangeCheckPolynomials::receive_witness_share(&NoPreprocessing, io_ctx)?;
-        let bytecode =
-            Rep3BytecodePolynomials::receive_witness_share(&_preprocessing.bytecode, io_ctx)?;
-        let r1cs = Rep3R1CSPolynomials::receive_witness_share(&ConstantPreprocessing::<C>, io_ctx)?;
-
-        Ok(Self {
-            instruction_lookups,
-            read_write_memory,
-            timestamp_range_check,
-            bytecode,
-            r1cs,
-        })
-    }
 
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
@@ -218,6 +131,7 @@ where
         })
     }
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         polynomials_shares: Vec<Self>,

@@ -66,5 +66,5 @@ pub trait MpcStarNetWorker: Sized + Clone {
 
     fn fork(&self) -> Self;
     fn fork_with_coordinator(&mut self) -> Result<Self>;
-    fn get_worker_subnets(&self, num_workers: usize, forks_cap: u32) -> Result<Vec<Self>>;
+    fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>>;
 }

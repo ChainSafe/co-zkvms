@@ -4,26 +4,23 @@ use crate::{
         instruction::JoltInstructionSet,
         vm::{read_write_memory::witness::Rep3ProgramIO, witness::Rep3Polynomials},
     },
-    poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial},
+    poly::Rep3MultilinearPolynomial,
     utils::{
         future_ring::{FutureRep3Ring, Rep3RingFutureExt},
-        transpose,
         types::Either,
     },
 };
 use ark_ff::Zero;
-use itertools::multizip;
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff};
 use jolt_tracer::{ELFInstruction, RV32IM};
 use mpc_core::protocols::{
     rep3::{
-        network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext},
+        network::{Rep3NetworkWorker, WorkerIoContext},
         Rep3PrimeFieldShare,
     },
     rep3_ring::Rep3RingSignedShare,
 };
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
@@ -32,58 +29,6 @@ pub type Rep3BytecodePolynomials<F> = BytecodeStuff<Rep3MultilinearPolynomial<F>
 
 impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3BytecodePolynomials<F> {
     type PublicPolynomials = BytecodePolynomials<F>;
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3BytecodePolynomials::stream_secret_shares",
-        level = "trace"
-    )]
-    fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
-        _preprocessing: &BytecodePreprocessing<F>,
-        polynomials: Self::PublicPolynomials,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let v_imm = polynomials.v_read_write.last().unwrap();
-        let mut v_imm_shares = generate_poly_shares_rep3(v_imm, rng);
-        let polys = (0..3)
-            .map(|i| {
-                let v_read_write = [
-                    Rep3MultilinearPolynomial::public_vec(polynomials.v_read_write[..5].to_vec()),
-                    vec![std::mem::take(&mut v_imm_shares[i])],
-                ]
-                .concat()
-                .try_into()
-                .unwrap();
-                BytecodeStuff {
-                    a_read_write: Rep3MultilinearPolynomial::public(
-                        polynomials.a_read_write.clone(),
-                    ),
-                    v_read_write: v_read_write,
-                    t_read: Rep3MultilinearPolynomial::public(polynomials.t_read.clone()),
-                    t_final: Rep3MultilinearPolynomial::public(polynomials.t_final.clone()),
-                    ..Default::default()
-                }
-            })
-            .collect();
-
-        network.send_requests(polys)?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3BytecodePolynomials::receive_witness_share",
-        level = "trace"
-    )]
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _: &BytecodePreprocessing<F>,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self> {
-        let polys = io_ctx.network().receive_request()?;
-        Ok(polys)
-    }
 
     #[tracing::instrument(skip_all, name = "Bytecode::generate_witness_rep3", level = "info")]
     fn generate_witness_rep3<Instructions, Network>(
@@ -182,6 +127,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         })
     }
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
         _: &BytecodePreprocessing<F>,
         polynomials_shares: Vec<Self>,

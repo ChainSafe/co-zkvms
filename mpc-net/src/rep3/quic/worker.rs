@@ -68,17 +68,13 @@ pub struct Rep3QuicMpcNetWorker {
 }
 
 impl Rep3QuicMpcNetWorker {
-    pub fn new(
-        config: NetworkConfig,
-        log_num_workers_per_party: usize,
-        forks_cap: u32,
-    ) -> Result<Self> {
+    pub fn new(config: NetworkConfig, log_num_workers_per_party: usize) -> Result<Self> {
         ensure!(
             config.parties.len() == 3,
             "REP3 protocol requires exactly 3 parties"
         );
 
-        let alloc = Arc::new(ForkAlloc::new(forks_cap));
+        let alloc = Arc::new(ForkAlloc::new());
         let fork_id = alloc.alloc();
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
@@ -245,19 +241,16 @@ impl Rep3QuicMpcNetWorker {
 #[derive(Debug)]
 pub struct ForkAlloc {
     next: AtomicU32,
-    cap: u32,
 }
 impl ForkAlloc {
-    pub fn new(cap: u32) -> Self {
+    pub fn new() -> Self {
         Self {
             next: AtomicU32::new(0),
-            cap,
         }
     }
     #[inline]
     pub fn alloc(&self) -> u32 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        assert!(id < self.cap, "fork capacity exhausted");
         id
     }
 }
@@ -462,17 +455,11 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
     }
 
     // #[tracing::instrument(skip_all, name = "MpcStarNetWorker::get_worker_subnets")]
-    fn get_worker_subnets(&self, num_workers: usize, forks_cap: u32) -> Result<Vec<Self>> {
+    fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>> {
         let config = self.config.clone();
         let log_num_workers_per_party = self.log_num_workers_per_party;
         (1..num_workers)
-            .map(|worker_id| {
-                Self::new(
-                    config.for_worker(worker_id),
-                    log_num_workers_per_party,
-                    forks_cap,
-                )
-            })
+            .map(|worker_id| Self::new(config.for_worker(worker_id), log_num_workers_per_party))
             .collect::<Result<Vec<_>>>()
     }
 

@@ -21,6 +21,7 @@ use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
 
+use crate::field::JoltField;
 use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomialsExt};
 use crate::jolt::{
     instruction::Rep3JoltInstructionSet,
@@ -29,7 +30,6 @@ use crate::jolt::{
         witness::Rep3JoltPolynomials, Jolt, JoltCommitments, JoltProof, JoltTraceStep,
     },
 };
-use crate::field::JoltField;
 use jolt_core::utils::transcript::AppendToTranscript;
 
 pub trait JoltRep3<F, PCS, const C: usize, const M: usize, ProofTranscript>:
@@ -42,72 +42,18 @@ where
 {
     #[tracing::instrument(skip_all, name = "Rep3Jolt::init")]
     fn init_rep3<Network: Rep3NetworkCoordinator>(
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
-        witness: Option<(Vec<JoltTraceStep<Self::InstructionSet>>, JoltDevice)>,
+        _: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: &mut Network,
     ) -> eyre::Result<(
         UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         JoltWitnessMeta,
     )> {
-        let (spartan_key, meta) = match witness {
-            Some((mut trace, program_io)) => {
-                let trace_length = trace.len();
-                let padded_trace_length = trace_length.next_power_of_two();
-                JoltTraceStep::pad(&mut trace);
-                let mut rng = test_rng();
-                let mut polynomials = Self::generate_witness(&preprocessing, trace, &program_io);
-                let r1cs_builder = Self::Constraints::construct_constraints(
-                    padded_trace_length,
-                    program_io.memory_layout.input_start,
-                );
-                let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
-                r1cs_builder.compute_aux(&mut polynomials);
-                let read_write_memory_size = polynomials.read_write_memory.v_final.len();
-                let memory_layout = program_io.memory_layout;
-                let num_ops = padded_trace_length;
-                assert_eq!(polynomials.instruction_lookups.dim[0].len(), num_ops);
-                assert_eq!(polynomials.read_write_memory.a_ram.len(), num_ops);
-                assert_eq!(polynomials.bytecode.a_read_write.len(), num_ops);
-
-                Rep3JoltPolynomials::stream_secret_shares(
-                    &preprocessing,
-                    polynomials,
-                    &mut rng,
-                    network,
-                )?;
-
-                let program_io_shares = Rep3ProgramIO::<F>::generate_secret_shares(
-                    program_io,
-                    read_write_memory_size,
-                    &mut rng,
-                );
-
-                let remaining_shares: Vec<_> = program_io_shares
-                    .into_iter()
-                    .map(|program_io| (program_io, trace_length))
-                    .collect();
-
-                tracing::trace_span!("send_witness_shares")
-                    .in_scope(|| network.send_requests_blocking(remaining_shares))?;
-                (
-                    spartan_key,
-                    JoltWitnessMeta {
-                        padded_trace_length,
-                        read_write_memory_size,
-                        memory_layout,
-                    },
-                )
-            }
-            None => {
-                let meta = network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?;
-                let r1cs_builder = Self::Constraints::construct_constraints(
-                    meta.padded_trace_length.next_power_of_two(),
-                    meta.memory_layout.input_start,
-                );
-                let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
-                (spartan_key, meta)
-            }
-        };
+        let meta = network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?;
+        let r1cs_builder = Self::Constraints::construct_constraints(
+            meta.padded_trace_length.next_power_of_two(),
+            meta.memory_layout.input_start,
+        );
+        let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
 
         tracing::info!("padded_trace_length: {}", meta.padded_trace_length);
 

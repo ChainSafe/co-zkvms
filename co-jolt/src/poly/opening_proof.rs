@@ -23,7 +23,6 @@ use crate::{
     utils::transcript::Transcript,
 };
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// An opening computed by the prover.

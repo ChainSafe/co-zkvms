@@ -78,7 +78,6 @@ type E = ark_bn254::Bn254;
 type CommitmentScheme = PST13<E>;
 // type CommitmentScheme = MockCommitScheme<F, KeccakTranscript>;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Parser)]
@@ -206,8 +205,7 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     // icicle_init();
 
     let mut network =
-        Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2(), 1 << 10)
-            .unwrap();
+        Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
     // let program_io: Rep3ProgramIOInput = network.receive_request()?;
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
@@ -226,7 +224,8 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     );
 
     let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
-        Some((trace, program_io)),
+        trace,
+        program_io,
         preprocessing,
         network,
     )?;
@@ -276,7 +275,6 @@ pub fn run_coordinator(
         tracing::warn!("Witness solving disabled");
     }
 
-    // use jolt_core::poly::commitment::mock::MockCommitScheme;
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
     let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
@@ -323,11 +321,7 @@ pub fn run_coordinator(
             .context("while serializing trace shares")?,
     )?;
 
-    let (spartan_key, meta) = RV32IJoltVM::init_rep3(
-        &preprocessing.shared,
-        None, // Some((trace, program_io.clone())),
-        &mut network,
-    )?;
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
 
     network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();

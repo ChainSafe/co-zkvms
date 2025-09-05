@@ -41,7 +41,6 @@ use mpc_core::protocols::{
 };
 use rand::Rng;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::jolt::{
@@ -306,6 +305,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         })
     }
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials_shares: Vec<Self>,
@@ -362,77 +362,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             a_init_final: None,
             v_init_final: None,
         }
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3InstructionLookupPolynomials::stream_secret_shares",
-        level = "trace"
-    )]
-    fn stream_secret_shares<R: Rng, Network: Rep3NetworkCoordinator>(
-        _: &InstructionLookupsPreprocessing<C, F>,
-        polynomials: InstructionLookupPolynomials<F>,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let InstructionLookupStuff {
-            dim,
-            read_cts,
-            final_cts,
-            E_polys,
-            lookup_outputs,
-            instruction_flags,
-            ..
-        } = polynomials;
-
-        let dim_shares = generate_poly_shares_rep3_vec(&dim, rng);
-        network.send_requests_blocking(dim_shares)?;
-
-        let read_cts_shares = generate_poly_shares_rep3_vec(&read_cts, rng);
-        network.send_requests_blocking(read_cts_shares)?;
-
-        let final_cts_shares = generate_poly_shares_rep3_vec(&final_cts, rng);
-        network.send_requests_blocking(final_cts_shares)?;
-
-        let e_polys_shares = generate_poly_shares_rep3_vec(&E_polys, rng);
-        network.send_requests_blocking(e_polys_shares)?;
-
-        let lookup_outputs_shares = generate_poly_shares_rep3(&lookup_outputs, rng);
-        network.send_requests_blocking(lookup_outputs_shares)?;
-
-        let instruction_flags_shares = [PartyID::ID0, PartyID::ID1, PartyID::ID2].map(|id| {
-            Rep3MultilinearPolynomial::public_with_trivial_share_vec(instruction_flags.clone(), id)
-        });
-        network.send_requests_blocking(instruction_flags_shares.to_vec())?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3InstructionLookupPolynomials::receive_witness_share",
-        level = "trace"
-    )]
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _: &InstructionLookupsPreprocessing<C, F>,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self> {
-        let dim = io_ctx.network().receive_request()?;
-        let read_cts = io_ctx.network().receive_request()?;
-        let final_cts = io_ctx.network().receive_request()?;
-        let E_polys = io_ctx.network().receive_request()?;
-        let lookup_outputs = io_ctx.network().receive_request()?;
-        let instruction_flags = io_ctx.network().receive_request()?;
-        Ok(Self {
-            dim,
-            read_cts,
-            final_cts,
-            E_polys,
-            lookup_outputs,
-            instruction_flags,
-            a_init_final: None,
-            v_init_final: None,
-        })
     }
 }
 

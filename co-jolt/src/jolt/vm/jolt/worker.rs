@@ -62,7 +62,7 @@ pub struct JoltRep3Prover<
     pub r1cs_builder: CombinedUniformBuilder<C, F, Constraints::Inputs>,
     pub spartan_key: UniformSpartanKey<C, <Constraints as R1CSConstraints<C, F>>::Inputs, F>,
     pub program_io: Rep3ProgramIO<F>,
-    pub trace_length: usize,
+    pub padded_trace_length: usize,
     _instruction_lookups: Rep3InstructionLookupsProver<C, M, F, Instructions, Subtables, Network>,
     _spartan_prover:
         Rep3UniformSpartanProver<F, PCS, ProofTranscript, Constraints::Inputs, Network>,
@@ -89,7 +89,8 @@ where
     Network: Rep3NetworkWorker,
 {
     pub fn init(
-        witness: Option<(Vec<JoltTraceStep<Instructions>>, Rep3ProgramIOInput)>,
+        mut trace: Vec<JoltTraceStep<Instructions>>,
+        program_io: Rep3ProgramIOInput,
         preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
         network: Network,
     ) -> eyre::Result<Self>
@@ -97,72 +98,52 @@ where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
-        // let num_workers = 1 << network.log_num_workers_per_party();
-        let mut io_ctx =
-            IoContextPool::init(network, rayon::current_num_threads() as u32, 1 << 10)?;
+        let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() as u32)?;
 
         let _guard = tracing::info_span!("JoltRep3Prover::init").entered();
 
-        let generate_witness = witness.is_some();
+        JoltTraceStep::pad(&mut trace);
+        let padded_trace_length = trace.len();
 
-        let (mut polynomials, program_io, trace_length) = match witness {
-            Some((mut trace, program_io)) => {
-                JoltTraceStep::pad(&mut trace);
-                let memory_layout = program_io.memory_layout;
+        let memory_layout = program_io.memory_layout;
 
-                let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
-                    program_io,
-                    &trace,
-                    io_ctx.worker(0),
-                )?;
+        let program_io =
+            Rep3ProgramIO::<F>::generate_witness_rep3(program_io, &trace, io_ctx.worker(0))?;
 
-                let polynomials = Rep3JoltPolynomials::generate_witness_rep3(
-                    &preprocessing.shared,
-                    &mut trace,
-                    &program_io,
-                    M,
-                    io_ctx.worker(0),
-                )?;
+        let mut polynomials = Rep3JoltPolynomials::generate_witness_rep3(
+            &preprocessing.shared,
+            &mut trace,
+            &program_io,
+            M,
+            io_ctx.worker(0),
+        )?;
 
-                let trace_length = trace.len();
-                let padded_trace_length = trace_length.next_power_of_two();
-                assert_eq!(
-                    polynomials.instruction_lookups.dim[0].len(),
-                    padded_trace_length
-                );
-                assert_eq!(
-                    polynomials.read_write_memory.a_ram.len(),
-                    padded_trace_length
-                );
-                assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
-
-                if io_ctx.id == PartyID::ID0 {
-                    let meta = JoltWitnessMeta {
-                        padded_trace_length,
-                        read_write_memory_size: polynomials.read_write_memory.v_final.len(),
-                        memory_layout,
-                    };
-
-                    io_ctx.network().send_response(meta)?;
-                }
-
-                (polynomials, program_io, trace_length)
-            }
-            None => {
-                let polynomials =
-                    Rep3JoltPolynomials::receive_witness_share(&preprocessing.shared, &mut io_ctx)?;
-                let (program_io, trace_length) = io_ctx.network().receive_request()?;
-                (polynomials, program_io, trace_length)
-            }
-        };
         let r1cs_builder = Constraints::construct_constraints(
-            trace_length.next_power_of_two(),
+            padded_trace_length,
             program_io.memory_layout.input_start,
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
-        if generate_witness {
-            r1cs_builder.compute_aux(&mut polynomials, io_ctx.worker(0))?;
+        r1cs_builder.compute_aux(&mut polynomials, io_ctx.worker(0))?;
+
+        assert_eq!(
+            polynomials.instruction_lookups.dim[0].len(),
+            padded_trace_length
+        );
+        assert_eq!(
+            polynomials.read_write_memory.a_ram.len(),
+            padded_trace_length
+        );
+        assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
+
+        if io_ctx.id == PartyID::ID0 {
+            let meta = JoltWitnessMeta {
+                padded_trace_length,
+                read_write_memory_size: polynomials.read_write_memory.v_final.len(),
+                memory_layout,
+            };
+
+            io_ctx.network().send_response(meta)?;
         }
 
         Ok(Self {
@@ -170,7 +151,7 @@ where
             polynomials,
             program_io,
             preprocessing,
-            trace_length,
+            padded_trace_length,
             r1cs_builder,
             spartan_key,
             _instruction_lookups: Rep3InstructionLookupsProver::new(),
@@ -185,27 +166,19 @@ where
         ProofTranscript: TranscriptExt,
     {
         self.io_ctx.sync_with_coordinator()?;
-        let preprocessing = &self.preprocessing;
+        let preprocessing = &mut self.preprocessing;
         let polynomials = &mut self.polynomials;
 
-        let trace_length = self.trace_length;
-        let padded_trace_length = trace_length.next_power_of_two();
         let srs_size = PCS::srs_size(&preprocessing.shared.generators);
-        let padded_log2 = padded_trace_length.log_2();
-        let srs_log2 = srs_size.log_2();
 
-        // println!(
-        //     "Trace length: {trace_length} (2^{})",
-        //     trace_length.next_power_of_two().log_2()
-        // );
-
-        if padded_trace_length > srs_size {
-            panic!(
-                "Padded trace length {padded_trace_length} (2^{padded_log2}) exceeds SRS size {srs_size} (2^{srs_log2}). Consider increasing the max_trace_length."
-            );
+        if self.padded_trace_length > srs_size {
+            return Err(eyre::eyre!(
+                "Padded trace length {} (2^{}) exceeds SRS size {srs_size} (2^{}). Consider increasing the max_trace_length.",
+                self.padded_trace_length, self.padded_trace_length.log_2(), srs_size.log_2()
+            ));
         }
 
-        // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
+        F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         polynomials
             .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, &mut self.io_ctx)?;

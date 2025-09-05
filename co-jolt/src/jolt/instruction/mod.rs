@@ -33,7 +33,6 @@ use strum::{EnumCount, IntoEnumIterator};
 pub use jolt_core::jolt::instruction::SubtableIndices;
 use jolt_core::jolt::subtable::LassoSubtable;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[enum_dispatch]

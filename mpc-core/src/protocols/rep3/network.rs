@@ -690,14 +690,13 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
 // }
 
 pub struct IoContextPool<Network: Rep3NetworkWorker> {
-    /// The party id
     pub id: PartyID,
 
     pub workers: Vec<WorkerIoContext<Network>>,
 }
 
 impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
-    pub fn init(network: Network, num_forks: u32, forks_cap: u32) -> eyre::Result<Self> {
+    pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
         let num_workers = 1 << network.log_num_workers_per_party();
         let mut main_worker = IoContext::init(network)?;
         let rngs = &mut main_worker.rngs;
@@ -707,7 +706,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
         let workers: Vec<_> = main_worker
             .network
-            .get_worker_subnets(num_workers, forks_cap)
+            .get_worker_subnets(num_workers)
             .context("while setting up worker subnets")?
             .into_iter()
             .map(|network| {

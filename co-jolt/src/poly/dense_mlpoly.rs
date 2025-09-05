@@ -10,14 +10,13 @@ use rand::{Rng, SeedableRng};
 use std::ops::Index;
 use std::sync::Arc;
 
-use crate::poly::Rep3MultilinearPolynomial;
 use crate::field::JoltField;
+use crate::poly::Rep3MultilinearPolynomial;
 use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[derive(Debug, Clone, Default, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
@@ -174,9 +173,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.coeffs_ref()
             .par_iter()
             .zip_eq(chis.par_iter())
-            .map(|(&eval, &chi)| {
-                eval.into_additive().mul_public_01_optimized(chi)
-            })
+            .map(|(&eval, &chi)| eval.into_additive().mul_public_01_optimized(chi))
             .sum()
     }
 

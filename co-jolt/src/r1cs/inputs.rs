@@ -48,99 +48,6 @@ where
 {
     type PublicPolynomials = R1CSPolynomials<F>;
 
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3R1CSPolynomials::stream_secret_shares",
-        level = "trace"
-    )]
-    fn stream_secret_shares<R: rand::Rng, Network: Rep3NetworkCoordinator>(
-        _preprocessing: &ConstantPreprocessing<C>,
-        polynomials: Self::PublicPolynomials,
-        rng: &mut R,
-        network: &mut Network,
-    ) -> eyre::Result<()> {
-        let AuxVariableStuff {
-            left_lookup_operand,
-            right_lookup_operand,
-            product,
-            relevant_y_chunks,
-            write_lookup_output_to_rd,
-            write_pc_to_rd,
-            next_pc_jump,
-            should_branch,
-            next_pc,
-        } = polynomials.aux;
-
-        let public_polys = (0..3)
-            .map(|_| Rep3R1CSPolynomials {
-                chunks_x: Default::default(),
-                chunks_y: Default::default(),
-                circuit_flags: Rep3MultilinearPolynomial::public_vec(
-                    polynomials.circuit_flags.to_vec(),
-                )
-                .try_into()
-                .unwrap(),
-                aux: AuxVariableStuff {
-                    left_lookup_operand: Default::default(),
-                    right_lookup_operand: Default::default(),
-                    product: Default::default(),
-                    relevant_y_chunks: Default::default(),
-                    write_lookup_output_to_rd: Rep3MultilinearPolynomial::public(
-                        write_lookup_output_to_rd.clone(),
-                    ),
-                    write_pc_to_rd: Rep3MultilinearPolynomial::public(write_pc_to_rd.clone()),
-                    next_pc_jump: Default::default(),
-                    should_branch: Default::default(),
-                    next_pc: Default::default(),
-                },
-            })
-            .collect();
-        network.send_requests(public_polys)?;
-        let chunks_x_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_x, rng);
-        network.send_requests(chunks_x_shares)?;
-        let chunks_y_shares = generate_poly_shares_rep3_vec(&polynomials.chunks_y, rng);
-        network.send_requests(chunks_y_shares)?;
-        let left_lookup_operand_shares = generate_poly_shares_rep3(&left_lookup_operand, rng);
-        network.send_requests(left_lookup_operand_shares)?;
-        let right_lookup_operand_shares = generate_poly_shares_rep3(&right_lookup_operand, rng);
-        network.send_requests(right_lookup_operand_shares)?;
-        let product_shares = generate_poly_shares_rep3(&product, rng);
-        network.send_requests(product_shares)?;
-        let relevant_y_chunks_shares = generate_poly_shares_rep3_vec(&relevant_y_chunks, rng);
-        network.send_requests(relevant_y_chunks_shares)?;
-        let next_pc_jump_shares = generate_poly_shares_rep3(&next_pc_jump, rng);
-        network.send_requests(next_pc_jump_shares)?;
-        let should_branch_shares = generate_poly_shares_rep3(&should_branch, rng);
-        network.send_requests(should_branch_shares)?;
-        let next_pc_shares = generate_poly_shares_rep3(&next_pc, rng);
-        network.send_requests(next_pc_shares)?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3R1CSPolynomials::receive_witness_share",
-        level = "trace"
-    )]
-    fn receive_witness_share<Network: Rep3NetworkWorker>(
-        _: &ConstantPreprocessing<C>,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<Self> {
-        let mut partial_polys: Self = io_ctx.network().receive_request()?;
-        partial_polys.chunks_x = io_ctx.network().receive_request()?;
-        partial_polys.chunks_y = io_ctx.network().receive_request()?;
-        partial_polys.aux.left_lookup_operand = io_ctx.network().receive_request()?;
-        partial_polys.aux.right_lookup_operand = io_ctx.network().receive_request()?;
-        partial_polys.aux.product = io_ctx.network().receive_request()?;
-        partial_polys.aux.relevant_y_chunks = io_ctx.network().receive_request()?;
-        partial_polys.aux.next_pc_jump = io_ctx.network().receive_request()?;
-        partial_polys.aux.should_branch = io_ctx.network().receive_request()?;
-        partial_polys.aux.next_pc = io_ctx.network().receive_request()?;
-
-        Ok(partial_polys)
-    }
-
     #[tracing::instrument(skip_all, name = "R1CS::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         _: &ConstantPreprocessing<C>,
@@ -223,6 +130,7 @@ where
         })
     }
 
+    #[cfg(feature = "debug")]
     fn combine_polynomials(
         _: &ConstantPreprocessing<C>,
         polynomials_shares: Vec<Self>,

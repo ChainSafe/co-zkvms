@@ -23,7 +23,6 @@ use std::{borrow::Borrow, marker::PhantomData};
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 
-#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::Rep3CommitmentScheme;
