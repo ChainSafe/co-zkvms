@@ -117,7 +117,7 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(16)
         .build_global()
         .expect("set global Rayon pool");
 
