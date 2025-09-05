@@ -9,7 +9,6 @@ use crate::subprotocols::{
 };
 use crate::utils::future::{FutureExt, FutureRep3};
 
-use ark_ff::Zero;
 use eyre::Context;
 use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
@@ -205,9 +204,6 @@ impl<F: JoltField> Rep3Bindable<F> for Rep3SparseInterleavedPolynomial<F> {
     /// sparse vectors in `self.coeffs`, and many more cases to check 😬
     #[tracing::instrument(skip_all, name = "SparseInterleavedPolynomial::bind", level = "trace")]
     fn bind(&mut self, r: F, party_id: PartyID) {
-        #[cfg(test)]
-        let (mut left_before_binding, mut right_before_binding) = self.uninterleave();
-
         if let Some(coalesced) = &mut self.coalesced {
             let padded_len = self.dense_len.next_multiple_of(4);
             coalesced.bind(r, party_id);

@@ -123,62 +123,32 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertValidDiv0Instruction<
         let batch_size = vals_many[0].len();
         let mut batched_vals_by_subtable = self.slice_values::<F, _>(vals_many, C, M);
 
-        #[cfg(not(feature = "public-eq"))]
-        {
-            let products = rep3::arithmetic::product_many(
-                (0..C).map(|i| {
-                    (0..batch_size)
-                        .flat_map(|j| {
-                            [
-                                mem::take(&mut batched_vals_by_subtable[0][i][j]),
-                                mem::take(&mut batched_vals_by_subtable[1][i][j]),
-                            ]
-                        })
-                        .collect::<Vec<_>>()
-                }),
-                io_ctx,
-            )?;
-            let res = products
-                .chunks(2)
-                .map(|chunk| {
-                    let [divisor_is_zero, is_valid_div_by_zero] = chunk.try_into().unwrap();
-                    rep3::arithmetic::sub_public_by_shared(
-                        F::one(),
-                        divisor_is_zero + is_valid_div_by_zero,
-                        io_ctx.id,
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            return Ok(res);
-        }
-
-        #[cfg(feature = "public-eq")]
-        {
-            let res = rep3::arithmetic::open_vec(
-                (0..batch_size).flat_map(|j| {
-                    chain!(
-                        (0..C).map(|i| &batched_vals_by_subtable[0][i][j]),
-                        (0..C).map(|i| &batched_vals_by_subtable[1][i][j]),
-                    )
+        let products = rep3::arithmetic::product_many(
+            (0..C).map(|i| {
+                (0..batch_size)
+                    .flat_map(|j| {
+                        [
+                            mem::take(&mut batched_vals_by_subtable[0][i][j]),
+                            mem::take(&mut batched_vals_by_subtable[1][i][j]),
+                        ]
+                    })
                     .collect::<Vec<_>>()
-                }),
-                io_ctx,
-            )?
-            .chunks(C * 2)
+            }),
+            io_ctx,
+        )?;
+        let res = products
+            .chunks(2)
             .map(|chunk| {
-                let (divisor_is_zero_vals, is_valid_div_by_zero_vals) = chunk.split_at(C);
-                let divisor_is_zero: F = divisor_is_zero_vals.iter().product();
-                let is_valid_div_by_zero: F = is_valid_div_by_zero_vals.iter().product();
-                rep3::arithmetic::promote_to_trivial_share(
+                let [divisor_is_zero, is_valid_div_by_zero] = chunk.try_into().unwrap();
+                rep3::arithmetic::sub_public_by_shared(
+                    F::one(),
+                    divisor_is_zero + is_valid_div_by_zero,
                     io_ctx.id,
-                    F::one() - divisor_is_zero + is_valid_div_by_zero,
                 )
             })
             .collect::<Vec<_>>();
 
-            return Ok(res);
-        }
+        return Ok(res);
     }
 
     fn to_indices_rep3(

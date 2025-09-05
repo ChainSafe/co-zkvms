@@ -1,5 +1,4 @@
 use itertools::izip;
-use std::iter::Sum;
 use std::ops::Shr;
 
 use rand::prelude::StdRng;
@@ -147,7 +146,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRAInstruction<WORD_SIZE> {
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
-        io_ctx: &mut IoContext<N>,
+        _: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {

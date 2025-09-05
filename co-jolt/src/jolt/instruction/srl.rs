@@ -1,5 +1,4 @@
 use itertools::izip;
-use std::iter::Sum;
 use std::ops::Shr;
 
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
@@ -121,7 +120,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRLInstruction<WORD_SIZE> {
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
         C: usize,
-        M: usize,
+        _: usize,
         _: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         assert!(C <= 10);
@@ -141,7 +140,7 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for SRLInstruction<WORD_SIZE> {
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3JoltInstruction],
-        io_ctx: &mut IoContext<N>,
+        _: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         izip!(steps, out).for_each(|(st, out)| {

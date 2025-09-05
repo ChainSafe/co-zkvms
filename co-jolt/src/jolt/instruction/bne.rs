@@ -93,29 +93,10 @@ impl Rep3JoltInstruction for BNEInstruction {
     fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals_many: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-        C: usize,
-        M: usize,
+        _: usize,
+        _: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-        #[cfg(feature = "public-eq")]
-        {
-            use crate::utils::instruction_utils::chunks_take_nth;
-
-            return Ok(chunks_take_nth(
-                &rep3::arithmetic::open_vec(&vals_many.concat(), io_ctx)?,
-                vals_many.len(),
-                vals_many[0].len(),
-            )
-            .map(|chunk| {
-                rep3::arithmetic::promote_to_trivial_share(
-                    io_ctx.id,
-                    F::one() - chunk.product::<F>(),
-                )
-            })
-            .collect::<Vec<_>>());
-        }
-
-        #[cfg(not(feature = "public-eq"))]
         Ok(rep3::arithmetic::product_many(&vals_many, io_ctx)?
             .into_iter()
             .map(|prod| {

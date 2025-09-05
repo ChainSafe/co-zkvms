@@ -15,7 +15,7 @@ pub enum FutureRep3<F: JoltField, T, Args = ()> {
 }
 
 #[derive(Debug, Clone)]
-enum FutureOp<F: JoltField> {
+pub enum FutureOp<F: JoltField> {
     // Out: Rep3PrimeFieldShare<F>
     Mul(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
     Cmux(

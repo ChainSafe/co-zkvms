@@ -27,7 +27,7 @@ use crate::jolt::{
     vm::{
         instruction_lookups::worker::Rep3InstructionLookupsProver,
         witness::{Rep3JoltPolynomials, Rep3JoltPolynomialsExt, Rep3Polynomials},
-        Jolt, JoltTraceStep,
+        JoltTraceStep,
     },
 };
 use jolt_core::{

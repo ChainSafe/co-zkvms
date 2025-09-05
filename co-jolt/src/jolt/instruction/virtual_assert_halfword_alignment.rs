@@ -108,8 +108,8 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
     fn combine_lookups_rep3_batched<F: JoltField, N: Rep3Network>(
         &self,
         vals: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-        C: usize,
-        M: usize,
+        _: usize,
+        _: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
         assert_eq!(vals.len(), 1);
@@ -143,10 +143,6 @@ impl<const WORD_SIZE: usize> Rep3JoltInstruction for AssertHalfwordAlignmentInst
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        // (((self.0.as_public() as u32 as i32 + self.1.as_public() as u32 as i32) % 2 == 0)
-        //         as u64)
-        //         .into()
-
         let (x, y): (Vec<_>, Vec<_>) = steps
             .into_iter()
             .map(|st| (st.lhs().as_binary(), st.rhs().unwrap().as_binary()))

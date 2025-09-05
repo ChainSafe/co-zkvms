@@ -1,4 +1,3 @@
-use ark_ff::One;
 use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 use num_traits::AsPrimitive;
@@ -156,10 +155,6 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use ark_std::test_rng;
-
-    type F = ark_bn254::Fr;
 
     #[test]
     fn test_chunk_and_concatenate_operands() {

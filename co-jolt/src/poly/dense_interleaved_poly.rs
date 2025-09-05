@@ -9,7 +9,6 @@ use crate::{
     },
     utils::transcript::Transcript,
 };
-use ark_ff::Zero;
 use eyre::Context;
 use mpc_core::protocols::{
     additive::AdditiveShare,

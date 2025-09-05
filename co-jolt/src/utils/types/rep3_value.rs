@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-use ark_ff::Zero;
 use eyre::Context;
 use mpc_core::protocols::{
     additive::{self, AdditiveShare},

@@ -656,22 +656,3 @@ pub fn unsafe_allocate_zero_share_vec<F: JoltField + Sized>(
     }
     result
 }
-
-#[cfg(test)]
-mod tests {
-    use ark_ff::{Field, One};
-    use ark_std::test_rng;
-
-    use super::*;
-
-    type F = ark_bn254::Fr;
-
-    // #[test]
-    // fn test_share_and_combine_poly_rep3() {
-    //     let mut rng = test_rng();
-    //     let poly = DensePolynomial::<F>::rand(10, &mut rng);
-    //     let shares = generate_poly_shares_rep3(&poly, &mut rng);
-    //     let combined = combine_poly_shares_rep3(vec![shares.0, shares.1, shares.2]);
-    //     assert_eq!(poly, combined);
-    // }
-}

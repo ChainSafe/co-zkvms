@@ -65,13 +65,13 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl $ConcreteInput {
-            fn lc_from_vec(inputs: Vec<$ConcreteInput>) -> $crate::r1cs::ops::LC {
-                let terms: Vec<$crate::r1cs::ops::Term> =
-                    inputs.into_iter().map(Into::into).collect();
-                $crate::r1cs::ops::LC::new(terms)
-            }
-        }
+        // impl $ConcreteInput {
+        //     fn lc_from_vec(inputs: Vec<$ConcreteInput>) -> $crate::r1cs::ops::LC {
+        //         let terms: Vec<$crate::r1cs::ops::Term> =
+        //             inputs.into_iter().map(Into::into).collect();
+        //         $crate::r1cs::ops::LC::new(terms)
+        //     }
+        // }
 
         impl<T: Into<$crate::r1cs::ops::LC>> std::ops::Add<T> for $ConcreteInput {
             type Output = $crate::r1cs::ops::LC;

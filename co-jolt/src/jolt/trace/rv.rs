@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;

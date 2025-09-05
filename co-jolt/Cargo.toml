@@ -79,7 +79,6 @@ icicle = [
     "dep:icicle-bn254",
     "jolt-core/icicle",
 ]
-public-eq = []
 debug = []
 
 [target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]

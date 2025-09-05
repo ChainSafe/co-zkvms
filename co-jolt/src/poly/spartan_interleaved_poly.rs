@@ -1,4 +1,3 @@
-use ark_ff::Zero;
 use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::GruenSplitEqPolynomial,
 };

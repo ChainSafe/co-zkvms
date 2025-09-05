@@ -109,7 +109,7 @@ pub trait Rep3JoltInstruction: JoltInstruction {
 
     fn to_indices_intermediate<F: JoltField>(
         &self,
-        id: PartyID,
+        _: PartyID,
     ) -> FutureRep3Ring<u128, Option<Rep3RingShare<u128>>> {
         FutureRep3Ring::Ready(None)
     }
@@ -123,9 +123,9 @@ pub trait Rep3JoltInstruction: JoltInstruction {
 
     fn output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
-        steps: &[&impl Rep3JoltInstruction],
-        io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        _: &[&impl Rep3JoltInstruction],
+        _: &mut IoContext<N>,
+        _: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         Err(eyre::eyre!(
             "output_batched not implemented for instruction"

@@ -395,18 +395,6 @@ impl Program {
     //     }
     // }
 
-    fn print_used_instructions(instruction_trace: &[RVTraceRow]) {
-        let opcodes_used = instruction_trace
-            .par_iter()
-            .map(|step| step.instruction.opcode.as_ref())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .unique()
-            .sorted()
-            .collect::<Vec<_>>();
-        println!("opcodes_used: {:?}", opcodes_used);
-    }
-
     fn save_linker(&self) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
         if let Some(parent) = linker_path.parent() {

@@ -4,10 +4,7 @@ use crate::{
     field::JoltField,
     jolt::vm::read_write_memory::witness::Rep3ProgramIO,
     poly::Rep3MultilinearPolynomial,
-    utils::{
-        future::FutureExt,
-        future_ring::{FutureRep3Ring, Rep3RingFutureExt},
-    },
+    utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt},
 };
 use ark_ff::Zero;
 use itertools::{izip, Itertools};
@@ -18,7 +15,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::{
     rep3::{
-        network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker},
+        network::{IoContext, IoContextPool, Rep3NetworkWorker},
         Rep3PrimeFieldShare,
     },
     rep3_ring::{self, ring::ring_impl::RingElement, Rep3RingShare},
