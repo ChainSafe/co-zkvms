@@ -108,14 +108,14 @@ where
         let memory_layout = program_io.memory_layout;
 
         let program_io =
-            Rep3ProgramIO::<F>::generate_witness_rep3(program_io, &trace, io_ctx.worker(0))?;
+            Rep3ProgramIO::<F>::generate_witness_rep3(program_io, &trace, &mut io_ctx)?;
 
         let mut polynomials = Rep3JoltPolynomials::generate_witness_rep3(
             &preprocessing.shared,
             &mut trace,
             &program_io,
             M,
-            io_ctx.worker(0),
+            &mut io_ctx,
         )?;
 
         let r1cs_builder = Constraints::construct_constraints(
@@ -124,7 +124,7 @@ where
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
-        r1cs_builder.compute_aux(&mut polynomials, io_ctx.worker(0))?;
+        r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
 
         assert_eq!(
             polynomials.instruction_lookups.dim[0].len(),
@@ -136,7 +136,7 @@ where
         );
         assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
 
-        if io_ctx.id == PartyID::ID0 {
+        if io_ctx.party_id() == PartyID::ID0 {
             let meta = JoltWitnessMeta {
                 padded_trace_length,
                 read_write_memory_size: polynomials.read_write_memory.v_final.len(),

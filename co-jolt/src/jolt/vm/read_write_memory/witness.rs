@@ -20,10 +20,8 @@ use jolt_core::jolt::vm::read_write_memory::{
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 
 use jolt_tracer::JoltDevice;
-use mpc_core::protocols::rep3::network::{
-    IoContext, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
-};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
@@ -48,6 +46,7 @@ pub struct Rep3ProgramIO<F: JoltField> {
 impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
     for Rep3ReadWriteMemoryPolynomials<F>
 {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = ReadWriteMemoryPolynomials<F>;
 
     #[tracing::instrument(
@@ -60,7 +59,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
         _: usize,
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,
@@ -426,7 +425,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
     pub fn generate_witness_rep3<Network, Instruction>(
         program_io: Rep3ProgramIOInput,
         trace: &[JoltTraceStep<Instruction>],
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         Network: Rep3NetworkWorker,

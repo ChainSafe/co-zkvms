@@ -151,7 +151,7 @@ where
         ];
 
         // (v_final - v_io) * eq * io_witness_range
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
         let output_check_fn = |vals: &[Rep3Value<F>]| -> AdditiveShare<F> {
             vals[2]
                 .sub(&vals[3], party_id)
@@ -236,7 +236,7 @@ where
         let t_read_rd: &CompactPolynomial<u32, F> = (&polynomials.t_read_rd).try_into().unwrap();
         let t_read_ram: &CompactPolynomial<u32, F> = (&polynomials.t_read_ram).try_into().unwrap();
 
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
 
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
             vec![Rep3PrimeFieldShare::zero_share(); 2 * MEMORY_OPS_PER_INSTRUCTION * num_ops];

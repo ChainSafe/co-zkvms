@@ -141,9 +141,8 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 one: self.one,
             })
         } else {
-            let one_share = rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::one());
+            let one_share = rep3::arithmetic::promote_to_trivial_share(io_ctx.party_id(), F::one());
             let coeffs = io_ctx
-                .worker(0)
                 .par_iter(&self.coeffs, None, |segment, io_ctx| {
                     let mut output_segment: Vec<
                         FutureRep3<F, SparseCoefficient<Rep3PrimeFieldShare<F>>, usize>,
@@ -185,7 +184,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
                 })
                 .context("while computing layer output")?;
 
-            Ok(Self::new(coeffs, self.dense_len / 2, io_ctx.id))
+            Ok(Self::new(coeffs, self.dense_len / 2, io_ctx.party_id()))
         }
     }
 }

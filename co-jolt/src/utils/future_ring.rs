@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use itertools::Itertools;
 use mpc_core::protocols::{
     rep3::{
-        network::{IoContext, Rep3Network, Rep3NetworkWorker, WorkerIoContext},
+        network::{IoContextPool, Rep3NetworkWorker},
         Rep3PrimeFieldShare,
     },
     rep3_ring::{
@@ -76,7 +76,7 @@ impl<R: IntRing2k, T> FutureRep3Ring<R, T, Option<usize>> {
 pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args = ()> {
     fn fulfill_batched<N: Rep3NetworkWorker, MapFn: Fn(U, Args) -> T + Send>(
         self,
-        io_ctx: &mut WorkerIoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where
@@ -97,7 +97,7 @@ where
     )]
     fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
-        io_ctx: &mut WorkerIoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where
@@ -250,7 +250,7 @@ where
     )]
     fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
-        io_ctx: &mut WorkerIoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
         map: MapFn,
     ) -> eyre::Result<Vec<T>>
     where

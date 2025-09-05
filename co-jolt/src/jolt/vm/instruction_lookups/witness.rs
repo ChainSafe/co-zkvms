@@ -27,7 +27,6 @@ use mpc_core::protocols::{
         self, arithmetic,
         network::{
             IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
-            WorkerIoContext,
         },
         PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
     },
@@ -56,9 +55,8 @@ pub type Rep3InstructionLookupPolynomials<F> = InstructionLookupStuff<Rep3Multil
 impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>
     for Rep3InstructionLookupPolynomials<F>
 {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = InstructionLookupPolynomials<F>;
-
-    // type Commitments = InstructionLookupCommitments<PCS, ProofTranscript>;
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
@@ -66,7 +64,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         trace: &mut [JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
         M: usize,
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
     where
         Instructions: Rep3JoltInstructionSet,
@@ -368,7 +366,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]
 fn subtable_lookup_indices_rep3<const C: usize, F, Network, Instructions>(
     ops: &[JoltTraceStep<Instructions>],
-    io_ctx0: &mut WorkerIoContext<Network>,
+    io_ctx0: &mut IoContextPool<Network>,
     M: usize,
 ) -> eyre::Result<Vec<Vec<Rep3RingShare<u32>>>>
 where
@@ -424,7 +422,7 @@ fn compute_lookup_outputs_rep3<
 >(
     ops: &[JoltTraceStep<Instructions>],
     num_reads: usize,
-    io_ctx: &mut WorkerIoContext<Network>,
+    io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<Rep3MultilinearPolynomial<F>> {
     let mut outputs_futures =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); ops.len()];

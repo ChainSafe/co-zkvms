@@ -3,7 +3,6 @@ use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
-use mpc_core::protocols::rep3::PartyID;
 use std::marker::PhantomData;
 use tracing::{span, Level};
 
@@ -67,7 +66,7 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
         let flattened_polys: Vec<&Rep3MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
@@ -292,7 +291,7 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
         }
     }
 
-    let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.id);
+    let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.party_id());
 
     io_ctx.network().send_response(final_evals.to_vec())?;
 

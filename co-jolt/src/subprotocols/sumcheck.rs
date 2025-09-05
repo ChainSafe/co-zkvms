@@ -234,12 +234,12 @@ where
         polys
             .par_iter_mut()
             .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.id);
+        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.party_id());
     }
 
     let final_evals = polys
         .iter()
-        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.id))
+        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.party_id()))
         .collect();
 
     Ok((r, final_evals))

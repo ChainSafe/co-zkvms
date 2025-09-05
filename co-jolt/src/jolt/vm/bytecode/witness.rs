@@ -16,7 +16,7 @@ use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, 
 use jolt_tracer::{ELFInstruction, RV32IM};
 use mpc_core::protocols::{
     rep3::{
-        network::{Rep3NetworkWorker, WorkerIoContext},
+        network::{IoContextPool, Rep3NetworkWorker},
         Rep3PrimeFieldShare,
     },
     rep3_ring::Rep3RingSignedShare,
@@ -28,6 +28,7 @@ use rayon::prelude::*;
 pub type Rep3BytecodePolynomials<F> = BytecodeStuff<Rep3MultilinearPolynomial<F>>;
 
 impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3BytecodePolynomials<F> {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = BytecodePolynomials<F>;
 
     #[tracing::instrument(skip_all, name = "Bytecode::generate_witness_rep3", level = "info")]
@@ -36,7 +37,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         trace: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
         _: usize,
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,

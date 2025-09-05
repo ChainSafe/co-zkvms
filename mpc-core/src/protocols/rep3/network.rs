@@ -467,28 +467,49 @@ impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
     }
 }
 
-pub struct WorkerIoContext<Network: Rep3NetworkWorker> {
+pub struct IoContextPool<Network: Rep3NetworkWorker> {
     pub worker_id: usize,
     main: IoContext<Network>,
     forks: Vec<IoContext<Network>>,
     num_workers: usize,
 }
 
-impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
+impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
+    pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
+        let worker_id = network.worker_idx();
+        let num_workers = 1 << network.log_num_workers_per_party();
+        let mut main = IoContext::init(network)?;
+
+        let forks = iter::repeat_with(|| main.fork())
+            .take(num_forks as usize)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            worker_id,
+            main,
+            forks,
+            num_workers,
+        })
+    }
+
     pub fn main(&mut self) -> &mut IoContext<Network> {
         &mut self.main
     }
 
-    pub fn forks(&mut self, num_forks: usize) -> &mut [IoContext<Network>] {
-        &mut self.forks[..num_forks]
-    }
-
-    pub fn forks_owned(&mut self, num_forks: usize) -> Vec<IoContext<Network>> {
-        self.forks[..num_forks].to_vec()
-    }
-
     pub fn network(&mut self) -> &mut Network {
         &mut self.main.network
+    }
+
+    pub fn fork(&mut self) -> eyre::Result<IoContext<Network>> {
+        self.main.fork().context("while forking io context")
+    }
+
+    pub fn log_num_workers_per_party(&self) -> usize {
+        self.main.network.log_num_workers_per_party()
+    }
+
+    pub fn num_workers(&self) -> usize {
+        1 << self.log_num_workers_per_party()
     }
 
     pub fn party_id(&self) -> PartyID {
@@ -497,6 +518,14 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
 
     pub fn party_idx(&self) -> usize {
         self.party_id().into()
+    }
+
+    pub fn forks(&mut self, num_forks: usize) -> &mut [IoContext<Network>] {
+        &mut self.forks[..num_forks]
+    }
+
+    pub fn forks_owned(&mut self, num_forks: usize) -> Vec<IoContext<Network>> {
+        self.forks[..num_forks].to_vec()
     }
 
     pub fn worker_idx(&self) -> usize {
@@ -673,110 +702,6 @@ impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
             })
             .collect::<Result<Vec<_>, _>>()
     }
-}
-
-// impl<Network: Rep3NetworkWorker> WorkerIoContext<Network> {
-//     pub fn init(worker_id: usize, network: Network, num_forks: usize) -> eyre::Result<Self> {
-//         let mut main = IoContext::init(network)?;
-//         let forks = iter::repeat_with(|| main.fork())
-//             .take(num_forks)
-//             .collect::<Result<Vec<_>, _>>()?;
-//         Ok(Self {
-//             worker_id,
-//             main,
-//             forks,
-//         })
-//     }
-// }
-
-pub struct IoContextPool<Network: Rep3NetworkWorker> {
-    pub id: PartyID,
-
-    pub workers: Vec<WorkerIoContext<Network>>,
-}
-
-impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
-    pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
-        let num_workers = 1 << network.log_num_workers_per_party();
-        let mut main_worker = IoContext::init(network)?;
-        let rngs = &mut main_worker.rngs;
-        let rng = &mut main_worker.rng;
-        let a2b_type = main_worker.a2b_type;
-        let id = main_worker.id;
-
-        let workers: Vec<_> = main_worker
-            .network
-            .get_worker_subnets(num_workers)
-            .context("while setting up worker subnets")?
-            .into_iter()
-            .map(|network| {
-                let mut rngs = rngs.fork();
-                let rng = rand_chacha::ChaCha12Rng::from_seed(rng.r#gen());
-                IoContext {
-                    network,
-                    rngs: rngs.fork(),
-                    rng: rng.clone(),
-                    id,
-                    a2b_type,
-                    rng_src: Arc::new(RngForker::new(rng)),
-                    rngs_src: Arc::new(RngForker::new(rngs)),
-                }
-            })
-            .collect();
-        let workers = rayon::iter::once(main_worker)
-            .chain(workers)
-            .enumerate()
-            .map(|(worker_id, worker)| {
-                let forks = iter::repeat_with(|| worker.fork())
-                    .take(num_forks as usize)
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                Ok(WorkerIoContext {
-                    worker_id,
-                    main: worker,
-                    forks,
-                    num_workers,
-                })
-            })
-            .collect::<eyre::Result<Vec<_>>>()?;
-
-        Ok(Self { id, workers })
-    }
-
-    pub fn main(&mut self) -> &mut IoContext<Network> {
-        &mut self.workers[0].main
-    }
-
-    pub fn worker(&mut self, worker_id: usize) -> &mut WorkerIoContext<Network> {
-        &mut self.workers[worker_id]
-    }
-
-    pub fn network(&mut self) -> &mut Network {
-        &mut self.workers[0].main.network
-    }
-
-    pub fn fork(&mut self) -> eyre::Result<IoContext<Network>> {
-        self.workers[0]
-            .main
-            .fork()
-            .context("while forking io context")
-    }
-
-    pub fn log_num_workers_per_party(&self) -> usize {
-        self.workers[0].main.network.log_num_workers_per_party()
-    }
-
-    pub fn num_workers(&self) -> usize {
-        1 << self.log_num_workers_per_party()
-    }
-
-    pub fn workers_mut(&mut self) -> &mut [WorkerIoContext<Network>] {
-        &mut self.workers
-    }
-
-    pub fn party_id(&self) -> PartyID {
-        self.id
-    }
 
     #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
     pub fn sync_with_parties(&mut self) -> eyre::Result<()> {
@@ -793,25 +718,22 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     }
     /// Prints the connection statistics.
     pub fn log_connection_stats(&self) {
-        let acc_io = self.workers[0]
+        let acc_io = self
             .forks
             .iter()
             .map(|io_ctx| io_ctx.network.io_stats_per_party())
-            .fold(
-                self.workers[0].main.network.io_stats_per_party(),
-                |mut acc, stats| {
-                    acc.iter_mut().for_each(|(id, (tx, rx))| {
-                        let (tx_, rx_) = stats.get(id).unwrap();
-                        *tx += tx_;
-                        *rx += rx_;
-                    });
-                    acc
-                },
-            );
+            .fold(self.main.network.io_stats_per_party(), |mut acc, stats| {
+                acc.iter_mut().for_each(|(id, (tx, rx))| {
+                    let (tx_, rx_) = stats.get(id).unwrap();
+                    *tx += tx_;
+                    *rx += rx_;
+                });
+                acc
+            });
         for (i, (tx, rx)) in acc_io {
             tracing::info!(
                 "IO: P{}->P{} | SENT: {} bytes | RECV: {} bytes",
-                self.id as usize,
+                self.party_idx(),
                 i,
                 ByteSize(tx),
                 ByteSize(rx)

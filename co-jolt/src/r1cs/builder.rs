@@ -14,7 +14,7 @@ use jolt_core::r1cs::{
     ops::{Term, Variable, LC},
 };
 use mpc_core::protocols::rep3::{
-    network::{Rep3NetworkWorker, WorkerIoContext},
+    network::{IoContextPool, Rep3NetworkWorker},
     PartyID, Rep3PrimeFieldShare,
 };
 
@@ -405,7 +405,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     pub fn compute_aux<N: Rep3NetworkWorker>(
         &self,
         jolt_polynomials: &mut Rep3JoltPolynomials<F>,
-        io_ctx: &mut WorkerIoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         let flattened_vars = I::flatten::<C>();
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {

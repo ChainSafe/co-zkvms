@@ -12,9 +12,7 @@ use jolt_core::r1cs::inputs::{
     AuxVariable, AuxVariableStuff, ConstraintInput, R1CSPolynomials, R1CSStuff,
 };
 
-use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
-};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rayon::prelude::*;
@@ -46,6 +44,7 @@ impl<const C: usize, F> Rep3Polynomials<F, ConstantPreprocessing<C>> for Rep3R1C
 where
     F: JoltField,
 {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = R1CSPolynomials<F>;
 
     #[tracing::instrument(skip_all, name = "R1CS::generate_witness_rep3")]
@@ -54,7 +53,7 @@ where
         trace: &mut [JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
         M: usize,
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: Rep3JoltInstructionSet,

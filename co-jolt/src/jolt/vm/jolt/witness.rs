@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials};
-use crate::jolt::vm::timestamp_range_check::{self, Rep3TimestampRangeCheckPolynomials};
+use crate::jolt::vm::timestamp_range_check::{self};
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
@@ -20,8 +20,7 @@ use jolt_core::r1cs::builder::CombinedUniformBuilder;
 use jolt_core::r1cs::inputs::ConstraintInput;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
-    WorkerIoContext,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
 use rand::Rng;
@@ -40,6 +39,7 @@ pub struct JoltWitnessMeta {
 pub type Rep3JoltPolynomials<F> = JoltStuff<Rep3MultilinearPolynomial<F>>;
 
 pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
+    #[cfg(feature = "debug")]
     type PublicPolynomials;
 
     fn generate_witness_rep3<Instructions, Network>(
@@ -47,7 +47,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
         M: usize,
-        network: &mut WorkerIoContext<Network>,
+        network: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         Instructions: Rep3JoltInstructionSet,
@@ -67,6 +67,7 @@ where
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
 {
+    #[cfg(feature = "debug")]
     type PublicPolynomials = JoltPolynomials<F>;
 
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_witness_rep3")]
@@ -75,7 +76,7 @@ where
         ops: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
         M: usize,
-        io_ctx: &mut WorkerIoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
@@ -284,11 +285,9 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let _guard = span.enter();
         let trace_polys = self.read_write_values();
 
-        let trace_commitments = PCS::batch_commit_rep3(
-            &trace_polys,
-            &preprocessing.generators,
-            PartyID::ID0 == io_ctx.party_id(),
-        );
+        let id = io_ctx.party_id();
+        let trace_commitments =
+            PCS::batch_commit_rep3(&trace_polys, &preprocessing.generators, id == PartyID::ID0);
 
         commitments
             .read_write_values_mut()
@@ -298,12 +297,13 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         drop(_guard);
         drop(span);
 
+        let id = io_ctx.party_id();
         let span = tracing::span!(tracing::Level::INFO, "commit::t_final");
         let _guard = span.enter();
         commitments.bytecode.t_final = PCS::commit_rep3(
             &self.bytecode.t_final,
             &preprocessing.generators,
-            PartyID::ID0 == io_ctx.party_id(),
+            id == PartyID::ID0,
         );
         drop(_guard);
         drop(span);
@@ -318,14 +318,14 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 PCS::commit_rep3(
                     &self.read_write_memory.v_final,
                     &preprocessing.generators,
-                    io_ctx.id == PartyID::ID0,
+                    id == PartyID::ID0,
                 )
             },
             || {
                 PCS::commit_rep3(
                     &self.read_write_memory.t_final,
                     &preprocessing.generators,
-                    io_ctx.id == PartyID::ID0,
+                    id == PartyID::ID0,
                 )
             },
         );

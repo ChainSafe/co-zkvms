@@ -1,5 +1,6 @@
 use std::slice::Chunks;
 
+use crate::field::JoltField;
 use crate::{
     poly::unipoly::unipoly_from_additive_evals,
     subprotocols::{
@@ -10,7 +11,6 @@ use crate::{
 };
 use ark_ff::Zero;
 use eyre::Context;
-use crate::field::JoltField;
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -129,7 +129,7 @@ impl<F: JoltField> Rep3DenseInterleavedPolynomial<F> {
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<Self> {
         let (left, right) = self.uninterleave();
-        let prod = io_ctx.worker(0).par_chunks(
+        let prod = io_ctx.par_chunks(
             left.into_par_iter().zip(right.into_par_iter()),
             None,
             |chunk, io_ctx| {

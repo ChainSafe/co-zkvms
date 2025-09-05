@@ -7,40 +7,8 @@ use jolt_core::{
     jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff},
     lasso::memory_checking::NoPreprocessing,
 };
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext},
-    Rep3PrimeFieldShare,
-};
 
 use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
-
-pub type Rep3TimestampRangeCheckPolynomials<F> =
-    TimestampRangeCheckStuff<Rep3MultilinearPolynomial<F>>;
-
-// impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeCheckPolynomials<F> {
-//     type PublicPolynomials = TimestampRangeCheckPolynomials<F>;
-
-//     fn generate_witness_rep3<Instructions, Network>(
-//         _: &NoPreprocessing,
-//         _: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
-//         _: &Rep3ProgramIO<F>,
-//         _: usize,
-//         _: &mut WorkerIoContext<Network>,
-//     ) -> eyre::Result<Self>
-//     where
-//         Instructions: crate::jolt::instruction::JoltInstructionSet
-//             + crate::jolt::instruction::Rep3JoltInstructionSet,
-//         Network: Rep3NetworkWorker,
-//     {
-//         unimplemented!()
-//     }
-
-//     #[cfg(feature = "debug")]
-//     fn combine_polynomials(_: &NoPreprocessing, _: Vec<Self>) -> Self::PublicPolynomials {
-//         unimplemented!()
-//     }
-// }
 
 pub fn get_timestamp_range_check_polynomials<F: JoltField, PCS, ProofTranscript>(
     rw_polys: &mut Rep3ReadWriteMemoryPolynomials<F>,
@@ -74,7 +42,7 @@ where
 
 pub fn get_timestamp_range_check_polynomials_rep3<F: JoltField, PCS, ProofTranscript>(
     rw_polys: &mut Rep3ReadWriteMemoryPolynomials<F>,
-) -> Rep3TimestampRangeCheckPolynomials<F>
+) -> TimestampRangeCheckStuff<Rep3MultilinearPolynomial<F>>
 where
     PCS: crate::poly::commitment::Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: jolt_core::utils::transcript::Transcript,
@@ -86,7 +54,7 @@ where
         final_cts_global_minus_read,
         ..
     } = get_timestamp_range_check_polynomials::<F, PCS, ProofTranscript>(rw_polys);
-    Rep3TimestampRangeCheckPolynomials {
+    TimestampRangeCheckStuff {
         read_cts_read_timestamp: read_cts_read_timestamp.map(Rep3MultilinearPolynomial::public),
         read_cts_global_minus_read: read_cts_global_minus_read
             .map(Rep3MultilinearPolynomial::public),
