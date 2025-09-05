@@ -40,6 +40,5 @@ This ongoing work builds up on the following projects:
 ## Known issues
 
 - Delegator acts as coordinator (with logarithmic communication overhead). See [coordinator role delegation](https://hackmd.io/@timofey/SJ7OU5dugg#Coordinator-role-delegation).
-- Limited private shared witness generation. Currently, the coordinator generates a witness secret share and sends it to the workers. See [witness extension in MPC](https://hackmd.io/@timofey/SJ7OU5dugg#Witness-extension-in-MPC)
 - Limited scaling. Currently, only the primary sumcheck for instruction lookups supports parallelization via worker subnets.
 - See [other pending optimizations and features](https://hackmd.io/@timofey/SJ7OU5dugg#Known-issues-Optimizations-and-Features)
