@@ -10,6 +10,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext},
+    Rep3PrimeFieldShare,
 };
 
 use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
@@ -124,9 +125,34 @@ where
     >::generate_witness(&polys);
 
     // Put back
-    std::mem::swap(&mut polys.t_read_ram, rw_polys.t_read_rd.as_public_mut());
-    std::mem::swap(&mut polys.t_read_ram, rw_polys.t_read_rs1.as_public_mut());
-    std::mem::swap(&mut polys.t_read_ram, rw_polys.t_read_rs2.as_public_mut());
+    std::mem::swap(&mut polys.t_read_rd, rw_polys.t_read_rd.as_public_mut());
+    std::mem::swap(&mut polys.t_read_rs1, rw_polys.t_read_rs1.as_public_mut());
+    std::mem::swap(&mut polys.t_read_rs2, rw_polys.t_read_rs2.as_public_mut());
     std::mem::swap(&mut polys.t_read_ram, rw_polys.t_read_ram.as_public_mut());
     res
+}
+
+pub fn get_timestamp_range_check_polynomials_rep3<F: JoltField, PCS, ProofTranscript>(
+    rw_polys: &mut Rep3ReadWriteMemoryPolynomials<F>,
+) -> Rep3TimestampRangeCheckPolynomials<F>
+where
+    PCS: crate::poly::commitment::Rep3CommitmentScheme<F, ProofTranscript>,
+    ProofTranscript: jolt_core::utils::transcript::Transcript,
+{
+    let TimestampRangeCheckStuff {
+        read_cts_read_timestamp,
+        read_cts_global_minus_read,
+        final_cts_read_timestamp,
+        final_cts_global_minus_read,
+        ..
+    } = get_timestamp_range_check_polynomials::<F, PCS, ProofTranscript>(rw_polys);
+    Rep3TimestampRangeCheckPolynomials {
+        read_cts_read_timestamp: read_cts_read_timestamp.map(Rep3MultilinearPolynomial::public),
+        read_cts_global_minus_read: read_cts_global_minus_read
+            .map(Rep3MultilinearPolynomial::public),
+        final_cts_read_timestamp: final_cts_read_timestamp.map(Rep3MultilinearPolynomial::public),
+        final_cts_global_minus_read: final_cts_global_minus_read
+            .map(Rep3MultilinearPolynomial::public),
+        identity: None,
+    }
 }

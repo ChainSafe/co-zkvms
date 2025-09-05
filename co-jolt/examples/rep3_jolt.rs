@@ -231,10 +231,10 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         network,
     )?;
 
-    prover.io_ctx.network().send_response(prover.program_io)?;
-    prover.io_ctx.network().send_response(prover.polynomials)?;
+    // prover.io_ctx.network().send_response(prover.program_io)?;
+    // prover.io_ctx.network().send_response(prover.polynomials)?;
 
-    // prover.prove()?;
+    prover.prove()?;
 
     prover.io_ctx.log_connection_stats();
     // drop(_enter);
@@ -332,38 +332,38 @@ pub fn run_coordinator(
     network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();
 
-    check_program_io::<F>(network.receive_responses()?, &program_io);
+    // check_program_io::<F>(network.receive_responses()?, &program_io);
 
-    let polys = Rep3JoltPolynomials::combine_polynomials(
-        &preprocessing.shared,
-        network.receive_responses()?,
-    );
-    JoltTraceStep::pad(&mut trace);
-    let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
-    let r1cs_builder: CombinedUniformBuilder<C, F, JoltR1CSInputs> =
-        JoltRV32IMConstraints::construct_constraints(
-            meta.padded_trace_length,
-            program_io.memory_layout.input_start,
-        );
-    r1cs_builder.compute_aux(&mut check);
-
-    check_instruction_polys(&polys.instruction_lookups, &check.instruction_lookups);
-    check_read_write_polys(&polys.read_write_memory, &check.read_write_memory);
-    check_bytecode(&polys.bytecode, &check.bytecode);
-    check_r1cs(&polys.r1cs, &check.r1cs);
-
-    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
-    //     meta,
-    //     // &program_io,
-    //     &spartan_key,
+    // let polys = Rep3JoltPolynomials::combine_polynomials(
     //     &preprocessing.shared,
-    //     &mut network,
-    // )?;
+    //     network.receive_responses()?,
+    // );
+    // JoltTraceStep::pad(&mut trace);
+    // let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
+    // let r1cs_builder: CombinedUniformBuilder<C, F, JoltR1CSInputs> =
+    //     JoltRV32IMConstraints::construct_constraints(
+    //         meta.padded_trace_length,
+    //         program_io.memory_layout.input_start,
+    //     );
+    // r1cs_builder.compute_aux(&mut check);
 
-    // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
-    //     .context("while verifying Lasso (rep3) proof")?;
+    // check_instruction_polys(&polys.instruction_lookups, &check.instruction_lookups);
+    // check_read_write_polys(&polys.read_write_memory, &check.read_write_memory);
+    // check_bytecode(&polys.bytecode, &check.bytecode);
+    // check_r1cs(&polys.r1cs, &check.r1cs);
 
-    // network.log_connection_stats(None);
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(
+        meta,
+        // &program_io,
+        &spartan_key,
+        &preprocessing.shared,
+        &mut network,
+    )?;
+
+    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+        .context("while verifying Lasso (rep3) proof")?;
+
+    network.log_connection_stats(None);
 
     Ok(())
 }
@@ -400,7 +400,7 @@ fn check_read_write_polys(
     check_poly(&polys.v_write_rd, &check.v_write_rd, "write_rd");
     check_poly(&polys.v_write_ram, &check.v_write_ram, "write_ram");
 
-    assert_eq!(polys.a_ram, check.a_ram);
+    check_poly(&polys.a_ram, &check.a_ram, "a_ram");
     check_poly(&polys.t_read_rd, &check.t_read_rd, "t_read_rd");
     check_poly(&polys.t_read_rs1, &check.t_read_rs1, "t_read_rs1");
     check_poly(&polys.t_read_rs2, &check.t_read_rs2, "t_read_rs2");

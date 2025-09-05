@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials};
-use crate::jolt::vm::timestamp_range_check::Rep3TimestampRangeCheckPolynomials;
+use crate::jolt::vm::timestamp_range_check::{self, Rep3TimestampRangeCheckPolynomials};
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
@@ -186,7 +186,7 @@ where
             io_ctx,
         )?;
 
-        let read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_witness_rep3(
+        let mut read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_witness_rep3(
             &preprocessing.read_write_memory,
             ops,
             program_io,
@@ -202,12 +202,19 @@ where
             io_ctx,
         )?;
 
+        let timestamp_range_check =
+            timestamp_range_check::get_timestamp_range_check_polynomials_rep3::<
+                F,
+                PCS,
+                ProofTranscript,
+            >(&mut read_write_memory);
+
         Ok(Self {
             instruction_lookups,
             r1cs,
             read_write_memory,
             bytecode,
-            ..Default::default() // timestamp polynomials are public
+            timestamp_range_check,
         })
     }
 

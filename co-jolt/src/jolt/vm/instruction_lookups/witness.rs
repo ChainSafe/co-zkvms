@@ -274,8 +274,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         drop(_guard);
 
-        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
-            vec![vec![0u64; m]; Instructions::COUNT];
+        let mut instruction_flag_bitvectors = vec![vec![0u8; m]; Instructions::COUNT];
 
         for (j, op) in trace.iter().enumerate() {
             if let Some(op) = &op.instruction_lookup {
