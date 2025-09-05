@@ -10,8 +10,9 @@ use bytesize::ByteSize;
 use eyre::Context;
 use mpc_net::channel::ChannelHandle;
 use std::collections::BTreeMap;
-use std::iter;
-use std::sync::Arc;
+use std::ops::Range;
+use std::sync::{Arc, OnceLock, mpsc};
+use std::{iter, thread};
 
 use itertools::Itertools;
 use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -592,69 +593,55 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .collect::<eyre::Result<Vec<_>>>()
     }
 
-    /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
+    /// Network parallel **cyclic** (aka round-robin) iterator map with deterministic fork assignment.
+    /// - Fork `f` handles indices `f, f+N, f+2N,…` where `N = min(self.forks.len(), inputs.len())`.
+    /// - Each fork owns an exclusive `IoContext`; output order matches input order.
+    /// - If `N==0` or `len==1`, runs on `self.main()`.
     ///
-    /// The `inputs` are split into chunks, and each chunk is processed in parallel using the `forks`.
-    ///
-    /// The `map` is a function that takes an input and an `IoContext` and returns a flattened result.
-    ///
-    /// The `max_forks` is the maximum number of forks to use.
-    /// If `None`, all forks are used. (Default: rayon::current_num_threads() / num_workers)
-    pub fn par_iter_init<T, U, R, MapFn>(
+    /// Bounds: `T: Send+Sync+Clone`, `R: Send+Sync`,
+    /// `map: Fn(T, &mut IoContext<Network>) -> eyre::Result<R> + Send+Sync`.
+    pub fn par_iter_cyclic<T, R, MapFn>(
         &mut self,
-        inputs: impl IntoParallelIterator<Item = T, Iter: IndexedParallelIterator>,
-        max_forks: Option<usize>,
-        init: impl Fn(&mut IoContext<Network>) -> eyre::Result<U>,
-        map_op: MapFn,
+        inputs: impl IntoIterator<Item = T>,
+        map: MapFn,
     ) -> eyre::Result<Vec<R>>
     where
-        MapFn: Fn(T, &mut U, &mut IoContext<Network>) -> eyre::Result<R> + Sync + Send,
-        T: Sized + Send,
-        U: Send,
-        R: Sync + Send,
+        MapFn: Fn(T, &mut IoContext<Network>) -> eyre::Result<R> + Sync + Send,
+        T: Send + Sync + Clone,
+        R: Send + Sync,
     {
-        let inputs_iter = inputs.into_par_iter();
-        let max_forks = max_forks.unwrap_or(self.forks.len());
-        let len = inputs_iter.len();
-
-        if max_forks == 0 {
-            return inputs_iter
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|val| map_op(val, &mut init(self.main())?, self.main()))
-                .collect::<eyre::Result<Vec<_>>>();
+        let items: Vec<T> = inputs.into_iter().collect();
+        let m = items.len();
+        if m == 0 {
+            return Ok(Vec::new());
         }
 
-        if len == 1 {
-            return Ok(vec![map_op(
-                inputs_iter.collect::<Vec<_>>().pop().unwrap(),
-                &mut init(self.main())?,
-                self.main(),
-            )?]);
+        // use up to m forks
+        let forks = self.forks.len().min(m);
+        if forks == 0 {
+            return items.into_iter().map(|v| map(v, self.main())).collect();
+        }
+        if m == 1 {
+            return Ok(vec![map(items[0].clone(), self.main())?]);
         }
 
-        let chunk_size = len.div_ceil(max_forks);
-        assert!(chunk_size != 0);
-        let forks = len.div_ceil(chunk_size);
-        let init_vals = self
-            .forks(forks)
-            .iter_mut()
-            .map(|mut ctx| init(&mut ctx).unwrap())
-            .collect::<Vec<_>>();
+        let results: Vec<OnceLock<eyre::Result<R>>> = (0..m).map(|_| OnceLock::new()).collect();
 
-        inputs_iter
+        // N parallel tasks; fork f processes indices f, f+N, f+2N, ...
+        (0..forks)
             .into_par_iter()
-            .chunks(chunk_size)
-            .zip_eq(self.forks(forks).par_iter_mut())
-            .zip_eq(init_vals.into_par_iter())
-            .map(|((chunk, ctx), mut init_val)| {
-                chunk
-                    .into_iter()
-                    .map(|val| map_op(val, &mut init_val, ctx))
-                    .collect_vec()
-            })
-            .flatten()
-            .collect::<eyre::Result<Vec<_>>>()
+            .zip(self.forks(forks).par_iter_mut())
+            .for_each(|(f, mut ctx)| {
+                for i in (f..m).step_by(forks) {
+                    let r = map(items[i].clone(), &mut ctx);
+                    let _ = results[i].set(r);
+                }
+            });
+
+        results
+            .into_par_iter()
+            .map(|cell| cell.into_inner().expect("missing result"))
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
@@ -702,6 +689,58 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             })
             .collect::<Result<Vec<_>, _>>()
     }
+
+    // /// Deterministic assignment based on input values:
+    // /// stable sort by `inputs[i]` (tie-break by index), then round-robin to forks.
+    // pub fn par_iter_range<R, E, MapFn>(
+    //     &mut self,
+    //     range: Vec<usize>,
+    //     map_fn: MapFn,
+    // ) -> Result<Vec<R>, E>
+    // where
+    //     R: Send + Sync,
+    //     E: Send + Sync,
+    //     MapFn: Fn(usize, &mut IoContext<Network>) -> Result<R, E> + Sync,
+    // {
+    //     let n = self.forks.len();
+    //     assert!(n > 0);
+    //     let m = range.len();
+
+    //     // stable order (by value, tie by index)
+    //     let order: Vec<usize> = (0..m).collect();
+
+    //     // deterministic RR split: fork f gets i=f, f+n, f+2n, …
+    //     let per_fork: Vec<Vec<usize>> = (0..n)
+    //         .map(|f| order.iter().skip(f).step_by(n).copied().collect())
+    //         .collect();
+
+    //     // take contexts
+    //     let ctxs = self.forks_owned(n); // Vec<IoContext<Network>>
+
+    //     // results without locks on hot path
+    //     let slots: Vec<OnceLock<Result<R, E>>> = (0..m).map(|_| OnceLock::new()).collect();
+    //     let map_ref = &map_fn;
+
+    //     per_fork
+    //         .into_par_iter() // N parallel tasks
+    //         .zip(ctxs.into_par_iter()) // pair each with its ctx
+    //         .for_each(|(idxs, mut ctx)| {
+    //             for i in idxs {
+    //                 let r = map_ref(range[i], &mut ctx);
+    //                 let _ = slots[i].set(r);
+    //             }
+    //         });
+
+    //     // gather in original order
+    //     let mut out = Vec::with_capacity(m);
+    //     for cell in slots {
+    //         match cell.into_inner().expect("missing result") {
+    //             Ok(v) => out.push(v),
+    //             Err(e) => return Err(e),
+    //         }
+    //     }
+    //     Ok(out)
+    // }
 
     #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
     pub fn sync_with_parties(&mut self) -> eyre::Result<()> {
