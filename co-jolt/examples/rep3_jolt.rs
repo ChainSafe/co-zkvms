@@ -29,6 +29,7 @@ use color_eyre::{
 use itertools::Itertools;
 use jolt_core::jolt::vm::JoltProverPreprocessing;
 
+use jolt_tracer::ELFInstruction;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     mpc_star::MpcStarNetWorker,
@@ -173,10 +174,12 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     let mut network =
         Rep3QuicMpcNetWorker::new(config.clone(), args.num_workers_per_party.log_2()).unwrap();
 
-    // let program_io: Rep3ProgramIOInput = network.receive_request()?;
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
     tracing::info!("trace len: {}", trace.len());
+
+    let bytecode: Vec<ELFInstruction> =
+        bincode::deserialize(&network.receive_request::<Vec<u8>>()?).unwrap();
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -220,6 +223,7 @@ pub fn run_coordinator(
 
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace(&inputs);
+    let bytecode_bytes = bincode::serialize(&bytecode).unwrap();
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -245,21 +249,6 @@ pub fn run_coordinator(
             num_inputs.next_power_of_two(),
         );
 
-    // if args.debug {
-    //     let (proof_check, commitments_check) =
-    //         RV32IJoltVM::prove(program_io.clone(), trace.clone(), preprocessing.clone());
-
-    //     RV32IJoltVM::verify(
-    //         preprocessing.shared.clone(),
-    //         proof_check,
-    //         commitments_check,
-    //         program_io.clone(),
-    //     )
-    //     .context("while verifying Lasso proof")?;
-    //     return Ok(());
-    // }
-    //
-
     let mut rng = test_rng();
     let (program_io_shares, trace_shares) =
         program.generate_trace_shares::<F, _>(&inputs, &mut rng);
@@ -278,6 +267,8 @@ pub fn run_coordinator(
             .collect::<bincode::Result<Vec<_>>>()
             .context("while serializing trace shares")?,
     )?;
+
+    network.broadcast_request(bytecode_bytes)?;
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
 
