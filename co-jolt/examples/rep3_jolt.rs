@@ -9,6 +9,8 @@ use co_jolt::jolt::vm::instruction_lookups::{
 };
 use co_jolt::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ProgramIOInput};
 use co_jolt::poly::Rep3MultilinearPolynomial;
+use co_jolt::r1cs::constraints::JoltRV32IMConstraints;
+use co_jolt::r1cs::inputs::JoltR1CSInputs;
 use co_jolt::utils::math::Math;
 use co_jolt::{
     host,
@@ -39,7 +41,10 @@ use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryPolynomials,
 };
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::r1cs::builder::CombinedUniformBuilder;
+use jolt_core::r1cs::constraints::R1CSConstraints as _;
 use jolt_core::r1cs::inputs::R1CSPolynomials;
+use jolt_core::r1cs::key::UniformSpartanKey;
 use jolt_core::{jolt::vm::JoltProverPreprocessing, msm::icicle_init};
 use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
@@ -334,9 +339,15 @@ pub fn run_coordinator(
         network.receive_responses()?,
     );
     JoltTraceStep::pad(&mut trace);
-    let check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
+    let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
+    let r1cs_builder: CombinedUniformBuilder<C, F, JoltR1CSInputs> =
+        JoltRV32IMConstraints::construct_constraints(
+            meta.padded_trace_length,
+            program_io.memory_layout.input_start,
+        );
+    r1cs_builder.compute_aux(&mut check);
 
-    // check_instruction_polys(&polys.instruction_lookups, &check.instruction_lookups);
+    check_instruction_polys(&polys.instruction_lookups, &check.instruction_lookups);
     check_read_write_polys(&polys.read_write_memory, &check.read_write_memory);
     check_bytecode(&polys.bytecode, &check.bytecode);
     check_r1cs(&polys.r1cs, &check.r1cs);
@@ -361,7 +372,11 @@ fn check_instruction_polys<F: JoltField>(
     polys: &InstructionLookupPolynomials<F>,
     check: &InstructionLookupPolynomials<F>,
 ) {
-    assert_eq!(polys.lookup_outputs, check.lookup_outputs);
+    check_poly(
+        &polys.lookup_outputs,
+        &check.lookup_outputs,
+        "lookup_outputs",
+    );
     check_polys(&polys.dim, &check.dim, "dim");
     check_polys(&polys.final_cts, &check.final_cts, "final_cts");
     check_polys(&polys.read_cts, &check.read_cts, "read_cts");
@@ -516,6 +531,7 @@ fn check_poly<F: JoltField>(
     check: &MultilinearPolynomial<F>,
     label: &str,
 ) {
+    assert_eq!(poly.len(), check.len(), "len mismatch {}", label);
     let poly = poly.coeffs_as_field_elements();
     let check = check.coeffs_as_field_elements();
     let p = izip!(&poly, &check).position(|(i, check)| *i != *check);

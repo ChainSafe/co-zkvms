@@ -135,8 +135,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     let num_reads = used_ops.len();
                     if num_reads == 0 {
                         return Ok((
-                            vec![Rep3PrimeFieldShare::zero_share(); M],
                             read_cts_i,
+                            vec![Rep3PrimeFieldShare::zero_share(); M],
                             subtable_lookups,
                         ));
                     }

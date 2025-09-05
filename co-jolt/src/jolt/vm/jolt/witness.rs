@@ -234,10 +234,10 @@ where
             })
             .multiunzip();
 
-        // let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
-        //     &preprocessing.instruction_lookups,
-        //     instructions_shares,
-        // )?;
+        let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
+            &preprocessing.instruction_lookups,
+            instructions_shares,
+        );
 
         let r1cs = Rep3R1CSPolynomials::combine_polynomials(&ConstantPreprocessing::<C>, r1cs);
 
@@ -250,7 +250,7 @@ where
             Rep3BytecodePolynomials::combine_polynomials(&preprocessing.bytecode, bytecode);
 
         JoltPolynomials {
-            // instruction_lookups,
+            instruction_lookups,
             r1cs,
             read_write_memory,
             bytecode,
