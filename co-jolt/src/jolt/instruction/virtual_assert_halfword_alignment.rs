@@ -1,5 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use eyre::Context;
 use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -13,12 +11,11 @@ use mpc_core::protocols::{
     rep3::{
         self,
         network::{IoContext, Rep3Network},
-        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
+        PartyID, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
 
-use crate::utils::future::FutureRep3;
 use jolt_core::jolt::subtable::{low_bit::LowBitSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::{add_and_chunk_operands, assert_valid_parameters};
 

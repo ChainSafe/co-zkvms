@@ -2,7 +2,6 @@ use itertools::izip;
 use std::iter::Sum;
 use std::ops::Shr;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -10,14 +9,12 @@ use serde::{Deserialize, Serialize};
 use mpc_core::protocols::{
     rep3::{
         self,
-        network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
     },
     rep3_ring::Rep3RingShare,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
-use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, rep3_chunk_and_concatenate_for_shift,
 };

@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::prelude::StdRng;
@@ -6,11 +5,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::field::JoltField;
-use crate::utils::future::FutureRep3;
 use crate::utils::future_ring::FutureRep3Ring;
 use jolt_core::jolt::subtable::LassoSubtable;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 

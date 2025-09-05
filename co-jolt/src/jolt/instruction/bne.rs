@@ -7,16 +7,13 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::jolt::instruction::{JoltInstruction, Rep3JoltInstruction};
-use crate::utils::future::FutureRep3;
 use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 use crate::{field::JoltField, jolt::instruction::Rep3Operand};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::jolt::subtable::{eq::EqSubtable, LassoSubtable};
 use mpc_core::protocols::rep3::{
     self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare, Rep3PrimeFieldShare,
+    network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

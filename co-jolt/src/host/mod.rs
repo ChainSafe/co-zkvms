@@ -5,19 +5,15 @@ use std::{
     fs::{self, File},
     io::{self, Read, Write},
     iter,
-    marker::PhantomData,
     path::PathBuf,
     process::Command,
 };
 
 use itertools::{izip, Itertools};
 use jolt_tracer::{RVTraceRow, RV32IM};
-use mpc_core::protocols::{
-    rep3::{self, Rep3PrimeFieldShare},
-    rep3_ring::{self, Rep3RingShare},
-};
+use mpc_core::protocols::rep3_ring::{self};
 use rand::{RngCore, SeedableRng};
-use rand_chacha::{ChaCha12Core, ChaCha12Rng};
+use rand_chacha::ChaCha12Rng;
 use rayon::prelude::*;
 
 use jolt_common::{

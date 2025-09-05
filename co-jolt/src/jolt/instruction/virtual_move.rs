@@ -1,25 +1,23 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::future::FutureRep3;
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 
 use jolt_core::{
     jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     utils::instruction_utils::{chunk_operand_usize, concatenate_lookups},
 };
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::{
     rep3::network::{IoContext, Rep3Network},
     rep3_ring::Rep3RingShare,
 };
 
 use crate::utils::instruction_utils::{
-    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand,
+    concatenate_lookups_rep3_batched, rep3_chunk_operand,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};

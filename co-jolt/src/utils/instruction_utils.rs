@@ -1,19 +1,18 @@
-use ark_ff::{One, Zero};
+use ark_ff::One;
 use itertools::izip;
 pub use jolt_core::utils::instruction_utils::*;
 use num_traits::AsPrimitive;
 
 use crate::field::JoltField;
 use mpc_core::protocols::{
-    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3::{self, Rep3PrimeFieldShare},
     rep3_ring::{
         casts::downcast,
         ring::{int_ring::IntRing2k, ring_impl::RingElement},
         Rep3RingShare,
     },
 };
-use num_bigint::BigUint;
-use std::{collections::HashMap, ops::Shr};
+use std::ops::Shr;
 
 pub fn concatenate_lookups_rep3<F: JoltField>(
     vals: &[Rep3PrimeFieldShare<F>],

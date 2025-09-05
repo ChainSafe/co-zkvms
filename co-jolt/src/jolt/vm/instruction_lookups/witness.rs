@@ -1,44 +1,33 @@
-use std::{iter, u32};
+use std::u32;
 
 use crate::{
     field::JoltField,
-    jolt::{instruction::sub, trace, vm::read_write_memory::witness::Rep3ProgramIO},
-    poly::{
-        combine_poly_shares_rep3, generate_poly_shares_rep3, generate_poly_shares_rep3_vec,
-        Rep3MultilinearPolynomial,
-    },
+    jolt::vm::read_write_memory::witness::Rep3ProgramIO,
+    poly::Rep3MultilinearPolynomial,
     utils::{
-        self,
-        future::{FutureExt, FutureRep3},
+        future::FutureExt,
         future_ring::{FutureRep3Ring, Rep3RingFutureExt},
     },
 };
-use ark_ff::{One, Zero};
-use ark_std::cfg_into_iter;
-use eyre::Context;
-use itertools::{izip, multizip, Either, Itertools};
-use jolt_core::{jolt::vm::instruction_lookups::InstructionLookupPolynomials, utils::math::Math};
+use ark_ff::Zero;
+use itertools::{izip, Itertools};
+use jolt_core::utils::math::Math;
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
 use mpc_core::protocols::{
     rep3::{
-        self, arithmetic,
         network::{
-            IoContext, IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
-        },
-        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
+            IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker,
+        }, Rep3PrimeFieldShare,
     },
     rep3_ring::{
         self,
-        gadgets::ohv::ohv,
-        lut::{PublicPrivateLut, Rep3LookupTable},
         ring::ring_impl::RingElement,
         Rep3RingShare,
     },
 };
-use rand::Rng;
 
 use rayon::prelude::*;
 

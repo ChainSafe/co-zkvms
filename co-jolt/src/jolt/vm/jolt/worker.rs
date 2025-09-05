@@ -10,7 +10,6 @@ use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
-        Rep3MultilinearPolynomial,
     },
     r1cs::{
         builder::CombinedUniformBuilder, constraints::R1CSConstraints,
@@ -18,7 +17,6 @@ use crate::{
     },
     utils::transcript::{Transcript, TranscriptExt},
 };
-use eyre::Context;
 use mpc_core::protocols::rep3::{
     network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
@@ -27,7 +25,7 @@ use snarks_core::math::Math;
 
 use crate::field::JoltField;
 use crate::jolt::{
-    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    instruction::Rep3JoltInstructionSet,
     vm::{
         instruction_lookups::worker::Rep3InstructionLookupsProver,
         witness::{Rep3JoltPolynomials, Rep3JoltPolynomialsExt, Rep3Polynomials},

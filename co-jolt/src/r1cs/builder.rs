@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 use jolt_core::r1cs::{
@@ -30,7 +29,7 @@ use crate::{
 
 use rayon::prelude::*;
 
-type AuxComputationFunction<F: JoltField> =
+type AuxComputationFunction<F> =
     dyn Fn(&[Rep3Value<F>], PartyID) -> FutureRep3<F, Rep3PrimeFieldShare<F>> + Send + Sync;
 
 pub struct AuxComputation<F: JoltField> {

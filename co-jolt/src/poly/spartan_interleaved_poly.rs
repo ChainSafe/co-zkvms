@@ -7,7 +7,7 @@ use jolt_core::{
     r1cs::builder::{Constraint, OffsetEqConstraint},
     utils::math::Math,
 };
-use mpc_core::protocols::additive::{self, AdditiveShare};
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;

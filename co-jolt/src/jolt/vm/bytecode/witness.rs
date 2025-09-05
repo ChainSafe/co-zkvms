@@ -12,7 +12,7 @@ use crate::{
 };
 use ark_ff::Zero;
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff};
+use jolt_core::jolt::vm::bytecode::{BytecodePreprocessing, BytecodeStuff};
 use jolt_tracer::{ELFInstruction, RV32IM};
 use mpc_core::protocols::{
     rep3::{

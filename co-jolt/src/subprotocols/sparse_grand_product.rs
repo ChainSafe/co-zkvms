@@ -15,7 +15,6 @@ use crate::utils::thread::drop_in_background_thread;
 use ark_ff::Zero;
 #[cfg(test)]
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::field::OptimizedMul;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;

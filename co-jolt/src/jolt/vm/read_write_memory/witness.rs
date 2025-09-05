@@ -1,4 +1,3 @@
-use std::mem;
 
 use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
@@ -6,15 +5,14 @@ use crate::jolt::trace::mem_op::MemoryOp;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
-use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::transpose;
 use crate::utils::types::Either;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{izip, multizip};
-use jolt_common::constants::{MEMORY_OPS_PER_INSTRUCTION, REGISTER_COUNT};
+use itertools::izip;
+use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::{
-    memory_address_to_witness_index, remap_address, ReadWriteMemoryPolynomials,
+    memory_address_to_witness_index, remap_address,
     ReadWriteMemoryPreprocessing, ReadWriteMemoryStuff,
 };
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;

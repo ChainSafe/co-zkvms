@@ -1,32 +1,21 @@
 use crate::field::JoltField;
-use crate::utils::future::FutureRep3;
 use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::{chunk_operand, rep3_chunk_operand};
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
 use enum_dispatch::enum_dispatch;
 use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::downcast;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
-use mpc_core::protocols::rep3_ring::{self, arithmetic};
+use mpc_core::protocols::rep3_ring::{self};
 use mpc_core::protocols::{
-    rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-        Rep3BigUintShare,
-    },
+    rep3::network::{IoContext, Rep3Network},
     rep3_ring::Rep3RingShare,
 };
 use num_traits::AsPrimitive;
 use rand::rngs::StdRng;
-use rand_chacha::rand_core::le;
 use serde::{Deserialize, Serialize};
-use std::any::type_name_of_val;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::panic;
 use strum::{EnumCount, IntoEnumIterator};
 

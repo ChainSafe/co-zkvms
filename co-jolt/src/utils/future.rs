@@ -7,7 +7,6 @@ use mpc_core::protocols::rep3::{
 };
 
 use rayon::prelude::*;
-use tokio::io;
 
 #[derive(Debug, Clone)]
 pub enum FutureRep3<F: JoltField, T, Args = ()> {

@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -14,12 +13,9 @@ use jolt_core::{
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
-use mpc_core::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::{
-    rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-    },
+    rep3::network::{IoContext, Rep3Network},
     rep3_ring::Rep3RingShare,
 };
 

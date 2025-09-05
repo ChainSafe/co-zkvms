@@ -4,7 +4,6 @@
     clippy::too_many_arguments
 )]
 
-use itertools::{multizip, Itertools};
 use jolt_core::jolt::vm::JoltStuff;
 use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -14,7 +13,6 @@ use jolt_core::r1cs::inputs::{
 
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -24,9 +22,7 @@ use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::rv32i_vm::RV32I;
 use crate::jolt::vm::witness::Rep3Polynomials;
 use crate::jolt::vm::JoltTraceStep;
-use crate::poly::{
-    generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
-};
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::{transpose, transpose_par_from_flat};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
@@ -8,14 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, PartyID, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices};
 use crate::field::JoltField;
-use crate::utils::future::FutureRep3;
 use crate::utils::future_ring::FutureRep3Ring;
 use crate::utils::instruction_utils::{
-    assert_valid_parameters, concatenate_lookups, concatenate_lookups_rep3,
+    assert_valid_parameters, concatenate_lookups,
     concatenate_lookups_rep3_batched, multiply_and_chunk_operands,
     rep3_multiply_and_chunk_operands,
 };

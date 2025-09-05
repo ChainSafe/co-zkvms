@@ -1,14 +1,11 @@
 use crate::{
     field::JoltField,
-    jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials},
+    jolt::vm::read_write_memory::witness::Rep3ReadWriteMemoryPolynomials,
 };
 
-use jolt_core::{
-    jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff},
-    lasso::memory_checking::NoPreprocessing,
-};
+use jolt_core::jolt::vm::timestamp_range_check::{TimestampRangeCheckPolynomials, TimestampRangeCheckStuff};
 
-use crate::{jolt::vm::witness::Rep3Polynomials, poly::Rep3MultilinearPolynomial};
+use crate::poly::Rep3MultilinearPolynomial;
 
 pub fn get_timestamp_range_check_polynomials<F: JoltField, PCS, ProofTranscript>(
     rw_polys: &mut Rep3ReadWriteMemoryPolynomials<F>,

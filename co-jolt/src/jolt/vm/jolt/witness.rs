@@ -11,21 +11,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
-use jolt_core::jolt::vm::timestamp_range_check::{
-    TimestampRangeCheckPolynomials, TimestampRangeCheckStuff,
-};
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
-use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
-use jolt_core::r1cs::builder::CombinedUniformBuilder;
-use jolt_core::r1cs::inputs::ConstraintInput;
+use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
-use rand::Rng;
 
-use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
+use crate::jolt::instruction::Rep3JoltInstructionSet;
 use crate::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
 use crate::jolt::vm::JoltTraceStep;
 

@@ -1,14 +1,13 @@
 use crate::{
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
-        split_public_poly, Rep3MultilinearPolynomial, Rep3PolysConversion,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator, Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
         grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::{transcript::Transcript, transpose_flatten, transpose_hashmap, types::Rep3Value},
+    utils::{transcript::Transcript, transpose_flatten, transpose_hashmap},
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
@@ -44,7 +43,7 @@ use tracing::trace_span;
 use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
 use crate::field::JoltField;
 use crate::jolt::{
-    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    instruction::Rep3JoltInstructionSet,
     vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
 };
 

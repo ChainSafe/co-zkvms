@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::{
     jolt::vm::{
-        read_write_memory::{coordinator::Rep3ReadWriteMemoryCoordinator, witness::Rep3ProgramIO},
+        read_write_memory::coordinator::Rep3ReadWriteMemoryCoordinator,
         witness::JoltWitnessMeta,
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
@@ -10,24 +10,22 @@ use crate::{
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     utils::transcript::TranscriptExt,
 };
-use ark_std::test_rng;
 use jolt_core::{
     jolt::vm::{
         bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof, JoltVerifierPreprocessing,
     },
     r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
 };
-use jolt_tracer::JoltDevice;
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
-use crate::jolt::vm::{jolt::witness::Rep3Polynomials, witness::Rep3JoltPolynomialsExt};
+use crate::jolt::vm::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::{
     instruction::Rep3JoltInstructionSet,
     vm::{
         instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32IJoltVM,
-        witness::Rep3JoltPolynomials, Jolt, JoltCommitments, JoltProof, JoltTraceStep,
+        witness::Rep3JoltPolynomials, Jolt, JoltCommitments, JoltProof,
     },
 };
 use jolt_core::utils::transcript::AppendToTranscript;

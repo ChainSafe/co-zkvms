@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, multizip, Itertools};
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rand::prelude::StdRng;
@@ -11,7 +10,7 @@ use jolt_core::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable};
 use jolt_core::utils::instruction_utils::chunk_and_concatenate_operands;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 
 use crate::utils::instruction_utils::rep3_chunk_and_concatenate_operands;
 

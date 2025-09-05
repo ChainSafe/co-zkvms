@@ -8,8 +8,7 @@ use jolt_core::jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable}
 use mpc_core::protocols::{
     rep3::{
         self,
-        network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
@@ -17,11 +16,9 @@ use mpc_core::protocols::{
 use super::{
     sltu::SLTUInstruction, JoltInstruction, Rep3JoltInstruction, Rep3Operand, SubtableIndices,
 };
-use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, rep3_chunk_and_concatenate_operands,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BGEUInstruction(pub Rep3Operand, pub Rep3Operand);

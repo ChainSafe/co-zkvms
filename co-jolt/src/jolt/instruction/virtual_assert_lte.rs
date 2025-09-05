@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 #[cfg(feature = "public-eq")]
 use mpc_core::protocols::additive;
@@ -6,7 +5,6 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::future::FutureRep3;
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use itertools::multizip;
 use jolt_core::{
@@ -18,7 +16,7 @@ use mpc_core::protocols::{
     rep3_ring,
 };
 use mpc_core::protocols::{
-    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3::{self, Rep3PrimeFieldShare},
     rep3_ring::Rep3RingShare,
 };
 

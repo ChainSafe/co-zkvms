@@ -1,12 +1,10 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use jolt_core::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use mpc_core::protocols::{
     rep3::{
-        self,
         network::{IoContext, Rep3Network},
-        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
+        PartyID, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
@@ -14,12 +12,11 @@ use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::future::FutureRep3;
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 use crate::{
     jolt::instruction::Rep3JoltInstruction,
     utils::instruction_utils::{
-        concatenate_lookups_rep3, concatenate_lookups_rep3_batched,
+        concatenate_lookups_rep3_batched,
         rep3_multiply_and_chunk_operands,
     },
 };

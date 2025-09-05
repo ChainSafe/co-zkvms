@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
 use rand::prelude::StdRng;
@@ -7,17 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::{
     rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
-    chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3,
+    chunk_and_concatenate_operands, concatenate_lookups,
     rep3_chunk_and_concatenate_operands,
 };
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};

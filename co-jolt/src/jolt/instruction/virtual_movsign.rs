@@ -1,12 +1,9 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use eyre::Context;
-use num_bigint::BigUint;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::future::FutureRep3;
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
 
 use jolt_core::{
@@ -21,12 +18,12 @@ use mpc_core::protocols::{
     rep3_ring::{ring::ring_impl::RingElement, Rep3RingShare},
 };
 use mpc_core::protocols::{
-    rep3::{self, Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3::Rep3PrimeFieldShare,
     rep3_ring,
 };
 
 use crate::utils::instruction_utils::{
-    concatenate_lookups_rep3, concatenate_lookups_rep3_batched, rep3_chunk_operand,
+    concatenate_lookups_rep3_batched, rep3_chunk_operand,
 };
 
 use super::{JoltInstruction, Rep3JoltInstruction, Rep3Operand};

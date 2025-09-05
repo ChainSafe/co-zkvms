@@ -6,24 +6,18 @@ use serde::{Deserialize, Serialize};
 
 use mpc_core::protocols::{
     rep3::{
-        self,
-        network::{IoContext, Rep3Network},
-        Rep3BigUintShare, Rep3PrimeFieldShare,
+        network::{IoContext, Rep3Network}, Rep3PrimeFieldShare,
     },
     rep3_ring::{self, Rep3RingShare},
 };
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::utils::future::FutureRep3;
 use crate::utils::instruction_utils::{
     chunk_and_concatenate_operands, concatenate_lookups, concatenate_lookups_rep3_batched,
     rep3_chunk_and_concatenate_operands,
 };
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
-use crate::{
-    jolt::instruction::{Rep3JoltInstruction, Rep3Operand},
-    utils::instruction_utils::concatenate_lookups_rep3,
-};
+use crate::jolt::instruction::{Rep3JoltInstruction, Rep3Operand};
 use jolt_core::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

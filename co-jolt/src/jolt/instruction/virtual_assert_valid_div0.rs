@@ -1,10 +1,8 @@
 use std::mem;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
 use rand::prelude::StdRng;
 use rand::RngCore;
-use rayon::iter;
 use serde::{Deserialize, Serialize};
 
 use crate::{field::JoltField, utils::future_ring::FutureRep3Ring};
@@ -21,7 +19,7 @@ use mpc_core::protocols::{
     rep3_ring::{ring::bit::Bit, Rep3RingShare},
 };
 use mpc_core::protocols::{
-    rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
+    rep3::Rep3PrimeFieldShare,
     rep3_ring,
 };
 
