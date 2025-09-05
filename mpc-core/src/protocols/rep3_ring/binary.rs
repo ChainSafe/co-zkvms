@@ -11,11 +11,11 @@ use itertools::izip;
 use mpc_types::protocols::{
     rep3::id::PartyID,
     rep3_ring::{
-        Rep3RingShare,
+        Rep3RingShare, Rep3RingSignedShare,
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
     },
 };
-use num_traits::{One, Zero};
+use num_traits::{AsPrimitive, One, Signed, Zero};
 use rand::{Rng, distributions::Standard, prelude::Distribution};
 
 use rayon::prelude::*;
@@ -32,6 +32,24 @@ where
     let p_share_1 = Rep3RingShare::new(t1, t0);
     let p_share_2 = Rep3RingShare::new(t2, t1);
     vec![p_share_0, p_share_1, p_share_2]
+}
+
+pub fn generate_signed_shares_rep3<T: IntRing2k, R: Rng>(
+    val: T::Signed,
+    rng: &mut R,
+) -> Vec<Rep3RingSignedShare<T>>
+where
+    Standard: Distribution<T>,
+    T::Signed: num_traits::Signed,
+{
+    let abs: T = val.abs().as_();
+    let sign = Bit::new(val.is_positive());
+    izip!(
+        generate_shares_rep3(abs, rng),
+        generate_shares_rep3::<Bit, _>(sign, rng)
+    )
+    .map(|(abs, sign)| Rep3RingSignedShare::new(abs, sign))
+    .collect()
 }
 
 /// Performs a bitwise XOR operation on two shared values.

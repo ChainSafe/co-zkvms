@@ -4,6 +4,7 @@
     clippy::too_many_arguments
 )]
 
+use itertools::{multizip, Itertools};
 use jolt_core::jolt::vm::JoltStuff;
 use jolt_core::lasso::memory_checking::Initializable;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -14,6 +15,7 @@ use jolt_core::r1cs::inputs::{
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext,
 };
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rayon::prelude::*;
 
@@ -27,6 +29,7 @@ use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{
     generate_poly_shares_rep3, generate_poly_shares_rep3_vec, Rep3MultilinearPolynomial,
 };
+use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::{transpose, transpose_par_from_flat};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -138,6 +141,7 @@ where
         Ok(partial_polys)
     }
 
+    #[tracing::instrument(skip_all, name = "R1CS::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         _: &ConstantPreprocessing<C>,
         trace: &mut [JoltTraceStep<Instructions>],
@@ -152,10 +156,13 @@ where
         let m = trace.len();
         let log_M = log2(M) as usize;
 
-        let mut chunks_x = vec![Rep3RingShare::zero_share(); C * m];
-        let mut chunks_y = vec![Rep3RingShare::zero_share(); C * m];
+        let mut chunks_x =
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
+        let mut chunks_y =
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
         let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m];
 
+        let id = io_ctx.party_id();
         trace
             .into_par_iter()
             .zip(chunks_x.par_chunks_mut(C))
@@ -163,11 +170,10 @@ where
             .zip(circuit_flags.par_iter_mut())
             .for_each(|(((step, chunks_x), chunks_y), circuit_flags)| {
                 if let Some(instr) = &step.instruction_lookup {
-                    let (x, y) = instr.operand_chunks_rep3(C, log_M);
+                    let (x, y) = instr.operand_chunks_rep3(C, log_M, id);
                     for i in 0..C {
-                        chunks_x[i] = x[i];
-
-                        chunks_y[i] = y[i];
+                        chunks_x[i] = FutureRep3Ring::cast_to_field_b2a(x[i]);
+                        chunks_y[i] = FutureRep3Ring::cast_to_field_b2a(y[i]);
                     }
                 }
 
@@ -178,27 +184,28 @@ where
                 }
             });
 
-        let chunks_x = transpose_par_from_flat(
-            io_ctx.par_chunks(chunks_x, None, |chunk, io_ctx| {
-                rep3_ring::casts::ring_to_field_many_selector(&chunk, io_ctx)
-            })?,
+        let _guard = tracing::trace_span!("cast_chunks_x").entered();
+        let chunks_x = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
+            chunks_x.fulfill_batched(io_ctx, |res, _: ()| res)?,
             m,
             C,
         )
         .into_iter()
         .map(Rep3MultilinearPolynomial::from)
         .collect();
+        drop(_guard);
 
-        let chunks_y = transpose_par_from_flat(
-            io_ctx.par_chunks(chunks_y, None, |chunk, io_ctx| {
-                rep3_ring::casts::ring_to_field_many_selector(&chunk, io_ctx)
-            })?,
+        let _guard = tracing::trace_span!("cast_chunks_y").entered();
+
+        let chunks_y = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
+            chunks_y.fulfill_batched(io_ctx, |res, _: ()| res)?,
             m,
             C,
         )
         .into_iter()
         .map(Rep3MultilinearPolynomial::from)
         .collect();
+        drop(_guard);
 
         let circuit_flags = transpose(circuit_flags)
             .into_iter()
@@ -217,10 +224,80 @@ where
     }
 
     fn combine_polynomials(
-        _preprocessing: &ConstantPreprocessing<C>,
-        _: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        todo!()
+        _: &ConstantPreprocessing<C>,
+        polynomials_shares: Vec<Self>,
+    ) -> Self::PublicPolynomials {
+        let [share1, share2, share3] = polynomials_shares
+            .try_into()
+            .map_err(|_| "expected 3 shares")
+            .unwrap();
+
+        let chunks_x = multizip((share1.chunks_x, share2.chunks_x, share3.chunks_x))
+            .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+            .collect_vec();
+
+        let chunks_y = multizip((share1.chunks_y, share2.chunks_y, share3.chunks_y))
+            .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+            .collect_vec();
+
+        let circuit_flags = share1.circuit_flags.map(|p| p.try_into().unwrap());
+
+        let mut aux = AuxVariableStuff::initialize(&C);
+
+        aux.left_lookup_operand = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.left_lookup_operand,
+            share2.aux.left_lookup_operand,
+            share3.aux.left_lookup_operand,
+        ]);
+        aux.right_lookup_operand = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.right_lookup_operand,
+            share2.aux.right_lookup_operand,
+            share3.aux.right_lookup_operand,
+        ]);
+        aux.product = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.product,
+            share2.aux.product,
+            share3.aux.product,
+        ]);
+        aux.relevant_y_chunks = multizip((
+            share1.aux.relevant_y_chunks,
+            share2.aux.relevant_y_chunks,
+            share3.aux.relevant_y_chunks,
+        ))
+        .map(|(p1, p2, p3)| Rep3MultilinearPolynomial::combine_shares(vec![p1, p2, p3]))
+        .collect_vec();
+        aux.write_lookup_output_to_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.write_lookup_output_to_rd,
+            share2.aux.write_lookup_output_to_rd,
+            share3.aux.write_lookup_output_to_rd,
+        ]);
+        aux.write_pc_to_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.write_pc_to_rd,
+            share2.aux.write_pc_to_rd,
+            share3.aux.write_pc_to_rd,
+        ]);
+        aux.next_pc_jump = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.next_pc_jump,
+            share2.aux.next_pc_jump,
+            share3.aux.next_pc_jump,
+        ]);
+        aux.should_branch = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.should_branch,
+            share2.aux.should_branch,
+            share3.aux.should_branch,
+        ]);
+        aux.next_pc = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.aux.next_pc,
+            share2.aux.next_pc,
+            share3.aux.next_pc,
+        ]);
+
+        Self::PublicPolynomials {
+            chunks_x,
+            chunks_y,
+            circuit_flags,
+            aux,
+        }
     }
 }
 

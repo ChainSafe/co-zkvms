@@ -7,10 +7,12 @@ use crate::{
     poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial},
     utils::{
         future_ring::{FutureRep3Ring, Rep3RingFutureExt},
+        transpose,
         types::Either,
     },
 };
 use ark_ff::Zero;
+use itertools::multizip;
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use jolt_core::jolt::vm::bytecode::{BytecodePolynomials, BytecodePreprocessing, BytecodeStuff};
 use jolt_tracer::{ELFInstruction, RV32IM};
@@ -19,7 +21,7 @@ use mpc_core::protocols::{
         network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker, WorkerIoContext},
         Rep3PrimeFieldShare,
     },
-    rep3_ring::Rep3RingShare,
+    rep3_ring::Rep3RingSignedShare,
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -83,11 +85,12 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         Ok(polys)
     }
 
+    #[tracing::instrument(skip_all, name = "Bytecode::generate_witness_rep3", level = "info")]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
-        M: usize,
+        _: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
@@ -144,10 +147,18 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
                 *rd = step.bytecode_row.rd;
                 *rs1 = step.bytecode_row.rs1;
                 *rs2 = step.bytecode_row.rs2;
-                *imm = FutureRep3Ring::cast_to_field_b2a(*step.bytecode_row.imm.as_shared())
+                *imm = match step.bytecode_row.imm {
+                    Either::Shared(imm) => FutureRep3Ring::cast_to_field_signed_b2a(imm),
+                    Either::Public(_) => {
+                        // zero pad
+                        FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share())
+                    }
+                };
             });
 
+        let _guard = tracing::trace_span!("cast_imm").entered();
         let imm: Vec<Rep3PrimeFieldShare<F>> = imm.fulfill_batched(io_ctx, |res, _: ()| res)?;
+        drop(_guard);
 
         let v_read_write = [
             Rep3MultilinearPolynomial::from(address),
@@ -172,10 +183,47 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
     }
 
     fn combine_polynomials(
-        preprocessing: &BytecodePreprocessing<F>,
+        _: &BytecodePreprocessing<F>,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        todo!()
+    ) -> Self::PublicPolynomials {
+        Self::PublicPolynomials {
+            a_read_write: polynomials_shares[0]
+                .a_read_write
+                .clone()
+                .try_into()
+                .unwrap(),
+            v_read_write: [
+                polynomials_shares[0].v_read_write[0]
+                    .clone()
+                    .try_into()
+                    .unwrap(),
+                polynomials_shares[0].v_read_write[1]
+                    .clone()
+                    .try_into()
+                    .unwrap(),
+                polynomials_shares[0].v_read_write[2]
+                    .clone()
+                    .try_into()
+                    .unwrap(),
+                polynomials_shares[0].v_read_write[3]
+                    .clone()
+                    .try_into()
+                    .unwrap(),
+                polynomials_shares[0].v_read_write[4]
+                    .clone()
+                    .try_into()
+                    .unwrap(),
+                Rep3MultilinearPolynomial::combine_shares(vec![
+                    polynomials_shares[0].v_read_write[5].clone(),
+                    polynomials_shares[1].v_read_write[5].clone(),
+                    polynomials_shares[2].v_read_write[5].clone(),
+                ]),
+            ],
+            t_read: polynomials_shares[0].t_read.clone().try_into().unwrap(),
+            t_final: polynomials_shares[0].t_final.clone().try_into().unwrap(),
+            a_init_final: None,
+            v_init_final: None,
+        }
     }
 }
 
@@ -192,7 +240,7 @@ pub struct BytecodeRow {
     /// Index of the second source register for this instruction (0 if register is unused).
     pub rs2: u8,
     /// "Immediate" value for this instruction (0 if unused).
-    pub imm: Either<i64, Rep3RingShare<u128>>,
+    pub imm: Either<i64, Rep3RingSignedShare<u64>>,
     /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,

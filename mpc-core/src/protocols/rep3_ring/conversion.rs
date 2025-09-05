@@ -482,27 +482,27 @@ pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
 
     match io_context.id {
         PartyID::ID0 => {
-            b0.par_iter_mut()
-                .zip_eq(b2.par_iter_mut())
-                .zip_eq(x.par_iter())
+            b0.iter_mut()
+                .zip_eq(&mut b2)
+                .zip_eq(x)
                 .for_each(|((b0, b2), x)| {
                     b0.a = F::from(x.a.0.convert() as u64);
                     b2.b = F::from(x.b.0.convert() as u64);
                 });
         }
         PartyID::ID1 => {
-            b1.par_iter_mut()
-                .zip_eq(b0.par_iter_mut())
-                .zip_eq(x.par_iter())
+            b1.iter_mut()
+                .zip_eq(&mut b0)
+                .zip_eq(x)
                 .for_each(|((b1, b0), x)| {
                     b1.a = F::from(x.a.0.convert() as u64);
                     b0.b = F::from(x.b.0.convert() as u64);
                 });
         }
         PartyID::ID2 => {
-            b2.par_iter_mut()
-                .zip_eq(b1.par_iter_mut())
-                .zip_eq(x.par_iter())
+            b2.iter_mut()
+                .zip_eq(&mut b1)
+                .zip_eq(x)
                 .for_each(|((b2, b1), x)| {
                     b2.a = F::from(x.a.0.convert() as u64);
                     b1.b = F::from(x.b.0.convert() as u64);

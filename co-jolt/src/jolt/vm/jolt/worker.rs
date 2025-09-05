@@ -124,18 +124,12 @@ where
                     io_ctx.worker(0),
                 )?;
 
-                // let program_io = Rep3ProgramIO::<F>::generate_witness_rep3(
-                //     &preprocessing.shared.read_write_memory,
-                //     program_io,
-                //     io_ctx.main(),
-                // )?;
-
                 let trace_length = trace.len();
                 let padded_trace_length = trace_length.next_power_of_two();
-                assert_eq!(
-                    polynomials.instruction_lookups.dim[0].len(),
-                    padded_trace_length
-                );
+                // assert_eq!(
+                //     polynomials.instruction_lookups.dim[0].len(),
+                //     padded_trace_length
+                // );
                 // assert_eq!(
                 //     polynomials.read_write_memory.a_ram.len(),
                 //     padded_trace_length
@@ -168,7 +162,7 @@ where
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
         if generate_witness {
-            // polynomials.compute_aux::<C, Constraints::Inputs>(&r1cs_builder);
+            r1cs_builder.compute_aux(&mut polynomials, io_ctx.worker(0))?;
         }
 
         Ok(Self {

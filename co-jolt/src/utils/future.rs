@@ -7,6 +7,7 @@ use mpc_core::protocols::rep3::{
 };
 
 use rayon::prelude::*;
+use tokio::io;
 
 #[derive(Debug, Clone)]
 pub enum FutureRep3<F: JoltField, T, Args = ()> {
@@ -97,6 +98,8 @@ where
         let (mut mul_x, mut mul_y, mut fut_muls, mut args_mul) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut b2a_x, mut fut_b2a, mut b2a_args) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut conds, mut truthy, mut falsy, mut fut_cmux, mut cmux_args) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
 
         self.into_iter()
             .zip_eq(fufilled.iter_mut())
@@ -111,6 +114,13 @@ where
                     b2a_x.push(x);
                     fut_b2a.push(fufilled);
                     b2a_args.push(args);
+                }
+                FutureRep3::Pending(FutureOp::Cmux(c, t, f), args) => {
+                    conds.push(c);
+                    truthy.push(t);
+                    falsy.push(f);
+                    fut_cmux.push(fufilled);
+                    cmux_args.push(args);
                 }
                 FutureRep3::Ready(x) => {
                     *fufilled = x;
@@ -146,6 +156,23 @@ where
                 .into_par_iter()
                 .zip_eq(c.into_par_iter())
                 .zip_eq(b2a_args)
+                .for_each(|((f, c), args)| {
+                    *f = map(c, args);
+                });
+        }
+
+        // Cmux
+        {
+            let c = if !conds.is_empty() {
+                rep3::arithmetic::cmux_many(&conds, &truthy, &falsy, io_ctx)?
+            } else {
+                vec![]
+            };
+
+            fut_cmux
+                .into_par_iter()
+                .zip_eq(c.into_par_iter())
+                .zip_eq(cmux_args)
                 .for_each(|((f, c), args)| {
                     *f = map(c, args);
                 });

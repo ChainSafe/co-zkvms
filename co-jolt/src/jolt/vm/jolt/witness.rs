@@ -68,7 +68,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     fn combine_polynomials(
         preprocessing: &Preprocessing,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials>;
+    ) -> Self::PublicPolynomials;
 }
 
 impl<F: JoltField, const C: usize, PCS, ProofTranscript>
@@ -214,27 +214,48 @@ where
     fn combine_polynomials(
         preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        let instructions_shares: Vec<_> = polynomials_shares
+    ) -> Self::PublicPolynomials {
+        let (instructions_shares, r1cs, read_write_memory, bytecode): (
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+            Vec<_>,
+        ) = polynomials_shares
             .into_iter()
             .map(|p| {
                 let Rep3JoltPolynomials {
                     instruction_lookups,
+                    bytecode,
+                    read_write_memory,
+                    r1cs,
                     ..
                 } = p;
-                instruction_lookups
+                (instruction_lookups, r1cs, read_write_memory, bytecode)
             })
-            .collect();
+            .multiunzip();
 
-        let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
-            &preprocessing.instruction_lookups,
-            instructions_shares,
-        )?;
+        // let instruction_lookups = Rep3InstructionLookupPolynomials::combine_polynomials(
+        //     &preprocessing.instruction_lookups,
+        //     instructions_shares,
+        // )?;
 
-        Ok(JoltPolynomials {
-            instruction_lookups,
+        let r1cs = Rep3R1CSPolynomials::combine_polynomials(&ConstantPreprocessing::<C>, r1cs);
+
+        let read_write_memory = Rep3ReadWriteMemoryPolynomials::combine_polynomials(
+            &preprocessing.read_write_memory,
+            read_write_memory,
+        );
+
+        let bytecode =
+            Rep3BytecodePolynomials::combine_polynomials(&preprocessing.bytecode, bytecode);
+
+        JoltPolynomials {
+            // instruction_lookups,
+            r1cs,
+            read_write_memory,
+            bytecode,
             ..Default::default()
-        })
+        }
     }
 }
 pub trait Rep3JoltPolynomialsExt<F: JoltField> {

@@ -12,7 +12,7 @@ use ark_ff::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
-        Rep3RingShare,
+        Rep3RingShare, Rep3RingSignedShare,
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
     },
 };
@@ -316,4 +316,28 @@ where
         .collect::<Vec<_>>();
 
     rep3::conversion::b2a_many(&biguint_shares, io_context)
+}
+
+/// A cast of a Rep3RingShare to a Rep3PrimeFieldShare
+#[tracing::instrument(skip_all, level = "trace")]
+pub fn signed_binary_ring_to_field_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    singed: Vec<Rep3RingSignedShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> std::io::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    Standard: Distribution<T>,
+{
+    let (binary, signs): (Vec<_>, Vec<_>) = singed
+        .into_iter()
+        .map(|Rep3RingSignedShare { abs, sign }| (abs, sign))
+        .unzip();
+
+    let positive = binary_ring_to_field_many(&binary, io_context)?;
+    let negative = positive
+        .iter()
+        .map(|x| rep3::arithmetic::neg(*x))
+        .collect::<Vec<_>>();
+    let signs = conversion::bit_inject_from_bits_to_field_many(&signs, io_context)?;
+
+    rep3::arithmetic::cmux_many::<F, N>(&signs, &positive, &negative, io_context)
 }

@@ -83,7 +83,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
         }
     }
 
-    fn pad(trace: &mut Vec<Self>) {
+    pub fn pad(trace: &mut Vec<Self>) {
         let unpadded_length = trace.len();
         let padded_length = unpadded_length.next_power_of_two();
         trace.resize(padded_length, Self::no_op());

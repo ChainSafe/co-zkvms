@@ -8,9 +8,10 @@ use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::transpose;
+use crate::utils::types::Either;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::izip;
-use jolt_common::constants::REGISTER_COUNT;
+use itertools::{izip, multizip};
+use jolt_common::constants::{MEMORY_OPS_PER_INSTRUCTION, REGISTER_COUNT};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, remap_address, ReadWriteMemoryPolynomials,
@@ -136,11 +137,16 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         Ok(partial)
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "ReadWriteMemory::generate_witness_rep3",
+        level = "info"
+    )]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &ReadWriteMemoryPreprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
-        M: usize,
+        _: usize,
         io_ctx: &mut WorkerIoContext<Network>,
     ) -> eyre::Result<Self>
     where
@@ -157,15 +163,19 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             preprocessing.min_bytecode_address,
             &program_io.memory_layout,
         );
-        let v_inputs_index = v_init_index + preprocessing.bytecode_words.len();
-        let party_id = io_ctx.party_id();
-        v_init[v_init_index..v_inputs_index]
+        let v_inputs_range = v_init_index..v_init_index + preprocessing.bytecode_words.len();
+        let id = io_ctx.party_id();
+        v_init[v_inputs_range]
             .par_iter_mut()
             .zip_eq(&preprocessing.bytecode_words)
             .for_each(|(v_init, word)| {
-                *v_init = rep3::arithmetic::promote_to_trivial_share(party_id, F::from_u32(*word))
+                *v_init = rep3::arithmetic::promote_to_trivial_share(id, F::from_u32(*word))
             });
-        // Copy input bytes
+        let v_inputs_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        );
+        // Copy input words
         let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
         v_init[v_inputs_range.clone()]
             .par_iter_mut()
@@ -190,24 +200,59 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         let mut v_write_ram: Vec<_> = Vec::with_capacity(m);
 
         let mut t_final = vec![0; memory_size];
-        let mut v_final = v_init
-            .par_iter()
-            .copied()
-            .map(FutureRep3Ring::<u64, Rep3PrimeFieldShare<F>>::Ready)
-            .collect::<Vec<_>>();
+        let mut v_final = v_init.clone();
 
-        let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
-        let _enter = span.enter();
+        let mut write_vals_f = vec![
+            (
+                Rep3PrimeFieldShare::<F>::zero_share(), // RD
+                Rep3PrimeFieldShare::<F>::zero_share()  // RAM
+            );
+            m
+        ];
 
-        for (i, step) in trace.iter().enumerate() {
+        let (write_vals_ring, write_refs): (Vec<_>, Vec<_>) = trace
+            .par_iter_mut()
+            .zip_eq(write_vals_f.par_iter_mut())
+            .flat_map(|(step, ops_f)| {
+                let mut new_vals = vec![];
+                let mut mut_refs = vec![];
+
+                if let MemoryOp::Write(_, Either::Shared(v_new)) = step.memory_ops[RD] {
+                    new_vals.push(v_new);
+                    mut_refs.push(&mut ops_f.0);
+                }
+
+                if let MemoryOp::Write(_, Either::Shared(v_new)) = step.memory_ops[RAM] {
+                    new_vals.push(v_new);
+                    mut_refs.push(&mut ops_f.1);
+                }
+
+                (new_vals, mut_refs)
+            })
+            .unzip();
+
+        let _guard = tracing::trace_span!("cast_writes").entered();
+        io_ctx
+            .par_chunks(write_vals_ring, None, |chunk, io_ctx| {
+                rep3_ring::casts::binary_ring_to_field_many(&chunk, io_ctx)
+            })?
+            .into_par_iter()
+            .zip_eq(write_refs)
+            .for_each(|(new_val, write)| {
+                *write = new_val;
+            });
+        drop(_guard);
+
+        for (i, (step, writes)) in trace.iter().zip(write_vals_f).enumerate() {
             let timestamp = i as u32;
 
             match step.memory_ops[RS1] {
                 MemoryOp::Read(a) => {
                     assert!(a < REGISTER_COUNT);
                     let a = a as usize;
+                    let v = v_final[a];
 
-                    v_read_rs1.push(a);
+                    v_read_rs1.push(v);
                     t_read_rs1.push(t_final[a]);
                     t_final[a] = timestamp;
                 }
@@ -220,8 +265,9 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
                 MemoryOp::Read(a) => {
                     assert!(a < REGISTER_COUNT);
                     let a = a as usize;
+                    let v = v_final[a];
 
-                    v_read_rs2.push(a);
+                    v_read_rs2.push(v);
                     t_read_rs2.push(t_final[a]);
                     t_final[a] = timestamp;
                 }
@@ -237,11 +283,16 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
                 MemoryOp::Write(a, v_new) => {
                     assert!(a < REGISTER_COUNT);
                     let a = a as usize;
+                    let v_old = v_final[a];
+                    let v_new = match v_new {
+                        Either::Public(_) => Rep3PrimeFieldShare::<F>::zero_share(), // zero pad
+                        Either::Shared(_) => writes.0,
+                    };
 
-                    v_read_rd.push(a);
+                    v_read_rd.push(v_old);
                     t_read_rd.push(t_final[a]);
-                    v_final[a] = FutureRep3Ring::cast_to_field_b2a(*v_new.as_shared());
-                    v_write_rd.push(a);
+                    v_final[a] = v_new;
+                    v_write_rd.push(v_new);
                     t_final[a] = timestamp;
                 }
             };
@@ -250,51 +301,32 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
                 MemoryOp::Read(a) => {
                     debug_assert!(a % 4 == 0);
                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v = v_final[remapped_a];
 
                     a_ram.push(remapped_a as u32);
-                    v_read_ram.push(remapped_a);
+                    v_read_ram.push(v);
                     t_read_ram.push(t_final[remapped_a]);
-                    v_write_ram.push(remapped_a);
+                    v_write_ram.push(v);
                     t_final[remapped_a] = timestamp;
                 }
                 MemoryOp::Write(a, v_new) => {
                     debug_assert!(a % 4 == 0);
                     let remapped_a = remap_address(a, &program_io.memory_layout) as usize;
+                    let v_old = v_final[remapped_a];
+                    let v_new = match v_new {
+                        Either::Public(_) => Rep3PrimeFieldShare::<F>::zero_share(), // zero pad
+                        Either::Shared(_) => writes.1,
+                    };
+
                     a_ram.push(remapped_a as u32);
-                    v_read_ram.push(remapped_a);
+                    v_read_ram.push(v_old);
                     t_read_ram.push(t_final[remapped_a]);
-                    v_final[remapped_a] = FutureRep3Ring::cast_to_field_b2a(*v_new.as_shared());
-                    v_write_ram.push(remapped_a);
+                    v_final[remapped_a] = v_new;
+                    v_write_ram.push(v_new);
                     t_final[remapped_a] = timestamp;
                 }
             }
         }
-
-        let v_final = v_final.fulfill_batched(io_ctx, |res, _| res)?;
-        let v_read_rd = v_read_rd
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
-        let v_read_rs1 = v_read_rs1
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
-        let v_read_rs2 = v_read_rs2
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
-        let v_read_ram = v_read_ram
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
-        let v_write_ram = v_write_ram
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
-        let v_write_rd = v_write_rd
-            .into_par_iter()
-            .map(|addr| v_final[addr])
-            .collect::<Vec<_>>();
 
         let [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram, t_final] =
             map_to_polys_public([
@@ -334,10 +366,80 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
     }
 
     fn combine_polynomials(
-        preprocessing: &ReadWriteMemoryPreprocessing,
+        _: &ReadWriteMemoryPreprocessing,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
-        todo!()
+    ) -> Self::PublicPolynomials {
+        let [share1, share2, share3] = polynomials_shares
+            .try_into()
+            .map_err(|_| "Expected 3 shares".to_string())
+            .unwrap();
+
+        let v_final = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_final,
+            share2.v_final,
+            share3.v_final,
+        ]);
+
+        let v_read_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_read_rd,
+            share2.v_read_rd,
+            share3.v_read_rd,
+        ]);
+
+        let v_read_rs1 = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_read_rs1,
+            share2.v_read_rs1,
+            share3.v_read_rs1,
+        ]);
+
+        let v_read_rs2 = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_read_rs2,
+            share2.v_read_rs2,
+            share3.v_read_rs2,
+        ]);
+
+        let v_read_ram = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_read_ram,
+            share2.v_read_ram,
+            share3.v_read_ram,
+        ]);
+
+        let v_write_rd = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_write_rd,
+            share2.v_write_rd,
+            share3.v_write_rd,
+        ]);
+
+        let v_write_ram = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_write_ram,
+            share2.v_write_ram,
+            share3.v_write_ram,
+        ]);
+
+        let v_init = Rep3MultilinearPolynomial::combine_shares(vec![
+            share1.v_init.unwrap(),
+            share2.v_init.unwrap(),
+            share3.v_init.unwrap(),
+        ]);
+
+        Self::PublicPolynomials {
+            a_ram: share1.a_ram.try_into().unwrap(),
+            v_read_rd,
+            v_read_rs1,
+            v_read_rs2,
+            v_read_ram,
+            v_write_rd,
+            v_write_ram,
+            v_final,
+            t_read_rd: share1.t_read_rd.try_into().unwrap(),
+            t_read_rs1: share1.t_read_rs1.try_into().unwrap(),
+            t_read_rs2: share1.t_read_rs2.try_into().unwrap(),
+            t_read_ram: share1.t_read_ram.try_into().unwrap(),
+            t_final: share1.t_final.try_into().unwrap(),
+            v_init: Some(v_init),
+            a_init_final: None,
+            identity: None,
+        }
     }
 }
 
@@ -406,6 +508,7 @@ impl Rep3ProgramIOInput {
 }
 
 impl<F: JoltField> Rep3ProgramIO<F> {
+    #[tracing::instrument(skip_all, name = "ProgramIO::generate_witness_rep3")]
     pub fn generate_witness_rep3<Network, Instruction>(
         program_io: Rep3ProgramIOInput,
         trace: &[JoltTraceStep<Instruction>],
@@ -435,8 +538,8 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             .unwrap();
 
         let memory_size = max_trace_address.next_power_of_two() as usize;
-        let input_words_len = inputs.len() / 4;
-        let output_words_len = outputs.len() / 4;
+        let input_words_len = inputs.len().div_ceil(4);
+        let output_words_len = outputs.len().div_ceil(4);
 
         // Convert input bytes into words and populate `v_io`
         let input_words = inputs

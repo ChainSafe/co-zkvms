@@ -306,6 +306,25 @@ pub fn cmux_vec<F: PrimeField, N: Rep3Network>(
     reshare_vec(result_a, io_context)
 }
 
+/// Implementations should not overwrite this method.
+pub fn cmux_many<F: PrimeField, N: Rep3Network>(
+    cond: &[FieldShare<F>],
+    truthy: &[FieldShare<F>],
+    falsy: &[FieldShare<F>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<FieldShare<F>>> {
+    debug_assert_eq!(truthy.len(), falsy.len());
+    let result_a = truthy
+        .iter()
+        .zip(falsy.iter())
+        .zip(cond.iter())
+        .map(|((t, f), c)| {
+            ((*t - *f) * *c).into_fe() + f.a + io_context.rngs.rand.masking_field_element::<F>()
+        })
+        .collect_vec();
+    reshare_vec(result_a, io_context)
+}
+
 /// Convenience method for \[a\] + \[b\] * c
 pub fn add_mul_public<F: PrimeField>(a: FieldShare<F>, b: FieldShare<F>, c: F) -> FieldShare<F> {
     a + mul_public(b, c)

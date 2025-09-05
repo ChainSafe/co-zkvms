@@ -36,6 +36,7 @@ use crate::{
         trace::mem_op::MemoryOp,
         vm::{bytecode::witness::BytecodeRow, read_write_memory::witness::Rep3ProgramIOInput},
     },
+    utils::types::Either,
 };
 use crate::{
     jolt::{
@@ -332,13 +333,35 @@ impl Program {
                         }
                     }
 
-                    izip!(instruction_shares, memory_ops_shares)
-                        .map(|(instruction_lookup, memory_ops)| JoltTraceStep {
-                            instruction_lookup,
-                            bytecode_row: row.bytecode_row.clone(),
-                            memory_ops,
-                            circuit_flags: row.circuit_flags.clone(),
-                        })
+                    // if row.bytecode_row.imm.as_public().is_negative() {
+                    //     println!(
+                    //         "{} -> {}",
+                    //         row.bytecode_row.imm.as_public(),
+                    //         *row.bytecode_row.imm.as_public() as u64
+                    //     )
+                    // }
+
+                    let mut bytecode_row_shares =
+                        iter::repeat_n(row.bytecode_row.clone(), 3).collect_vec();
+                    rep3_ring::binary::generate_signed_shares_rep3(
+                        *row.bytecode_row.imm.as_public(),
+                        rng,
+                    )
+                    .into_iter()
+                    .zip(bytecode_row_shares.iter_mut())
+                    .for_each(|(imm, row)| {
+                        row.imm = Either::Shared(imm);
+                    });
+
+                    izip!(instruction_shares, memory_ops_shares, bytecode_row_shares)
+                        .map(
+                            |(instruction_lookup, memory_ops, bytecode_row)| JoltTraceStep {
+                                instruction_lookup,
+                                bytecode_row,
+                                memory_ops,
+                                circuit_flags: row.circuit_flags.clone(),
+                            },
+                        )
                         .collect()
                 },
             )

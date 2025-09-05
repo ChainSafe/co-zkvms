@@ -43,17 +43,14 @@ use rand::Rng;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use tokio::io;
 
 use crate::jolt::{
-    instruction::{JoltInstructionSet, Rep3JoltInstructionSet},
+    instruction::Rep3JoltInstructionSet,
     vm::{
         instruction_lookups::InstructionLookupsPreprocessing, witness::Rep3Polynomials,
         JoltTraceStep,
     },
 };
-
-const _M: usize = 1 << 16;
 
 pub type Rep3InstructionLookupPolynomials<F> = InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
@@ -64,7 +61,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
     // type Commitments = InstructionLookupCommitments<PCS, ProofTranscript>;
 
-    #[tracing::instrument(skip_all, name = "InstructionLookupsProof::generate_witness_rep3")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         trace: &mut [JoltTraceStep<Instructions>],
@@ -313,36 +310,36 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
     fn combine_polynomials(
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<InstructionLookupPolynomials<F>> {
+    ) -> InstructionLookupPolynomials<F> {
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dim = multizip((share1.dim, share2.dim, share3.dim))
             .map(|(dim1, dim2, dim3)| {
-                Rep3MultilinearPolynomial::try_combine_shares(vec![dim1, dim2, dim3])
+                Rep3MultilinearPolynomial::combine_shares(vec![dim1, dim2, dim3])
             })
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .collect_vec();
 
         let read_cts = multizip((share1.read_cts, share2.read_cts, share3.read_cts))
             .map(|(read1, read2, read3)| {
-                Rep3MultilinearPolynomial::try_combine_shares(vec![read1, read2, read3])
+                Rep3MultilinearPolynomial::combine_shares(vec![read1, read2, read3])
             })
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .collect_vec();
 
         let final_cts = multizip((share1.final_cts, share2.final_cts, share3.final_cts))
             .map(|(final1, final2, final3)| {
-                Rep3MultilinearPolynomial::try_combine_shares(vec![final1, final2, final3])
+                Rep3MultilinearPolynomial::combine_shares(vec![final1, final2, final3])
             })
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .collect_vec();
 
         let e_polys = multizip((share1.E_polys, share2.E_polys, share3.E_polys))
-            .map(|(e1, e2, e3)| Rep3MultilinearPolynomial::try_combine_shares(vec![e1, e2, e3]))
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .map(|(e1, e2, e3)| Rep3MultilinearPolynomial::combine_shares(vec![e1, e2, e3]))
+            .collect_vec();
 
         let lookup_outputs = MultilinearPolynomial::from(
             combine_poly_shares_rep3(vec![
-                share1.lookup_outputs.try_into()?,
-                share2.lookup_outputs.try_into()?,
-                share3.lookup_outputs.try_into()?,
+                share1.lookup_outputs.try_into().unwrap(),
+                share2.lookup_outputs.try_into().unwrap(),
+                share3.lookup_outputs.try_into().unwrap(),
             ])
             .evals()
             .into_iter()
@@ -353,10 +350,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let instruction_flags = share1
             .instruction_flags
             .into_iter()
-            .map(|p| p.try_into())
-            .collect::<eyre::Result<Vec<_>>>()?;
+            .map(|p| p.try_into().unwrap())
+            .collect::<Vec<_>>();
 
-        Ok(InstructionLookupPolynomials {
+        InstructionLookupPolynomials {
             dim,
             read_cts,
             final_cts,
@@ -365,7 +362,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             lookup_outputs,
             a_init_final: None,
             v_init_final: None,
-        })
+        }
     }
 
     #[tracing::instrument(

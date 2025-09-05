@@ -95,7 +95,7 @@ impl<T: IntRing2k> Rep3RingShare<T> {
 
     /// Converts a vector of bits in little-endian order to a share.
     pub fn from_le_bytes(bytes: &[Rep3RingShare<u8>]) -> Self {
-        assert_eq!(bytes.len(), T::K / 8);
+        assert!(bytes.len() <= T::K / 8);
 
         // let mut acc = Self::zero_share();
         // let mut i = 0;
@@ -122,5 +122,19 @@ impl<T: IntRing2k> Rep3RingShare<T> {
 impl<T: IntRing2k> AsRef<Rep3RingShare<T>> for Rep3RingShare<T> {
     fn as_ref(&self) -> &Self {
         self
+    }
+}
+
+/// This type represents a replicated shared value. Since a replicated share of a ring element contains additive shares of two parties, this type contains two ring elements.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Rep3RingSignedShare<T: IntRing2k> {
+    pub abs: Rep3RingShare<T>,
+    pub sign: Rep3RingShare<Bit>,
+}
+
+impl<T: IntRing2k> Rep3RingSignedShare<T> {
+    pub fn new(abs: Rep3RingShare<T>, sign: Rep3RingShare<Bit>) -> Self {
+        Self { abs, sign }
     }
 }

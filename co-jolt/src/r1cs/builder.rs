@@ -48,6 +48,7 @@ impl<F: JoltField> AuxComputation<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, level = "trace")]
     fn compute_aux_poly_fut<const C: usize, I: ConstraintInput>(
         &self,
         jolt_polynomials: &Rep3JoltPolynomials<F>,

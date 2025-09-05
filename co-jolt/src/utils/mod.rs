@@ -1,8 +1,8 @@
 pub mod future;
 pub mod future_ring;
 pub mod instruction_utils;
-pub mod types;
 pub mod transcript;
+pub mod types;
 
 use std::collections::HashMap;
 

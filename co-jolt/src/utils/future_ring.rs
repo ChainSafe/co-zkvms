@@ -8,7 +8,7 @@ use mpc_core::protocols::{
     rep3_ring::{
         self,
         ring::{bit::Bit, int_ring::IntRing2k},
-        Rep3RingShare,
+        Rep3RingShare, Rep3RingSignedShare,
     },
 };
 
@@ -27,6 +27,7 @@ pub enum FutureOp<R: IntRing2k> {
     BitInject(Rep3RingShare<Bit>),
     CastToField(Rep3RingShare<R>),
     CastToFieldB2A(Rep3RingShare<R>),
+    CastToFieldSigned(Rep3RingSignedShare<R>),
 
     // Out: Rep3RingShare<R>
     RingMulA2B(Rep3RingShare<R>, Rep3RingShare<R>), // TODO: make recursive
@@ -44,6 +45,10 @@ impl<R: IntRing2k, T, Args: Default> FutureRep3Ring<R, T, Args> {
 
     pub fn cast_to_field_b2a(a: Rep3RingShare<R>) -> Self {
         FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(a), Default::default())
+    }
+
+    pub fn cast_to_field_signed_b2a(a: Rep3RingSignedShare<R>) -> Self {
+        FutureRep3Ring::Pending(FutureOp::CastToFieldSigned(a), Default::default())
     }
 
     pub fn bit_inject_to_field(a: Rep3RingShare<Bit>) -> Self {
@@ -104,6 +109,8 @@ where
         let (mut cast_x, mut fut_cast, mut cast_args) = (Vec::new(), Vec::new(), Vec::new());
         let (mut cast_b2a_x, mut fut_cast_b2a, mut cast_b2a_args) =
             (Vec::new(), Vec::new(), Vec::new());
+        let (mut cast_signed_x, mut fut_cast_signed, mut cast_signed_args) =
+            (Vec::new(), Vec::new(), Vec::new());
         let (mut fut_fulfilled, mut fulfilled_index) = (Vec::new(), Vec::new());
 
         self.into_iter()
@@ -123,6 +130,11 @@ where
                     cast_b2a_x.push(x);
                     fut_cast_b2a.push(fufilled);
                     cast_b2a_args.push(args);
+                }
+                FutureRep3Ring::Pending(FutureOp::CastToFieldSigned(x), args) => {
+                    cast_signed_x.push(x);
+                    fut_cast_signed.push(fufilled);
+                    cast_signed_args.push(args);
                 }
                 FutureRep3Ring::Pending(FutureOp::Fulfilled, args) => {
                     fut_fulfilled.push(fufilled);
@@ -186,6 +198,25 @@ where
                 .into_par_iter()
                 .zip_eq(shares.into_par_iter())
                 .zip_eq(cast_b2a_args)
+                .for_each(|((f, c), args)| {
+                    *f = map(c, args);
+                });
+        }
+
+        // Cast B2A Signed
+        {
+            let shares = if !cast_signed_x.is_empty() {
+                io_ctx.par_chunks(cast_signed_x, None, |chunk, io_ctx| {
+                    rep3_ring::casts::signed_binary_ring_to_field_many(chunk, io_ctx)
+                })?
+            } else {
+                vec![]
+            };
+
+            fut_cast_signed
+                .into_par_iter()
+                .zip_eq(shares.into_par_iter())
+                .zip_eq(cast_signed_args)
                 .for_each(|((f, c), args)| {
                     *f = map(c, args);
                 });

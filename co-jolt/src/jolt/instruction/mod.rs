@@ -22,9 +22,12 @@ use mpc_core::protocols::{
 };
 use num_traits::AsPrimitive;
 use rand::rngs::StdRng;
+use rand_chacha::rand_core::le;
 use serde::{Deserialize, Serialize};
+use std::any::type_name_of_val;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::panic;
 use strum::{EnumCount, IntoEnumIterator};
 
 pub use jolt_core::jolt::instruction::SubtableIndices;
@@ -145,6 +148,7 @@ pub trait Rep3JoltInstruction: JoltInstruction {
         &self,
         C: usize,
         log_M: usize,
+        party_id: PartyID,
     ) -> (Vec<Rep3RingShare<u8>>, Vec<Rep3RingShare<u8>>) {
         assert!(
             log_M % 2 == 0,
@@ -152,8 +156,8 @@ pub trait Rep3JoltInstruction: JoltInstruction {
         );
         let (x, y) = self.operands_rep3();
         (
-            rep3_chunk_operand(x.as_arithmetic(), C, log_M / 2),
-            rep3_chunk_operand(y.as_arithmetic(), C, log_M / 2),
+            rep3_chunk_operand(x.as_binary_or_trivial(party_id), C, log_M / 2),
+            rep3_chunk_operand(y.as_binary_or_trivial(party_id), C, log_M / 2),
         )
     }
 }
@@ -368,6 +372,15 @@ impl Rep3Operand {
         match self {
             Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),
+        }
+    }
+
+    pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<u32> {
+        match *self {
+            Rep3Operand::Shared { binary, .. } => binary,
+            Rep3Operand::Public(value) => {
+                rep3_ring::binary::promote_to_trivial_share(id, &(value as u32).into())
+            }
         }
     }
 }

@@ -40,6 +40,12 @@ impl MemoryOp {
     }
 }
 
+impl Default for MemoryOp {
+    fn default() -> Self {
+        Self::noop_read()
+    }
+}
+
 impl From<jolt_common::rv_trace::MemoryOp> for MemoryOp {
     fn from(row: jolt_common::rv_trace::MemoryOp) -> Self {
         match row {

@@ -96,7 +96,7 @@ impl<F: JoltField> Rep3Polynomials<F, NoPreprocessing> for Rep3TimestampRangeChe
     fn combine_polynomials(
         preprocessing: &NoPreprocessing,
         polynomials_shares: Vec<Self>,
-    ) -> eyre::Result<Self::PublicPolynomials> {
+    ) -> Self::PublicPolynomials {
         unimplemented!()
     }
 }

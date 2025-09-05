@@ -109,14 +109,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn try_combine_shares(polys: Vec<Self>) -> Result<MultilinearPolynomial<F>, eyre::Error> {
+    pub fn combine_shares(polys: Vec<Self>) -> MultilinearPolynomial<F> {
         let [s0, s1, s2] = polys.try_into().unwrap();
         let a = rep3::combine_field_elements::<F>(
             s0.as_shared().coeffs_ref(),
             s1.as_shared().coeffs_ref(),
             s2.as_shared().coeffs_ref(),
         );
-        Ok(MultilinearPolynomial::from(a))
+        MultilinearPolynomial::from(a)
     }
 
     pub fn dot_product_with_public(&self, other: &[F]) -> Rep3Value<F> {
