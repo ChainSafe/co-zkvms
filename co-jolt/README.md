@@ -26,9 +26,14 @@ bash ./examples/run_3_party_jolt.sh
 - coordinator — m7i.2xlarge, 8 vCPUs 32 GiB RAM
 - program: [SHA2 chain (100-300 iterations)](https://github.com/nulltea/co-zkvms/blob/dc2b785b3d3a4873f36215e6e272665199bba885/co-jolt/examples/sha3-chain/guest/src/lib.rs#L6)
 
-### Worker time — Per module / Core operations
+### Prover — Per module / Core operations
 
-<img width="4746" height="1409" alt="image" src="https://github.com/user-attachments/assets/b76a423e-d5fe-4cee-83c3-c4e45f4e421e" />
+<img width="4899" height="1424" alt="image" src="https://github.com/user-attachments/assets/be8ad8e7-9604-4bb9-8442-e5b66862f370" />
+
+### Witness generation
+
+<img width="4645" height="1329" alt="image" src="https://github.com/user-attachments/assets/6642ea08-5f1d-4b73-b0f7-066831f17f1f" />
+
 
 ## Acknowledgements
 
