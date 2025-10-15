@@ -41,8 +41,8 @@ use mpc_core::protocols::rep3::{
 use mpc_net::config::NetworkConfig;
 use mpc_net::rep3::PartyWorkerID;
 use mpc_net::{
-    mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
+    topology::{MpcStarNetCoordinator, MpcStarNetWorker},
 };
 use noir_r1cs::NoirProofScheme;
 use rand::RngCore;

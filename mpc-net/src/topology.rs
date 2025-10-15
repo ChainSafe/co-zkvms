@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
+use serde::{de::DeserializeOwned, Serialize};
 
 pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self)
@@ -67,4 +68,10 @@ pub trait MpcStarNetWorker: Sized + Clone {
     fn fork(&self) -> Self;
     fn fork_with_coordinator(&mut self) -> Result<Self>;
     fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>>;
+}
+
+pub trait MpcRingNetWorkerExt: Sized + Clone {
+    fn send_next_link_serde<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
+
+    fn resv_prev_link_serde<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
 }

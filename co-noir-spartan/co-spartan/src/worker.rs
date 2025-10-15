@@ -21,7 +21,7 @@ use color_eyre::eyre::Result;
 use mpc_core::protocols::rep3::{
     arithmetic::Rep3PrimeFieldShare, poly::Rep3DensePolynomial, rngs::SSRandom,
 };
-use mpc_net::mpc_star::MpcStarNetWorker;
+use mpc_net::topology::MpcStarNetWorker;
 use rand::RngCore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -206,7 +206,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
         let num_variables = pk.ipk.padded_num_var;
 
         let eq_func = partial_generate_eq(&v_msg, self.start_eq, self.log_chunk_size);
-        
+
         let final_point = rep3_first_sumcheck_worker(
             &witness_share.za,
             &witness_share.zb,
@@ -699,7 +699,10 @@ pub fn distributed_sumcheck_worker<F: Field, N: MpcStarNetWorker>(
     let mut verifier_msg = None;
     let mut final_point = Vec::new();
 
-    tracing::info!("distributed_q_polys: {:?}", distributed_q_polys.num_variables);
+    tracing::info!(
+        "distributed_q_polys: {:?}",
+        distributed_q_polys.num_variables
+    );
     for _round in 0..distributed_q_polys.num_variables {
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
         network

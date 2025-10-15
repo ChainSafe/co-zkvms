@@ -10,7 +10,7 @@ pub mod quic;
 
 pub type WorkerID = usize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
 pub struct PartyWorkerID(PartyID, WorkerID);
 
 impl PartyWorkerID {

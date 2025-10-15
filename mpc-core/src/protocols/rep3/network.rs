@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock, mpsc};
 use std::{iter, thread};
 
 use itertools::Itertools;
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
@@ -468,6 +468,8 @@ impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
     }
 }
 
+use mpc_net::topology::MpcRingNetWorkerExt;
+
 pub struct IoContextPool<Network: Rep3NetworkWorker> {
     pub worker_id: usize,
     main: IoContext<Network>,
@@ -479,7 +481,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
         let worker_id = network.worker_idx();
         let num_workers = 1 << network.log_num_workers_per_party();
-        let mut main = IoContext::init(network)?;
+        let main = IoContext::init(network)?;
 
         let forks = iter::repeat_with(|| main.fork())
             .take(num_forks as usize)

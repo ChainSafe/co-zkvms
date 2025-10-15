@@ -26,7 +26,7 @@ use ark_std::{
 };
 use color_eyre::eyre::Context;
 use color_eyre::eyre::Result;
-use mpc_net::mpc_star::MpcStarNetCoordinator;
+use mpc_net::topology::MpcStarNetCoordinator;
 use snarks_core::{
     math::Math,
     poly::commitment::{aggregate_proof, combine_comm, merge_proof},
@@ -42,8 +42,8 @@ use spartan::{
 
 use crate::{
     sumcheck::{
-        default_sumcheck_poly_list, merge_list_of_distributed_poly,
-        ProverFirstMsg, ProverSecondMsg, Rep3SumcheckProverMsg,
+        default_sumcheck_poly_list, merge_list_of_distributed_poly, ProverFirstMsg,
+        ProverSecondMsg, Rep3SumcheckProverMsg,
     },
     worker::PartialProof,
 };
@@ -548,8 +548,13 @@ impl<E: Pairing, N: MpcStarNetCoordinator> SpartanProverCoordinator<E, N> {
             num_variables: q_num_vars,
         };
 
-        let (prover_msgs, final_point, time) =
-            distributed_sumcheck_coordinator(&poly_info, &q_polys, network, transcript, log_num_pub_workers)?;
+        let (prover_msgs, final_point, time) = distributed_sumcheck_coordinator(
+            &poly_info,
+            &q_polys,
+            network,
+            transcript,
+            log_num_pub_workers,
+        )?;
 
         state.time_elapsed += time;
         let eta: E::ScalarField = transcript.challenge_scalar(b"eta");

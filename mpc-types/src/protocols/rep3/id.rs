@@ -5,7 +5,7 @@
 use std::error::Error;
 
 /// An enum representing the party ID
-#[derive(std::cmp::Eq, std::cmp::PartialEq, Clone, Copy, Debug)]
+#[derive(std::cmp::Eq, std::cmp::PartialEq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum PartyID {
     /// Party 0
     ID0 = 0,

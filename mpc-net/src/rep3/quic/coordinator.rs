@@ -20,7 +20,7 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 use rayon::prelude::*;
 
 use crate::{
-    channel::ChannelHandle, config::NetworkConfig, mpc_star::MpcStarNetCoordinator,
+    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetCoordinator,
     MpcNetworkHandlerWrapperMut, Result,
 };
 

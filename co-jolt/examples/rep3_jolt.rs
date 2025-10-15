@@ -31,11 +31,11 @@ use jolt_core::jolt::vm::JoltProverPreprocessing;
 
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
-    mpc_star::MpcStarNetWorker,
+    topology::MpcStarNetWorker,
 };
 use mpc_net::{
-    mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
+    topology::MpcStarNetCoordinator,
 };
 
 use std::path::{Path, PathBuf};

@@ -19,6 +19,7 @@ use mpc_core::protocols::rep3::{
     network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
 };
+use mpc_net::topology::MpcRingNetWorkerExt;
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
@@ -82,7 +83,7 @@ where
     Constraints: R1CSConstraints<C, F>,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    Network: Rep3NetworkWorker,
+    Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
 {
     pub fn init(
         mut trace: Vec<JoltTraceStep<Instructions>>,

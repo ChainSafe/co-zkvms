@@ -18,6 +18,7 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
+use mpc_net::topology::MpcRingNetWorkerExt;
 
 use crate::jolt::instruction::Rep3JoltInstructionSet;
 use crate::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
@@ -45,7 +46,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     ) -> eyre::Result<Self>
     where
         Instructions: Rep3JoltInstructionSet,
-        Network: Rep3NetworkWorker;
+        Network: Rep3NetworkWorker + MpcRingNetWorkerExt;
 
     #[cfg(feature = "debug")]
     fn combine_polynomials(
@@ -76,7 +77,7 @@ where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
         Instructions: Rep3JoltInstructionSet,
-        Network: Rep3NetworkWorker,
+        Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
     {
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(
             &preprocessing.instruction_lookups,
