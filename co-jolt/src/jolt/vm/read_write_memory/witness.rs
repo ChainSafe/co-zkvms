@@ -10,6 +10,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::rv_trace::MemoryLayout;
+#[cfg(feature = "debug")]
+use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryPolynomials;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, remap_address, ReadWriteMemoryPreprocessing,
     ReadWriteMemoryStuff,

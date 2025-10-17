@@ -130,6 +130,8 @@ where
         _: &ConstantPreprocessing<C>,
         polynomials_shares: Vec<Self>,
     ) -> Self::PublicPolynomials {
+        use itertools::{multizip, Itertools};
+
         let [share1, share2, share3] = polynomials_shares
             .try_into()
             .map_err(|_| "expected 3 shares")

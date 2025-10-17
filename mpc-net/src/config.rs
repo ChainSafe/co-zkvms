@@ -379,12 +379,16 @@ impl NetworkConfig {
         for worker in 0..num_workers {
             let worker_port_offset = 1000 * worker as u16;
 
+            // TODO: refactor with inner loop in 0..=2
+            parties[0].worker = worker;
             parties[0].dns_name.port += worker_port_offset;
             parties[0].cert_path = format!("data/cert{}_0.der", worker).into();
 
+            parties[1].worker = worker;
             parties[1].dns_name.port += worker_port_offset;
             parties[1].cert_path = format!("data/cert{}_1.der", worker).into();
 
+            parties[2].worker = worker;
             parties[2].dns_name.port += worker_port_offset;
             parties[2].cert_path = format!("data/cert{}_2.der", worker).into();
 
@@ -455,51 +459,33 @@ impl NetworkConfig {
                     next_worker, prev_worker
                 );
 
-                workers
-                    .get_mut(&PartyWorkerID::new(0, worker))
-                    .unwrap()
-                    .exogenous_links = Some(vec![
+                for party_id in 0..3 {
+                    let links = if prev_worker != next_worker {
+                        vec![
+                            workers
+                                .get(&PartyWorkerID::new(party_id, prev_worker))
+                                .unwrap()
+                                .parties[party_id]
+                                .clone(),
+                            workers
+                                .get(&PartyWorkerID::new(party_id, next_worker))
+                                .unwrap()
+                                .parties[party_id]
+                                .clone(),
+                        ]
+                    } else {
+                        vec![workers
+                            .get(&PartyWorkerID::new(party_id, prev_worker))
+                            .unwrap()
+                            .parties[party_id]
+                            .clone()]
+                    };
+
                     workers
-                        .get(&PartyWorkerID::new(0, prev_worker))
+                        .get_mut(&PartyWorkerID::new(party_id, worker))
                         .unwrap()
-                        .parties[0]
-                        .clone(),
-                    workers
-                        .get(&PartyWorkerID::new(0, next_worker))
-                        .unwrap()
-                        .parties[0]
-                        .clone(),
-                ]);
-                workers
-                    .get_mut(&PartyWorkerID::new(1, worker))
-                    .unwrap()
-                    .exogenous_links = Some(vec![
-                    workers
-                        .get(&PartyWorkerID::new(1, prev_worker))
-                        .unwrap()
-                        .parties[1]
-                        .clone(),
-                    workers
-                        .get(&PartyWorkerID::new(1, next_worker))
-                        .unwrap()
-                        .parties[1]
-                        .clone(),
-                ]);
-                workers
-                    .get_mut(&PartyWorkerID::new(0, worker))
-                    .unwrap()
-                    .exogenous_links = Some(vec![
-                    workers
-                        .get(&PartyWorkerID::new(2, prev_worker))
-                        .unwrap()
-                        .parties[2]
-                        .clone(),
-                    workers
-                        .get(&PartyWorkerID::new(2, next_worker))
-                        .unwrap()
-                        .parties[2]
-                        .clone(),
-                ]);
+                        .exogenous_links = Some(links);
+                }
             }
         }
 

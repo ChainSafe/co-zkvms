@@ -8,6 +8,8 @@ use crate::{
 };
 use ark_ff::Zero;
 use itertools::{izip, Itertools};
+#[cfg(feature = "debug")]
+use jolt_core::jolt::vm::instruction_lookups::InstructionLookupPolynomials;
 use jolt_core::utils::math::Math;
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
@@ -164,7 +166,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if io_ctx.worker_id != 0 {
             io_ctx.network().resv_prev_link_serde()?
         } else {
-            final_cts_
+            vec![vec![Rep3RingShare::zero_share(); M]; preprocessing.num_memories]
         };
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
@@ -340,6 +342,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         _: &InstructionLookupsPreprocessing<C, F>,
         polynomials_shares: Vec<Self>,
     ) -> InstructionLookupPolynomials<F> {
+        use itertools::multizip;
+
+        use crate::poly::combine_poly_shares_rep3;
+
         let [share1, share2, share3] = polynomials_shares.try_into().unwrap();
 
         let dim = multizip((share1.dim, share2.dim, share3.dim))

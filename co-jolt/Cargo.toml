@@ -64,7 +64,7 @@ mpc-net = { path = "../mpc-net" }
 jolt-common = { git = "https://github.com/nulltea/jolt.git", package = "common", branch = "co-jolt" }
 
 [features]
-default = ["std"]
+default = ["std", "debug"]
 std = [
     "ark-ff/std",
     "ark-poly/std",

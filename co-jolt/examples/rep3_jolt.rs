@@ -1,6 +1,7 @@
 #[cfg(feature = "debug")]
 mod debug;
 
+use co_jolt::jolt::vm::witness::Rep3Polynomials as _;
 #[cfg(feature = "debug")]
 use debug::*;
 
@@ -19,7 +20,6 @@ use co_jolt::{
             Jolt, JoltTraceStep,
         },
     },
-    poly::commitment::mock::MockCommitScheme,
     utils::transcript::KeccakTranscript,
 };
 use color_eyre::{
@@ -196,7 +196,10 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         network,
     )?;
 
-    prover.prove()?;
+    // prover.io_ctx.network().send_response(prover.program_io)?;
+    prover.io_ctx.network().send_response(prover.polynomials)?;
+
+    // prover.prove()?;
 
     prover.io_ctx.log_connection_stats();
     drop(tracing_guard);
@@ -219,7 +222,7 @@ pub fn run_coordinator(
     let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace(&inputs);
+    let (program_io, mut trace) = program.trace(&inputs);
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -264,12 +267,9 @@ pub fn run_coordinator(
     let (program_io_shares, trace_shares) =
         program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
-    let mut network = Rep3QuicNetCoordinator::new(
-        config.extend_with_workers(args.num_workers_per_party),
-        args.num_workers_per_party.log_2(),
-    )
-    .unwrap();
-    network.trim_subnets(1).unwrap();
+    let mut network =
+        Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
+    // network.trim_subnets(1).unwrap();
     network.send_requests_blocking(
         program_io_shares
             .into_iter()
@@ -284,16 +284,34 @@ pub fn run_coordinator(
     network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();
 
-    let (proof, commitments) = RV32IJoltVM::prove_rep3(
-        meta,
-        // &program_io,
-        &spartan_key,
+    let polys = co_jolt::jolt::vm::witness::Rep3JoltPolynomials::combine_polynomials(
         &preprocessing.shared,
-        &mut network,
-    )?;
+        network.receive_responses()?,
+    );
+    JoltTraceStep::pad(&mut trace);
+    let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
+    // let r1cs_builder: jolt_core::r1cs::builder::CombinedUniformBuilder<
+    //     C,
+    //     F,
+    //     co_jolt::r1cs::inputs::JoltR1CSInputs,
+    // > = <co_jolt::r1cs::constraints::JoltRV32IMConstraints as jolt_core::r1cs::constraints::R1CSConstraints>::construct_constraints(
+    //     meta.padded_trace_length,
+    //     program_io.memory_layout.input_start,
+    // );
+    // r1cs_builder.compute_aux(&mut check);
 
-    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
-        .context("while verifying Lasso (rep3) proof")?;
+    check_instruction_polys(&polys.instruction_lookups, &check.instruction_lookups);
+
+    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
+    //     meta,
+    //     // &program_io,
+    //     &spartan_key,
+    //     &preprocessing.shared,
+    //     &mut network,
+    // )?;
+
+    // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+    //     .context("while verifying Lasso (rep3) proof")?;
 
     network.log_connection_stats(None);
 

@@ -126,42 +126,63 @@ impl Rep3QuicMpcNetWorker {
                 let chan_next = ChannelHandle::manage(chan_next);
                 let chan_prev = ChannelHandle::manage(chan_prev);
 
-                let mut links = HashMap::with_capacity(net_handler.parties_connections.len() - 1);
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                let mut links = HashMap::new();
                 let (exo_chan_next, exo_chan_prev) =
                     if let Some(conns) = net_handler.exogenous_connections.as_ref() {
                         for (&worker, conn) in conns {
-                            if worker + 1 % num_workers == net_handler.worker {
+                            if net_handler.worker + 1 % num_workers == worker {
                                 // we are the client, so we are the receiver
                                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-                                send_stream.write_u32(net_handler.my_id as u32).await?;
+                                println!(
+                                    "party {} send out worker id {} to {}",
+                                    net_handler.my_id, net_handler.worker, worker
+                                );
+                                send_stream.write_u32(net_handler.worker as u32).await?;
                                 let their_worker = recv_stream.read_u32().await?;
+                                println!(
+                                    "{}-{} open_bi with {} got worker ID: {}",
+                                    net_handler.worker, net_handler.my_id, worker, their_worker
+                                );
                                 assert!(their_worker == worker as u32);
                                 assert!(links.insert(worker, conn.clone()).is_none());
                             } else {
                                 // we are the server, so we are the sender
                                 let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
                                 let their_worker = recv_stream.read_u32().await?;
+                                println!(
+                                    "{}-{} accept_bi with {} got worker ID: {}",
+                                    net_handler.worker, net_handler.my_id, worker, their_worker
+                                );
                                 assert!(their_worker == worker as u32);
-                                send_stream.write_u32(net_handler.my_id as u32).await?;
+                                send_stream.write_u32(net_handler.worker as u32).await?;
                                 assert!(links.insert(worker, conn.clone()).is_none());
                             }
                         }
 
-                        let mut exo_channels = net_handler.get_byte_exo_links_channels().await?;
+                        let mut exo_channels =
+                            net_handler.get_byte_exo_links_channels(num_workers).await?;
 
-                        let exo_chan_next = exo_channels
-                            .remove(&id.party_id().next_id().into())
-                            .ok_or(eyre::eyre!("no next channel found"))?;
-                        let exo_chan_prev = exo_channels
-                            .remove(&id.party_id().prev_id().into())
-                            .ok_or(eyre::eyre!("no prev channel found"))?;
+                        let chan_next = if let Some(exo_chan_next) =
+                            exo_channels.remove(&(net_handler.worker + 1 % num_workers))
+                        {
+                            Some(ChannelHandle::manage(exo_chan_next))
+                        } else {
+                            None
+                        };
+                        let chan_prev = if let Some(exo_chan_prev) =
+                            exo_channels.remove(&(net_handler.worker - 1 % num_workers))
+                        {
+                            Some(ChannelHandle::manage(exo_chan_prev))
+                        } else {
+                            None
+                        };
+
                         if !channels.is_empty() {
                             bail!("unexpected channels found")
                         }
-                        let chan_next = ChannelHandle::manage(exo_chan_next);
-                        let chan_prev = ChannelHandle::manage(exo_chan_prev);
 
-                        (Some(chan_next), Some(chan_prev))
+                        (chan_next, chan_prev)
                     } else {
                         (None, None)
                     };
@@ -421,10 +442,10 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                 let (exo_chan_next, exo_chan_prev) =
                     if let Some(conns) = net_handler.exogenous_connections.as_ref() {
                         for (&worker, conn) in conns {
-                            if worker + 1 % num_workers == net_handler.worker {
+                            if net_handler.worker + 1 % num_workers == worker {
                                 // we are the client, so we are the receiver
                                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-                                send_stream.write_u32(net_handler.my_id as u32).await?;
+                                send_stream.write_u32(net_handler.worker as u32).await?;
                                 let their_worker = recv_stream.read_u32().await?;
                                 assert!(their_worker == worker as u32);
                                 assert!(links.insert(worker, conn.clone()).is_none());
@@ -433,26 +454,34 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                                 let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
                                 let their_worker = recv_stream.read_u32().await?;
                                 assert!(their_worker == worker as u32);
-                                send_stream.write_u32(net_handler.my_id as u32).await?;
+                                send_stream.write_u32(net_handler.worker as u32).await?;
                                 assert!(links.insert(worker, conn.clone()).is_none());
                             }
                         }
 
-                        let mut exo_channels = net_handler.get_byte_exo_links_channels().await?;
+                        let mut exo_channels =
+                            net_handler.get_byte_exo_links_channels(num_workers).await?;
 
-                        let exo_chan_next = exo_channels
-                            .remove(&id.party_id().next_id().into())
-                            .ok_or(eyre::eyre!("no next channel found"))?;
-                        let exo_chan_prev = exo_channels
-                            .remove(&id.party_id().prev_id().into())
-                            .ok_or(eyre::eyre!("no prev channel found"))?;
+                        let chan_next = if let Some(exo_chan_next) =
+                            exo_channels.remove(&(net_handler.worker + 1 % num_workers))
+                        {
+                            Some(ChannelHandle::manage(exo_chan_next))
+                        } else {
+                            None
+                        };
+                        let chan_prev = if let Some(exo_chan_prev) =
+                            exo_channels.remove(&(net_handler.worker - 1 % num_workers))
+                        {
+                            Some(ChannelHandle::manage(exo_chan_prev))
+                        } else {
+                            None
+                        };
+
                         if !channels.is_empty() {
                             bail!("unexpected channels found")
                         }
-                        let chan_next = ChannelHandle::manage(exo_chan_next);
-                        let chan_prev = ChannelHandle::manage(exo_chan_prev);
 
-                        (Some(chan_next), Some(chan_prev))
+                        (chan_next, chan_prev)
                     } else {
                         (None, None)
                     };
@@ -634,6 +663,16 @@ impl MpcNetworkHandlerWorker {
                 .add(coordinator.cert.clone())
                 .with_context(|| format!("adding certificate for coordinator to root store"))?;
         }
+        if let Some(links) = &config.exogenous_links {
+            for link in links {
+                root_store.add(link.cert.clone()).with_context(|| {
+                    format!(
+                        "adding certificate for exogenous link {} to root store",
+                        link.worker
+                    )
+                })?;
+            }
+        }
         let crypto = quinn::rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
@@ -812,37 +851,41 @@ impl MpcNetworkHandlerWorker {
             }
         }
 
-        let mut exogenous_connections = None;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut exogenous_connections: Option<BTreeMap<_, _>> = None;
 
         if let Some(links) = config.exogenous_links {
             let mut exo_connections = BTreeMap::new();
-            for party in links {
-                if party.worker == config.worker {
+            for worker in links {
+                if worker.worker == config.worker {
                     continue;
                 }
-                if party.id != config.my_id {
+                if worker.id != config.my_id {
                     panic!("wrong or malisious config")
                 }
-                if party.worker + 1 % num_workers == config.my_id {
-                    tracing::trace!(
-                        "my id: {:?}, connecting to party: {:?}",
-                        config.my_id,
-                        party.id
+                if config.worker + 1 % num_workers == worker.worker {
+                    println!(
+                        "worker: {:?} party: {:?}, connecting to worker: {:?}",
+                        config.worker, config.my_id, worker.worker
                     );
 
                     // connect to link, we are client
-                    let party_addresses: Vec<SocketAddr> = party
+                    let worker_addresses: Vec<SocketAddr> = worker
                         .dns_name
                         .to_socket_addrs()
                         .with_context(|| {
-                            format!("while resolving DNS name for {}", party.dns_name)
+                            format!("while resolving DNS name for {}", worker.dns_name)
                         })?
                         .collect();
-                    if party_addresses.is_empty() {
-                        return Err(eyre::eyre!("could not resolve DNS name {}", party.dns_name));
+                    if worker_addresses.is_empty() {
+                        return Err(eyre::eyre!(
+                            "could not resolve DNS name {}",
+                            worker.dns_name
+                        ));
                     }
-                    let party_addr = party_addresses[0];
-                    let local_client_socket: SocketAddr = match party_addr {
+                    let worker_addr = worker_addresses[0];
+                    let local_client_socket: SocketAddr = match worker_addr {
                         SocketAddr::V4(_) => {
                             "0.0.0.0:0".parse().expect("hardcoded IP address is valid")
                         }
@@ -852,17 +895,26 @@ impl MpcNetworkHandlerWorker {
                     };
                     let endpoint =
                         quinn::Endpoint::client(local_client_socket).with_context(|| {
-                            format!("creating client endpoint to party {}", party.id)
+                            format!("creating client endpoint to worker {}", worker.worker)
                         })?;
                     let conn = endpoint
-                        .connect_with(client_config.clone(), party_addr, &party.dns_name.hostname)
+                        .connect_with(
+                            client_config.clone(),
+                            worker_addr,
+                            &worker.dns_name.hostname,
+                        )
                         .with_context(|| {
-                            format!("setting up client connection with party {}", party.id)
+                            format!("setting up client connection with worker {}", worker.worker)
                         })?
                         .await
-                        .with_context(|| format!("connecting as a client to party {}", party.id))?;
+                        .with_context(|| {
+                            format!(
+                                "connecting as a client to worker {} with worker address: {}",
+                                worker.worker, worker_addr
+                            )
+                        })?;
                     let mut uni = conn.open_uni().await?;
-                    uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
+                    uni.write_u32(u32::try_from(config.worker).expect("worker id fits into u32"))
                         .await?;
                     uni.flush().await?;
                     uni.finish()?;
@@ -872,13 +924,12 @@ impl MpcNetworkHandlerWorker {
                         endpoint.local_addr().unwrap(),
                         conn.remote_address(),
                     );
-                    assert!(exo_connections.insert(party.worker, conn).is_none());
+                    assert!(exo_connections.insert(worker.worker, conn).is_none());
                     endpoints.push(endpoint);
-                } else if party.worker + num_workers - 1 % num_workers == config.my_id {
-                    tracing::trace!(
-                        "my id: {:?}, accepting connection from party: {:?}",
-                        config.my_id,
-                        party.id
+                } else if config.worker - 1 % num_workers == worker.worker {
+                    println!(
+                        "worker: {:?}, accepting connection from worker: {:?}",
+                        config.worker, worker.worker
                     );
 
                     // we are the server, accept a connection
@@ -897,15 +948,15 @@ impl MpcNetworkHandlerWorker {
                                 conn.remote_address(),
                             );
                             let mut uni = conn.accept_uni().await?;
-                            let other_party_id = uni.read_u32().await?;
+                            let other_worker_id = uni.read_u32().await?;
                             tracing::trace!(
-                                "my id: {:?}, accepted connection from other_party_id: {:?}",
-                                config.my_id,
-                                other_party_id
+                                "my worker: {:?}, accepted connection from other_worker_id: {:?}",
+                                config.worker,
+                                other_worker_id
                             );
-                            assert!(parties_connections
+                            assert!(exo_connections
                                 .insert(
-                                    usize::try_from(other_party_id).expect("u32 fits into usize"),
+                                    usize::try_from(other_worker_id).expect("u32 fits into usize"),
                                     conn
                                 )
                                 .is_none());
@@ -913,21 +964,27 @@ impl MpcNetworkHandlerWorker {
                         Ok(None) => {
                             return Err(eyre::eyre!(
                                 "server endpoint did not accept a connection from party {}",
-                                party.id
+                                worker.id
                             ));
                         }
                         Err(_) => {
                             return Err(eyre::eyre!(
                                 "party {} did not connect within 60 seconds - timeout",
-                                party.id
+                                worker.id
                             ));
                         }
                     }
                 } else {
-                    panic!("not a ring topology")
+                    panic!(
+                        "not a ring topology: worker {} next: {} prev: {} == {}",
+                        config.worker,
+                        config.worker + 1 % num_workers,
+                        config.worker - 1 % num_workers,
+                        worker.worker,
+                    );
                 }
             }
-            exogenous_connections.insert(exo_connections);
+            let _ = exogenous_connections.insert(exo_connections);
         }
 
         endpoints.push(server_endpoint);
@@ -1035,6 +1092,7 @@ impl MpcNetworkHandlerWorker {
 
     pub async fn get_byte_exo_links_channels(
         &self,
+        num_workers: usize,
     ) -> std::io::Result<HashMap<usize, BytesChannel<RecvStream, SendStream>>> {
         let exogenous_connections = self.exogenous_connections.as_ref().unwrap();
         const NUM_BYTES: usize = 5;
@@ -1046,10 +1104,10 @@ impl MpcNetworkHandlerWorker {
 
         let mut channels = HashMap::with_capacity(exogenous_connections.len() - 1);
         for (&worker, conn) in exogenous_connections.into_iter() {
-            if worker < self.my_id {
+            if self.worker + 1 % num_workers == worker {
                 // we are the client, so we are the receiver
                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-                send_stream.write_u32(self.my_id as u32).await?;
+                send_stream.write_u32(self.worker as u32).await?;
                 let their_worker = recv_stream.read_u32().await?;
                 assert!(their_worker == worker as u32);
                 let conn = Channel::new(recv_stream, send_stream, codec.clone());
@@ -1059,7 +1117,7 @@ impl MpcNetworkHandlerWorker {
                 let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
                 let their_worker = recv_stream.read_u32().await?;
                 assert!(their_worker == worker as u32);
-                send_stream.write_u32(self.my_id as u32).await?;
+                send_stream.write_u32(self.worker as u32).await?;
                 let conn = Channel::new(recv_stream, send_stream, codec.clone());
                 assert!(channels.insert(worker, conn).is_none());
             }
