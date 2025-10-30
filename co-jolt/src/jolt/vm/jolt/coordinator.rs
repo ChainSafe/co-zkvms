@@ -45,7 +45,12 @@ where
         UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         JoltWitnessMeta,
     )> {
-        let meta = network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?;
+        let metas = network.receive_response_from_workers::<JoltWitnessMeta>(PartyID::ID0)?;
+        let meta = JoltWitnessMeta {
+            padded_trace_length: metas.iter().map(|m| m.padded_trace_length).sum(),
+            read_write_memory_size: metas[0].read_write_memory_size,
+            memory_layout: metas[0].memory_layout.clone(),
+        };
         let r1cs_builder = Self::Constraints::construct_constraints(
             meta.padded_trace_length.next_power_of_two(),
             meta.memory_layout.input_start,

@@ -100,10 +100,22 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 
         responses_bytes
             .iter()
-            .map(|data| {
+            .enumerate()
+            .map(|(i, data)| {
                 T::deserialize_uncompressed_unchecked(&data[..])
                     .map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "while deserializing response {}: {} - {}",
+                                i,
+                                data[..].len(),
+                                e
+                            ),
+                        )
                     })
                     .context("while deserializing response")
             })
@@ -247,6 +259,18 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         T::deserialize_uncompressed_unchecked(&response[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while deserializing response")
+    }
+
+    fn receive_response_from_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+    ) -> Result<Vec<T>> {
+        let mut responses = Vec::new();
+        for worker_id in 0..(1 << self.log_num_workers_per_party()) {
+            let response = self.receive_response::<T>(party_id, worker_id)?;
+            responses.push(response);
+        }
+        Ok(responses)
     }
 
     fn log_num_workers_per_party(&self) -> usize {

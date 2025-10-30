@@ -160,14 +160,18 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 .into_iter(),
         );
 
-        if io_ctx.worker_id + 1 % 1 << io_ctx.log_num_workers_per_party() != 0 {
+        if (io_ctx.worker_id + 1) % (1 << io_ctx.log_num_workers_per_party()) != 0 {
+            println!("{} sending to next worker", io_ctx.worker_id,);
             io_ctx.network().send_next_link_serde(final_cts_.clone())?;
         }
         let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if io_ctx.worker_id != 0 {
+            println!("{} recieving from prev worker", io_ctx.worker_id,);
+
             io_ctx.network().resv_prev_link_serde()?
         } else {
             vec![vec![Rep3RingShare::zero_share(); M]; preprocessing.num_memories]
         };
+        println!("{} recieved from prev worker", io_ctx.worker_id,);
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_cyclic(

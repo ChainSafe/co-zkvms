@@ -16,6 +16,10 @@ pub trait MpcStarNetCoordinator: Sized {
         party_id: PartyID,
         worker_id: usize,
     ) -> Result<T>;
+    fn receive_response_from_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+    ) -> Result<Vec<T>>;
     fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: T,

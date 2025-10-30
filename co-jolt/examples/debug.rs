@@ -5,8 +5,9 @@ use co_jolt::{
         read_write_memory::witness::Rep3ProgramIO,
     },
     poly::Rep3MultilinearPolynomial,
+    utils::transpose,
 };
-use itertools::izip;
+use itertools::{izip, Itertools};
 use jolt_core::{
     jolt::vm::{
         bytecode::BytecodePolynomials,
@@ -18,18 +19,32 @@ use jolt_core::{
 use jolt_tracer::JoltDevice;
 
 pub fn check_instruction_polys<F: JoltField>(
-    polys: &InstructionLookupPolynomials<F>,
+    worker_polys: Vec<&InstructionLookupPolynomials<F>>,
     check: &InstructionLookupPolynomials<F>,
 ) {
     check_poly(
-        &polys.lookup_outputs,
+        &concat_jolt_polynomials(&worker_polys, |p| &p.lookup_outputs),
         &check.lookup_outputs,
         "lookup_outputs",
     );
-    check_polys(&polys.dim, &check.dim, "dim");
-    check_polys(&polys.final_cts, &check.final_cts, "final_cts");
-    check_polys(&polys.read_cts, &check.read_cts, "read_cts");
-    check_polys(&polys.E_polys, &check.E_polys, "E_polys");
+    check_polys(
+        &concat_jolt_polynomials_many(&worker_polys, |p| &p.dim),
+        &check.dim,
+        "dim",
+    );
+    worker_polys
+        .iter()
+        .for_each(|p| check_polys(&p.final_cts, &check.final_cts, "final_cts"));
+    check_polys(
+        &concat_jolt_polynomials_many(&worker_polys, |p| &p.read_cts),
+        &check.read_cts,
+        "read_cts",
+    );
+    check_polys(
+        &concat_jolt_polynomials_many(&worker_polys, |p| &p.E_polys),
+        &check.E_polys,
+        "E_polys",
+    );
 }
 
 pub fn check_read_write_polys<F: JoltField>(
@@ -195,6 +210,42 @@ pub fn check_poly<F: JoltField>(
             &check[pos..pos + 5]
         );
     }
+}
+
+fn concat_jolt_polynomials<T, F: JoltField>(
+    polys: &[T],
+    map_fn: impl Fn(&T) -> &MultilinearPolynomial<F>,
+) -> MultilinearPolynomial<F> {
+    MultilinearPolynomial::from(
+        polys
+            .into_iter()
+            .map(map_fn)
+            .flat_map(|p| p.coeffs_as_field_elements())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn concat_jolt_polynomials_many<T, F: JoltField>(
+    polys: &[T],
+    map_fn: impl Fn(&T) -> &[MultilinearPolynomial<F>],
+) -> Vec<MultilinearPolynomial<F>> {
+    transpose(
+        polys
+            .into_iter()
+            .map(map_fn)
+            .map(|p| p.to_vec())
+            .collect_vec(),
+    )
+    .into_iter()
+    .map(|worker_polys| {
+        MultilinearPolynomial::from(
+            worker_polys
+                .into_iter()
+                .flat_map(|p| p.coeffs_as_field_elements())
+                .collect_vec(),
+        )
+    })
+    .collect::<Vec<_>>()
 }
 
 fn main() {}

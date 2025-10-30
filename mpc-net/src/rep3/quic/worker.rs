@@ -131,7 +131,9 @@ impl Rep3QuicMpcNetWorker {
                 let (exo_chan_next, exo_chan_prev) =
                     if let Some(conns) = net_handler.exogenous_connections.as_ref() {
                         for (&worker, conn) in conns {
-                            if net_handler.worker + 1 % num_workers == worker {
+                            if (net_handler.worker + 1) % num_workers == worker
+                                && (worker != 0 || num_workers > 2)
+                            {
                                 // we are the client, so we are the receiver
                                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
                                 println!(
@@ -163,20 +165,17 @@ impl Rep3QuicMpcNetWorker {
                         let mut exo_channels =
                             net_handler.get_byte_exo_links_channels(num_workers).await?;
 
-                        let chan_next = if let Some(exo_chan_next) =
-                            exo_channels.remove(&(net_handler.worker + 1 % num_workers))
-                        {
-                            Some(ChannelHandle::manage(exo_chan_next))
+                        let next = (net_handler.worker + 1) % num_workers;
+                        let chan_next = if next != 0 || num_workers > 2 {
+                            exo_channels
+                                .remove(&next)
+                                .map(|exo_chan_next| ChannelHandle::manage(exo_chan_next))
                         } else {
                             None
                         };
-                        let chan_prev = if let Some(exo_chan_prev) =
-                            exo_channels.remove(&(net_handler.worker - 1 % num_workers))
-                        {
-                            Some(ChannelHandle::manage(exo_chan_prev))
-                        } else {
-                            None
-                        };
+                        let chan_prev = exo_channels
+                            .remove(&((net_handler.worker - 1) % num_workers))
+                            .map(|exo_chan_prev| ChannelHandle::manage(exo_chan_prev));
 
                         if !channels.is_empty() {
                             bail!("unexpected channels found")
@@ -391,6 +390,11 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             config.parties.iter_mut().for_each(|party| {
                 party.dns_name.port = party.dns_name.port + 10 * fork_id as u16;
             });
+            if let Some(links) = &mut config.exogenous_links {
+                links.iter_mut().for_each(|party| {
+                    party.dns_name.port = party.dns_name.port + 10 * fork_id as u16;
+                });
+            }
             config.coordinator = None;
             config
         };
@@ -442,7 +446,9 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                 let (exo_chan_next, exo_chan_prev) =
                     if let Some(conns) = net_handler.exogenous_connections.as_ref() {
                         for (&worker, conn) in conns {
-                            if net_handler.worker + 1 % num_workers == worker {
+                            if (net_handler.worker + 1) % num_workers == worker
+                                && (worker != 0 || num_workers > 2)
+                            {
                                 // we are the client, so we are the receiver
                                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
                                 send_stream.write_u32(net_handler.worker as u32).await?;
@@ -462,20 +468,17 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                         let mut exo_channels =
                             net_handler.get_byte_exo_links_channels(num_workers).await?;
 
-                        let chan_next = if let Some(exo_chan_next) =
-                            exo_channels.remove(&(net_handler.worker + 1 % num_workers))
-                        {
-                            Some(ChannelHandle::manage(exo_chan_next))
+                        let next = (net_handler.worker + 1) % num_workers;
+                        let chan_next = if next != 0 || num_workers > 2 {
+                            exo_channels
+                                .remove(&next)
+                                .map(|exo_chan_next| ChannelHandle::manage(exo_chan_next))
                         } else {
                             None
                         };
-                        let chan_prev = if let Some(exo_chan_prev) =
-                            exo_channels.remove(&(net_handler.worker - 1 % num_workers))
-                        {
-                            Some(ChannelHandle::manage(exo_chan_prev))
-                        } else {
-                            None
-                        };
+                        let chan_prev = exo_channels
+                            .remove(&((net_handler.worker - 1) % num_workers))
+                            .map(|exo_chan_prev| ChannelHandle::manage(exo_chan_prev));
 
                         if !channels.is_empty() {
                             bail!("unexpected channels found")
@@ -851,7 +854,7 @@ impl MpcNetworkHandlerWorker {
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         let mut exogenous_connections: Option<BTreeMap<_, _>> = None;
 
@@ -864,10 +867,15 @@ impl MpcNetworkHandlerWorker {
                 if worker.id != config.my_id {
                     panic!("wrong or malisious config")
                 }
-                if config.worker + 1 % num_workers == worker.worker {
-                    println!(
+
+                let next = (config.worker + 1) % num_workers;
+                let prev = (config.worker - 1) % num_workers;
+                if next == worker.worker && (next != 0 || num_workers > 2) {
+                    tracing::trace!(
                         "worker: {:?} party: {:?}, connecting to worker: {:?}",
-                        config.worker, config.my_id, worker.worker
+                        config.worker,
+                        config.my_id,
+                        worker.worker
                     );
 
                     // connect to link, we are client
@@ -926,10 +934,11 @@ impl MpcNetworkHandlerWorker {
                     );
                     assert!(exo_connections.insert(worker.worker, conn).is_none());
                     endpoints.push(endpoint);
-                } else if config.worker - 1 % num_workers == worker.worker {
-                    println!(
+                } else if prev == worker.worker {
+                    tracing::trace!(
                         "worker: {:?}, accepting connection from worker: {:?}",
-                        config.worker, worker.worker
+                        config.worker,
+                        worker.worker
                     );
 
                     // we are the server, accept a connection
@@ -963,13 +972,14 @@ impl MpcNetworkHandlerWorker {
                         }
                         Ok(None) => {
                             return Err(eyre::eyre!(
-                                "server endpoint did not accept a connection from party {}",
-                                worker.id
+                                "server endpoint did not accept a connection from worker {}",
+                                worker.worker
                             ));
                         }
                         Err(_) => {
                             return Err(eyre::eyre!(
-                                "party {} did not connect within 60 seconds - timeout",
+                                "worker {}_{} did not connect within 60 seconds - timeout",
+                                worker.worker,
                                 worker.id
                             ));
                         }
@@ -978,8 +988,8 @@ impl MpcNetworkHandlerWorker {
                     panic!(
                         "not a ring topology: worker {} next: {} prev: {} == {}",
                         config.worker,
-                        config.worker + 1 % num_workers,
-                        config.worker - 1 % num_workers,
+                        (config.worker + 1) % num_workers,
+                        (config.worker - 1) % num_workers,
                         worker.worker,
                     );
                 }
@@ -1104,7 +1114,7 @@ impl MpcNetworkHandlerWorker {
 
         let mut channels = HashMap::with_capacity(exogenous_connections.len() - 1);
         for (&worker, conn) in exogenous_connections.into_iter() {
-            if self.worker + 1 % num_workers == worker {
+            if (self.worker + 1) % num_workers == worker && (worker != 0 || num_workers > 2) {
                 // we are the client, so we are the receiver
                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
                 send_stream.write_u32(self.worker as u32).await?;

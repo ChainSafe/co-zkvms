@@ -392,6 +392,9 @@ impl Rep3ProgramIOInput {
             memory_layout,
         } = program_io;
 
+        println!("inputs len {}", inputs.len());
+        println!("outputs len {}", outputs.len());
+
         let inputs = transpose(
             inputs
                 .into_iter()

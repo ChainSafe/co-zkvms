@@ -25,6 +25,7 @@ use jolt_common::{
     rv_trace::JoltDevice,
 };
 pub use jolt_tracer::{self as tracer, ELFInstruction};
+use snarks_core::math::Math;
 
 use crate::{
     field::JoltField,
@@ -265,105 +266,122 @@ impl Program {
         &mut self,
         inputs: &[u8],
         rng: &mut R,
+        log_num_workers_per_party: usize,
     ) -> (Vec<Rep3ProgramIOInput>, Vec<Vec<JoltTraceStep<RV32I>>>) {
-        let (program_io, trace) = self.trace(inputs);
+        let (program_io, mut trace) = self.trace(inputs);
+        JoltTraceStep::pad(&mut trace);
+        assert!(trace.len().is_power_of_two());
+        println!("trace len: {}", trace.len());
 
         let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
+        // extend for `num_workers_per_party`
+        let program_io_shares = iter::repeat_n(program_io_shares, 1 << log_num_workers_per_party)
+            .flatten()
+            .collect();
+
+        let chunk_size = trace.len() / (1 << log_num_workers_per_party);
+
+        println!("chunk size: {}", chunk_size);
 
         let root = rng.next_u64();
         let trace_shares = trace
-            .into_par_iter()
-            .map_init(
-                move || {
-                    let tid = rayon::current_thread_index().unwrap_or(0) as u64;
-                    ChaCha12Rng::seed_from_u64(root ^ tid)
-                },
-                |rng, row| {
-                    let instruction_shares = if let Some(r) = row.instruction_lookup {
-                        let op1_shares = rep3_ring::binary::generate_shares_rep3(
-                            r.lhs().as_public() as u32,
-                            rng,
-                        );
-                        let op2_shares = if let Some(op2) = r.rhs() {
-                            match r {
-                                RV32I::SLL(..)
-                                | RV32I::SRA(..)
-                                | RV32I::SRL(..)
-                                | RV32I::VIRTUAL_POW2(..)
-                                | RV32I::VIRTUAL_SRA_PADDING(..) => {
-                                    vec![Some(op2.clone()); 3]
-                                }
-                                _ => rep3_ring::binary::generate_shares_rep3(
-                                    op2.as_public() as u32,
+            .chunks(chunk_size)
+            .into_iter()
+            .flat_map(|trace| {
+                let trace_shares = trace
+                    .into_par_iter()
+                    .map_init(
+                        move || {
+                            let tid = rayon::current_thread_index().unwrap_or(0) as u64;
+                            ChaCha12Rng::seed_from_u64(root ^ tid)
+                        },
+                        |rng, row| {
+                            let instruction_shares = if let Some(r) = &row.instruction_lookup {
+                                let op1_shares = rep3_ring::binary::generate_shares_rep3(
+                                    r.lhs().as_public() as u32,
                                     rng,
-                                )
-                                .into_iter()
-                                .map(|share| Some(Rep3Operand::from_binary(share)))
-                                .collect(),
-                            }
-                        } else {
-                            vec![None; 3]
-                        };
-                        let mut instruction_shares: Vec<Option<RV32I>> = vec![Some(r.clone()); 3];
-                        izip!(instruction_shares.iter_mut(), op1_shares, op2_shares).for_each(
-                            |(r, op1_share, op2_share)| {
-                                let (op1, op2) = r.as_mut().unwrap().operands_mut();
-                                *op1 = Rep3Operand::from_binary(op1_share);
-                                if let Some(op2) = op2 {
-                                    *op2 = op2_share.unwrap();
+                                );
+                                let op2_shares = if let Some(op2) = r.rhs() {
+                                    match r {
+                                        RV32I::SLL(..)
+                                        | RV32I::SRA(..)
+                                        | RV32I::SRL(..)
+                                        | RV32I::VIRTUAL_POW2(..)
+                                        | RV32I::VIRTUAL_SRA_PADDING(..) => {
+                                            vec![Some(op2.clone()); 3]
+                                        }
+                                        _ => rep3_ring::binary::generate_shares_rep3(
+                                            op2.as_public() as u32,
+                                            rng,
+                                        )
+                                        .into_iter()
+                                        .map(|share| Some(Rep3Operand::from_binary(share)))
+                                        .collect(),
+                                    }
+                                } else {
+                                    vec![None; 3]
+                                };
+                                let mut instruction_shares: Vec<Option<RV32I>> =
+                                    vec![Some(r.clone()); 3];
+                                izip!(instruction_shares.iter_mut(), op1_shares, op2_shares)
+                                    .for_each(|(r, op1_share, op2_share)| {
+                                        let (op1, op2) = r.as_mut().unwrap().operands_mut();
+                                        *op1 = Rep3Operand::from_binary(op1_share);
+                                        if let Some(op2) = op2 {
+                                            *op2 = op2_share.unwrap();
+                                        }
+                                    });
+                                instruction_shares
+                            } else {
+                                vec![None; 3]
+                            };
+
+                            let mut memory_ops_shares =
+                                vec![[MemoryOp::Read(0); MEMORY_OPS_PER_INSTRUCTION]; 3];
+
+                            for i in 0..MEMORY_OPS_PER_INSTRUCTION {
+                                let shares = MemoryOp::generate_shares_rep3(row.memory_ops[i], rng);
+                                for j in 0..3 {
+                                    memory_ops_shares[j][i] = shares[j];
                                 }
-                            },
-                        );
-                        instruction_shares
-                    } else {
-                        vec![None; 3]
-                    };
+                            }
 
-                    let mut memory_ops_shares =
-                        vec![[MemoryOp::Read(0); MEMORY_OPS_PER_INSTRUCTION]; 3];
+                            // if row.bytecode_row.imm.as_public().is_negative() {
+                            //     println!(
+                            //         "{} -> {}",
+                            //         row.bytecode_row.imm.as_public(),
+                            //         *row.bytecode_row.imm.as_public() as u64
+                            //     )
+                            // }
 
-                    for i in 0..MEMORY_OPS_PER_INSTRUCTION {
-                        let shares = MemoryOp::generate_shares_rep3(row.memory_ops[i], rng);
-                        for j in 0..3 {
-                            memory_ops_shares[j][i] = shares[j];
-                        }
-                    }
+                            let mut bytecode_row_shares =
+                                iter::repeat_n(row.bytecode_row.clone(), 3).collect_vec();
+                            rep3_ring::binary::generate_signed_shares_rep3(
+                                *row.bytecode_row.imm.as_public(),
+                                rng,
+                            )
+                            .into_iter()
+                            .zip(bytecode_row_shares.iter_mut())
+                            .for_each(|(imm, row)| {
+                                row.imm = Either::Shared(imm);
+                            });
 
-                    // if row.bytecode_row.imm.as_public().is_negative() {
-                    //     println!(
-                    //         "{} -> {}",
-                    //         row.bytecode_row.imm.as_public(),
-                    //         *row.bytecode_row.imm.as_public() as u64
-                    //     )
-                    // }
-
-                    let mut bytecode_row_shares =
-                        iter::repeat_n(row.bytecode_row.clone(), 3).collect_vec();
-                    rep3_ring::binary::generate_signed_shares_rep3(
-                        *row.bytecode_row.imm.as_public(),
-                        rng,
+                            izip!(instruction_shares, memory_ops_shares, bytecode_row_shares)
+                                .map(|(instruction_lookup, memory_ops, bytecode_row)| {
+                                    JoltTraceStep {
+                                        instruction_lookup,
+                                        bytecode_row,
+                                        memory_ops,
+                                        circuit_flags: row.circuit_flags.clone(),
+                                    }
+                                })
+                                .collect()
+                        },
                     )
-                    .into_iter()
-                    .zip(bytecode_row_shares.iter_mut())
-                    .for_each(|(imm, row)| {
-                        row.imm = Either::Shared(imm);
-                    });
-
-                    izip!(instruction_shares, memory_ops_shares, bytecode_row_shares)
-                        .map(
-                            |(instruction_lookup, memory_ops, bytecode_row)| JoltTraceStep {
-                                instruction_lookup,
-                                bytecode_row,
-                                memory_ops,
-                                circuit_flags: row.circuit_flags.clone(),
-                            },
-                        )
-                        .collect()
-                },
-            )
+                    .collect::<Vec<_>>();
+                transpose(trace_shares)
+            })
             .collect::<Vec<_>>();
-
-        let trace_shares = transpose(trace_shares);
 
         (program_io_shares, trace_shares)
     }
