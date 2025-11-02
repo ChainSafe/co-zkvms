@@ -4,10 +4,12 @@
 use crate::field::JoltField;
 use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::types::Rep3Value;
+use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
 };
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
+use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
@@ -43,34 +45,71 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
-        let (sumcheck_proof, r) = coordinate_prove_arbitrary(num_rounds, transcript, network)?;
+        let log_num_workers = network.log_num_workers_per_party();
+        let (mut sumcheck_proof, mut r, claim) =
+            coordinate_prove_arbitrary(num_rounds - log_num_workers, transcript, network)?;
 
-        let final_claims = self.receive_final_claims(network)?;
+        let final_claims = if network.log_num_workers_per_party() > 0 {
+            self.prove_remaining_rounds(&mut r, claim, &mut sumcheck_proof, transcript, network)?
+        } else {
+            self.receive_final_claims(network)?
+        };
 
         Ok((sumcheck_proof, r, final_claims))
     }
 
     fn receive_final_claims(&self, network: &mut Network) -> eyre::Result<(F, F)> {
         let (final_claims_shares_l, final_claims_shares_r): (
-            Vec<Rep3PrimeFieldShare<F>>,
-            Vec<Rep3PrimeFieldShare<F>>,
+            Vec<AdditiveShare<F>>,
+            Vec<AdditiveShare<F>>,
         ) = network
-            .receive_responses::<(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>()?
+            .receive_responses::<(AdditiveShare<F>, AdditiveShare<F>)>()?
             .into_iter()
             .unzip();
 
         let final_claims = (
-            rep3::combine_field_element(
-                final_claims_shares_l[0],
-                final_claims_shares_l[1],
-                final_claims_shares_l[2],
-            ),
-            rep3::combine_field_element(
-                final_claims_shares_r[0],
-                final_claims_shares_r[1],
-                final_claims_shares_r[2],
-            ),
+            additive::combine_additive_share(final_claims_shares_l),
+            additive::combine_additive_share(final_claims_shares_r),
         );
+
+        Ok(final_claims)
+    }
+
+    fn prove_remaining_rounds(
+        &self,
+        r: &mut Vec<F>,
+        claim: F,
+        proof: &mut SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(F, F)> {
+        let log_num_workers = network.log_num_workers_per_party();
+        let evals = network
+            .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
+            .into_iter()
+            .flat_map(|shares| {
+                let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
+
+                vec![
+                    additive::combine_additive_share(final_l),
+                    additive::combine_additive_share(final_r),
+                ]
+            })
+            .collect();
+
+        let (E1, E2): (Vec<_>, Vec<_>) = network
+            .receive_response_from_workers::<(F, F)>(PartyID::ID0)?
+            .into_iter()
+            .unzip();
+        let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
+
+        let mut layer = DenseInterleavedPolynomial::new(evals);
+
+        let (proof_, r_, final_claims) = layer.prove_sumcheck(&claim, &mut eq_poly, transcript);
+
+        network.broadcast_request((r_.clone(), final_claims))?;
+        proof.compressed_polys.extend(proof_.compressed_polys);
+        r.extend(r_);
 
         Ok(final_claims)
     }
@@ -123,8 +162,24 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        let final_claims = self.final_claims(party_id);
-        io_ctx.network().send_response(final_claims)?;
+        let mut final_claims = self.final_claims(party_id);
+        io_ctx.network().send_response((
+            final_claims.0.into_additive(),
+            final_claims.1.into_additive(),
+        ))?;
+
+        if io_ctx.log_num_workers_per_party() > 0 {
+            if io_ctx.party_id() == PartyID::ID0 {
+                io_ctx
+                    .network()
+                    .send_response((eq_poly.E1[0], eq_poly.E1[1]))?;
+            }
+
+            // Coordinator runs remaining sumcheck rounds
+            let (r_, final_claims_): (Vec<F>, _) = io_ctx.network().receive_request()?;
+            final_claims = final_claims_;
+            r.extend(r_);
+        }
 
         Ok((r, final_claims))
     }
@@ -135,11 +190,12 @@ pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
     num_rounds: usize,
     transcript: &mut ProofTranscript,
     network: &mut Network,
-) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)>
+) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F)>
 where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
+    let mut claim = F::zero();
     let mut r: Vec<F> = Vec::new();
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
@@ -154,14 +210,14 @@ where
         let r_j = transcript.challenge_scalar();
         r.push(r_j);
 
-        let claim = round_poly.evaluate(&r_j);
+        claim = round_poly.evaluate(&r_j);
 
         network.broadcast_request((r_j, claim))?;
 
         cubic_polys.push(compressed_poly);
     }
 
-    Ok((SumcheckInstanceProof::new(cubic_polys), r))
+    Ok((SumcheckInstanceProof::new(cubic_polys), r, claim))
 }
 
 #[tracing::instrument(skip_all, name = "sumcheck::prove_arbitrary_worker")]

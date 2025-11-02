@@ -10,6 +10,10 @@ use crate::{
     utils::transcript::Transcript,
 };
 use eyre::Context;
+use itertools::Itertools;
+use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
+use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
+use mpc_core::protocols::additive;
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{

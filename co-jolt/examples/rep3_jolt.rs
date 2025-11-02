@@ -118,7 +118,7 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -217,9 +217,9 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     // .global_worker_id();
     // prover.io_ctx.network().send_response(gid)?;
 
-    prover.io_ctx.network().send_response(prover.polynomials)?;
+    // prover.io_ctx.network().send_response(prover.polynomials)?;
 
-    // prover.prove()?;
+    prover.prove()?;
 
     prover.io_ctx.log_connection_stats();
     drop(tracing_guard);
@@ -312,22 +312,22 @@ pub fn run_coordinator(
     // network.send_requests(vec![0usize, 1, 2, 3, 4, 5]).unwrap();
     // println!("ids: {:?}", network.receive_responses::<usize>().unwrap());
 
-    let worker_polys: Vec<_> = network.receive_responses().unwrap();
+    // let worker_polys: Vec<_> = network.receive_responses().unwrap();
 
-    let worker_polys = worker_polys
-        .into_iter()
-        .chunks(3)
-        .into_iter()
-        .map(|chunk| {
-            co_jolt::jolt::vm::witness::Rep3JoltPolynomials::combine_polynomials(
-                &preprocessing.shared,
-                chunk.collect(),
-            )
-        })
-        .collect::<Vec<_>>();
+    // let worker_polys = worker_polys
+    //     .into_iter()
+    //     .chunks(3)
+    //     .into_iter()
+    //     .map(|chunk| {
+    //         co_jolt::jolt::vm::witness::Rep3JoltPolynomials::combine_polynomials(
+    //             &preprocessing.shared,
+    //             chunk.collect(),
+    //         )
+    //     })
+    //     .collect::<Vec<_>>();
 
-    JoltTraceStep::pad(&mut trace);
-    let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
+    // JoltTraceStep::pad(&mut trace);
+    // let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
     // let r1cs_builder: jolt_core::r1cs::builder::CombinedUniformBuilder<
     //     C,
     //     F,
@@ -338,21 +338,21 @@ pub fn run_coordinator(
     // );
     // r1cs_builder.compute_aux(&mut check);
 
-    check_instruction_polys(
-        worker_polys
-            .iter()
-            .map(|p| &p.instruction_lookups)
-            .collect_vec(),
-        &check.instruction_lookups,
-    );
+    // check_instruction_polys(
+    //     worker_polys
+    //         .iter()
+    //         .map(|p| &p.instruction_lookups)
+    //         .collect_vec(),
+    //     &check.instruction_lookups,
+    // );
 
-    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
-    //     meta,
-    //     // &program_io,
-    //     &spartan_key,
-    //     &preprocessing.shared,
-    //     &mut network,
-    // )?;
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(
+        meta,
+        // &program_io,
+        &spartan_key,
+        &preprocessing.shared,
+        &mut network,
+    )?;
 
     // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
     //     .context("while verifying Lasso (rep3) proof")?;

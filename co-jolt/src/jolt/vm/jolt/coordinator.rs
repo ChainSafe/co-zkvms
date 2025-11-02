@@ -122,17 +122,17 @@ where
 
         network.sync_with_parties()?;
 
-        let span = tracing::span!(tracing::Level::INFO, "BytecodeProof::prove");
-        let _guard = span.enter();
-        let bytecode_proof = BytecodeProof::coordinate_memory_checking(
-            &preprocessing.bytecode,
-            meta.padded_trace_length,
-            preprocessing.bytecode.v_init_final[0].len(),
-            &mut transcript,
-            network,
-        )?;
-        drop(_guard);
-        drop(span);
+        // let span = tracing::span!(tracing::Level::INFO, "BytecodeProof::prove");
+        // let _guard = span.enter();
+        // let bytecode_proof = BytecodeProof::coordinate_memory_checking(
+        //     &preprocessing.bytecode,
+        //     meta.padded_trace_length,
+        //     preprocessing.bytecode.v_init_final[0].len(),
+        //     &mut transcript,
+        //     network,
+        // )?;
+        // drop(_guard);
+        // drop(span);
 
         let instruction_lookups_proof = InstructionLookupsProof::prove_rep3(
             trace_length,
@@ -141,28 +141,28 @@ where
             &mut transcript,
         )?;
 
-        let memory_proof = ReadWriteMemoryProof::prove_rep3(
-            meta.padded_trace_length,
-            meta.read_write_memory_size,
-            &preprocessing.read_write_memory,
-            &mut transcript,
-            network,
-        )?;
+        // let memory_proof = ReadWriteMemoryProof::prove_rep3(
+        //     meta.padded_trace_length,
+        //     meta.read_write_memory_size,
+        //     &preprocessing.read_write_memory,
+        //     &mut transcript,
+        //     network,
+        // )?;
 
-        let r1cs_proof =
-            UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
-                .expect("r1cs proof failed");
+        // let r1cs_proof =
+        //     UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
+        //         .expect("r1cs proof failed");
 
-        let opening_proof =
-            Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
+        // let opening_proof =
+        //     Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
 
         let jolt_proof = JoltProof {
-            bytecode: bytecode_proof,
+            // bytecode: bytecode_proof,
             trace_length,
-            read_write_memory: memory_proof,
+            // read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
-            r1cs: r1cs_proof,
-            opening_proof,
+            // r1cs: r1cs_proof,
+            // opening_proof,
             _marker: PhantomData,
         };
 

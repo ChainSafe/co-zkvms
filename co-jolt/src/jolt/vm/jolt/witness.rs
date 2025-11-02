@@ -198,10 +198,14 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     {
         let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let mut commitments_shares: Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>> = network
-            .receive_responses()?
+        let mut worker_commitments_shares: Vec<
+            Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>>,
+        > = network
+            .receive_responses_from_subnets()?
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+
+        worker_commitments_shares.
 
         let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
         let _guard = span.enter();

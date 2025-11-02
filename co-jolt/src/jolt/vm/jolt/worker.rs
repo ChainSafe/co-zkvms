@@ -184,20 +184,20 @@ where
 
         let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
 
-        let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
-        let _guard = span.enter();
-        Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
-            &preprocessing.shared.generators,
-            &preprocessing.shared.bytecode,
-            &polynomials.bytecode,
-            &polynomials,
-            &mut opening_accumulator,
-            &mut self.io_ctx,
-        )?;
-        drop(_guard);
-        drop(span);
+        // let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
+        // let _guard = span.enter();
+        // Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
+        //     &preprocessing.shared.generators,
+        //     &preprocessing.shared.bytecode,
+        //     &polynomials.bytecode,
+        //     &polynomials,
+        //     &mut opening_accumulator,
+        //     &mut self.io_ctx,
+        // )?;
+        // drop(_guard);
+        // drop(span);
 
-        self.io_ctx.sync_with_parties()?;
+        // self.io_ctx.sync_with_parties()?;
 
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
             PCS,
@@ -210,34 +210,34 @@ where
             &mut self.io_ctx,
         )?;
 
-        self.io_ctx.sync_with_parties()?;
+        // self.io_ctx.sync_with_parties()?;
 
-        Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
-            &preprocessing.shared.generators,
-            &preprocessing.shared.read_write_memory,
-            polynomials,
-            &self.program_io,
-            &mut opening_accumulator,
-            &mut self.io_ctx,
-        )?;
+        // Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
+        //     &preprocessing.shared.generators,
+        //     &preprocessing.shared.read_write_memory,
+        //     polynomials,
+        //     &self.program_io,
+        //     &mut opening_accumulator,
+        //     &mut self.io_ctx,
+        // )?;
 
-        self.io_ctx.sync_with_parties()?;
+        // self.io_ctx.sync_with_parties()?;
 
-        Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
-            &self.r1cs_builder,
-            &self.spartan_key,
-            polynomials,
-            &mut opening_accumulator,
-            &mut self.io_ctx,
-        )?;
+        // Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
+        //     &self.r1cs_builder,
+        //     &self.spartan_key,
+        //     polynomials,
+        //     &mut opening_accumulator,
+        //     &mut self.io_ctx,
+        // )?;
 
-        self.io_ctx.sync_with_parties()?;
+        // self.io_ctx.sync_with_parties()?;
 
-        // Batch-prove all openings
-        opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
-            &preprocessing.shared.generators,
-            self.io_ctx.main(),
-        )?;
+        // // Batch-prove all openings
+        // opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
+        //     &preprocessing.shared.generators,
+        //     self.io_ctx.main(),
+        // )?;
 
         Ok(())
     }

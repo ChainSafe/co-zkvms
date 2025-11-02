@@ -13,6 +13,7 @@ use eyre::Context;
 use jolt_core::poly::{
     sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
 };
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::{math::Math, transcript::Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{

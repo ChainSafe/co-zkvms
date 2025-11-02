@@ -1,10 +1,10 @@
-use ark_ff::PrimeField;
-use ark_linear_sumcheck::rng::FeedableRNG;
-use eyre::Context;
 use crate::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };
+use ark_ff::PrimeField;
+use ark_linear_sumcheck::rng::FeedableRNG;
+use eyre::Context;
 use mpc_types::protocols::additive::AdditivePrimeFieldShare;
 use rand::RngCore;
 
@@ -63,11 +63,7 @@ pub fn promote_to_trivial_share<F: PrimeField>(public_value: F, id: PartyID) -> 
     AdditiveShare::promote_from_trivial(public_value, id)
 }
 
-fn combine_field_elements<F: PrimeField>(
-    share1: &[F],
-    share2: &[F],
-    share3: &[F],
-) -> Vec<F> {
+fn combine_field_elements<F: PrimeField>(share1: &[F], share2: &[F], share3: &[F]) -> Vec<F> {
     assert_eq!(share1.len(), share2.len());
     assert_eq!(share2.len(), share3.len());
 
@@ -76,6 +72,7 @@ fn combine_field_elements<F: PrimeField>(
         .collect::<Vec<_>>()
 }
 
+// TODO: replace with `combine_additive_vec`
 pub fn combine_additive_shares<F: PrimeField>(
     share1: &[AdditiveShare<F>],
     share2: &[AdditiveShare<F>],
@@ -89,9 +86,7 @@ pub fn combine_additive_shares<F: PrimeField>(
         .collect::<Vec<_>>()
 }
 
-pub fn combine_additive_share<F: PrimeField>(
-    shares: Vec<AdditiveShare<F>>,
-) -> F {
+pub fn combine_additive_share<F: PrimeField>(shares: Vec<AdditiveShare<F>>) -> F {
     assert_eq!(shares.len(), 3);
 
     AdditiveShare::into_fe_vec(shares).iter().sum::<F>()
@@ -102,11 +97,7 @@ pub fn combine_additive_share<F: PrimeField>(
 /// Panics if the provided `Vec` sizes do not match.
 pub fn combine_additive_vec<F: PrimeField>(shares: Vec<Vec<AdditiveShare<F>>>) -> Vec<F> {
     let [s0, s1, s2]: [Vec<AdditiveShare<F>>; 3] = shares.try_into().unwrap();
-    combine_additive_shares(
-        &s0,
-        &s1,
-        &s2,
-    )
+    combine_additive_shares(&s0, &s1, &s2)
 }
 
 fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F {

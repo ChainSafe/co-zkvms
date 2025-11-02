@@ -14,7 +14,11 @@ use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
+use jolt_core::subprotocols::grand_product::{
+    BatchedGrandProductLayer, BatchedGrandProductLayerProof,
+};
+use jolt_core::subprotocols::sparse_grand_product::BatchedGrandProductToggleLayer;
+use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
@@ -852,6 +856,59 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
+    fn prove_remaining_rounds(
+        &self,
+        r: &mut Vec<F>,
+        claim: F,
+        proof: &mut SumcheckInstanceProof<F, ProofTranscript>,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(F, F)> {
+        let log_num_workers = network.log_num_workers_per_party();
+        let (coalesced_flags, coalesced_fingerprints) = network
+            .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
+            .into_iter()
+            .map(|shares| {
+                let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
+
+                (
+                    additive::combine_additive_share(final_l),
+                    additive::combine_additive_share(final_r),
+                )
+            })
+            .fold(
+                (vec![], vec![]),
+                |(mut final_evals_l, mut final_evals_r), (final_l, final_r)| {
+                    final_evals_l.push(final_l);
+                    final_evals_r.push(final_r);
+                    (final_evals_l, final_evals_r)
+                },
+            );
+
+        let (E1, E2): (Vec<_>, Vec<_>) = network
+            .receive_response_from_workers::<(F, F)>(PartyID::ID0)?
+            .into_iter()
+            .unzip();
+        let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
+
+        let mut layer = BatchedGrandProductToggleLayer {
+            flag_indices: vec![],
+            flag_values: vec![],
+            fingerprints: vec![],
+            coalesced_flags: Some(coalesced_flags),
+            coalesced_fingerprints: Some(coalesced_fingerprints),
+            layer_len: 1 << network.log_num_workers_per_party(),
+            batched_layer_len: 0,
+        };
+
+        let (proof_, r_, final_claims) = layer.prove_sumcheck(&claim, &mut eq_poly, transcript);
+
+        network.broadcast_request((r_.clone(), final_claims))?;
+        proof.compressed_polys.extend(proof_.compressed_polys);
+        r.extend(r_);
+
+        Ok(final_claims)
+    }
 }
 
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorker<F, Network>
@@ -870,9 +927,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
-        if io_ctx.party_id() == rep3::PartyID::ID0 {
-            io_ctx.network().send_response(eq_poly.get_num_vars())?;
-        }
+        // if io_ctx.party_id() == rep3::PartyID::ID0 {
+        //     io_ctx.network().send_response(eq_poly.get_num_vars())?;
+        // }
 
         let (r_sumcheck, _) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
 
@@ -901,7 +958,8 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
+        // let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
+        let num_rounds = r_grand_product.len();
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;

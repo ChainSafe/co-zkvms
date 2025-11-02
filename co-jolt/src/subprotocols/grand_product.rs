@@ -191,9 +191,9 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
-        if io_ctx.party_id() == rep3::PartyID::ID0 {
-            io_ctx.network().send_response(eq_poly.get_num_vars())?;
-        }
+        // if io_ctx.party_id() == rep3::PartyID::ID0 {
+        //     io_ctx.network().send_response(eq_poly.get_num_vars())?;
+        // }
 
         let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
 

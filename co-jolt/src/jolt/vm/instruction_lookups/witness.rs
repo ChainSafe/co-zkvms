@@ -56,6 +56,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
     {
         let m = trace.len().next_power_of_two();
+        let worker_idx = io_ctx.worker_idx();
+        let num_workers = 1usize << io_ctx.log_num_workers_per_party();
 
         Instructions::promote_public_operands_to_shared(
             trace.par_iter_mut().map(|op| &mut op.instruction_lookup),
@@ -160,116 +162,139 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 .into_iter(),
         );
 
-        if (io_ctx.worker_id + 1) % (1 << io_ctx.log_num_workers_per_party()) != 0 {
-            println!("{} sending to next worker", io_ctx.worker_id,);
+        if (worker_idx + 1) % num_workers != 0 {
             io_ctx.network().send_next_link_serde(final_cts_.clone())?;
         }
-        let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if io_ctx.worker_id != 0 {
-            println!("{} recieving from prev worker", io_ctx.worker_id,);
-
+        let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if worker_idx != 0 {
             io_ctx.network().resv_prev_link_serde()?
         } else {
             vec![vec![Rep3RingShare::zero_share(); M]; preprocessing.num_memories]
         };
-        println!("{} recieved from prev worker", io_ctx.worker_id,);
 
-        let polys = tracing::info_span!("compute_polys").in_scope(|| {
-            io_ctx.par_iter_cyclic(
-                izip!(final_cts, used_ops, rand_ohvs, memory_addresses_c).enumerate(),
-                |(memory_index, (mut final_cts_i, used_ops, rand_ohv, memory_addresses_c)),
-                 io_ctx| {
-                    let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+        let (read_cts, final_cts, e_polys): (Vec<_>, Vec<_>, Vec<_>) =
+            tracing::info_span!("compute_polys")
+                .in_scope(|| {
+                    io_ctx.par_iter_cyclic(
+                        izip!(final_cts, used_ops, rand_ohvs, memory_addresses_c).enumerate(),
+                        |(
+                            memory_index,
+                            (mut final_cts_i, used_ops, rand_ohv, memory_addresses_c),
+                        ),
+                         io_ctx| {
+                            let subtable_index =
+                                preprocessing.memory_to_subtable_index[memory_index];
 
-                    let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); m];
-                    let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); m];
+                            let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); m];
+                            let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); m];
 
-                    let num_reads = used_ops.len();
-                    if num_reads == 0 {
-                        return eyre::Ok((
-                            read_cts_i,
-                            vec![Rep3PrimeFieldShare::zero_share(); M],
-                            subtable_lookups,
-                        ));
-                    }
+                            let num_reads = used_ops.len();
+                            if num_reads == 0 {
+                                return eyre::Ok((
+                                    Rep3MultilinearPolynomial::from(read_cts_i),
+                                    vec![Rep3RingShare::zero_share(); M],
+                                    Rep3MultilinearPolynomial::from(subtable_lookups),
+                                ));
+                            }
 
-                    let mut read_cts_i_local_a = vec![RingElement::zero(); num_reads];
-                    let mut lookup_subtables_local_a = vec![RingElement::zero(); num_reads];
+                            let mut read_cts_i_local_a = vec![RingElement::zero(); num_reads];
+                            let mut lookup_subtables_local_a = vec![RingElement::zero(); num_reads];
 
-                    let _guard =
-                        tracing::trace_span!("ops_per_memory", memory_index, subtable_index)
+                            let _guard = tracing::trace_span!(
+                                "ops_per_memory",
+                                memory_index,
+                                subtable_index
+                            )
                             .entered();
-                    // let memory_addresses_c = memory_addresses_c.into_iter();
-                    for i in 0..num_reads {
-                        let c = memory_addresses_c[i];
+                            // let memory_addresses_c = memory_addresses_c.into_iter();
+                            for i in 0..num_reads {
+                                let c = memory_addresses_c[i];
 
-                        let mut counter = io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
-                        for (i, l) in final_cts_i.iter_mut().enumerate() {
-                            let e = rand_ohv[i ^ c];
-                            counter += e * *l;
-                            *l += e; // ohv_bit (either 0 or 1)
-                        }
-                        let mut subtable_lookup =
-                            io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
-                        for (i, l) in materialized_subtable_luts[subtable_index]
-                            .iter()
-                            .enumerate()
-                        {
-                            let e = rand_ohv[i ^ c];
-                            subtable_lookup += e * *l;
-                        }
+                                let mut counter =
+                                    io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                for (i, l) in final_cts_i.iter_mut().enumerate() {
+                                    let e = rand_ohv[i ^ c];
+                                    counter += e * *l;
+                                    *l += e; // ohv_bit (either 0 or 1)
+                                }
+                                let mut subtable_lookup =
+                                    io_ctx.rngs.rand.masking_element::<RingElement<u32>>();
+                                for (i, l) in materialized_subtable_luts[subtable_index]
+                                    .iter()
+                                    .enumerate()
+                                {
+                                    let e = rand_ohv[i ^ c];
+                                    subtable_lookup += e * *l;
+                                }
 
-                        read_cts_i_local_a[i] = counter;
-                        lookup_subtables_local_a[i] = subtable_lookup;
-                    }
-                    drop(_guard);
+                                read_cts_i_local_a[i] = counter;
+                                lookup_subtables_local_a[i] = subtable_lookup;
+                            }
+                            drop(_guard);
 
-                    let _guard = tracing::trace_span!("luts_reshare").entered();
-                    let read_cts_i_b = io_ctx.network.reshare_many(&read_cts_i_local_a)?;
-                    let lookup_subtables_b =
-                        io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
-                    drop(_guard);
+                            let _guard = tracing::trace_span!("luts_reshare").entered();
+                            let read_cts_i_b = io_ctx.network.reshare_many(&read_cts_i_local_a)?;
+                            let lookup_subtables_b =
+                                io_ctx.network.reshare_many(&lookup_subtables_local_a)?;
+                            drop(_guard);
 
-                    let used_read_cts_i = izip!(read_cts_i_local_a, read_cts_i_b)
-                        .map(|(a, b)| Rep3RingShare { a, b })
-                        .collect::<Vec<_>>();
-                    let used_subtable_lookups = izip!(lookup_subtables_local_a, lookup_subtables_b)
-                        .map(|(a, b)| Rep3RingShare { a, b })
-                        .collect::<Vec<_>>();
+                            let used_read_cts_i = izip!(read_cts_i_local_a, read_cts_i_b)
+                                .map(|(a, b)| Rep3RingShare { a, b })
+                                .collect::<Vec<_>>();
+                            let used_subtable_lookups =
+                                izip!(lookup_subtables_local_a, lookup_subtables_b)
+                                    .map(|(a, b)| Rep3RingShare { a, b })
+                                    .collect::<Vec<_>>();
 
-                    let used_read_cts_i =
-                        rep3_ring::casts::ring_to_field_many_selector(&used_read_cts_i, io_ctx)
+                            let used_read_cts_i = rep3_ring::casts::ring_to_field_many_selector(
+                                &used_read_cts_i,
+                                io_ctx,
+                            )
                             .unwrap();
-                    let final_cts_i =
-                        rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx)
-                            .unwrap();
-                    let used_subtable_lookups = rep3_ring::casts::ring_to_field_many_selector(
-                        &used_subtable_lookups,
-                        io_ctx,
-                    )
-                    .unwrap();
+                            // let final_cts_i =
+                            //     rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx)
+                            //         .unwrap();
+                            let used_subtable_lookups =
+                                rep3_ring::casts::ring_to_field_many_selector(
+                                    &used_subtable_lookups,
+                                    io_ctx,
+                                )
+                                .unwrap();
 
-                    izip!(used_ops, used_read_cts_i, used_subtable_lookups,).for_each(
-                        |(j, cts, e)| {
-                            read_cts_i[j] = cts;
-                            subtable_lookups[j] = e;
+                            izip!(used_ops, used_read_cts_i, used_subtable_lookups,).for_each(
+                                |(j, cts, e)| {
+                                    read_cts_i[j] = cts;
+                                    subtable_lookups[j] = e;
+                                },
+                            );
+
+                            Ok((read_cts_i.into(), final_cts_i, subtable_lookups.into()))
                         },
-                    );
+                    )
+                })?
+                .into_iter()
+                .multiunzip();
 
-                    Ok((read_cts_i, final_cts_i, subtable_lookups))
-                },
-            )
+        let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if (worker_idx + 1) % num_workers != 0 {
+            io_ctx.network().resv_prev_link_serde()?
+        } else {
+            final_cts
+        };
+        if (worker_idx + 2) % num_workers == 0 {
+            io_ctx.network().send_next_link_serde(final_cts.clone())?;
+        }
+
+        let M_chunk_size = M / num_workers;
+        let final_cts = tracing::info_span!("compute_polys").in_scope(|| {
+            io_ctx.par_iter_cyclic(final_cts, |final_cts_i, io_ctx| {
+                let final_cts_i = final_cts_i
+                    [M_chunk_size * worker_idx..M_chunk_size * (worker_idx + 1)]
+                    .to_vec();
+                let final_cts_i =
+                    rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx).unwrap();
+
+                Ok(final_cts_i.into())
+            })
         })?;
-
-        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
-        let (read_cts, final_cts, e_polys) = polys.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut read_acc, mut final_acc, mut e_acc), (r, f, e)| {
-                read_acc.push(Rep3MultilinearPolynomial::from(r));
-                final_acc.push(Rep3MultilinearPolynomial::from(f));
-                e_acc.push(Rep3MultilinearPolynomial::from(e));
-                (read_acc, final_acc, e_acc)
-            },
-        );
 
         let span = tracing::info_span!("compute_dim");
         let _guard = span.enter();
