@@ -1,3 +1,5 @@
+use std::ops::{Add, AddAssign};
+
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials};
@@ -8,7 +10,7 @@ use crate::poly::Rep3MultilinearPolynomial;
 use crate::r1cs::inputs::{ConstantPreprocessing, Rep3R1CSPolynomials};
 use crate::utils::types::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{multizip, Itertools};
+use itertools::{izip, multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
@@ -193,6 +195,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     ) -> eyre::Result<JoltCommitments<PCS, ProofTranscript>>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
+        // PCS::Commitment: AddAssign<PCS::Commitment>,
         ProofTranscript: Transcript,
         Network: Rep3NetworkCoordinator,
     {
@@ -205,55 +208,70 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
             .try_into()
             .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
-        worker_commitments_shares.
+        worker_commitments_shares
+            .into_iter()
+            .map(|mut commitments_shares| {
+                let mut commitments =
+                    JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
-        let _guard = span.enter();
-        multizip((
-            commitments_shares[0].read_write_values(),
-            commitments_shares[1].read_write_values(),
-            commitments_shares[2].read_write_values(),
-        ))
-        .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-        .zip(commitments.read_write_values_mut())
-        .for_each(|(commitment, dest)| *dest = commitment);
-        drop(_guard);
+                let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
+                let _guard = span.enter();
+                multizip((
+                    commitments_shares[0].read_write_values(),
+                    commitments_shares[1].read_write_values(),
+                    commitments_shares[2].read_write_values(),
+                ))
+                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
+                .zip(commitments.read_write_values_mut())
+                .for_each(|(commitment, dest)| *dest = commitment);
+                drop(_guard);
 
-        let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
-        let _guard = span.enter();
-        commitments.instruction_lookups.final_cts = multizip((
-            &commitments_shares[0].instruction_lookups.final_cts,
-            &commitments_shares[1].instruction_lookups.final_cts,
-            &commitments_shares[2].instruction_lookups.final_cts,
-        ))
-        .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-        .collect_vec();
-        drop(_guard);
+                let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
+                let _guard = span.enter();
+                commitments.instruction_lookups.final_cts = multizip((
+                    &commitments_shares[0].instruction_lookups.final_cts,
+                    &commitments_shares[1].instruction_lookups.final_cts,
+                    &commitments_shares[2].instruction_lookups.final_cts,
+                ))
+                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
+                .collect_vec();
+                drop(_guard);
 
-        let span = tracing::span!(tracing::Level::INFO, "combine_t_final");
-        let _guard = span.enter();
-        commitments.bytecode.t_final = std::mem::take(
-            commitments_shares[0]
-                .bytecode
-                .t_final
-                .try_into_public_mut()
-                .expect("party 0 must compute commitment to public t_final"),
-        );
+                let span = tracing::span!(tracing::Level::INFO, "combine_t_final");
+                let _guard = span.enter();
+                commitments.bytecode.t_final = std::mem::take(
+                    commitments_shares[0]
+                        .bytecode
+                        .t_final
+                        .try_into_public_mut()
+                        .expect("party 0 must compute commitment to public t_final"),
+                );
 
-        commitments.read_write_memory.v_final = PCS::combine_commitment_shares(&[
-            &commitments_shares[0].read_write_memory.v_final,
-            &commitments_shares[1].read_write_memory.v_final,
-            &commitments_shares[2].read_write_memory.v_final,
-        ]);
+                commitments.read_write_memory.v_final = PCS::combine_commitment_shares(&[
+                    &commitments_shares[0].read_write_memory.v_final,
+                    &commitments_shares[1].read_write_memory.v_final,
+                    &commitments_shares[2].read_write_memory.v_final,
+                ]);
 
-        commitments.read_write_memory.t_final = std::mem::take(
-            commitments_shares[0]
-                .read_write_memory
-                .t_final
-                .try_into_public_mut()
-                .expect("party 0 must compute commitment to public t_final"),
-        );
-        drop(_guard);
+                commitments.read_write_memory.t_final = std::mem::take(
+                    commitments_shares[0]
+                        .read_write_memory
+                        .t_final
+                        .try_into_public_mut()
+                        .expect("party 0 must compute commitment to public t_final"),
+                );
+                commitments
+            })
+            .reduce(|mut acc, comm| {
+                izip!(acc.read_write_values_mut(), comm.read_write_values())
+                    .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
+                izip!(
+                    &mut acc.instruction_lookups.final_cts,
+                    comm.instruction_lookups.final_cts
+                )
+                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, &comm));
+                acc
+            });
         Ok(commitments)
     }
 

@@ -49,4 +49,6 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = Kecca
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<Self::Commitment>],
     ) -> Self::Commitment;
+
+    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment;
 }

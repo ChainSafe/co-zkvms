@@ -56,17 +56,17 @@ where
             )
             .context("while proving grand products")?;
 
-        let (_, r_read_write_opening) =
+        let (_, r_read_write_point) =
             r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
-        let (_, r_init_final_opening) =
+        let (_, r_init_final_point) =
             r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         Self::compute_openings(
             opening_accumulator,
             polynomials,
             jolt_polynomials,
-            r_read_write_opening,
-            r_init_final_opening,
+            r_read_write_point,
+            r_init_final_point,
             io_ctx,
         )?;
 
@@ -142,15 +142,18 @@ where
 
         let (read_write_evals, eq_read_write) =
             Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, r_read_write);
+        let party_id = io_ctx.party_id();
+        io_ctx.network().send_response(
+            read_write_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
 
-        opening_accumulator.append(
+        opening_accumulator.append_with_known_claim(
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
-            &read_write_evals
-                .iter()
-                .map(|x| x.into_additive(io_ctx.party_id()))
-                .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
 
@@ -158,14 +161,17 @@ where
         let (init_final_evals, eq_init_final) =
             Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
 
-        opening_accumulator.append(
+        io_ctx.network().send_response(
+            init_final_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        opening_accumulator.append_with_known_claim(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
             r_init_final.to_vec(),
-            &init_final_evals
-                .iter()
-                .map(|x| x.into_additive(io_ctx.party_id()))
-                .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
 

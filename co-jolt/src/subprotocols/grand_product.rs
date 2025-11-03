@@ -56,7 +56,7 @@ where
         &self,
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<BatchedGrandProductProof<PCS, ProofTranscript>> {
+    ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
@@ -74,10 +74,13 @@ where
                 .push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
         }
 
-        Ok(BatchedGrandProductProof {
-            gkr_layers: proof_layers,
-            quark_proof: None,
-        })
+        Ok((
+            BatchedGrandProductProof {
+                gkr_layers: proof_layers,
+                quark_proof: None,
+            },
+            r,
+        ))
     }
 }
 

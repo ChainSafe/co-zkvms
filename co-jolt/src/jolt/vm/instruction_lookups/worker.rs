@@ -109,16 +109,17 @@ where
         let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq[..num_rounds]);
         let eq_poly = MultilinearPolynomial::from(eq_evals);
 
-        let (r_primary_sumchecks, flag_evals, E_evals, outputs_eval) =
-            Self::prove_primary_sumcheck(
-                preprocessing,
-                num_rounds,
-                eq_poly,
-                polynomials.instruction_lookups.instruction_flags.clone(),
-                polynomials.instruction_lookups.E_polys.clone(),
-                polynomials.instruction_lookups.lookup_outputs.clone(),
-                io_ctx,
-            )?;
+        let r_primary_sumchecks = Self::prove_primary_sumcheck(
+            preprocessing,
+            num_rounds,
+            eq_poly,
+            polynomials.instruction_lookups.instruction_flags.clone(),
+            polynomials.instruction_lookups.E_polys.clone(),
+            polynomials.instruction_lookups.lookup_outputs.clone(),
+            io_ctx,
+        )?;
+
+        tracing::info!("Primary sumcheck proof done");
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
@@ -130,15 +131,11 @@ where
             .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
             .collect::<Vec<_>>();
 
-        let primary_sumcheck_openings: Vec<_> =
-            chain![E_evals, flag_evals, once(outputs_eval)].collect();
-
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
-        opening_accumulator.append(
+        opening_accumulator.append_with_known_claim(
             &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,
-            &primary_sumcheck_openings,
             io_ctx.main(),
         )?;
 
@@ -183,12 +180,7 @@ where
         E_polys: Vec<Rep3MultilinearPolynomial<F>>,
         lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<(
-        Vec<F>,
-        Vec<AdditiveShare<F>>,
-        Vec<AdditiveShare<F>>,
-        AdditiveShare<F>,
-    )> {
+    ) -> eyre::Result<Vec<F>> {
         let log_num_workers = io_ctx.log_num_workers_per_party();
 
         let (mut r_primary_sumchecks, eq_evals, flag_evals, E_evals, outputs_eval) =
@@ -202,11 +194,7 @@ where
                 io_ctx,
             )?;
 
-        let party_id = io_ctx.party_id();
-        let span = tracing::info_span!("prove_primary_sumcheck_remaining");
-        let _span_enter = span.enter();
-
-        let E_evals = E_evals
+        let E_evals: Vec<_> = E_evals
             .into_par_iter()
             .map(|eval| eval.into_additive())
             .collect();
@@ -220,22 +208,15 @@ where
                 outputs_eval.into_additive(),
             ))?;
 
-            let (r_final, flag_evals, E_evals, outputs_eval) =
-                io_ctx.network().receive_request()?;
+            let r_final = io_ctx.network().receive_request()?;
             r_primary_sumchecks.push(r_final);
-            Ok((r_primary_sumchecks, flag_evals, E_evals, outputs_eval))
+            Ok(r_primary_sumchecks)
         } else {
-            let flag_evals = flag_evals
-                .into_par_iter()
-                .map(|eval| additive::promote_to_trivial_share(eval, party_id))
-                .collect();
+            io_ctx
+                .network()
+                .send_response((flag_evals, E_evals, outputs_eval.into_additive()))?;
 
-            Ok((
-                r_primary_sumchecks,
-                flag_evals,
-                E_evals,
-                outputs_eval.into_additive(),
-            ))
+            Ok(r_primary_sumchecks)
         }
     }
 
@@ -316,10 +297,10 @@ where
         // Polys are fully defined so we can just take the first (and only) evaluation
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
 
-        println!("flag_evals {}", flag_polys[0].len());
-        println!("E_evals {}", E_polys[0].len());
-        println!("lookup_outputs_eval {}", lookup_outputs_poly.len());
-        println!("eq_eval {}", eq_poly.len());
+        // println!("flag_evals {}", flag_polys[0].len());
+        // println!("E_evals {}", E_polys[0].len());
+        // println!("lookup_outputs_eval {}", lookup_outputs_poly.len());
+        // println!("eq_eval {}", eq_poly.len());
         let flag_evals = flag_polys
             .iter()
             .map(|poly| poly.final_sumcheck_claim().as_public())

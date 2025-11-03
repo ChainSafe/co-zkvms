@@ -91,7 +91,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             Vec<_>,
             Vec<_>,
         ) = itertools::multiunzip(
-            tracing::info_span!("compute_polys")
+            tracing::info_span!("compute_final_cts_prefix")
                 .in_scope(|| {
                     io_ctx.par_iter_cyclic(0..preprocessing.num_memories, |memory_index, io_ctx| {
                         let dim_index = preprocessing.memory_to_dimension_index[memory_index];
@@ -162,14 +162,17 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 .into_iter(),
         );
 
+        let span = tracing::info_span!("sync_final_cts_prefix");
+        let _guard = span.enter();
         if (worker_idx + 1) % num_workers != 0 {
-            io_ctx.network().send_next_link_serde(final_cts_.clone())?;
+            io_ctx.network().send_next_link(final_cts_.clone())?;
         }
         let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if worker_idx != 0 {
-            io_ctx.network().resv_prev_link_serde()?
+            io_ctx.network().resv_prev_link()?
         } else {
             vec![vec![Rep3RingShare::zero_share(); M]; preprocessing.num_memories]
         };
+        drop(_guard);
 
         let (read_cts, final_cts, e_polys): (Vec<_>, Vec<_>, Vec<_>) =
             tracing::info_span!("compute_polys")
@@ -274,17 +277,20 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 .into_iter()
                 .multiunzip();
 
+        let span = tracing::info_span!("sync_final_cts");
+        let _guard = span.enter();
         let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if (worker_idx + 1) % num_workers != 0 {
-            io_ctx.network().resv_prev_link_serde()?
+            io_ctx.network().resv_next_link()?
         } else {
             final_cts
         };
-        if (worker_idx + 2) % num_workers == 0 {
-            io_ctx.network().send_next_link_serde(final_cts.clone())?;
+        if worker_idx != 0 {
+            io_ctx.network().send_prev_link(final_cts.clone())?;
         }
+        drop(_guard);
 
         let M_chunk_size = M / num_workers;
-        let final_cts = tracing::info_span!("compute_polys").in_scope(|| {
+        let final_cts = tracing::info_span!("final_cts_ring_to_field").in_scope(|| {
             io_ctx.par_iter_cyclic(final_cts, |final_cts_i, io_ctx| {
                 let final_cts_i = final_cts_i
                     [M_chunk_size * worker_idx..M_chunk_size * (worker_idx + 1)]

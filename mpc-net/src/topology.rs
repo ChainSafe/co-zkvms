@@ -75,7 +75,8 @@ pub trait MpcStarNetWorker: Sized + Clone {
 }
 
 pub trait MpcRingNetWorkerExt: Sized + Clone {
-    fn send_next_link_serde<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
-
-    fn resv_prev_link_serde<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
+    fn send_next_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
+    fn send_prev_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
+    fn resv_prev_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
+    fn resv_next_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
 }

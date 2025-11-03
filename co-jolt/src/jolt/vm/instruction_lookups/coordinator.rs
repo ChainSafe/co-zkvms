@@ -9,7 +9,7 @@ use crate::{
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
-use itertools::{izip, Itertools};
+use itertools::{chain, izip, Itertools};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 use jolt_core::{
@@ -20,6 +20,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+use std::iter::once;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul};
 
@@ -53,26 +54,34 @@ where
 
         let num_rounds = num_ops.log_2();
 
-        let primary_sumcheck_proof = Self::prove_primary_sumcheck_rep3(
-            num_rounds,
-            preprocessing,
-            F::zero(),
-            transcript,
-            network,
-        )
-        .context("while proving primary sumcheck")?;
+        let (primary_sumcheck_proof, flag_evals, E_evals, outputs_eval) =
+            Self::prove_primary_sumcheck_rep3(
+                num_rounds,
+                preprocessing,
+                F::zero(),
+                transcript,
+                network,
+            )
+            .context("while proving primary sumcheck")?;
+
+        let primary_sumcheck_claims: Vec<_> =
+            chain![E_evals, flag_evals, once(outputs_eval)].collect();
 
         let mut flag_evals = vec![F::zero(); Self::NUM_INSTRUCTIONS];
         let mut E_evals = vec![F::zero(); preprocessing.num_memories];
         let mut outputs_eval = F::zero();
 
-        let claims = Rep3ProverOpeningAccumulator::<F>::receive_claims(transcript, network)?;
+        Rep3ProverOpeningAccumulator::<F>::coordinate_with_known_claims(
+            &primary_sumcheck_claims,
+            transcript,
+            network,
+        )?;
 
         E_evals
             .iter_mut()
             .chain(flag_evals.iter_mut())
             .chain([&mut outputs_eval])
-            .zip(claims.into_iter())
+            .zip(primary_sumcheck_claims.into_iter())
             .for_each(|(eval, claim)| {
                 *eval = claim;
             });
@@ -111,7 +120,7 @@ where
         mut previous_claim: F,
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<SumcheckInstanceProof<F, ProofTranscript>> {
+    ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F)> {
         let log_num_workers = network.log_num_workers_per_party();
         if log_num_workers > 0 {
             network.extend_with_worker_subnets(1 << log_num_workers)?;
@@ -121,7 +130,22 @@ where
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         for _ in 0..num_rounds - log_num_workers {
-            let mut round_evals = additive::combine_additive_vec(network.receive_responses()?);
+            let mut round_evals = if log_num_workers == 0 {
+                additive::combine_additive_vec(network.receive_responses()?)
+            } else {
+                let subnet_responces =
+                    network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
+                let degree = subnet_responces[0][0].len();
+                subnet_responces
+                    .into_iter()
+                    .map(|shares| additive::combine_additive_vec(shares))
+                    .fold(vec![F::zero(); degree], |mut acc, coeff| {
+                        acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
+                            *acc += coeff;
+                        });
+                        acc
+                    })
+            };
             round_evals.insert(1, previous_claim - round_evals[0]);
             let round_poly = UniPoly::from_evals(&round_evals);
 
@@ -151,7 +175,7 @@ where
 
                     (eq_evals[0], flag_evals.pop().unwrap(), additive::combine_additive_vec(E_evals), additive::combine_additive_share(output_evals))
                 })
-                .fold((vec![], vec![vec![]; preprocessing.num_memories], vec![vec![]; preprocessing.num_memories], vec![]), |(mut eq_evals, mut flag_evals, mut E_evals, mut output_evals), (eq_eval, flag_eval, E_eval, output_eval)| {
+                .fold((vec![], vec![vec![]; Instructions::COUNT], vec![vec![]; preprocessing.num_memories], vec![]), |(mut eq_evals, mut flag_evals, mut E_evals, mut output_evals), (eq_eval, flag_eval, E_eval, output_eval)| {
                     eq_evals.push(eq_eval);
                     izip!(&mut flag_evals, flag_eval).for_each(|(es, e)| es.push(e));
                     izip!(&mut E_evals, E_eval).for_each(|(es, e)| es.push(e));
@@ -163,10 +187,14 @@ where
                 .into_iter()
                 .map(MultilinearPolynomial::from)
                 .collect_vec();
+
             let mut flag_polys = flag_evals
                 .into_iter()
                 .map(MultilinearPolynomial::from)
                 .collect_vec();
+
+            let eq_poly: MultilinearPolynomial<F> = eq_evals.into();
+
             let (proof, r_final, flag_evals, E_evals, outputs_eval) = InstructionLookupsProof::<
                 C,
                 M,
@@ -178,19 +206,39 @@ where
             >::prove_primary_sumcheck(
                 preprocessing,
                 log_num_workers,
-                eq_evals.into(),
+                eq_poly,
                 &mut E_polys,
                 &mut flag_polys,
                 &mut output_evals.into(),
                 transcript,
             );
 
-            network.broadcast_request((r_final, flag_evals, E_evals, outputs_eval))?;
+            network.broadcast_request(())?;
 
             compressed_polys.extend(proof.compressed_polys);
-        }
+            Ok((
+                SumcheckInstanceProof::new(compressed_polys),
+                flag_evals,
+                E_evals,
+                outputs_eval,
+            ))
+        } else {
+            let (mut flag_evals, E_evals_shares, output_eval_shares): (Vec<_>, Vec<_>, Vec<_>) =
+                network
+                    .receive_responses::<(Vec<F>, Vec<AdditiveShare<F>>, AdditiveShare<F>)>()?
+                    .into_iter()
+                    .multiunzip();
+            let flag_evals = flag_evals.pop().unwrap();
+            let E_evals = additive::combine_additive_vec(E_evals_shares);
+            let output_eval = additive::combine_additive_share(output_eval_shares);
 
-        Ok(SumcheckInstanceProof::new(compressed_polys))
+            Ok((
+                SumcheckInstanceProof::new(compressed_polys),
+                flag_evals,
+                E_evals,
+                output_eval,
+            ))
+        }
     }
 }
 

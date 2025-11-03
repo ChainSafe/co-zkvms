@@ -134,28 +134,16 @@ impl Rep3QuicMpcNetWorker {
                             if (net_handler.worker + 1) % num_workers == worker
                                 && (worker != 0 || num_workers > 2)
                             {
-                                // we are the client, so we are the receiver
+                                // we are the client, so we are the sender
                                 let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-                                println!(
-                                    "party {} send out worker id {} to {}",
-                                    net_handler.my_id, net_handler.worker, worker
-                                );
                                 send_stream.write_u32(net_handler.worker as u32).await?;
                                 let their_worker = recv_stream.read_u32().await?;
-                                println!(
-                                    "{}-{} open_bi with {} got worker ID: {}",
-                                    net_handler.worker, net_handler.my_id, worker, their_worker
-                                );
                                 assert!(their_worker == worker as u32);
                                 assert!(links.insert(worker, conn.clone()).is_none());
                             } else {
-                                // we are the server, so we are the sender
+                                // we are the server, so we are the receiver
                                 let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
                                 let their_worker = recv_stream.read_u32().await?;
-                                println!(
-                                    "{}-{} accept_bi with {} got worker ID: {}",
-                                    net_handler.worker, net_handler.my_id, worker, their_worker
-                                );
                                 assert!(their_worker == worker as u32);
                                 send_stream.write_u32(net_handler.worker as u32).await?;
                                 assert!(links.insert(worker, conn.clone()).is_none());
@@ -562,7 +550,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
 }
 
 impl MpcRingNetWorkerExt for Rep3QuicMpcNetWorker {
-    fn send_next_link_serde<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()> {
+    fn send_next_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()> {
         let ser_data = bincode::serialize(&data)?;
         std::mem::drop(
             self.exo_chan_next
@@ -573,9 +561,47 @@ impl MpcRingNetWorkerExt for Rep3QuicMpcNetWorker {
         Ok(())
     }
 
-    fn resv_prev_link_serde<T: Serialize + DeserializeOwned>(&mut self) -> Result<T> {
+    fn send_prev_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()> {
+        let ser_data = bincode::serialize(&data)?;
+        std::mem::drop(
+            self.exo_chan_prev
+                .as_mut()
+                .unwrap()
+                .blocking_send(Bytes::from(ser_data)),
+        );
+        Ok(())
+    }
+
+    fn resv_prev_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T> {
         let data = self
             .exo_chan_prev
+            .as_mut()
+            .unwrap()
+            .blocking_recv()
+            .blocking_recv();
+        let data = data.map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
+        })??;
+        let len = data.len();
+
+        bincode::deserialize(&data[..])
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "to {} error: {e}: got {} bytes type {}",
+                        self.id.party_id(),
+                        len,
+                        std::any::type_name::<T>()
+                    ),
+                )
+            })
+            .context("while recieving from exo link")
+    }
+
+    fn resv_next_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T> {
+        let data = self
+            .exo_chan_next
             .as_mut()
             .unwrap()
             .blocking_recv()

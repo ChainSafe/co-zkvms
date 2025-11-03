@@ -97,7 +97,12 @@ where
     {
         let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() as u32)?;
 
-        let _guard = tracing::info_span!("JoltRep3Prover::init").entered();
+        let _guard = tracing::info_span!(
+            "JoltRep3Prover::init",
+            worker = io_ctx.worker_idx(),
+            party = io_ctx.party_idx()
+        )
+        .entered();
 
         JoltTraceStep::pad(&mut trace);
         let padded_trace_length = trace.len();

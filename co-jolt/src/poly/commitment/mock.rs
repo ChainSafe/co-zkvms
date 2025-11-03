@@ -135,6 +135,10 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
 
         commitments
     }
+
+    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment {
+        todo!()
+    }
 }
 
 impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>

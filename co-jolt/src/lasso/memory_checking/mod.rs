@@ -4,9 +4,17 @@ pub use jolt_core::lasso::memory_checking::{
 };
 use jolt_core::{
     lasso::memory_checking::{ExogenousOpenings, Initializable},
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    },
     subprotocols::grand_product::BatchedGrandProductProof,
 };
-use mpc_core::protocols::{additive, rep3::network::Rep3NetworkCoordinator};
+use mpc_core::protocols::{
+    additive::{self, AdditiveShare},
+    rep3::network::Rep3NetworkCoordinator,
+};
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::{
@@ -45,18 +53,28 @@ where
     ) -> eyre::Result<
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
-        let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
-            Self::prove_grand_products_rep3(
-                preprocessing,
-                num_lookups,
-                memory_size,
-                network,
-                transcript,
-            )
-            .context("while proving grand products")?;
+        let (
+            read_write_grand_product,
+            init_final_grand_product,
+            r_read_write,
+            r_init_final,
+            multiset_hashes,
+        ) = Self::prove_grand_products_rep3(
+            preprocessing,
+            num_lookups,
+            memory_size,
+            network,
+            transcript,
+        )
+        .context("while proving grand products")?;
 
-        let (openings, exogenous_openings) =
-            Self::receive_openings(preprocessing, transcript, network)?;
+        let (openings, exogenous_openings) = Self::receive_openings(
+            r_read_write,
+            r_init_final,
+            preprocessing,
+            transcript,
+            network,
+        )?;
 
         Ok(MemoryCheckingProof {
             multiset_hashes,
@@ -76,6 +94,8 @@ where
     ) -> eyre::Result<(
         BatchedGrandProductProof<PCS, ProofTranscript>,
         BatchedGrandProductProof<PCS, ProofTranscript>,
+        Vec<F>,
+        Vec<F>,
         MultisetHashes<F>,
     )> {
         // Fiat-Shamir randomness for multiset hashes
@@ -116,20 +136,24 @@ where
         let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
         let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
 
-        let read_write_grand_product =
+        let (read_write_grand_product, r_read_write) =
             read_write_circuit.cooridinate_prove_grand_product(transcript, network)?;
-        let init_final_grand_product =
+        let (init_final_grand_product, r_init_final) =
             init_final_circuit.cooridinate_prove_grand_product(transcript, network)?;
 
         Ok((
             read_write_grand_product,
             init_final_grand_product,
+            r_read_write,
+            r_init_final,
             multiset_hashes,
         ))
     }
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
+        mut r_read_write: Vec<F>,
+        mut r_init_final: Vec<F>,
         preprocessing: &Self::Preprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -137,8 +161,32 @@ where
         let mut exogenous_openings = Self::ExogenousOpenings::default();
         let mut openings = Self::Openings::initialize(preprocessing);
 
-        let read_write_evals: Vec<F> =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+        let log_num_workers = network.log_num_workers_per_party();
+        let remaining_r_read_write = r_read_write.split_off(r_read_write.len() - log_num_workers);
+        let remaining_r_init_final = r_init_final.split_off(r_init_final.len() - log_num_workers);
+
+        let read_write_evals: Vec<_> = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+            .into_iter()
+            .map(additive::combine_additive_vec)
+            .fold(
+                vec![vec![]; openings.read_write_values().len()],
+                |mut evals, eval| {
+                    evals.push(eval);
+                    evals
+                },
+            )
+            .into_par_iter()
+            .map(|evals| {
+                DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&remaining_r_read_write)
+            })
+            .collect();
+
+        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
+            &read_write_evals,
+            transcript,
+            network,
+        )?;
 
         let read_write_openings: Vec<&mut F> = openings
             .read_write_values_mut()
@@ -150,8 +198,28 @@ where
             *opening = *eval;
         }
 
-        let init_final_evals: Vec<F> =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+        let init_final_evals: Vec<_> = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+            .into_iter()
+            .map(additive::combine_additive_vec)
+            .fold(
+                vec![vec![]; openings.init_final_values().len()],
+                |mut evals, eval| {
+                    evals.push(eval);
+                    evals
+                },
+            )
+            .into_par_iter()
+            .map(|evals| {
+                DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&remaining_r_read_write)
+            })
+            .collect();
+
+        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
+            &init_final_evals,
+            transcript,
+            network,
+        )?;
 
         for (opening, eval) in openings
             .init_final_values_mut()

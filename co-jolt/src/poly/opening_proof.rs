@@ -82,8 +82,18 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
         assert_eq!(polynomials.len(), claims.len());
-
         io_ctx.network.send_response(claims.to_vec())?;
+        self.append_with_known_claim(polynomials, eq_poly, opening_point, io_ctx)
+    }
+
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
+    pub fn append_with_known_claim<Network: Rep3NetworkWorker>(
+        &mut self,
+        polynomials: &[&Rep3MultilinearPolynomial<F>],
+        eq_poly: DensePolynomial<F>,
+        opening_point: Vec<F>,
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
         let (rho, batched_claim): (F, F) = io_ctx.network.receive_request()?;
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
@@ -109,7 +119,18 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        let claims = additive::combine_additive_vec(network.receive_responses()?);
+        todo!()
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3ProverOpeningAccumulator::receive_claims")]
+    pub fn coordinate_with_known_claims<
+        ProofTranscript: Transcript,
+        Network: Rep3NetworkCoordinator,
+    >(
+        claims: &[F],
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<()> {
         let rho: F = transcript.challenge_scalar();
         let mut rho_powers = vec![F::one()];
         for i in 1..claims.len() {
@@ -122,7 +143,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
         network.broadcast_request((rho, batched_claim))?;
-        Ok(claims)
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_public")]

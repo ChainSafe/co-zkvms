@@ -19,7 +19,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
 use rand::RngCore;
-use std::{borrow::Borrow, marker::PhantomData};
+use std::{borrow::Borrow, marker::PhantomData, ops::Add};
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 
@@ -226,6 +226,13 @@ where
 
         shared_commitments
     }
+
+    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment {
+        PST13Commitment {
+            nv: a.nv + b.nv,
+            g_product: (a.g_product + b.g_product).into_affine(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -404,6 +411,17 @@ impl<E: Pairing> Default for PST13Commitment<E> {
         Self {
             nv: 0,
             g_product: E::G1Affine::zero(),
+        }
+    }
+}
+
+impl<E: Pairing> Add for PST13Commitment<E> {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            nv: self.nv + other.nv,
+            g_product: (self.g_product + other.g_product).into_affine(),
         }
     }
 }
