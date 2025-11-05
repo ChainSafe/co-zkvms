@@ -168,8 +168,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             io_ctx.network().send_next_link(final_cts_.clone())?;
         }
         let final_cts: Vec<Vec<Rep3RingShare<u32>>> = if worker_idx != 0 {
+            tracing::info!("using prefix");
             io_ctx.network().resv_prev_link()?
         } else {
+            tracing::info!("using empty");
             vec![vec![Rep3RingShare::zero_share(); M]; preprocessing.num_memories]
         };
         drop(_guard);
@@ -187,6 +189,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             let subtable_index =
                                 preprocessing.memory_to_subtable_index[memory_index];
 
+                            if final_cts_i.is_empty() {
+                                final_cts_i = vec![Rep3RingShare::zero_share(); M];
+                            }
+
                             let mut read_cts_i = vec![Rep3PrimeFieldShare::zero_share(); m];
                             let mut subtable_lookups = vec![Rep3PrimeFieldShare::zero_share(); m];
 
@@ -194,7 +200,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                             if num_reads == 0 {
                                 return eyre::Ok((
                                     Rep3MultilinearPolynomial::from(read_cts_i),
-                                    vec![Rep3RingShare::zero_share(); M],
+                                    final_cts_i,
                                     Rep3MultilinearPolynomial::from(subtable_lookups),
                                 ));
                             }
@@ -295,6 +301,12 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 let final_cts_i = final_cts_i
                     [M_chunk_size * worker_idx..M_chunk_size * (worker_idx + 1)]
                     .to_vec();
+                if final_cts_i
+                    .iter()
+                    .all(|c| *c == Rep3RingShare::zero_share())
+                {
+                    return Ok(vec![Rep3PrimeFieldShare::<F>::zero_share(); M_chunk_size].into());
+                }
                 let final_cts_i =
                     rep3_ring::casts::ring_to_field_many_selector(&final_cts_i, io_ctx).unwrap();
 

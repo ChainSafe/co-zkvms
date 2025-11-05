@@ -161,7 +161,7 @@ where
         })
     }
 
-    #[tracing::instrument(skip_all, name = "JoltRep3Prover::prove")]
+    #[tracing::instrument(skip_all, name = "JoltRep3Prover::prove", fields(worker = self.io_ctx.worker_idx(), party = self.io_ctx.party_idx()))]
     pub fn prove(&mut self) -> eyre::Result<()>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,

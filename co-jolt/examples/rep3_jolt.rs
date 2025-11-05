@@ -346,6 +346,8 @@ pub fn run_coordinator(
     //     &check.instruction_lookups,
     // );
 
+    // println!("CORRECT");
+
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
         meta,
         // &program_io,

@@ -45,6 +45,8 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
+        tracing::info!("worker: prove_memory_checking - start");
+
         let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) =
             Self::prove_grand_products(
                 preprocessing,

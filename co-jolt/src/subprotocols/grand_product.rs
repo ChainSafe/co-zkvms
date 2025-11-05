@@ -1,11 +1,13 @@
 use jolt_core::{
-    poly::dense_mlpoly::DensePolynomial,
-    utils::{math::Math, transcript::Transcript},
+    poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
+    subprotocols::grand_product::{
+        BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
+    },
+    utils::thread::drop_in_background_thread,
 };
 use jolt_core::{
-    poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
-    subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
-    utils::thread::drop_in_background_thread,
+    poly::{dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial},
+    utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::{
     additive,
@@ -54,18 +56,28 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn cooridinate_prove_grand_product(
         &self,
+        claimed_outputs: Vec<F>,
+        remaining_layers: Option<Vec<impl BatchedGrandProductLayer<F, ProofTranscript>>>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
-        let mut proof_layers = Vec::with_capacity(self.num_layers());
+        let mut proof_layers = Vec::with_capacity(
+            self.num_layers() + remaining_layers.as_ref().map_or(0, |v| v.len()),
+        );
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        let outputs = additive::combine_additive_vec::<F>(network.receive_responses()?);
-        transcript.append_scalars(&outputs);
-        let output_mle = DensePolynomial::new_padded(outputs);
+        transcript.append_scalars(&claimed_outputs);
+        let output_mle = DensePolynomial::new_padded(claimed_outputs);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
+        println!("initial claim: {}", claim);
+
+        if let Some(remaining_layers) = remaining_layers {
+            for mut layer in remaining_layers {
+                proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
+            }
+        }
 
         network.broadcast_request((r.clone(), claim))?;
 
@@ -117,16 +129,17 @@ where
         _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        let mut proof_layers = Vec::with_capacity(self.num_layers());
-
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        let outputs = self.claimed_outputs();
-        io_ctx.network().send_response(outputs)?;
+        // if io_ctx.log_num_workers_per_party() == 0 {
+        //     let outputs = self.claimed_outputs();
+        //     io_ctx.network().send_response(outputs)?;
+        // }
         let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
         let mut claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
-        for layer in self.layers() {
-            proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
+        for (i, layer) in self.layers().into_iter().enumerate() {
+            println!("proving layer {} with r.len() = {}", i, r.len());
+            layer.prove_layer(&mut claim, &mut r, io_ctx)?;
         }
 
         Ok(r)
@@ -148,7 +161,8 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
+        // let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
+        let num_rounds = r_grand_product.len();
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;
@@ -164,9 +178,10 @@ where
 
         // produce a random challenge to condense two claims into a single claim
         let r_layer: F = transcript.challenge_scalar();
-        network.broadcast_request(r_layer)?;
 
         *claim = left_claim + r_layer * (right_claim - left_claim);
+        println!("r_layer: {} claim {}", r_layer, claim);
+        network.broadcast_request(r_layer)?;
         r_grand_product.push(r_layer);
 
         Ok(BatchedGrandProductLayerProof {
@@ -192,13 +207,41 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         r_grand_product: &mut Vec<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
-
-        // if io_ctx.party_id() == rep3::PartyID::ID0 {
-        //     io_ctx.network().send_response(eq_poly.get_num_vars())?;
-        // }
+        let mut eq_poly = SplitEqPolynomial::new_chunk(
+            r_grand_product,
+            io_ctx.log_num_workers_per_party(),
+            io_ctx.worker_idx(),
+        );
+        if io_ctx.worker_idx() == 0 {
+            let eq_evals = SplitEqPolynomial::new(r_grand_product).merge().Z;
+            let eq_evals_1 = SplitEqPolynomial::new_chunk(
+                r_grand_product,
+                io_ctx.log_num_workers_per_party(),
+                0,
+            )
+            .merge()
+            .Z;
+            let eq_evals_2 = SplitEqPolynomial::new_chunk(
+                r_grand_product,
+                io_ctx.log_num_workers_per_party(),
+                1,
+            )
+            .merge()
+            .Z;
+            assert_eq!(eq_evals_1.len() + eq_evals_2.len(), eq_evals.len());
+            assert_eq!([eq_evals_1, eq_evals_2].concat(), eq_evals);
+            println!("eq_poly split correct");
+        }
+        // let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
+        println!(
+            "BatchedGrandProductLayer::prove_layer eq_poly num_vars: {} E1_len {} E2_len {}",
+            eq_poly.get_num_vars(),
+            eq_poly.E1_len,
+            eq_poly.E2_len
+        );
 
         let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
+        println!("r_sumcheck: {}", r_sumcheck.len());
 
         drop_in_background_thread(eq_poly);
 

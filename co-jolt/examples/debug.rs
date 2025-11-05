@@ -32,9 +32,16 @@ pub fn check_instruction_polys<F: JoltField>(
         &check.dim,
         "dim",
     );
-    worker_polys
-        .iter()
-        .for_each(|p| check_polys(&p.final_cts, &check.final_cts, "final_cts"));
+
+    check_polys(
+        &concat_jolt_polynomials_many(&worker_polys, |p| &p.final_cts),
+        &check.final_cts,
+        "final_cts",
+    );
+
+    // worker_polys
+    //     .iter()
+    //     .for_each(|p| check_polys(&p.final_cts, &check.final_cts, "final_cts"));
     check_polys(
         &concat_jolt_polynomials_many(&worker_polys, |p| &p.read_cts),
         &check.read_cts,

@@ -106,7 +106,11 @@ where
 
         let r_eq = io_ctx.network().receive_request::<Vec<F>>()?;
 
-        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq[..num_rounds]);
+        let worker_idx = io_ctx.worker_idx();
+        let eq_chunk_size = 1usize << num_rounds;
+        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq)
+            .drain(worker_idx * eq_chunk_size..(worker_idx + 1) * eq_chunk_size)
+            .collect();
         let eq_poly = MultilinearPolynomial::from(eq_evals);
 
         let r_primary_sumchecks = Self::prove_primary_sumcheck(
@@ -118,8 +122,6 @@ where
             polynomials.instruction_lookups.lookup_outputs.clone(),
             io_ctx,
         )?;
-
-        tracing::info!("Primary sumcheck proof done");
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
@@ -208,8 +210,9 @@ where
                 outputs_eval.into_additive(),
             ))?;
 
-            let r_final = io_ctx.network().receive_request()?;
-            r_primary_sumchecks.push(r_final);
+            let r_final: Vec<F> = io_ctx.network().receive_request()?;
+
+            r_primary_sumchecks.extend(r_final);
             Ok(r_primary_sumchecks)
         } else {
             io_ctx
@@ -220,7 +223,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner", fields(worker_id = io_ctx.network().worker_idx()))]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner")]
     fn prove_primary_sumcheck_inner(
         preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
         num_rounds: usize,
@@ -635,6 +638,9 @@ where
             })
             .collect();
 
+        let M_worker = M / (1 << io_ctx.log_num_workers_per_party());
+        let offset_worker = M_worker * io_ctx.worker_idx();
+
         let init_final_leaves: Vec<_> = preprocessing
             .materialized_subtables
             .par_iter()
@@ -643,12 +649,13 @@ where
                 let mut leaves =
                     vec![
                         Rep3PrimeFieldShare::zero_share();
-                        M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1)
+                        M_worker
+                            * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1)
                     ];
                 // Init leaves
-                (0..M).for_each(|i| {
-                    let a = &F::from_u16(i as u16);
-                    let v: u32 = subtable[i];
+                (0..M_worker).for_each(|i| {
+                    let a = &F::from_u16((offset_worker + i) as u16);
+                    let v: u32 = subtable[offset_worker + i];
                     // let t = F::zero();
                     // Compute h(a,v,t) where t == 0
                     leaves[i] = rep3::arithmetic::promote_to_trivial_share(
@@ -658,10 +665,10 @@ where
                 });
 
                 // Final leaves
-                let mut leaf_index = M;
+                let mut leaf_index = M_worker;
                 for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
                     let final_cts = &polynomials.final_cts[*memory_index].as_shared();
-                    (0..M).for_each(|i| {
+                    (0..M_worker).for_each(|i| {
                         leaves[leaf_index] =
                             leaves[i] + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
                         leaf_index += 1;

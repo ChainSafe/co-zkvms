@@ -925,7 +925,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
         r_grand_product: &mut Vec<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
+        let mut eq_poly = SplitEqPolynomial::new_chunk(
+            r_grand_product,
+            io_ctx.log_num_workers_per_party(),
+            io_ctx.worker_idx(),
+        );
+
+        println!("Rep3BatchedGrandProductToggleLayer::prove_layer");
 
         // if io_ctx.party_id() == rep3::PartyID::ID0 {
         //     io_ctx.network().send_response(eq_poly.get_num_vars())?;
@@ -1005,14 +1011,84 @@ where
         // let batch_size = fingerprints.len();
         let tree_depth = fingerprints[0].len().log_2();
 
+        // for (i, (fingerprint, flags)) in fingerprints.iter().zip(&flags).enumerate() {
+        //     let coeffs = rep3::arithmetic::open_vec(fingerprint, io_ctx.main())?;
+        //     if io_ctx.party_idx() == 0 {
+        //         if io_ctx.log_num_workers_per_party() == 0 {
+        //             tracing::info!(
+        //                 "len {} fingerprint {}: {:?}",
+        //                 coeffs.len(),
+        //                 i,
+        //                 &coeffs[coeffs.len() / 2..coeffs.len() / 2 + 10]
+        //             );
+        //             tracing::info!(
+        //                 "len {} flags {}: {:?}",
+        //                 flags.len(),
+        //                 i,
+        //                 flags
+        //                     .iter()
+        //                     .copied()
+        //                     .skip(half_points[i].unwrap_or(flags.len()))
+        //                     .take(10)
+        //                     .map(|f| f - coeffs.len() / 2)
+        //                     .collect::<Vec<_>>()
+        //             );
+        //         } else if io_ctx.worker_idx() == 1 {
+        //             tracing::info!(
+        //                 "len {} fingerprint {}: {:?}",
+        //                 coeffs.len(),
+        //                 i,
+        //                 &coeffs[..10]
+        //             );
+        //             tracing::info!(
+        //                 "flags {} len {}: {:?}",
+        //                 i,
+        //                 flags.len(),
+        //                 flags.iter().copied().take(10).collect::<Vec<_>>()
+        //             );
+        //         }
+        //     }
+        // }
+
         let num_sparse_layers = tree_depth - 1;
 
         let toggle_layer = Rep3BatchedGrandProductToggleLayer::new(flags, fingerprints);
         let mut sparse_layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
         sparse_layers.push(toggle_layer.layer_output(io_ctx.party_id()));
 
+        // let mut dense_len = toggle_layer.layer_len / 2;
         for i in 0..num_sparse_layers {
             let previous_layer = &sparse_layers[i];
+            // let tmp = previous_layer.to_dense();
+            // let coeffs = rep3::arithmetic::open_vec(tmp.coeffs_ref(), io_ctx.main())?;
+            // if io_ctx.party_idx() == 0 {
+            //     if io_ctx.log_num_workers_per_party() == 0 {
+            //         tracing::info!(
+            //             "Layer {} len {} dense_2: {:?}",
+            //             i,
+            //             previous_layer.dense_len,
+            //             &coeffs[dense_len / 2..]
+            //                 .into_iter()
+            //                 .enumerate()
+            //                 .filter(|(_, coeff)| **coeff != F::ONE)
+            //                 .take(10)
+            //                 .collect::<Vec<_>>()
+            //         );
+            //     } else if io_ctx.worker_idx() == 1 {
+            //         tracing::info!(
+            //             "Layer {} len {} dense: {:?}",
+            //             i,
+            //             previous_layer.dense_len,
+            //             &coeffs
+            //                 .into_iter()
+            //                 .enumerate()
+            //                 .filter(|(_, coeff)| *coeff != F::ONE)
+            //                 .take(10)
+            //                 .collect::<Vec<_>>()
+            //         );
+            //     }
+            // }
+            // dense_len /= 2;
             sparse_layers.push(previous_layer.layer_output(io_ctx)?);
         }
 

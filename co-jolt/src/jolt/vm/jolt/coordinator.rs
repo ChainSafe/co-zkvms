@@ -108,7 +108,6 @@ where
         // );
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
-        println!("Received Jolt commitments");
 
         transcript.append_scalar(&spartan_key.vk_digest);
 

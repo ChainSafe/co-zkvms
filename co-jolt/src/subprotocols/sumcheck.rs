@@ -48,12 +48,20 @@ where
         let log_num_workers = network.log_num_workers_per_party();
         let (mut sumcheck_proof, mut r, claim) =
             coordinate_prove_arbitrary(num_rounds - log_num_workers, transcript, network)?;
+        println!(
+            "coordinator coordinated {}-round sumcheck",
+            num_rounds - log_num_workers
+        );
 
         let final_claims = if network.log_num_workers_per_party() > 0 {
             self.prove_remaining_rounds(&mut r, claim, &mut sumcheck_proof, transcript, network)?
         } else {
             self.receive_final_claims(network)?
         };
+        println!(
+            "coordinator finished remaining {}-round sumcheck",
+            log_num_workers
+        );
 
         Ok((sumcheck_proof, r, final_claims))
     }
@@ -162,6 +170,8 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
+        println!("worker proved {}-round sumcheck", num_rounds);
+
         let mut final_claims = self.final_claims(party_id);
         io_ctx.network().send_response((
             final_claims.0.into_additive(),
@@ -175,9 +185,17 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
                     .send_response((eq_poly.E1[0], eq_poly.E1[1]))?;
             }
 
+            // println!("worker waiting for claim");
+
             // Coordinator runs remaining sumcheck rounds
-            let (r_, final_claims_): (Vec<F>, _) = io_ctx.network().receive_request()?;
-            final_claims = final_claims_;
+            let (r_, final_claims_): (Vec<F>, (F, F)) = io_ctx.network().receive_request()?;
+
+            // println!("worker received claim");
+            let party_id = io_ctx.party_id();
+            final_claims = (
+                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.0),
+                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.1),
+            );
             r.extend(r_);
         }
 
@@ -200,8 +218,25 @@ where
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _round in 0..num_rounds {
-        let round_poly =
-            UniPoly::<F>::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
+        // let round_poly =
+        //     UniPoly::<F>::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
+        let round_coeffs = if network.log_num_workers_per_party() == 0 {
+            additive::combine_additive_vec(network.receive_responses()?)
+        } else {
+            let subnet_responces =
+                network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
+            let degree = subnet_responces[0][0].len();
+            subnet_responces
+                .into_iter()
+                .map(|shares| additive::combine_additive_vec(shares))
+                .fold(vec![F::zero(); degree], |mut acc, coeff| {
+                    acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
+                        *acc += coeff;
+                    });
+                    acc
+                })
+        };
+        let round_poly = UniPoly::<F>::from_coeff(round_coeffs);
         let compressed_poly = round_poly.compress();
 
         // append the prover's message to the transcript
