@@ -87,7 +87,7 @@ where
     let num_rounds = memory_size.log_2();
     let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
     network.broadcast_request(r_eq)?;
-    let (sumcheck_proof, _, _) =
+    let (sumcheck_proof, _) =
         sumcheck::coordinate_prove_arbitrary::<F, _, Network>(num_rounds, transcript, network)?;
 
     let sumcheck_openings = Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;

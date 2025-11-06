@@ -20,7 +20,7 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 
 /// Represents a single layer of a sparse grand product circuit.
 #[derive(Default, Debug, Clone)]
@@ -409,16 +409,14 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: AdditiveShare<F>,
+        // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<AdditiveShare<F>> {
+    ) -> Vec<AdditiveShare<F>> {
         if let Some(coalesced) = &self.coalesced {
             let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::coalesced");
             let _enter = span.enter();
             return Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
-                coalesced,
-                eq_poly,
-                previous_round_claim,
+                coalesced, eq_poly, // previous_round_claim,
                 party_id,
             );
         }
@@ -705,14 +703,14 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             )
         };
 
-        let cubic_evals = [
+        let cubic_evals = vec![
             cubic_evals.0,
-            (previous_round_claim - cubic_evals.0),
+            // (previous_round_claim - cubic_evals.0),
             cubic_evals.1,
             cubic_evals.2,
         ];
 
-        unipoly_from_additive_evals(&cubic_evals)
+        cubic_evals
     }
 
     fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {

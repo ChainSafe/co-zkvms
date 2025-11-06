@@ -446,6 +446,13 @@ where
             .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
             .sum();
 
+        println!("combined_flags: {}", combined_flags);
+        println!(
+            "combined_read_write_fingerprint: {}",
+            combined_read_write_fingerprint
+        );
+        println!("read_write_claim: {}", combined_flags);
+
         // Now we combine flags(r', r'') and fingerprints(r', r'') to obtain the evaluation of the
         // multi-*quadratic* extension W of the input layer at (r', r'')
         //

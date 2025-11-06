@@ -356,8 +356,8 @@ pub fn run_coordinator(
         &mut network,
     )?;
 
-    // RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
-    //     .context("while verifying Lasso (rep3) proof")?;
+    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+        .context("while verifying Lasso (rep3) proof")?;
 
     network.log_connection_stats(None);
 

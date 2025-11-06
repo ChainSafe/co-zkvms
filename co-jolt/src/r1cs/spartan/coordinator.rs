@@ -93,7 +93,7 @@ where
 
         let num_rounds_inner_sumcheck = (key.uniform_r1cs.num_vars.next_power_of_two() * 4).log_2();
 
-        let (inner_sumcheck_proof, _, _) =
+        let (inner_sumcheck_proof, _) =
             sumcheck::coordinate_prove_arbitrary(num_rounds_inner_sumcheck, transcript, network)?;
 
         drop(_guard);
@@ -108,7 +108,7 @@ where
 
         let shift_sumcheck_claim = additive::combine_additive_share(network.receive_responses()?);
 
-        let (shift_sumcheck_proof, _, _) =
+        let (shift_sumcheck_proof, _) =
             sumcheck::coordinate_prove_arbitrary(num_rounds_shift_sumcheck, transcript, network)?;
         drop(_guard);
         drop(span);

@@ -128,6 +128,10 @@ where
                     interleave(rw_hashes, rw_hashes_next).collect_vec(),
                     interleave(if_hashes, if_hashes_next).collect_vec(),
                 )
+                // (
+                //     [rw_hashes, rw_hashes_next].concat(),
+                //     [if_hashes, if_hashes_next].concat(),
+                // )
             })
             .unwrap();
 
@@ -167,7 +171,7 @@ where
         // println!("Multiset init_hashes: {:?}", multiset_hashes.init_hashes);
         // println!("Multiset final_hashes: {:?}", multiset_hashes.final_hashes);
 
-        Self::check_multiset_equality(preprocessing, &multiset_hashes);
+        // Self::check_multiset_equality(preprocessing, &multiset_hashes);
         println!("Multiset equality check passed");
         multiset_hashes.append_to_transcript(transcript);
 

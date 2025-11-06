@@ -71,13 +71,22 @@ where
         let output_mle = DensePolynomial::new_padded(claimed_outputs);
         let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r);
-        println!("initial claim: {}", claim);
+        println!("coordinator | initial claim: {} r: {:?}", claim, r);
 
         if let Some(remaining_layers) = remaining_layers {
             for mut layer in remaining_layers {
                 proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
             }
         }
+
+        println!(
+            "coordinator | remaining layers r: [{}..{}] claim: {}",
+            r[0],
+            r.last().unwrap(),
+            claim
+        );
+
+        println!("--------------------");
 
         network.broadcast_request((r.clone(), claim))?;
 
@@ -130,8 +139,8 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
-        let mut claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
-        for (i, layer) in self.layers().into_iter().enumerate() {
+        let mut claim = additive::promote_to_trivial_share(claim, io_ctx.party_id());
+        for layer in self.layers().into_iter() {
             layer.prove_layer(&mut claim, &mut r, io_ctx)?;
         }
 
@@ -157,8 +166,15 @@ where
         // let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
         let num_rounds = r_grand_product.len();
 
+        println!("coordinator | previous_claim: {:?}", claim);
+
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;
+            self.coordinate_prove_sumcheck(claim, num_rounds, transcript, network)?;
+
+        println!("coordinator | r_sumcheck: {:?}", r_sumcheck);
+
+        // println!("r_grand_product: {:?}", r_grand_product);
+        // println!("r_sumcheck: {:?}", r_sumcheck);
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);
@@ -173,7 +189,10 @@ where
         let r_layer: F = transcript.challenge_scalar();
 
         *claim = left_claim + r_layer * (right_claim - left_claim);
-        println!("r_layer: {} claim {}", r_layer, claim);
+        println!(
+            "r_layer: [{}..{}] claim {}",
+            r_grand_product[0], r_layer, claim
+        );
         network.broadcast_request(r_layer)?;
         r_grand_product.push(r_layer);
 

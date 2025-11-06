@@ -213,9 +213,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: AdditiveShare<F>,
+        // previous_round_claim: AdditiveShare<F>,
         _: PartyID,
-    ) -> UniPoly<AdditiveShare<F>> {
+    ) -> Vec<AdditiveShare<F>> {
         // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
         // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
@@ -358,13 +358,13 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 )
         };
 
-        let cubic_evals = [
+        let cubic_evals = vec![
             cubic_evals.0,
-            previous_round_claim - cubic_evals.0,
+            // previous_round_claim - cubic_evals.0,
             cubic_evals.1,
             cubic_evals.2,
         ];
-        unipoly_from_additive_evals(&cubic_evals)
+        cubic_evals
     }
 
     fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {

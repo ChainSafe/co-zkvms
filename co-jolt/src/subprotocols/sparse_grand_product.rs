@@ -302,9 +302,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     fn compute_cubic(
         &self,
         eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: AdditiveShare<F>,
+        // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<AdditiveShare<F>> {
+    ) -> Vec<AdditiveShare<F>> {
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
@@ -437,13 +437,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     )
             };
 
-            let cubic_evals = [
-                cubic_evals.0,
-                (previous_round_claim - cubic_evals.0),
-                cubic_evals.1,
-                cubic_evals.2,
-            ];
-            return unipoly_from_additive_evals(&cubic_evals);
+            let cubic_evals = vec![cubic_evals.0, cubic_evals.1, cubic_evals.2];
+            return cubic_evals;
         }
 
         let cubic_evals = if eq_poly.E1_len == 1 {
@@ -826,14 +821,14 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             )
         };
 
-        let cubic_evals = [
+        let cubic_evals = vec![
             cubic_evals.0,
-            (previous_round_claim - cubic_evals.0),
+            // (previous_round_claim - cubic_evals.0),
             cubic_evals.1,
             cubic_evals.2,
         ];
 
-        unipoly_from_additive_evals(&cubic_evals)
+        cubic_evals
     }
 
     fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
@@ -976,7 +971,7 @@ where
 {
     fn coordinate_prove_layer(
         &self,
-        _claim: &mut F,
+        previous_claim: &mut F,
         r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -985,7 +980,7 @@ where
         let num_rounds = r_grand_product.len();
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;
+            self.coordinate_prove_sumcheck(previous_claim, num_rounds, transcript, network)?;
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);
