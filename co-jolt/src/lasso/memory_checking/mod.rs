@@ -1,5 +1,7 @@
+use std::panic;
+
 use eyre::Context;
-use itertools::{interleave, Itertools};
+use itertools::{interleave, izip, Itertools};
 pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
@@ -8,6 +10,7 @@ use jolt_core::{
     poly::{
         dense_interleaved_poly::DenseInterleavedPolynomial,
         dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
     subprotocols::grand_product::{
@@ -211,25 +214,20 @@ where
         let mut openings = Self::Openings::initialize(preprocessing);
 
         let log_num_workers = network.log_num_workers_per_party();
-        let remaining_r_read_write = r_read_write.split_off(r_read_write.len() - log_num_workers);
-        let remaining_r_init_final = r_init_final.split_off(r_init_final.len() - log_num_workers);
 
-        let read_write_evals: Vec<_> = network
-            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
-            .into_iter()
-            .map(additive::combine_additive_vec)
-            .fold(
-                vec![vec![]; openings.read_write_values().len()],
-                |mut evals, eval| {
-                    evals.push(eval);
-                    evals
-                },
-            )
-            .into_par_iter()
-            .map(|evals| {
-                DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&remaining_r_read_write)
-            })
-            .collect();
+        let read_write_evals = if log_num_workers == 0 {
+            additive::combine_additive_vec(network.receive_responses()?)
+        } else {
+            Self::compute_remaining_openings(
+                r_read_write,
+                openings
+                    .read_write_values_mut()
+                    .into_iter()
+                    .chain(exogenous_openings.openings_mut())
+                    .collect(),
+                network,
+            )?
+        };
 
         Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
             &read_write_evals,
@@ -237,32 +235,17 @@ where
             network,
         )?;
 
-        let read_write_openings: Vec<&mut F> = openings
-            .read_write_values_mut()
-            .into_iter()
-            .chain(exogenous_openings.openings_mut())
-            .collect();
+        println!("coordinator append read_write_polys opennings");
 
-        for (opening, eval) in read_write_openings.into_iter().zip(read_write_evals.iter()) {
-            *opening = *eval;
-        }
-
-        let init_final_evals: Vec<_> = network
-            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
-            .into_iter()
-            .map(additive::combine_additive_vec)
-            .fold(
-                vec![vec![]; openings.init_final_values().len()],
-                |mut evals, eval| {
-                    evals.push(eval);
-                    evals
-                },
-            )
-            .into_par_iter()
-            .map(|evals| {
-                DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&remaining_r_init_final)
-            })
-            .collect();
+        let init_final_evals = if log_num_workers == 0 {
+            additive::combine_additive_vec(network.receive_responses()?)
+        } else {
+            Self::compute_remaining_openings(
+                r_init_final,
+                openings.init_final_values_mut(),
+                network,
+            )?
+        };
 
         Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
             &init_final_evals,
@@ -270,13 +253,7 @@ where
             network,
         )?;
 
-        for (opening, eval) in openings
-            .init_final_values_mut()
-            .into_iter()
-            .zip(init_final_evals.iter())
-        {
-            *opening = *eval;
-        }
+        println!("coordinator append init_final_polys opennings");
 
         Ok((openings, exogenous_openings))
     }
@@ -317,6 +294,35 @@ where
 
         // assert_eq!(read_write_hashes, read_write_hashes_);
         grand_product.into_layers()
+    }
+
+    fn compute_remaining_openings(
+        mut r: Vec<F>,
+        openings: Vec<&mut F>,
+        network: &mut Network,
+    ) -> eyre::Result<Vec<F>> {
+        let log_num_workers = network.log_num_workers_per_party();
+        let r_remaining = r.split_off(r.len() - log_num_workers);
+
+        let chi = EqPolynomial::evals(&r_remaining);
+
+        let read_write_evals: Vec<_> = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+            .into_iter()
+            .map(additive::combine_additive_vec)
+            .fold(vec![vec![]; openings.len()], |mut evals, eval| {
+                izip!(evals.iter_mut(), eval).for_each(|(a, b)| a.push(b));
+                evals
+            })
+            .into_par_iter()
+            .map(|evals| DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&chi))
+            .collect();
+
+        for (opening, eval) in openings.into_iter().zip(read_write_evals.iter()) {
+            *opening = *eval;
+        }
+
+        Ok(read_write_evals)
     }
 }
 

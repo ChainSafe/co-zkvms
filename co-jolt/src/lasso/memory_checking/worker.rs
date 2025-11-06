@@ -149,6 +149,9 @@ where
             &read_write_polys,
             &r_read_write[..r_read_write.len() - log_num_workers],
         );
+
+        println!("read_write_evals {}", read_write_evals.len());
+
         io_ctx.network().send_response(
             read_write_evals
                 .iter()
@@ -162,6 +165,8 @@ where
             r_read_write.to_vec(),
             io_ctx.main(),
         )?;
+
+        println!("worker append read_write_polys opennings");
 
         let init_final_polys = polynomials.init_final_values();
         let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate(
@@ -181,6 +186,8 @@ where
             r_init_final.to_vec(),
             io_ctx.main(),
         )?;
+
+        println!("worker append init_final_polys opennings");
 
         Ok(())
     }
