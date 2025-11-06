@@ -142,9 +142,13 @@ where
             .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
             .collect::<Vec<_>>();
 
-        let (read_write_evals, eq_read_write) =
-            Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, r_read_write);
         let party_id = io_ctx.party_id();
+        let log_num_workers = io_ctx.log_num_workers_per_party();
+
+        let (read_write_evals, eq_read_write) = Rep3MultilinearPolynomial::batch_evaluate(
+            &read_write_polys,
+            &r_read_write[..r_read_write.len() - log_num_workers],
+        );
         io_ctx.network().send_response(
             read_write_evals
                 .iter()
@@ -160,9 +164,10 @@ where
         )?;
 
         let init_final_polys = polynomials.init_final_values();
-        let (init_final_evals, eq_init_final) =
-            Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, r_init_final);
-
+        let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate(
+            &init_final_polys,
+            &r_init_final[..r_init_final.len() - log_num_workers],
+        );
         io_ctx.network().send_response(
             init_final_evals
                 .iter()

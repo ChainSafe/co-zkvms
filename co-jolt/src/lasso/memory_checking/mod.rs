@@ -128,8 +128,9 @@ where
             })
             .unwrap();
 
-        let num_workers = 1 << network.log_num_workers_per_party();
-        let rw_remaining_layers = if network.log_num_workers_per_party() > 0 {
+        let log_num_workers = network.log_num_workers_per_party();
+        let num_workers = 1 << log_num_workers;
+        let rw_remaining_layers = if log_num_workers > 0 {
             Some(Self::construct_remaining_layers(
                 &mut read_write_hashes,
                 num_workers,
@@ -138,7 +139,7 @@ where
             None
         };
 
-        let init_final_remaining_layers = if network.log_num_workers_per_party() > 0 {
+        let init_final_remaining_layers = if log_num_workers > 0 {
             Some(Self::construct_remaining_layers(
                 &mut init_final_hashes,
                 num_workers,
@@ -167,8 +168,10 @@ where
         println!("Multiset equality check passed");
         multiset_hashes.append_to_transcript(transcript);
 
-        let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
-        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
+        let read_write_circuit =
+            Self::read_write_grand_product_rep3(preprocessing, num_lookups, log_num_workers);
+        let init_final_circuit =
+            Self::init_final_grand_product_rep3(preprocessing, memory_size, log_num_workers);
 
         let (read_write_grand_product, r_read_write) = read_write_circuit
             .cooridinate_prove_grand_product(
@@ -281,15 +284,17 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
+        log_num_workers: usize,
     ) -> Self::Rep3ReadWriteGrandProduct {
-        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2())
+        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2() - log_num_workers)
     }
 
     fn init_final_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         memory_size: usize,
+        log_num_workers: usize,
     ) -> Self::Rep3InitFinalGrandProduct {
-        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2())
+        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2() - log_num_workers)
     }
 
     fn construct_remaining_layers(

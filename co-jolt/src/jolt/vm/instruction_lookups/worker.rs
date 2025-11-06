@@ -26,10 +26,7 @@ use jolt_core::{
     },
     utils::{math::Math, thread::drop_in_background_thread},
 };
-use mpc_core::protocols::{
-    additive,
-    rep3::{network::IoContextPool, Rep3PrimeFieldShare},
-};
+use mpc_core::protocols::rep3::{network::IoContextPool, Rep3PrimeFieldShare};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -39,7 +36,6 @@ use mpc_core::protocols::{
     },
 };
 use std::{collections::HashMap, iter::once, marker::PhantomData, sync::Arc};
-use tokio::io;
 use tracing::trace_span;
 
 use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};

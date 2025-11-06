@@ -14,9 +14,7 @@ use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::grand_product::{
-    BatchedGrandProductLayer, BatchedGrandProductLayerProof,
-};
+use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use jolt_core::subprotocols::sparse_grand_product::BatchedGrandProductToggleLayer;
 use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use jolt_core::utils::transcript::Transcript;
@@ -885,10 +883,10 @@ where
                 },
             );
 
-        let (E1, E2): (Vec<_>, Vec<_>) = network
-            .receive_response_from_workers::<(F, F)>(PartyID::ID0)?
-            .into_iter()
-            .unzip();
+        // Assumption: At round N-log_num_workers E_1 is completely bound,
+        // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
+        let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
+        let E1 = vec![F::zero()];
         let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
 
         let mut layer = BatchedGrandProductToggleLayer {
@@ -931,7 +929,26 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
             io_ctx.worker_idx(),
         );
 
-        println!("Rep3BatchedGrandProductToggleLayer::prove_layer");
+        // if io_ctx.log_num_workers_per_party() > 0 && io_ctx.worker_idx() == 0 {
+        //     let eq_evals = SplitEqPolynomial::new(r_grand_product).merge().Z;
+        //     let eq_evals_1 = SplitEqPolynomial::new_chunk(
+        //         r_grand_product,
+        //         io_ctx.log_num_workers_per_party(),
+        //         0,
+        //     )
+        //     .merge()
+        //     .Z;
+        //     let eq_evals_2 = SplitEqPolynomial::new_chunk(
+        //         r_grand_product,
+        //         io_ctx.log_num_workers_per_party(),
+        //         1,
+        //     )
+        //     .merge()
+        //     .Z;
+        //     assert_eq!(eq_evals_1.len() + eq_evals_2.len(), eq_evals.len());
+        //     assert_eq!([eq_evals_1, eq_evals_2].concat(), eq_evals);
+        //     println!("eq_poly split correct");
+        // }
 
         // if io_ctx.party_id() == rep3::PartyID::ID0 {
         //     io_ctx.network().send_response(eq_poly.get_num_vars())?;

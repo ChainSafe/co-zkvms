@@ -48,20 +48,12 @@ where
         let log_num_workers = network.log_num_workers_per_party();
         let (mut sumcheck_proof, mut r, claim) =
             coordinate_prove_arbitrary(num_rounds - log_num_workers, transcript, network)?;
-        println!(
-            "coordinator coordinated {}-round sumcheck",
-            num_rounds - log_num_workers
-        );
 
         let final_claims = if network.log_num_workers_per_party() > 0 {
             self.prove_remaining_rounds(&mut r, claim, &mut sumcheck_proof, transcript, network)?
         } else {
             self.receive_final_claims(network)?
         };
-        println!(
-            "coordinator finished remaining {}-round sumcheck",
-            log_num_workers
-        );
 
         Ok((sumcheck_proof, r, final_claims))
     }
@@ -105,10 +97,10 @@ where
             })
             .collect();
 
-        let (E1, E2): (Vec<_>, Vec<_>) = network
-            .receive_response_from_workers::<(F, F)>(PartyID::ID0)?
-            .into_iter()
-            .unzip();
+        // Assumption: At round N-log_num_workers E_1 is completely bound,
+        // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
+        let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
+        let E1 = vec![F::zero()];
         let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
@@ -170,8 +162,6 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        println!("worker proved {}-round sumcheck", num_rounds);
-
         let mut final_claims = self.final_claims(party_id);
         io_ctx.network().send_response((
             final_claims.0.into_additive(),
@@ -180,12 +170,8 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         if io_ctx.log_num_workers_per_party() > 0 {
             if io_ctx.party_id() == PartyID::ID0 {
-                io_ctx
-                    .network()
-                    .send_response((eq_poly.E1[0], eq_poly.E1[1]))?;
+                io_ctx.network().send_response(eq_poly.E2[0])?;
             }
-
-            // println!("worker waiting for claim");
 
             // Coordinator runs remaining sumcheck rounds
             let (r_, final_claims_): (Vec<F>, (F, F)) = io_ctx.network().receive_request()?;

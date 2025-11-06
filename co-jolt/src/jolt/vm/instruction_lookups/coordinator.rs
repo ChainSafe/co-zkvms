@@ -327,12 +327,13 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
+        log_num_workers: usize,
     ) -> Rep3ToggledBatchedGrandProduct<F> {
         <Rep3ToggledBatchedGrandProduct<F> as Rep3BatchedGrandProduct<
             F,
             PCS,
             ProofTranscript,
             Network,
-        >>::construct(num_lookups.log_2() + 1)
+        >>::construct(num_lookups.log_2() + 1 - log_num_workers)
     }
 }

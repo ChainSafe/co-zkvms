@@ -129,16 +129,9 @@ where
         _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
-        // a single claim.
-        // if io_ctx.log_num_workers_per_party() == 0 {
-        //     let outputs = self.claimed_outputs();
-        //     io_ctx.network().send_response(outputs)?;
-        // }
         let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
         let mut claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
         for (i, layer) in self.layers().into_iter().enumerate() {
-            println!("proving layer {} with r.len() = {}", i, r.len());
             layer.prove_layer(&mut claim, &mut r, io_ctx)?;
         }
 
@@ -212,36 +205,29 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
             io_ctx.log_num_workers_per_party(),
             io_ctx.worker_idx(),
         );
-        if io_ctx.worker_idx() == 0 {
-            let eq_evals = SplitEqPolynomial::new(r_grand_product).merge().Z;
-            let eq_evals_1 = SplitEqPolynomial::new_chunk(
-                r_grand_product,
-                io_ctx.log_num_workers_per_party(),
-                0,
-            )
-            .merge()
-            .Z;
-            let eq_evals_2 = SplitEqPolynomial::new_chunk(
-                r_grand_product,
-                io_ctx.log_num_workers_per_party(),
-                1,
-            )
-            .merge()
-            .Z;
-            assert_eq!(eq_evals_1.len() + eq_evals_2.len(), eq_evals.len());
-            assert_eq!([eq_evals_1, eq_evals_2].concat(), eq_evals);
-            println!("eq_poly split correct");
-        }
+        // if io_ctx.worker_idx() == 0 {
+        //     let eq_evals = SplitEqPolynomial::new(r_grand_product).merge().Z;
+        //     let eq_evals_1 = SplitEqPolynomial::new_chunk(
+        //         r_grand_product,
+        //         io_ctx.log_num_workers_per_party(),
+        //         0,
+        //     )
+        //     .merge()
+        //     .Z;
+        //     let eq_evals_2 = SplitEqPolynomial::new_chunk(
+        //         r_grand_product,
+        //         io_ctx.log_num_workers_per_party(),
+        //         1,
+        //     )
+        //     .merge()
+        //     .Z;
+        //     assert_eq!(eq_evals_1.len() + eq_evals_2.len(), eq_evals.len());
+        //     assert_eq!([eq_evals_1, eq_evals_2].concat(), eq_evals);
+        //     println!("eq_poly split correct");
+        // }
         // let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
-        println!(
-            "BatchedGrandProductLayer::prove_layer eq_poly num_vars: {} E1_len {} E2_len {}",
-            eq_poly.get_num_vars(),
-            eq_poly.E1_len,
-            eq_poly.E2_len
-        );
 
         let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
-        println!("r_sumcheck: {}", r_sumcheck.len());
 
         drop_in_background_thread(eq_poly);
 
