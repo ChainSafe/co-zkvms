@@ -100,25 +100,25 @@ where
         let evals = network
             .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
             .into_iter()
-            // .flat_map(|shares| {
-            //     let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
-            //     vec![
-            //         additive::combine_additive_share(final_l),
-            //         additive::combine_additive_share(final_r),
-            //     ]
-            // })
-            // .collect();
-            .map(|shares| {
+            .flat_map(|shares| {
                 let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
                 vec![
                     additive::combine_additive_share(final_l),
                     additive::combine_additive_share(final_r),
                 ]
             })
-            .reduce(|evals, evals_next| interleave(evals, evals_next).collect())
-            .unwrap();
+            .collect();
+        // .map(|shares| {
+        //     let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
+        //     vec![
+        //         additive::combine_additive_share(final_l),
+        //         additive::combine_additive_share(final_r),
+        //     ]
+        // })
+        // .reduce(|evals, evals_next| interleave(evals, evals_next).collect())
+        // .unwrap();
 
-        println!("remaining evals: {:?}", evals);
+        tracing::info!("remaining evals: {:?}", evals);
 
         // Assumption: At round N-log_num_workers E_1 is completely bound,
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
@@ -131,7 +131,7 @@ where
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
 
-        println!("eq final: {:?}", eq_poly.E2[0]);
+        // tracing::info!("eq final: {:?}", eq_poly.E2[0]);
 
         network.broadcast_request((r_.clone(), final_claims))?;
         proof.compressed_polys.extend(proof_.compressed_polys);
@@ -254,13 +254,13 @@ where
                     acc
                 })
         };
-        println!("cubic evals: {:?}", round_evals);
+        tracing::info!("worker -> cubic evals: {:?}", round_evals);
         round_evals.insert(1, *claim - round_evals[0]);
 
         let round_poly = UniPoly::<F>::from_evals(&round_evals);
         let compressed_poly = round_poly.compress();
 
-        println!("compressed_poly: {:?}", compressed_poly);
+        // println!("compressed_poly: {:?}", compressed_poly);
 
         // append the prover's message to the transcript
         compressed_poly.append_to_transcript(transcript);
@@ -276,7 +276,7 @@ where
         cubic_polys.push(compressed_poly);
     }
 
-    println!("coordinator | round e: {:?}", tmp_e);
+    // tracing::info!("coordinator | round e: {:?}", tmp_e);
 
     Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }

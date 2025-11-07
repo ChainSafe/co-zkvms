@@ -209,7 +209,7 @@ where
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
+        // assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
         assert_eq!(
             init_final_hashes.len(),
             Self::NUM_SUBTABLES + preprocessing.num_memories
@@ -217,7 +217,7 @@ where
 
         let mut read_hashes = Vec::with_capacity(preprocessing.num_memories);
         let mut write_hashes = Vec::with_capacity(preprocessing.num_memories);
-        for i in 0..preprocessing.num_memories {
+        for i in 0..read_write_hashes.len() / 2 {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }

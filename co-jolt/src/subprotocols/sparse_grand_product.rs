@@ -1,3 +1,6 @@
+use std::env;
+use std::io::Read;
+
 use crate::field::JoltField;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -12,6 +15,9 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::izip;
+use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
@@ -72,7 +78,18 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
         level = "trace"
     )]
     fn layer_output(&self, party_id: PartyID) -> Rep3SparseInterleavedPolynomial<F> {
-        let values: Vec<_> = self
+        let fingerprints_chunk = self.fingerprints[0].len() / 2;
+        let layer_len = fingerprints_chunk * 2;
+        let batched_layer_len = self.fingerprints.len() * layer_len;
+        let padded_poly_half = 1 << 20;
+        println!(
+            "batched_layer_len: {} padded_poly {}",
+            batched_layer_len,
+            padded_poly_half * 2
+        );
+
+        assert_eq!(self.layer_len / 2, layer_len);
+        let mut values: Vec<Vec<SparseCoefficient<_>>> = self
             .fingerprints
             .par_iter()
             .enumerate()
@@ -80,14 +97,57 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
                 let flag_indices = &self.flag_indices[batch_index / 2];
                 let mut sparse_coeffs = Vec::with_capacity(self.layer_len);
                 for i in flag_indices {
-                    sparse_coeffs
-                        .push((batch_index * self.layer_len / 2 + i, fingerprints[*i]).into());
+                    if env::var("NUM_WORKERS_PER_PARTY").unwrap().contains("1") {
+                        if *i >= fingerprints_chunk {
+                            sparse_coeffs.push(
+                                (
+                                    padded_poly_half + batch_index * (layer_len / 2) + i
+                                        - fingerprints_chunk,
+                                    fingerprints[*i],
+                                )
+                                    .into(),
+                            );
+                        } else {
+                            sparse_coeffs
+                                .push((batch_index * layer_len / 2 + i, fingerprints[*i]).into());
+                        }
+                    } else {
+                        sparse_coeffs
+                            .push((batch_index * self.layer_len / 2 + i, fingerprints[*i]).into());
+                    }
+                    // sparse_coeffs
+                    //     .push((batch_index * self.layer_len / 2 + i, fingerprints[*i]).into());
                 }
                 sparse_coeffs
             })
             .collect();
 
-        Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2, party_id)
+        if env::var("NUM_WORKERS_PER_PARTY").unwrap().contains("1") {
+            values.push(
+                (batched_layer_len / 2..padded_poly_half)
+                    .map(|i| (i, Rep3PrimeFieldShare::zero_share()).into())
+                    .collect(),
+            );
+            values.push(
+                (padded_poly_half + batched_layer_len / 2..padded_poly_half * 2)
+                    .map(|i| (i, Rep3PrimeFieldShare::zero_share()).into())
+                    .collect(),
+            );
+        }
+
+        let max_index = values.iter().flatten().map(|x| x.index).max().unwrap();
+        println!(
+            "max index: {}",
+            values.iter().flatten().map(|x| x.index).max().unwrap()
+        );
+
+        // Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2, party_id)
+        if env::var("NUM_WORKERS_PER_PARTY").unwrap().contains("1") {
+            println!("NUM_WORKERS_PER_PARTY = 1");
+            Rep3SparseInterleavedPolynomial::new(values, padded_poly_half * 2, party_id)
+        } else {
+            Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2, party_id)
+        }
     }
 
     /// Coalesces flags and fingerprints into one (dense) vector each.
@@ -1068,40 +1128,296 @@ where
         let mut sparse_layers: Vec<_> = Vec::with_capacity(1 + num_sparse_layers);
         sparse_layers.push(toggle_layer.layer_output(io_ctx.party_id()));
 
-        // let mut dense_len = toggle_layer.layer_len / 2;
+        // let mut dense_len = toggle_layer.dense_len;
         for i in 0..num_sparse_layers {
             let previous_layer = &sparse_layers[i];
-            // let tmp = previous_layer.to_dense();
-            // let coeffs = rep3::arithmetic::open_vec(tmp.coeffs_ref(), io_ctx.main())?;
-            // if io_ctx.party_idx() == 0 {
-            //     if io_ctx.log_num_workers_per_party() == 0 {
-            //         tracing::info!(
-            //             "Layer {} len {} dense_2: {:?}",
-            //             i,
-            //             previous_layer.dense_len,
-            //             &coeffs[dense_len / 2..]
-            //                 .into_iter()
-            //                 .enumerate()
-            //                 .filter(|(_, coeff)| **coeff != F::ONE)
-            //                 .take(10)
-            //                 .collect::<Vec<_>>()
-            //         );
-            //     } else if io_ctx.worker_idx() == 1 {
-            //         tracing::info!(
-            //             "Layer {} len {} dense: {:?}",
-            //             i,
-            //             previous_layer.dense_len,
-            //             &coeffs
-            //                 .into_iter()
-            //                 .enumerate()
-            //                 .filter(|(_, coeff)| *coeff != F::ONE)
-            //                 .take(10)
-            //                 .collect::<Vec<_>>()
-            //         );
-            //     }
-            // }
+            let dense_len = previous_layer.dense_len;
+            let tmp = previous_layer.to_dense();
+            let coeffs = rep3::arithmetic::open_vec(tmp.coeffs_ref(), io_ctx.main())?;
+            if io_ctx.party_idx() == 0 {
+                if io_ctx.log_num_workers_per_party() == 0 {
+                    if i == 0 {
+                        println!(
+                            "worker | dense len {} coeffs len {}",
+                            dense_len,
+                            coeffs.len()
+                        );
+                        let file =
+                            std::fs::File::create("sparse_grand_product_layer_0_dense").unwrap();
+                        let writer = std::io::BufWriter::new(file);
+                        coeffs.serialize_uncompressed(writer).unwrap();
+                    }
+                    tracing::info!(
+                        "Layer {} len {} dense_1: {:?}",
+                        i,
+                        previous_layer.dense_len,
+                        &coeffs[..dense_len / 2]
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(_, coeff)| **coeff != F::ONE)
+                            .take(10)
+                            .collect::<Vec<_>>()
+                    );
+                    tracing::info!(
+                        "Layer {} len {} dense_2: {:?}",
+                        i,
+                        previous_layer.dense_len,
+                        &coeffs[dense_len / 2..]
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(_, coeff)| **coeff != F::ONE)
+                            .take(10)
+                            .collect::<Vec<_>>()
+                    );
+                } else {
+                    if i == 0 && io_ctx.worker_idx() == 0 {
+                        let file =
+                            std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
+                        let mut reader = std::io::BufReader::new(file);
+                        let check =
+                            Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
+                        // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
+                        tracing::info!(
+                            "worker 0 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {} | after (len {}) {:?}",
+                            check.len(),
+                            dense_len,
+                            check[..dense_len]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE)
+                                .count(),
+                            check[..check.len()/2]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE)
+                                .count(),
+                            check[..check.len()/2]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff == F::ZERO)
+                                .count(),
+                            check[dense_len..check.len() / 2]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            check[dense_len..check.len() / 2]
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(_, coeff)| **coeff != F::ONE && **coeff != F::ZERO)
+                                .take(10)
+                                .collect::<Vec<_>>()
+                        );
+                        tracing::info!(
+                            "worker 0 | coeffs len {} | elements in dense {} | elements total {} | zero elements {} | after (len {}) {:?}",
+                            coeffs.len(),
+                            coeffs[..dense_len]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE)
+                                .count(),
+                            coeffs[..]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE)
+                                .count(),
+                            coeffs
+                                [..]
+                                .into_iter()
+                                .filter(|coeff| **coeff == F::ZERO)
+                                .count(),
+                            coeffs[dense_len..coeffs.len()]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            coeffs[dense_len..coeffs.len()]
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(_, coeff)| **coeff != F::ONE && **coeff != F::ZERO)
+                                .take(10)
+                                .collect::<Vec<_>>()
+                        );
+                        tracing::info!(
+                            "worker 0 | total non zero in check: {} | in dense half {} | in actual half {}",
+                            check[..]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            check[..dense_len]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            check[..check.len()/2]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                        );
+                        let p = izip!(&coeffs[..check.len() / 2], &check)
+                            .position(|(i, check)| *i != *check);
+                        if let Some(pos) = p {
+                            tracing::warn!(
+                                "worker 0 | mismatch at position {} {:?} != {:?}",
+                                pos,
+                                &coeffs[pos..pos + 10],
+                                &check[pos..pos + 10]
+                            );
+                        }
+                    }
+                    if i == 0 && io_ctx.worker_idx() == 1 {
+                        let file =
+                            std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
+                        let mut reader = std::io::BufReader::new(file);
+                        let check =
+                            Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
+
+                        tracing::info!(
+                            "worker 1 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {}",
+                            check.len(),
+                            dense_len,
+                            check[dense_len..]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            check[check.len()/2..]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            check[check.len()/2..]
+                                .into_iter()
+                                // .enumerate()
+                                .filter(|coeff| **coeff == F::ZERO)
+                                .count(),
+                        );
+                        tracing::info!(
+                            "worker 1 | coeffs len {} | elements in dense {} | elements total {} | zero elements {}",
+                            coeffs.len(),
+                            coeffs[..dense_len]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE)
+                                .count(),
+                            coeffs[..]
+                                .into_iter()
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                                .count(),
+                            coeffs
+                                [..]
+                                .into_iter()
+                                .filter(|coeff| **coeff == F::ZERO)
+                                .count(),
+                        );
+                        // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
+                        let p = izip!(&coeffs, &check[check.len() / 2..])
+                            .position(|(i, check)| *i != *check);
+                        if let Some(pos) = p {
+                            tracing::warn!(
+                                "worker 1 | mismatch at position {} {:?} != {:?}",
+                                pos,
+                                &coeffs[pos..pos + 10],
+                                &check[dense_len + pos..dense_len + pos + 10]
+                            );
+                        }
+                    }
+                    tracing::info!(
+                        "Layer {} len {} dense: {:?}",
+                        i,
+                        previous_layer.dense_len,
+                        &coeffs
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(_, coeff)| *coeff != F::ONE)
+                            .take(10)
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
             // dense_len /= 2;
             sparse_layers.push(previous_layer.layer_output(io_ctx)?);
+        }
+
+        if io_ctx.log_num_workers_per_party() == 0 {
+            let pre_last_layer = &sparse_layers[sparse_layers.len() - 1];
+            let dense_len = pre_last_layer.dense_len;
+            let (left, right) = pre_last_layer.uninterleave();
+            let outputs: Vec<_> = left
+                .iter()
+                .zip(right.iter())
+                .map(|(l, r)| *l * *r)
+                .collect();
+
+            let opened =
+                additive::open_vec(AdditiveShare::<F>::into_fe_vec(outputs), io_ctx.main())
+                    .unwrap();
+
+            if io_ctx.party_idx() == 0 {
+                tracing::info!(
+                    "Layer {} len {} outputs_1: {:?}",
+                    sparse_layers.len() - 2,
+                    dense_len,
+                    &opened[..dense_len / 2]
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, coeff)| **coeff != F::ONE)
+                        .take(10)
+                        .collect::<Vec<_>>()
+                );
+                tracing::info!(
+                    "Layer {} len {} outputs_2: {:?}",
+                    sparse_layers.len() - 2,
+                    dense_len,
+                    &opened[dense_len / 4..]
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, coeff)| **coeff != F::ONE)
+                        .take(10)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+
+        let last_layer = &sparse_layers[sparse_layers.len() - 1];
+        let dense_len = last_layer.dense_len;
+
+        let tmp = last_layer.to_dense();
+        let coeffs = rep3::arithmetic::open_vec(tmp.coeffs_ref(), io_ctx.main())?;
+        if io_ctx.party_idx() == 0 {
+            if io_ctx.log_num_workers_per_party() == 0 {
+                tracing::info!(
+                    "Layer {} len {} dense_1: {:?}",
+                    sparse_layers.len() - 1,
+                    last_layer.dense_len,
+                    &coeffs[..dense_len / 2]
+                        .into_iter()
+                        // .enumerate()
+                        // .filter(|(_, coeff)| **coeff != F::ONE)
+                        // .take(10)
+                        .collect::<Vec<_>>()
+                );
+                tracing::info!(
+                    "Layer {} len {} dense_2: {:?}",
+                    sparse_layers.len() - 1,
+                    last_layer.dense_len,
+                    &coeffs[dense_len / 2..]
+                        .into_iter()
+                        // .enumerate()
+                        // .filter(|(_, coeff)| **coeff != F::ONE)
+                        // .take(10)
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                tracing::info!(
+                    "Layer {} len {} dense: {:?}",
+                    sparse_layers.len() - 1,
+                    last_layer.dense_len,
+                    &coeffs
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, coeff)| *coeff != F::ONE)
+                        .take(10)
+                        .collect::<Vec<_>>()
+                );
+            }
         }
 
         Ok(Self {

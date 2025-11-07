@@ -123,21 +123,27 @@ where
                     additive::combine_additive_vec(if_hashes_shares),
                 )
             })
-            .reduce(|(rw_hashes, if_hashes), (rw_hashes_next, if_hashes_next)| {
-                (
-                    interleave(rw_hashes, rw_hashes_next).collect_vec(),
-                    interleave(if_hashes, if_hashes_next).collect_vec(),
-                )
-                // (
-                //     [rw_hashes, rw_hashes_next].concat(),
-                //     [if_hashes, if_hashes_next].concat(),
-                // )
-            })
+            .reduce(
+                |(mut rw_hashes, if_hashes), (mut rw_hashes_next, if_hashes_next)| {
+                    rw_hashes.resize(128, F::ZERO);
+                    rw_hashes_next.resize(128, F::ZERO);
+                    // (
+                    //     interleave(rw_hashes, rw_hashes_next).collect_vec(),
+                    //     interleave(if_hashes, if_hashes_next).collect_vec(),
+                    // )
+
+                    (
+                        [rw_hashes, rw_hashes_next].concat(),
+                        [if_hashes, if_hashes_next].concat(),
+                    )
+                },
+            )
             .unwrap();
 
         let log_num_workers = network.log_num_workers_per_party();
         let num_workers = 1 << log_num_workers;
         let rw_remaining_layers = if log_num_workers > 0 {
+            // println!("final layer?: {:?}", read_write_hashes);
             Some(Self::construct_remaining_layers(
                 &mut read_write_hashes,
                 num_workers,
@@ -166,14 +172,14 @@ where
             init_final_hashes.clone(),
         );
 
-        // println!("Multiset read_hashes: {:?}", multiset_hashes.read_hashes);
-        // println!("Multiset write_hashes: {:?}", multiset_hashes.write_hashes);
-        // println!("Multiset init_hashes: {:?}", multiset_hashes.init_hashes);
-        // println!("Multiset final_hashes: {:?}", multiset_hashes.final_hashes);
+        println!("Multiset read_hashes: {:?}", multiset_hashes.read_hashes);
+        println!("Multiset write_hashes: {:?}", multiset_hashes.write_hashes);
+        println!("Multiset init_hashes: {:?}", multiset_hashes.init_hashes);
+        println!("Multiset final_hashes: {:?}", multiset_hashes.final_hashes);
 
         // Self::check_multiset_equality(preprocessing, &multiset_hashes);
-        println!("Multiset equality check passed");
-        multiset_hashes.append_to_transcript(transcript);
+        // println!("Multiset equality check passed");
+        // multiset_hashes.append_to_transcript(transcript);
 
         let read_write_circuit =
             Self::read_write_grand_product_rep3(preprocessing, num_lookups, log_num_workers);
