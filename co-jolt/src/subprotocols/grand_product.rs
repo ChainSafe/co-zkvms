@@ -71,55 +71,36 @@ where
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        // transcript.append_scalars(&claimed_outputs); // TODO uncomment! (with padding?)
+        transcript.append_scalars(&claimed_outputs);
         let output_mle = DensePolynomial::new_padded(claimed_outputs);
-        let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
-        let mut claim = output_mle.evaluate(&r);
-        tracing::info!(
-            "coordinator | initial claim: {} r: ({}) {:?}",
-            claim,
-            r.len(),
-            r
-        );
+        let mut r_grand_product: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
+        let mut claim = output_mle.evaluate(&r_grand_product);
 
         if let Some(remaining_layers) = remaining_layers {
             for mut layer in remaining_layers {
-                proof_layers.push(layer.prove_layer(&mut claim, &mut r, transcript));
-                tracing::info!("sumcheck final claim: {}", claim);
+                proof_layers.push(layer.prove_layer(&mut claim, &mut r_grand_product, transcript));
             }
         }
 
-        tracing::info!("coordinator | r: ({}) {:?}", r.len(), r);
+        let sigma_r_split = |r: &[F]| {
+            let n = r.len();
+            let mut r_sigma = Vec::with_capacity(n);
+            r_sigma.push(r[n - 1]);
+            r_sigma.extend_from_slice(&r[..n - 1]);
+            r_sigma
+        };
 
-        // let mut r_evals = EqPolynomial::evals(&r);
-        // let r_evals_right = r_evals.split_off(r_evals.len() / 2);
-        // let r_evals_permuted: Vec<_> = interleave(r_evals, r_evals_right).collect();
+        r_grand_product = sigma_r_split(&r_grand_product);
 
-        // let left: Vec<_> = r.iter().copied().step_by(2).collect();
-        // let right: Vec<_> = r.iter().copied().skip(1).step_by(2).collect();
-
-        // r = [left, right].concat();
-
-        // let r_evals_check = EqPolynomial::evals(&r);
-
-        // assert_eq!(r_evals_permuted, r_evals_check);
-
-        // tracing::info!("coordinator | r_permuted: {:?}", r);
-
-        // tracing::info!(
-        //     "coordinator | remaining layers r: [{}..{}] claim: {}",
-        //     r[0],
-        //     r.last().unwrap(),
-        //     claim
-        // );
-
-        tracing::info!("--------------------");
-
-        network.broadcast_request((r.clone(), claim))?;
+        network.broadcast_request((r_grand_product.clone(), claim))?;
 
         for layer in self.layers() {
-            proof_layers
-                .push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
+            proof_layers.push(layer.coordinate_prove_layer(
+                &mut claim,
+                &mut r_grand_product,
+                transcript,
+                network,
+            )?);
         }
 
         Ok((
@@ -127,7 +108,7 @@ where
                 gkr_layers: proof_layers,
                 quark_proof: None,
             },
-            r,
+            r_grand_product,
         ))
     }
 }
@@ -167,23 +148,8 @@ where
     ) -> eyre::Result<Vec<F>> {
         let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
         let mut claim = additive::promote_to_trivial_share(claim, io_ctx.party_id());
-        for (i, layer) in self.layers().into_iter().enumerate() {
-            if io_ctx.party_idx() == 0 {
-                tracing::info!("layer {} r_grand_product: {:?}", i, r);
-            }
+        for layer in self.layers().into_iter() {
             layer.prove_layer(&mut claim, &mut r, io_ctx)?;
-
-            if i == 0 && io_ctx.log_num_workers_per_party() == 0 {
-                let sigma_r_split = |r: &[F]| {
-                    let n = r.len();
-                    let mut r_sigma = Vec::with_capacity(n);
-                    r_sigma.push(r[n - 1]);
-                    r_sigma.extend_from_slice(&r[..n - 1]);
-                    r_sigma
-                };
-
-                r = sigma_r_split(&r);
-            }
         }
 
         Ok(r)
@@ -205,18 +171,10 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        // let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
         let num_rounds = r_grand_product.len();
-
-        tracing::info!("coordinator | previous_claim: {:?}", claim);
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.coordinate_prove_sumcheck(claim, num_rounds, transcript, network)?;
-
-        // tracing::info!("coordinator | r_sumcheck: {:?}", r_sumcheck);
-
-        // println!("r_grand_product: {:?}", r_grand_product);
-        // println!("r_sumcheck: {:?}", r_sumcheck);
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);
@@ -231,12 +189,7 @@ where
         let r_layer: F = transcript.challenge_scalar();
 
         *claim = left_claim + r_layer * (right_claim - left_claim);
-        tracing::info!(
-            "r_layer: [{}..{}] claim {}",
-            r_grand_product[0],
-            r_layer,
-            claim
-        );
+
         network.broadcast_request(r_layer)?;
         r_grand_product.push(r_layer);
 
@@ -268,27 +221,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
             io_ctx.log_num_workers_per_party(),
             io_ctx.worker_idx(),
         );
-        // if io_ctx.worker_idx() == 0 {
-        //     let eq_evals = SplitEqPolynomial::new(r_grand_product).merge().Z;
-        //     let eq_evals_1 = SplitEqPolynomial::new_chunk(
-        //         r_grand_product,
-        //         io_ctx.log_num_workers_per_party(),
-        //         0,
-        //     )
-        //     .merge()
-        //     .Z;
-        //     let eq_evals_2 = SplitEqPolynomial::new_chunk(
-        //         r_grand_product,
-        //         io_ctx.log_num_workers_per_party(),
-        //         1,
-        //     )
-        //     .merge()
-        //     .Z;
-        //     assert_eq!(eq_evals_1.len() + eq_evals_2.len(), eq_evals.len());
-        //     assert_eq!([eq_evals_1, eq_evals_2].concat(), eq_evals);
-        //     println!("eq_poly split correct");
-        // }
-        // let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
 
         let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
 

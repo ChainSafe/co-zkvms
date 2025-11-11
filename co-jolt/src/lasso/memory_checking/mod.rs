@@ -124,23 +124,16 @@ where
                 )
             })
             .reduce(|(rw_hashes, if_hashes), (rw_hashes_next, if_hashes_next)| {
-                // rw_hashes.resize(128, F::ZERO);
-                // rw_hashes_next.resize(128, F::ZERO);
                 (
                     interleave(rw_hashes, rw_hashes_next).collect_vec(),
                     interleave(if_hashes, if_hashes_next).collect_vec(),
                 )
-                // (
-                //     [rw_hashes, rw_hashes_next].concat(),
-                //     [if_hashes, if_hashes_next].concat(),
-                // )
             })
             .unwrap();
 
         let log_num_workers = network.log_num_workers_per_party();
         let num_workers = 1 << log_num_workers;
         let rw_remaining_layers = if log_num_workers > 0 {
-            // println!("final layer?: {:?}", read_write_hashes);
             Some(Self::construct_remaining_layers(
                 &mut read_write_hashes,
                 num_workers,
@@ -158,25 +151,14 @@ where
             None
         };
 
-        // init_final_hashes = DenseInterleavedPolynomial::new(init_final_hashes)
-        //     .par_chunks(2)
-        //     .map(|chunk| chunk[0] * chunk[1])
-        //     .collect();
-
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
             read_write_hashes.clone(),
             init_final_hashes.clone(),
         );
 
-        println!("Multiset read_hashes: {:?}", multiset_hashes.read_hashes);
-        println!("Multiset write_hashes: {:?}", multiset_hashes.write_hashes);
-        println!("Multiset init_hashes: {:?}", multiset_hashes.init_hashes);
-        println!("Multiset final_hashes: {:?}", multiset_hashes.final_hashes);
-
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
-        // println!("Multiset equality check passed");
-        // multiset_hashes.append_to_transcript(transcript);
+        multiset_hashes.append_to_transcript(transcript);
 
         let read_write_circuit =
             Self::read_write_grand_product_rep3(preprocessing, num_lookups, log_num_workers);
@@ -190,7 +172,7 @@ where
                 transcript,
                 network,
             )?;
-        println!("Read-write grand product proved");
+
         let (init_final_grand_product, r_init_final) = init_final_circuit
             .cooridinate_prove_grand_product(
                 init_final_hashes,
@@ -198,7 +180,6 @@ where
                 transcript,
                 network,
             )?;
-        println!("Init-final grand product proved");
 
         Ok((
             read_write_grand_product,
@@ -242,8 +223,6 @@ where
             network,
         )?;
 
-        println!("coordinator append read_write_polys opennings");
-
         let init_final_evals = if log_num_workers == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
@@ -259,8 +238,6 @@ where
             transcript,
             network,
         )?;
-
-        println!("coordinator append init_final_polys opennings");
 
         Ok((openings, exogenous_openings))
     }
@@ -293,13 +270,6 @@ where
 
         *hashes = BatchedGrandProduct::<F, PCS, ProofTranscript>::claimed_outputs(&grand_product);
 
-        // // not sure if this is sufficient for workers > 2
-        // read_write_hashes = DenseInterleavedPolynomial::new(read_write_hashes)
-        //     .par_chunks(2)
-        //     .map(|chunk| chunk[0] * chunk[1])
-        //     .collect();
-
-        // assert_eq!(read_write_hashes, read_write_hashes_);
         grand_product.into_layers()
     }
 

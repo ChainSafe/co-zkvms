@@ -109,18 +109,6 @@ where
             })
             .collect();
 
-        // .map(|shares| {
-        //     let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
-        //     vec![
-        //         additive::combine_additive_share(final_l),
-        //         additive::combine_additive_share(final_r),
-        //     ]
-        // })
-        // .reduce(|evals, evals_next| interleave(evals, evals_next).collect())
-        // .unwrap();
-
-        tracing::info!("remaining evals: {:?}", evals);
-
         // Assumption: At round N-log_num_workers E_1 is completely bound,
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
         let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
@@ -131,8 +119,6 @@ where
 
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
-
-        tracing::info!("eq final: {:?}", eq_poly.E2[0]);
 
         network.broadcast_request((r_.clone(), final_claims))?;
         proof.compressed_polys.extend(proof_.compressed_polys);
@@ -231,14 +217,11 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    // let mut claim = F::zero();
     let mut r: Vec<F> = Vec::new();
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     let mut tmp_e = vec![];
     for _round in 0..num_rounds {
-        // let round_poly =
-        //     UniPoly::<F>::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
         let mut round_evals = if network.log_num_workers_per_party() == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
@@ -255,16 +238,13 @@ where
                     acc
                 })
         };
-        tracing::info!("worker -> cubic evals: {:?}", round_evals);
         round_evals.insert(1, *claim - round_evals[0]);
 
         let round_poly = UniPoly::<F>::from_evals(&round_evals);
         let compressed_poly = round_poly.compress();
 
-        // println!("compressed_poly: {:?}", compressed_poly);
-
         // append the prover's message to the transcript
-        // compressed_poly.append_to_transcript(transcript); // TODO: uncomment!!
+        compressed_poly.append_to_transcript(transcript);
         // derive the verifier's challenge for the next round
         let r_j = transcript.challenge_scalar();
         r.push(r_j);
@@ -276,8 +256,6 @@ where
 
         cubic_polys.push(compressed_poly);
     }
-
-    tracing::info!("coordinator | round e: {:?}", tmp_e);
 
     Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
