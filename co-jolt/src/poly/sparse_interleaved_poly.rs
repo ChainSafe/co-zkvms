@@ -54,6 +54,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
             .iter()
             .flatten()
             .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
+
         Self {
             dense_len,
             coeffs: vec![vec![]; batch_size],
@@ -421,6 +422,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             tmp.bind(r_j, party_id);
             let dense_open = rep3::arithmetic::open_vec(&tmp.coeffs, io_ctx.main()).unwrap();
 
+            if _round == num_rounds - 2 {
+                tracing::info!("binded poly coeffs: {:?}", dense_open);
+            }
+
             self.bind(r_j, party_id);
             let binded = self.to_dense().coeffs_ref().to_vec();
             let sparse_open = rep3::arithmetic::open_vec(&binded, io_ctx.main()).unwrap();
@@ -449,6 +454,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             final_claims.0.into_additive(),
             final_claims.1.into_additive(),
         ))?;
+
+        if io_ctx.party_idx() == 0 && io_ctx.log_num_workers_per_party() > 0 {
+            tracing::info!("sumcheck final eq_eval: {:?}", eq_poly.E2[0]);
+        }
 
         if io_ctx.log_num_workers_per_party() > 0 {
             if io_ctx.party_id() == PartyID::ID0 {

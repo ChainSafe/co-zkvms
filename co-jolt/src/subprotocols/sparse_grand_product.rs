@@ -16,7 +16,7 @@ use crate::subprotocols::sumcheck::{
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::izip;
+use itertools::{interleave, izip};
 use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::poly::unipoly::UniPoly;
@@ -82,6 +82,7 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
         let layer_len = fingerprints_chunk * 2;
         let batched_layer_len = self.fingerprints.len() * layer_len;
         let padded_poly_half = 1 << 20;
+        println!("self.fingerprints[0].len: {}", self.fingerprints[0].len());
         println!(
             "batched_layer_len: {} padded_poly {}",
             batched_layer_len,
@@ -91,7 +92,7 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
         assert_eq!(self.layer_len / 2, layer_len);
         let mut values: Vec<Vec<SparseCoefficient<_>>> = self
             .fingerprints
-            .par_iter()
+            .iter()
             .enumerate()
             .map(|(batch_index, fingerprints)| {
                 let flag_indices = &self.flag_indices[batch_index / 2];
@@ -134,12 +135,6 @@ impl<F: JoltField> Rep3BatchedGrandProductToggleLayer<F> {
                     .collect(),
             );
         }
-
-        let max_index = values.iter().flatten().map(|x| x.index).max().unwrap();
-        println!(
-            "max index: {}",
-            values.iter().flatten().map(|x| x.index).max().unwrap()
-        );
 
         // Rep3SparseInterleavedPolynomial::new(values, self.batched_layer_len / 2, party_id)
         if env::var("NUM_WORKERS_PER_PARTY").unwrap().contains("1") {
@@ -1171,43 +1166,43 @@ where
                     );
                 } else {
                     if i == 0 && io_ctx.worker_idx() == 0 {
-                        let file =
-                            std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
-                        let mut reader = std::io::BufReader::new(file);
-                        let check =
-                            Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
-                        // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
-                        tracing::info!(
-                            "worker 0 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {} | after (len {}) {:?}",
-                            check.len(),
-                            dense_len,
-                            check[..dense_len]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE)
-                                .count(),
-                            check[..check.len()/2]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE)
-                                .count(),
-                            check[..check.len()/2]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff == F::ZERO)
-                                .count(),
-                            check[dense_len..check.len() / 2]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                            check[dense_len..check.len() / 2]
-                                .into_iter()
-                                .enumerate()
-                                .filter(|(_, coeff)| **coeff != F::ONE && **coeff != F::ZERO)
-                                .take(10)
-                                .collect::<Vec<_>>()
-                        );
+                        // let file =
+                        //     std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
+                        // let mut reader = std::io::BufReader::new(file);
+                        // let check =
+                        //     Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
+                        // // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
+                        // tracing::info!(
+                        //     "worker 0 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {} | after (len {}) {:?}",
+                        //     check.len(),
+                        //     dense_len,
+                        //     check[..dense_len]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE)
+                        //         .count(),
+                        //     check[..check.len()/2]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE)
+                        //         .count(),
+                        //     check[..check.len()/2]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff == F::ZERO)
+                        //         .count(),
+                        //     check[dense_len..check.len() / 2]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        //     check[dense_len..check.len() / 2]
+                        //         .into_iter()
+                        //         .enumerate()
+                        //         .filter(|(_, coeff)| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .take(10)
+                        //         .collect::<Vec<_>>()
+                        // );
                         tracing::info!(
                             "worker 0 | coeffs len {} | elements in dense {} | elements total {} | zero elements {} | after (len {}) {:?}",
                             coeffs.len(),
@@ -1217,7 +1212,7 @@ where
                                 .count(),
                             coeffs[..]
                                 .into_iter()
-                                .filter(|coeff| **coeff != F::ONE)
+                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
                                 .count(),
                             coeffs
                                 [..]
@@ -1235,61 +1230,61 @@ where
                                 .take(10)
                                 .collect::<Vec<_>>()
                         );
-                        tracing::info!(
-                            "worker 0 | total non zero in check: {} | in dense half {} | in actual half {}",
-                            check[..]
-                                .into_iter()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                            check[..dense_len]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                            check[..check.len()/2]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                        );
-                        let p = izip!(&coeffs[..check.len() / 2], &check)
-                            .position(|(i, check)| *i != *check);
-                        if let Some(pos) = p {
-                            tracing::warn!(
-                                "worker 0 | mismatch at position {} {:?} != {:?}",
-                                pos,
-                                &coeffs[pos..pos + 10],
-                                &check[pos..pos + 10]
-                            );
-                        }
+                        // tracing::info!(
+                        //     "worker 0 | total non zero in check: {} | in dense half {} | in actual half {}",
+                        //     check[..]
+                        //         .into_iter()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        //     check[..dense_len]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        //     check[..check.len()/2]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        // );
+                        // let p = izip!(&coeffs[..check.len() / 2], &check)
+                        //     .position(|(i, check)| *i != *check);
+                        // if let Some(pos) = p {
+                        //     tracing::warn!(
+                        //         "worker 0 | mismatch at position {} {:?} != {:?}",
+                        //         pos,
+                        //         &coeffs[pos..pos + 10],
+                        //         &check[pos..pos + 10]
+                        //     );
+                        // }
                     }
                     if i == 0 && io_ctx.worker_idx() == 1 {
-                        let file =
-                            std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
-                        let mut reader = std::io::BufReader::new(file);
-                        let check =
-                            Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
+                        // let file =
+                        //     std::fs::File::open("sparse_grand_product_layer_0_dense").unwrap();
+                        // let mut reader = std::io::BufReader::new(file);
+                        // let check =
+                        //     Vec::<F>::deserialize_uncompressed_unchecked(&mut reader).unwrap();
 
-                        tracing::info!(
-                            "worker 1 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {}",
-                            check.len(),
-                            dense_len,
-                            check[dense_len..]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                            check[check.len()/2..]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
-                                .count(),
-                            check[check.len()/2..]
-                                .into_iter()
-                                // .enumerate()
-                                .filter(|coeff| **coeff == F::ZERO)
-                                .count(),
-                        );
+                        // tracing::info!(
+                        //     "worker 1 | check len {} dense len {} | elements in dense {} | elements in half {} | zero elements {}",
+                        //     check.len(),
+                        //     dense_len,
+                        //     check[dense_len..]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        //     check[check.len()/2..]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff != F::ONE && **coeff != F::ZERO)
+                        //         .count(),
+                        //     check[check.len()/2..]
+                        //         .into_iter()
+                        //         // .enumerate()
+                        //         .filter(|coeff| **coeff == F::ZERO)
+                        //         .count(),
+                        // );
                         tracing::info!(
                             "worker 1 | coeffs len {} | elements in dense {} | elements total {} | zero elements {}",
                             coeffs.len(),
@@ -1307,17 +1302,17 @@ where
                                 .filter(|coeff| **coeff == F::ZERO)
                                 .count(),
                         );
-                        // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
-                        let p = izip!(&coeffs, &check[check.len() / 2..])
-                            .position(|(i, check)| *i != *check);
-                        if let Some(pos) = p {
-                            tracing::warn!(
-                                "worker 1 | mismatch at position {} {:?} != {:?}",
-                                pos,
-                                &coeffs[pos..pos + 10],
-                                &check[dense_len + pos..dense_len + pos + 10]
-                            );
-                        }
+                        // // assert_eq!(check[..previous_layer.dense_len].to_vec(), coeffs);
+                        // let p = izip!(&coeffs, &check[check.len() / 2..])
+                        //     .position(|(i, check)| *i != *check);
+                        // if let Some(pos) = p {
+                        //     tracing::warn!(
+                        //         "worker 1 | mismatch at position {} {:?} != {:?}",
+                        //         pos,
+                        //         &coeffs[pos..pos + 10],
+                        //         &check[dense_len + pos..dense_len + pos + 10]
+                        //     );
+                        // }
                     }
                     tracing::info!(
                         "Layer {} len {} dense: {:?}",
@@ -1332,7 +1327,15 @@ where
                     );
                 }
             }
+
             // dense_len /= 2;
+            // let mut layer = previous_layer.layer_output(io_ctx)?;
+            // if i == num_sparse_layers - 1 {
+            //     let mut lhs = layer.coalesced.as_mut().unwrap().coeffs.clone();
+            //     let rhs = lhs.split_off(layer.dense_len / 2);
+            //     layer.coalesced.as_mut().unwrap().coeffs = interleave(lhs, rhs).collect();
+            // }
+            // sparse_layers.push(layer);
             sparse_layers.push(previous_layer.layer_output(io_ctx)?);
         }
 
@@ -1384,21 +1387,10 @@ where
         if io_ctx.party_idx() == 0 {
             if io_ctx.log_num_workers_per_party() == 0 {
                 tracing::info!(
-                    "Layer {} len {} dense_1: {:?}",
+                    "Layer {} len {} dense: {:?}",
                     sparse_layers.len() - 1,
                     last_layer.dense_len,
-                    &coeffs[..dense_len / 2]
-                        .into_iter()
-                        // .enumerate()
-                        // .filter(|(_, coeff)| **coeff != F::ONE)
-                        // .take(10)
-                        .collect::<Vec<_>>()
-                );
-                tracing::info!(
-                    "Layer {} len {} dense_2: {:?}",
-                    sparse_layers.len() - 1,
-                    last_layer.dense_len,
-                    &coeffs[dense_len / 2..]
+                    &coeffs[..]
                         .into_iter()
                         // .enumerate()
                         // .filter(|(_, coeff)| **coeff != F::ONE)

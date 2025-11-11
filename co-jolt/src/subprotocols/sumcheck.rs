@@ -108,6 +108,7 @@ where
                 ]
             })
             .collect();
+
         // .map(|shares| {
         //     let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
         //     vec![
@@ -131,7 +132,7 @@ where
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
 
-        // tracing::info!("eq final: {:?}", eq_poly.E2[0]);
+        tracing::info!("eq final: {:?}", eq_poly.E2[0]);
 
         network.broadcast_request((r_.clone(), final_claims))?;
         proof.compressed_polys.extend(proof_.compressed_polys);
@@ -263,7 +264,7 @@ where
         // println!("compressed_poly: {:?}", compressed_poly);
 
         // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
+        // compressed_poly.append_to_transcript(transcript); // TODO: uncomment!!
         // derive the verifier's challenge for the next round
         let r_j = transcript.challenge_scalar();
         r.push(r_j);
@@ -276,7 +277,7 @@ where
         cubic_polys.push(compressed_poly);
     }
 
-    // tracing::info!("coordinator | round e: {:?}", tmp_e);
+    tracing::info!("coordinator | round e: {:?}", tmp_e);
 
     Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
