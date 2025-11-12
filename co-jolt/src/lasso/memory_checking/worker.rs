@@ -150,8 +150,6 @@ where
             &r_read_write[..r_read_write.len() - log_num_workers],
         );
 
-        println!("read_write_evals {}", read_write_evals.len());
-
         io_ctx.network().send_response(
             read_write_evals
                 .iter()
@@ -186,8 +184,6 @@ where
             r_init_final.to_vec(),
             io_ctx.main(),
         )?;
-
-        println!("worker append init_final_polys opennings");
 
         Ok(())
     }

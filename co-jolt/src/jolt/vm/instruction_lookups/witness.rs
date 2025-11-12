@@ -85,6 +85,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             })
             .collect();
 
+        println!("preprocessing.num_memories: {}", preprocessing.num_memories);
+
         let (final_cts_, used_ops, rand_ohvs, memory_addresses_c): (
             Vec<_>,
             Vec<_>,

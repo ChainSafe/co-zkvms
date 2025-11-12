@@ -1,6 +1,5 @@
 use super::dense_interleaved_poly::Rep3DenseInterleavedPolynomial;
 use crate::field::JoltField;
-use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::poly::Rep3DensePolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedGrandProductLayerWorker;
 use crate::subprotocols::sumcheck::{Rep3BatchedCubicSumcheckWorker, Rep3Bindable};
@@ -11,16 +10,15 @@ use crate::utils::future::{FutureExt, FutureRep3};
 
 use eyre::Context;
 use jolt_core::poly::{
-    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
+    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial,
 };
-use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::utils::{math::Math, transcript::Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::{prelude::*, vec};
+use rayon::prelude::*;
 
 /// Represents a single layer of a sparse grand product circuit.
 #[derive(Default, Debug, Clone)]
@@ -45,7 +43,7 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         party_id: PartyID,
     ) -> Self {
         let batch_size = coeffs.len();
-        // assert!((dense_len / batch_size).is_power_of_two());
+        assert!((dense_len / batch_size).is_power_of_two());
         let one: Rep3PrimeFieldShare<F> =
             rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
 
@@ -55,33 +53,27 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
             .flatten()
             .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
 
-        Self {
-            dense_len,
-            coeffs: vec![vec![]; batch_size],
-            coalesced: Some(Rep3DenseInterleavedPolynomial::new(coalesced)),
-            one,
+        if (dense_len / batch_size) <= 2 {
+            // Coalesce
+            let mut coalesced = vec![one; dense_len];
+            coeffs
+                .iter()
+                .flatten()
+                .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
+            Self {
+                dense_len,
+                coeffs: vec![vec![]; batch_size],
+                coalesced: Some(Rep3DenseInterleavedPolynomial::new(coalesced)),
+                one,
+            }
+        } else {
+            Self {
+                dense_len,
+                coeffs,
+                coalesced: None,
+                one,
+            }
         }
-        // if (dense_len / batch_size) <= 2 {
-        //     // Coalesce
-        //     let mut coalesced = vec![one; dense_len];
-        //     coeffs
-        //         .iter()
-        //         .flatten()
-        //         .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
-        //     Self {
-        //         dense_len,
-        //         coeffs: vec![vec![]; batch_size],
-        //         coalesced: Some(Rep3DenseInterleavedPolynomial::new(coalesced)),
-        //         one,
-        //     }
-        // } else {
-        //     Self {
-        //         dense_len,
-        //         coeffs,
-        //         coalesced: None,
-        //         one,
-        //     }
-        // }
     }
 
     pub fn batch_size(&self) -> usize {
@@ -397,88 +389,6 @@ where
 impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F, Network>
     for Rep3SparseInterleavedPolynomial<F>
 {
-    fn prove_sumcheck(
-        &mut self,
-        claim: &AdditiveShare<F>,
-        eq_poly: &mut SplitEqPolynomial<F>,
-        io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<(Vec<F>, (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>))> {
-        let num_rounds = eq_poly.get_num_vars();
-
-        // let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let party_id = io_ctx.party_id();
-        for _round in 0..num_rounds {
-            let cubic_poly = Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
-                self, eq_poly, party_id,
-            );
-            // append the prover's message to the transcript
-            io_ctx.network().send_response(cubic_poly)?;
-            let (r_j, next_claim): (F, F) = io_ctx.network().receive_request()?;
-
-            r.push(r_j);
-            // bind polynomials to verifier's challenge
-            let mut tmp = Rep3DenseInterleavedPolynomial::new(self.coalesce());
-            tmp.bind(r_j, party_id);
-            let dense_open = rep3::arithmetic::open_vec(&tmp.coeffs, io_ctx.main()).unwrap();
-
-            if _round == num_rounds - 2 {
-                tracing::info!("binded poly coeffs: {:?}", dense_open);
-            }
-
-            self.bind(r_j, party_id);
-            let binded = self.to_dense().coeffs_ref().to_vec();
-            let sparse_open = rep3::arithmetic::open_vec(&binded, io_ctx.main()).unwrap();
-
-            // if _round > num_rounds - 2 && io_ctx.party_idx() == 0 {
-            //     tracing::info!("round {} binded evals: {:?}", _round, sparse_open);
-            // }
-
-            if io_ctx.party_idx() == 0 {
-                assert_eq!(dense_open, sparse_open[..self.dense_len]);
-            }
-
-            eq_poly.bind(r_j);
-
-            // poly coeffs are additive shares but evaluation requires multiplication
-            // e = poly.evaluate(&r_j);
-            // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
-            // previous_claim = additive::promote_to_trivial_share(next_claim, party_id);
-        }
-
-        debug_assert_eq!(eq_poly.len(), 1);
-
-        let mut final_claims =
-            Rep3BatchedCubicSumcheckWorker::<F, Network>::final_claims(self, party_id);
-        io_ctx.network().send_response((
-            final_claims.0.into_additive(),
-            final_claims.1.into_additive(),
-        ))?;
-
-        if io_ctx.party_idx() == 0 && io_ctx.log_num_workers_per_party() > 0 {
-            tracing::info!("sumcheck final eq_eval: {:?}", eq_poly.E2[0]);
-        }
-
-        if io_ctx.log_num_workers_per_party() > 0 {
-            if io_ctx.party_id() == PartyID::ID0 {
-                io_ctx.network().send_response(eq_poly.E2[0])?;
-            }
-
-            // Coordinator runs remaining sumcheck rounds
-            let (r_, final_claims_): (Vec<F>, (F, F)) = io_ctx.network().receive_request()?;
-
-            // println!("worker received claim");
-            let party_id = io_ctx.party_id();
-            final_claims = (
-                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.0),
-                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.1),
-            );
-            r.extend(r_);
-        }
-
-        Ok((r, final_claims))
-    }
-
     /// We want to compute the evaluations of the following univariate cubic polynomial at
     /// points {0, 1, 2, 3}:
     ///     \sum_{x} eq(r, x) * left(x) * right(x)
@@ -514,20 +424,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 coalesced, eq_poly, // previous_round_claim,
                 party_id,
             );
-        } else {
-            // let coalesced = Self {
-            //     dense_len: self.dense_len,
-            //     coeffs: vec![vec![]; self.batch_size()],
-            //     coalesced: Some(Rep3DenseInterleavedPolynomial::new(self.coalesce())),
-            //     one: self.one.clone(),
-            // };
-            return Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
-                &Rep3DenseInterleavedPolynomial::new(self.coalesce()),
-                eq_poly, // previous_round_claim,
-                party_id,
-            );
         }
-        tracing::info!("compute cubic not coalesced");
 
         let one_share = rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
 

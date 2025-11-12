@@ -192,8 +192,8 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
-        mut r_read_write: Vec<F>,
-        mut r_init_final: Vec<F>,
+        r_read_write: Vec<F>,
+        r_init_final: Vec<F>,
         preprocessing: &Self::Preprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -203,19 +203,24 @@ where
 
         let log_num_workers = network.log_num_workers_per_party();
 
+        let read_write_openings: Vec<_> = openings
+            .read_write_values_mut()
+            .into_iter()
+            .chain(exogenous_openings.openings_mut())
+            .collect();
+
         let read_write_evals = if log_num_workers == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
-            Self::compute_remaining_openings(
-                r_read_write,
-                openings
-                    .read_write_values_mut()
-                    .into_iter()
-                    .chain(exogenous_openings.openings_mut())
-                    .collect(),
-                network,
-            )?
+            Self::compute_remaining_openings(r_read_write, read_write_openings.len(), network)?
         };
+
+        read_write_openings
+            .into_par_iter()
+            .zip(read_write_evals.par_iter())
+            .for_each(|(opening, eval)| {
+                *opening = *eval;
+            });
 
         Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
             &read_write_evals,
@@ -228,10 +233,18 @@ where
         } else {
             Self::compute_remaining_openings(
                 r_init_final,
-                openings.init_final_values_mut(),
+                openings.init_final_values().len(),
                 network,
             )?
         };
+
+        openings
+            .init_final_values_mut()
+            .into_par_iter()
+            .zip(init_final_evals.par_iter())
+            .for_each(|(opening, eval)| {
+                *opening = *eval;
+            });
 
         Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
             &init_final_evals,
@@ -275,7 +288,7 @@ where
 
     fn compute_remaining_openings(
         mut r: Vec<F>,
-        openings: Vec<&mut F>,
+        num_openings: usize,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
         let log_num_workers = network.log_num_workers_per_party();
@@ -287,17 +300,13 @@ where
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
             .map(additive::combine_additive_vec)
-            .fold(vec![vec![]; openings.len()], |mut evals, eval| {
+            .fold(vec![vec![]; num_openings], |mut evals, eval| {
                 izip!(evals.iter_mut(), eval).for_each(|(a, b)| a.push(b));
                 evals
             })
             .into_par_iter()
             .map(|evals| DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&chi))
             .collect();
-
-        for (opening, eval) in openings.into_iter().zip(read_write_evals.iter()) {
-            *opening = *eval;
-        }
 
         Ok(read_write_evals)
     }

@@ -4,7 +4,6 @@
 use crate::field::JoltField;
 use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::types::Rep3Value;
-use itertools::interleave;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
@@ -15,7 +14,7 @@ use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3::{self, PartyID};
+use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
@@ -120,7 +119,7 @@ where
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
 
-        network.broadcast_request((r_.clone(), final_claims))?;
+        network.broadcast_request(r_.clone())?;
         proof.compressed_polys.extend(proof_.compressed_polys);
         r.extend(r_);
 
@@ -147,10 +146,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     )]
     fn prove_sumcheck(
         &mut self,
-        claim: &AdditiveShare<F>,
         eq_poly: &mut SplitEqPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<(Vec<F>, (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>))> {
+    ) -> eyre::Result<Vec<F>> {
         let num_rounds = eq_poly.get_num_vars();
 
         // let mut previous_claim = *claim;
@@ -160,7 +158,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             let cubic_poly = self.compute_cubic(eq_poly, party_id);
             // append the prover's message to the transcript
             io_ctx.network().send_response(cubic_poly)?;
-            let (r_j, next_claim): (F, F) = io_ctx.network().receive_request()?;
+            let r_j = io_ctx.network().receive_request()?;
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
@@ -175,7 +173,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        let mut final_claims = self.final_claims(party_id);
+        let final_claims = self.final_claims(party_id);
         io_ctx.network().send_response((
             final_claims.0.into_additive(),
             final_claims.1.into_additive(),
@@ -187,18 +185,10 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             }
 
             // Coordinator runs remaining sumcheck rounds
-            let (r_, final_claims_): (Vec<F>, (F, F)) = io_ctx.network().receive_request()?;
-
-            // println!("worker received claim");
-            let party_id = io_ctx.party_id();
-            final_claims = (
-                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.0),
-                rep3::arithmetic::promote_to_trivial_share(party_id, final_claims_.1),
-            );
-            r.extend(r_);
+            r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
         }
 
-        Ok((r, final_claims))
+        Ok(r)
     }
 }
 

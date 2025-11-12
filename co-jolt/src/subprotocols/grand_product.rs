@@ -1,28 +1,18 @@
-use itertools::interleave;
 use jolt_core::{
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-        split_eq_poly::SplitEqPolynomial,
-    },
+    poly::dense_mlpoly::DensePolynomial,
+    utils::{math::Math, transcript::Transcript},
+};
+use jolt_core::{
+    poly::{commitment::commitment_scheme::CommitmentScheme,split_eq_poly::SplitEqPolynomial},
     subprotocols::grand_product::{
         BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
     },
     utils::thread::drop_in_background_thread,
 };
-use jolt_core::{
-    poly::{dense_interleaved_poly::DenseInterleavedPolynomial, dense_mlpoly::DensePolynomial},
-    utils::{math::Math, transcript::Transcript},
-};
-use mpc_core::protocols::{
-    additive,
-    rep3::{network::IoContextPool, Rep3PrimeFieldShare},
-};
+use mpc_core::protocols::rep3::{network::IoContextPool, Rep3PrimeFieldShare};
 use mpc_core::protocols::{
     additive::AdditiveShare,
-    rep3::{
-        self,
-        network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
-    },
+    rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
 };
 
 use rayon::prelude::*;
@@ -80,19 +70,19 @@ where
             for mut layer in remaining_layers {
                 proof_layers.push(layer.prove_layer(&mut claim, &mut r_grand_product, transcript));
             }
+
+            let sigma_r_split = |r: &[F]| {
+                let n = r.len();
+                let mut r_sigma = Vec::with_capacity(n);
+                r_sigma.push(r[n - 1]);
+                r_sigma.extend_from_slice(&r[..n - 1]);
+                r_sigma
+            };
+
+            r_grand_product = sigma_r_split(&r_grand_product);
         }
 
-        let sigma_r_split = |r: &[F]| {
-            let n = r.len();
-            let mut r_sigma = Vec::with_capacity(n);
-            r_sigma.push(r[n - 1]);
-            r_sigma.extend_from_slice(&r[..n - 1]);
-            r_sigma
-        };
-
-        r_grand_product = sigma_r_split(&r_grand_product);
-
-        network.broadcast_request((r_grand_product.clone(), claim))?;
+        network.broadcast_request(r_grand_product.clone())?;
 
         for layer in self.layers() {
             proof_layers.push(layer.coordinate_prove_layer(
@@ -146,10 +136,9 @@ where
         _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
-        let mut claim = additive::promote_to_trivial_share(claim, io_ctx.party_id());
+        let mut r = io_ctx.network().receive_request()?;
         for layer in self.layers().into_iter() {
-            layer.prove_layer(&mut claim, &mut r, io_ctx)?;
+            layer.prove_layer(&mut r, io_ctx)?;
         }
 
         Ok(r)
@@ -212,7 +201,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     )]
     fn prove_layer(
         &mut self,
-        claim: &mut AdditiveShare<F>,
         r_grand_product: &mut Vec<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
@@ -222,11 +210,9 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
             io_ctx.worker_idx(),
         );
 
-        let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
+        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
 
         drop_in_background_thread(eq_poly);
-
-        let (left_claim, right_claim) = sumcheck_claims;
 
         r_sumcheck
             .into_par_iter()
@@ -235,9 +221,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
 
         // produce a random challenge to condense two claims into a single claim
         let r_layer = io_ctx.network().receive_request()?;
-        *claim = rep3::arithmetic::add_mul_public(left_claim, right_claim - left_claim, r_layer)
-            .into_additive();
-
         r_grand_product.push(r_layer);
 
         Ok(())

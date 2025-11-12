@@ -1,11 +1,7 @@
-use std::env;
-use std::io::Read;
-
 use crate::field::JoltField;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::sparse_interleaved_poly::Rep3SparseInterleavedPolynomial;
-use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::subprotocols::grand_product::{
     Rep3BatchedGrandProduct, Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker,
     Rep3BatchedGrandProductWorker,
@@ -15,11 +11,8 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, izip};
 use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
-use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
 use jolt_core::subprotocols::sparse_grand_product::BatchedGrandProductToggleLayer;
 use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
@@ -920,7 +913,6 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
     )]
     fn prove_layer(
         &mut self,
-        claim: &mut AdditiveShare<F>,
         r_grand_product: &mut Vec<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
@@ -930,7 +922,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
             io_ctx.worker_idx(),
         );
 
-        let (r_sumcheck, _) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
+        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
 
         drop_in_background_thread(eq_poly);
 
