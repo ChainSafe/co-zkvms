@@ -356,14 +356,14 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         })
     }
 
-    fn extend_with_worker_subnets(&mut self, new_num_workers: usize) -> eyre::Result<()> {
-        self.current_num_workers = new_num_workers;
-        Ok(())
+    fn set_worker_subnets(&mut self, num_workers: usize) {
+        assert_ne!(num_workers, 0);
+        assert!(num_workers <= (1 << self.log_num_workers_per_party));
+        self.current_num_workers = num_workers;
     }
 
-    fn trim_subnets(&mut self, num_workers: usize) -> Result<()> {
-        self.current_num_workers = num_workers;
-        Ok(())
+    fn reset_worker_subnets(&mut self) {
+        self.current_num_workers = 1 << self.log_num_workers_per_party;
     }
 }
 

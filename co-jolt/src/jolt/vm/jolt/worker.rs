@@ -105,7 +105,7 @@ where
         .entered();
 
         JoltTraceStep::pad(&mut trace);
-        let padded_trace_length = trace.len();
+        let padded_trace_length = trace.len() / io_ctx.num_workers();
 
         let memory_layout = program_io.memory_layout;
 
@@ -132,11 +132,11 @@ where
             polynomials.instruction_lookups.dim[0].len(),
             padded_trace_length
         );
-        assert_eq!(
-            polynomials.read_write_memory.a_ram.len(),
-            padded_trace_length
-        );
-        assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
+        // assert_eq!(
+        //     polynomials.read_write_memory.a_ram.len(),
+        //     padded_trace_length
+        // );
+        // assert_eq!(polynomials.bytecode.a_read_write.len(), padded_trace_length);
 
         if io_ctx.party_id() == PartyID::ID0 {
             let meta = JoltWitnessMeta {

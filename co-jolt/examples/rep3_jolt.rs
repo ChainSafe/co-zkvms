@@ -26,7 +26,7 @@ use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use jolt_core::jolt::vm::JoltProverPreprocessing;
 
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool};
@@ -284,23 +284,20 @@ pub fn run_coordinator(
     //
 
     let mut rng = test_rng();
-    let (program_io_shares, trace_shares) = program.generate_trace_shares::<F, _>(
-        &inputs,
-        &mut rng,
-        args.num_workers_per_party.log_2(),
-    );
+    let (program_io_shares, trace_shares) =
+        program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
     let mut network =
         Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
     // network.trim_subnets(1).unwrap();
-    network.send_requests_blocking(
-        program_io_shares
-            .into_iter()
-            .zip(trace_shares)
-            .map(|s| bincode::serialize(&s))
-            .collect::<bincode::Result<Vec<_>>>()
-            .context("while serializing trace shares")?,
-    )?;
+    let worker_shares = izip!(program_io_shares, trace_shares)
+        .map(|s| bincode::serialize(&s))
+        .cycle()
+        .take(3 * args.num_workers_per_party)
+        .collect::<bincode::Result<Vec<_>>>()
+        .context("while serializing trace shares")?;
+    println!("worker_shares: {:?}", worker_shares.len());
+    network.send_requests_blocking(worker_shares)?;
 
     println!("send trace");
 

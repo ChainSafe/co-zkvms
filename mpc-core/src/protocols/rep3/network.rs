@@ -480,7 +480,7 @@ pub struct IoContextPool<Network: Rep3NetworkWorker> {
 impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
         let worker_id = network.worker_idx();
-        let num_workers = 1 << network.log_num_workers_per_party();
+        let num_workers = 1 << network.log_num_workers();
         let main = IoContext::init(network)?;
 
         let forks = iter::repeat_with(|| main.fork())
@@ -507,12 +507,12 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         self.main.fork().context("while forking io context")
     }
 
-    pub fn log_num_workers_per_party(&self) -> usize {
-        self.main.network.log_num_workers_per_party()
+    pub fn log_num_workers(&self) -> usize {
+        self.main.network.log_num_workers()
     }
 
     pub fn num_workers(&self) -> usize {
-        1 << self.log_num_workers_per_party()
+        1 << self.log_num_workers()
     }
 
     pub fn party_id(&self) -> PartyID {

@@ -3,7 +3,7 @@ use jolt_core::{
     utils::{math::Math, transcript::Transcript},
 };
 use jolt_core::{
-    poly::{commitment::commitment_scheme::CommitmentScheme,split_eq_poly::SplitEqPolynomial},
+    poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
     subprotocols::grand_product::{
         BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
     },
@@ -51,7 +51,7 @@ where
     fn cooridinate_prove_grand_product(
         &self,
         claimed_outputs: Vec<F>,
-        remaining_layers: Option<Vec<impl BatchedGrandProductLayer<F, ProofTranscript>>>,
+        // remaining_layers: Option<Vec<impl BatchedGrandProductLayer<F, ProofTranscript>>>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
@@ -70,16 +70,6 @@ where
             for mut layer in remaining_layers {
                 proof_layers.push(layer.prove_layer(&mut claim, &mut r_grand_product, transcript));
             }
-
-            let sigma_r_split = |r: &[F]| {
-                let n = r.len();
-                let mut r_sigma = Vec::with_capacity(n);
-                r_sigma.push(r[n - 1]);
-                r_sigma.extend_from_slice(&r[..n - 1]);
-                r_sigma
-            };
-
-            r_grand_product = sigma_r_split(&r_grand_product);
         }
 
         network.broadcast_request(r_grand_product.clone())?;
@@ -206,7 +196,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new_chunk(
             r_grand_product,
-            io_ctx.log_num_workers_per_party(),
+            io_ctx.log_num_workers(),
             io_ctx.worker_idx(),
         );
 

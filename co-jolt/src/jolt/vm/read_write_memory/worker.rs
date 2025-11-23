@@ -206,8 +206,8 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
-        (Vec<Rep3PrimeFieldShare<F>>, usize),
-        (Vec<Rep3PrimeFieldShare<F>>, usize),
+        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
+        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
     )> {
         let gamma_squared = gamma.square();
         let gamma = *gamma;
@@ -248,7 +248,10 @@ where
                     match i {
                         RS1 => {
                             *read_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(v_read_rs1.as_shared()[j], gamma),
+                                rep3::arithmetic::mul_public(
+                                    v_read_rs1.as_shared().get_coeff(j),
+                                    gamma,
+                                ),
                                 t_read_rs1[j].field_mul(gamma_squared) + F::from_u8(a_rs1[j])
                                     - *tau,
                                 party_id,
@@ -256,7 +259,10 @@ where
                         }
                         RS2 => {
                             *read_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(v_read_rs2.as_shared()[j], gamma),
+                                rep3::arithmetic::mul_public(
+                                    v_read_rs2.as_shared().get_coeff(j),
+                                    gamma,
+                                ),
                                 t_read_rs2[j].field_mul(gamma_squared) + F::from_u8(a_rs2[j])
                                     - *tau,
                                 party_id,
@@ -264,14 +270,20 @@ where
                         }
                         RD => {
                             *read_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(v_read_rd.as_shared()[j], gamma),
+                                rep3::arithmetic::mul_public(
+                                    v_read_rd.as_shared().get_coeff(j),
+                                    gamma,
+                                ),
                                 t_read_rd[j].field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
                                 party_id,
                             );
                         }
                         RAM => {
                             *read_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(v_read_ram.as_shared()[j], gamma),
+                                rep3::arithmetic::mul_public(
+                                    v_read_ram.as_shared().get_coeff(j),
+                                    gamma,
+                                ),
                                 t_read_ram[j].field_mul(gamma_squared) + F::from_u32(a_ram[j])
                                     - *tau,
                                 party_id,
@@ -285,28 +297,40 @@ where
                 |(j, write_fingerprint)| match i {
                     RS1 => {
                         *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(v_read_rs1.as_shared()[j], gamma),
+                            rep3::arithmetic::mul_public(
+                                v_read_rs1.as_shared().get_coeff(j),
+                                gamma,
+                            ),
                             (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs1[j]) - *tau,
                             party_id,
                         );
                     }
                     RS2 => {
                         *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(v_read_rs2.as_shared()[j], gamma),
+                            rep3::arithmetic::mul_public(
+                                v_read_rs2.as_shared().get_coeff(j),
+                                gamma,
+                            ),
                             (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs2[j]) - *tau,
                             party_id,
                         );
                     }
                     RD => {
                         *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(v_write_rd.as_shared()[j], gamma),
+                            rep3::arithmetic::mul_public(
+                                v_write_rd.as_shared().get_coeff(j),
+                                gamma,
+                            ),
                             (j as u64).field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
                             party_id,
                         );
                     }
                     RAM => {
                         *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(v_write_ram.as_shared()[j], gamma),
+                            rep3::arithmetic::mul_public(
+                                v_write_ram.as_shared().get_coeff(j),
+                                gamma,
+                            ),
                             (j as u64).field_mul(gamma_squared) + F::from_u32(a_ram[j]) - *tau,
                             party_id,
                         );
@@ -321,7 +345,7 @@ where
             .into_par_iter()
             .map(|i| {
                 rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_init[i], gamma),
+                    rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
                     F::from_u32(i as u32) - *tau,
                     party_id,
                 )
@@ -334,7 +358,7 @@ where
             .into_par_iter()
             .map(|i| {
                 rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_final.as_shared()[i], gamma),
+                    rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
                     t_final[i].field_mul(gamma_squared) + F::from_u32(i as u32) - *tau,
                     party_id,
                 )
@@ -342,8 +366,8 @@ where
             .collect();
 
         Ok((
-            (read_write_leaves, 2 * MEMORY_OPS_PER_INSTRUCTION),
-            ([init_fingerprints, final_fingerprints].concat(), 2),
+            Some((read_write_leaves, 2 * MEMORY_OPS_PER_INSTRUCTION)),
+            Some(([init_fingerprints, final_fingerprints].concat(), 2)),
         ))
     }
 }

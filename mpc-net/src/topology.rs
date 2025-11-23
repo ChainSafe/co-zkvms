@@ -49,8 +49,8 @@ pub trait MpcStarNetCoordinator: Sized {
     fn reset_stats(&mut self);
 
     fn fork(&mut self) -> Result<Self>;
-    fn extend_with_worker_subnets(&mut self, num_workers: usize) -> Result<()>;
-    fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
+    fn set_worker_subnets(&mut self, num_workers: usize);
+    fn reset_worker_subnets(&mut self);
 }
 
 pub trait MpcStarNetWorker: Sized + Clone {
@@ -60,7 +60,7 @@ pub trait MpcStarNetWorker: Sized + Clone {
     ) -> Result<()>;
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
-    fn log_num_workers_per_party(&self) -> usize;
+    fn log_num_workers(&self) -> usize;
     // fn rank(&self) -> usize;
 
     fn io_stats_total(&self) -> (u64, u64);

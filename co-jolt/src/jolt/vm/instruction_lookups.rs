@@ -169,6 +169,7 @@ where
                 .iter()
                 .map(|poly| poly.try_into().unwrap())
                 .collect(),
+            None,
         );
 
         (
@@ -1060,10 +1061,12 @@ where
     pub(crate) fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
+        with_memories: Option<Vec<usize>>,
     ) -> Vec<Vec<usize>> {
         let m = instruction_flag_polys[0].coeffs.len();
 
-        (0..preprocessing.num_memories)
+        with_memories
+            .unwrap_or((0..preprocessing.num_memories).collect())
             .into_par_iter()
             .map(|memory_index| {
                 let instruction_indices: Vec<_> = (0..Self::NUM_INSTRUCTIONS)

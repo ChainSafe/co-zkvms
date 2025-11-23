@@ -918,7 +918,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
     ) -> eyre::Result<()> {
         let mut eq_poly = SplitEqPolynomial::new_chunk(
             r_grand_product,
-            io_ctx.log_num_workers_per_party(),
+            io_ctx.log_num_workers(),
             io_ctx.worker_idx(),
         );
 

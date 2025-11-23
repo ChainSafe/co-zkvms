@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::ops::{Add, AddAssign};
 
 use crate::field::JoltField;
@@ -89,9 +90,14 @@ where
             io_ctx,
         )?;
 
+        let worker_idx = io_ctx.worker_idx();
+        let m_worker = ops.len().next_power_of_two() / io_ctx.num_workers();
+        let trace_worker_range =
+            (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, ops.len());
+
         let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
             &ConstantPreprocessing::<C>,
-            ops,
+            &mut ops[trace_worker_range.clone()],
             program_io,
             M,
             io_ctx,
@@ -99,7 +105,7 @@ where
 
         let mut read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_witness_rep3(
             &preprocessing.read_write_memory,
-            ops,
+            &mut ops[trace_worker_range.clone()],
             program_io,
             M,
             io_ctx,
@@ -107,7 +113,7 @@ where
 
         let bytecode = Rep3BytecodePolynomials::generate_witness_rep3(
             &preprocessing.bytecode,
-            ops,
+            &mut ops[trace_worker_range.clone()],
             program_io,
             M,
             io_ctx,
@@ -199,16 +205,15 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         ProofTranscript: Transcript,
         Network: Rep3NetworkCoordinator,
     {
-        let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+        // let mut commitments = JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
-        let mut worker_commitments_shares: Vec<
-            Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>>,
-        > = network
-            .receive_responses_from_subnets()?
-            .try_into()
-            .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
+        let worker_commitments_shares: Vec<Vec<JoltMaybeSharedCommitments<PCS, ProofTranscript>>> =
+            network
+                .receive_responses_from_subnets()?
+                .try_into()
+                .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
-        worker_commitments_shares
+        let commitments = worker_commitments_shares
             .into_iter()
             .map(|mut commitments_shares| {
                 let mut commitments =
@@ -216,6 +221,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
 
                 let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
                 let _guard = span.enter();
+
                 multizip((
                     commitments_shares[0].read_write_values(),
                     commitments_shares[1].read_write_values(),
@@ -262,16 +268,32 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 );
                 commitments
             })
-            .reduce(|mut acc, comm| {
-                izip!(acc.read_write_values_mut(), comm.read_write_values())
+            .reduce(|mut acc, next| {
+                let read_cts_start = 19 + C;
+                let acc_read_cts_len = acc.instruction_lookups.read_cts.len();
+                let mut next_rw_comms = next.read_write_values();
+                let mut acc_rw_comms = acc.read_write_values_mut();
+
+                let _: Vec<_> = next_rw_comms
+                    .drain(read_cts_start..read_cts_start + next.instruction_lookups.read_cts.len())
+                    .collect();
+                let _: Vec<_> = acc_rw_comms
+                    .drain(read_cts_start..read_cts_start + acc_read_cts_len)
+                    .collect();
+
+                assert_eq!(acc_rw_comms.len(), next_rw_comms.len());
+
+                izip!(acc_rw_comms, next_rw_comms)
                     .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
-                izip!(
-                    &mut acc.instruction_lookups.final_cts,
-                    comm.instruction_lookups.final_cts
-                )
-                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, &comm));
+                acc.instruction_lookups
+                    .read_cts
+                    .extend(next.instruction_lookups.read_cts);
+                acc.instruction_lookups
+                    .final_cts
+                    .extend(next.instruction_lookups.final_cts);
                 acc
-            });
+            })
+            .unwrap();
         Ok(commitments)
     }
 
@@ -300,11 +322,38 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
-        let trace_polys = self.read_write_values();
+        let mut trace_polys = self.read_write_values();
+
+        if io_ctx.log_num_workers() != 0 {
+            commitments
+                .instruction_lookups
+                .read_cts
+                .truncate(self.instruction_lookups.read_cts.len());
+            commitments
+                .instruction_lookups
+                .final_cts
+                .truncate(self.instruction_lookups.final_cts.len());
+        }
+
+        let read_cts_comms = (io_ctx.log_num_workers() != 0).then(|| {
+            let before_read_cts = 19 + C;
+            let read_cts_len = self.instruction_lookups.read_cts.len();
+            let read_cts: Vec<_> = trace_polys
+                .drain(before_read_cts..before_read_cts + read_cts_len)
+                .collect();
+
+            debug_assert_eq!(read_cts.len(), read_cts_len);
+            PCS::batch_commit_rep3(&read_cts, &preprocessing.generators, false)
+        });
 
         let id = io_ctx.party_id();
-        let trace_commitments =
+        let mut trace_commitments =
             PCS::batch_commit_rep3(&trace_polys, &preprocessing.generators, id == PartyID::ID0);
+
+        if let Some(read_cts_comms) = read_cts_comms {
+            let before_read_cts = 19 + C;
+            trace_commitments.splice(before_read_cts..before_read_cts, read_cts_comms.into_iter());
+        }
 
         commitments
             .read_write_values_mut()

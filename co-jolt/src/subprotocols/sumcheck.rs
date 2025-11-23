@@ -179,7 +179,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             final_claims.1.into_additive(),
         ))?;
 
-        if io_ctx.log_num_workers_per_party() > 0 {
+        if io_ctx.log_num_workers() > 0 {
             if io_ctx.party_id() == PartyID::ID0 {
                 io_ctx.network().send_response(eq_poly.E2[0])?;
             }

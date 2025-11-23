@@ -50,6 +50,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::Shared(poly)
     }
 
+    pub fn shard_from_shared_coeffs(
+        coeffs: Vec<Rep3PrimeFieldShare<F>>,
+        shard_nv: usize,
+        worker_idx: usize,
+    ) -> Self {
+        Self::shared(Rep3DensePolynomial::new_shard(coeffs, shard_nv, worker_idx))
+    }
+
     pub fn as_shared(&self) -> &Rep3DensePolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Shared(poly) => poly,
@@ -129,7 +137,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     pub fn get_coeff(&self, index: usize) -> Rep3Value<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_coeff(index).into(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly[index].into(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.get_coeff(index).into(),
         }
     }
 
@@ -184,9 +192,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 scaling_factor,
                 scaling_factor_r2_adjusted,
             )),
-            Rep3MultilinearPolynomial::Shared(poly) => {
-                Rep3Value::Shared(rep3::arithmetic::mul_public(poly[index], scaling_factor))
-            }
+            Rep3MultilinearPolynomial::Shared(poly) => Rep3Value::Shared(
+                rep3::arithmetic::mul_public(poly.get_coeff(index), scaling_factor),
+            ),
         }
     }
 
@@ -297,15 +305,44 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    // pub fn poly_shard_for_worker(
+    //     &self,
+    //     shard_nv: usize,
+    //     worker_idx: usize,
+    // ) -> Rep3MultilinearPolynomial<F> {
+    //     match self {
+    //         Rep3MultilinearPolynomial::Shared(poly) => {
+    //             Rep3DensePolynomial::poly_shard_for_worker(poly, shard_nv, worker_idx)
+    //         }
+    //         Rep3MultilinearPolynomial::Public { poly, .. } => {
+    //             let log_workers = poly.get_num_vars() - shard_nv;
+    //             Rep3MultilinearPolynomial::public(std::mem::take(
+    //                 &mut split_public_poly(poly.clone(), log_workers)[worker_idx], // TODO: avoid cloning
+    //             ))
+    //         }
+    //     }
+    // }
+
+    // pub fn poly_shard_for_worker_vec(
+    //     polys: &[Rep3MultilinearPolynomial<F>],
+    //     shard_nv: usize,
+    //     worker_idx: usize,
+    // ) -> Vec<Rep3MultilinearPolynomial<F>> {
+    //     polys
+    //         .iter()
+    //         .map(|poly| poly.poly_shard_for_worker(shard_nv, worker_idx))
+    //         .collect()
+    // }
+
     pub fn split_poly(
-        polys: Rep3MultilinearPolynomial<F>,
+        poly: Rep3MultilinearPolynomial<F>,
         log_workers: usize,
     ) -> Vec<Rep3MultilinearPolynomial<F>> {
         if log_workers == 0 {
-            return vec![polys];
+            return vec![poly];
         }
 
-        match polys {
+        match poly {
             Rep3MultilinearPolynomial::Shared(poly) => {
                 Rep3DensePolynomial::split_poly(poly, log_workers)
             }
@@ -419,6 +456,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .map(|poly| poly.clone_with_bound_coeffs())
             .collect()
     }
+
+    pub fn shard_from_public_bytes(coeffs: Vec<u8>, shard_nv: usize, worker_idx: usize) -> Self {
+        Self::public(MultilinearPolynomial::U8Scalars(
+            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+        ))
+    }
 }
 
 pub fn split_public_poly<F: JoltField>(
@@ -431,10 +474,6 @@ pub fn split_public_poly<F: JoltField>(
 
     let nv = poly.get_num_vars() - log_workers;
     let chunk_size = 1 << nv;
-
-    if log_workers == 0 {
-        return vec![poly];
-    }
 
     let mut res = Vec::new();
 

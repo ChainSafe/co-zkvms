@@ -330,7 +330,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         Ok(ret)
     }
 
-    fn log_num_workers_per_party(&self) -> usize {
+    fn log_num_workers(&self) -> usize {
         self.log_num_workers_per_party
     }
 

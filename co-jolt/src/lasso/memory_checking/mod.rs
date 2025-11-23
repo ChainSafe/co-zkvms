@@ -111,45 +111,46 @@ where
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
 
-        let (mut read_write_hashes, mut init_final_hashes) = network
-            .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()
-            .context("while receiving hashes")?
-            .into_iter()
-            .map(|worker_shares| {
-                let (rw_hashes_shares, if_hashes_shares): (Vec<Vec<_>>, Vec<Vec<_>>) =
-                    worker_shares.into_iter().unzip();
-                (
-                    additive::combine_additive_vec(rw_hashes_shares),
-                    additive::combine_additive_vec(if_hashes_shares),
-                )
-            })
-            .reduce(|(rw_hashes, if_hashes), (rw_hashes_next, if_hashes_next)| {
-                (
-                    interleave(rw_hashes, rw_hashes_next).collect_vec(),
-                    interleave(if_hashes, if_hashes_next).collect_vec(),
-                )
-            })
-            .unwrap();
-
         let log_num_workers = network.log_num_workers_per_party();
         let num_workers = 1 << log_num_workers;
-        let rw_remaining_layers = if log_num_workers > 0 {
-            Some(Self::construct_remaining_layers(
-                &mut read_write_hashes,
-                num_workers,
-            ))
-        } else {
-            None
-        };
 
-        let init_final_remaining_layers = if log_num_workers > 0 {
-            Some(Self::construct_remaining_layers(
-                &mut init_final_hashes,
-                num_workers,
-            ))
-        } else {
-            None
-        };
+        let read_write_effective_workers =
+            Self::read_write_effective_workers(preprocessing, log_num_workers);
+        let init_final_effective_workers =
+            Self::init_final_effective_workers(preprocessing, log_num_workers);
+
+        println!(
+            "read_write_effective_workers {} init_final_effective_workers {}",
+            read_write_effective_workers, init_final_effective_workers
+        );
+
+        network.set_worker_subnets(read_write_effective_workers);
+        let mut read_write_hashes = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
+            .context("while receiving hashes")?
+            .into_iter()
+            .flat_map(additive::combine_additive_vec)
+            .collect::<Vec<_>>();
+
+        println!("read_write_hashes: {:?}", read_write_hashes.len());
+
+        network.set_worker_subnets(init_final_effective_workers);
+        let mut init_final_hashes = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
+            .context("while receiving hashes")?
+            .into_iter()
+            .flat_map(additive::combine_additive_vec)
+            .collect::<Vec<_>>();
+
+        println!("init_final_hashes: {:?}", init_final_hashes.len());
+
+        // let rw_remaining_layers = (log_num_workers > 0).then(|| {
+        //     Self::construct_remaining_layers(&mut read_write_hashes, read_write_effective_workers)
+        // });
+
+        // let init_final_remaining_layers = (log_num_workers > 0).then(|| {
+        //     Self::construct_remaining_layers(&mut init_final_hashes, init_final_effective_workers)
+        // });
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
@@ -165,21 +166,13 @@ where
         let init_final_circuit =
             Self::init_final_grand_product_rep3(preprocessing, memory_size, log_num_workers);
 
+        network.set_worker_subnets(read_write_effective_workers);
         let (read_write_grand_product, r_read_write) = read_write_circuit
-            .cooridinate_prove_grand_product(
-                read_write_hashes,
-                rw_remaining_layers,
-                transcript,
-                network,
-            )?;
+            .cooridinate_prove_grand_product(read_write_hashes, None, transcript, network)?;
 
+        network.set_worker_subnets(init_final_effective_workers);
         let (init_final_grand_product, r_init_final) = init_final_circuit
-            .cooridinate_prove_grand_product(
-                init_final_hashes,
-                init_final_remaining_layers,
-                transcript,
-                network,
-            )?;
+            .cooridinate_prove_grand_product(init_final_hashes, None, transcript, network)?;
 
         Ok((
             read_write_grand_product,
@@ -269,6 +262,20 @@ where
         log_num_workers: usize,
     ) -> Self::Rep3InitFinalGrandProduct {
         Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2() - log_num_workers)
+    }
+
+    fn read_write_effective_workers(
+        _preprocessing: &Self::Preprocessing,
+        log_num_workers: usize,
+    ) -> usize {
+        1 << log_num_workers
+    }
+
+    fn init_final_effective_workers(
+        _preprocessing: &Self::Preprocessing,
+        log_num_workers: usize,
+    ) -> usize {
+        1 << log_num_workers
     }
 
     fn construct_remaining_layers(

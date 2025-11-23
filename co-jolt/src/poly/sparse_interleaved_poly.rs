@@ -721,7 +721,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
         assert_eq!(self.dense_len, 2);
         let dense = self.to_dense();
-        (dense[0], dense[1])
+        (dense.get_bound_coeff(0), dense.get_bound_coeff(1))
     }
 }
 

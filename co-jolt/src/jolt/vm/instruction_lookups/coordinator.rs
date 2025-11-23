@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::jolt::vm::instruction_lookups::witness;
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
@@ -51,10 +52,9 @@ where
     {
         transcript.append_message(Self::protocol_name());
 
-        let r_eq = transcript.challenge_vector::<F>(num_ops.log_2());
-        network.broadcast_request(r_eq)?;
-
         let num_rounds = num_ops.log_2();
+        let r_eq = transcript.challenge_vector::<F>(num_rounds);
+        network.broadcast_request(r_eq)?;
 
         let (primary_sumcheck_proof, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck_rep3(
@@ -335,5 +335,22 @@ where
             ProofTranscript,
             Network,
         >>::construct(num_lookups.log_2() + 1 - log_num_workers)
+    }
+
+    fn read_write_effective_workers(
+        preprocessing: &Self::Preprocessing,
+        log_num_workers: usize,
+    ) -> usize {
+        witness::read_write_effective_workers(preprocessing.num_memories, log_num_workers)
+    }
+
+    fn init_final_effective_workers(
+        preprocessing: &Self::Preprocessing,
+        log_num_workers: usize,
+    ) -> usize {
+        witness::init_final_effective_workers(
+            &preprocessing.subtable_to_memory_indices,
+            log_num_workers,
+        )
     }
 }

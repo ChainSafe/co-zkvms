@@ -368,7 +368,7 @@ impl<E: Pairing, N: MpcStarNetWorker> SpartanProverWorker<E, N> {
             E::ScalarField::one(),
             1,
             pk.num_variables,
-            network.log_num_workers_per_party(),
+            network.log_num_workers(),
             network,
         )
         .context("while running batch open poly")?;
@@ -737,7 +737,7 @@ pub fn rep3_eval_poly_worker<F: PrimeField, N: MpcStarNetWorker>(
     for p in polys {
         res.push(
             p.share_0
-                .evaluate(&final_point[0..num_vars - network.log_num_workers_per_party()].to_vec()),
+                .evaluate(&final_point[0..num_vars - network.log_num_workers()].to_vec()),
         )
     }
 
