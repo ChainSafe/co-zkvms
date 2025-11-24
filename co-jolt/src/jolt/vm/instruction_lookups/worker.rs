@@ -145,12 +145,7 @@ where
             std::mem::take(&mut polynomials.instruction_lookups.E_polys)
                 .into_iter()
                 .enumerate()
-                .filter_map(|(i, p)| {
-                    read_memories
-                        .as_ref()
-                        .is_some_and(|m| m.contains(&i))
-                        .then_some(p)
-                })
+                .filter_map(|(i, p)| read_memories.contains(&i).then_some(p))
                 .collect();
 
         // println!(
@@ -641,8 +636,8 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(
-        Option<(Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>)>,
-        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
+        (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>, usize),
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
     )> {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.read_cts[0].len();
@@ -663,82 +658,76 @@ where
             worker_idx,
         );
 
-        let read_write_leaves = read_memories.as_ref().map(|memories| {
-            let offset = memories[0];
-            memories
-                .into_par_iter()
-                .flat_map_iter(|memory_index| {
-                    let dim_index = preprocessing.memory_to_dimension_index[*memory_index];
-                    let dim = polynomials.dim[dim_index].as_shared();
-                    let e_polys = &polynomials.E_polys[memory_index - offset].as_shared();
-                    let read_cts = &polynomials.read_cts[memory_index - offset];
+        let offset = read_memories[0];
+        let read_write_leaves = read_memories
+            .par_iter()
+            .flat_map_iter(|memory_index| {
+                let dim_index = preprocessing.memory_to_dimension_index[*memory_index];
+                let dim = polynomials.dim[dim_index].as_shared();
+                let e_polys = &polynomials.E_polys[*memory_index - offset].as_shared();
+                let read_cts = &polynomials.read_cts[*memory_index - offset];
 
-                    let read_fingerprints: Vec<_> = (0..num_lookups)
-                        .map(|i| {
-                            let a = dim[i];
-                            let v: Rep3Value<F> = e_polys[i].into();
-                            let t = read_cts.get_coeff(i);
-                            t.mul_public(gamma_squared)
-                                .add(&v.mul_public(*gamma), party_id)
-                                .add_shared(a, party_id)
-                                .sub_public(&*tau, party_id)
-                                .as_shared()
-                        })
-                        .collect();
-                    let write_fingerprints: Vec<Rep3PrimeFieldShare<F>> = read_fingerprints
-                        .iter()
-                        .map(|read_fingerprint| {
-                            rep3::arithmetic::add_public(*read_fingerprint, gamma_squared, party_id)
-                        })
-                        .collect();
-                    [read_fingerprints, write_fingerprints]
-                })
-                .collect::<Vec<_>>()
-        });
+                let read_fingerprints: Vec<_> = (0..num_lookups)
+                    .map(|i| {
+                        let a = dim[i];
+                        let v: Rep3Value<F> = e_polys[i].into();
+                        let t = read_cts.get_coeff(i);
+                        t.mul_public(gamma_squared)
+                            .add(&v.mul_public(*gamma), party_id)
+                            .add_shared(a, party_id)
+                            .sub_public(&*tau, party_id)
+                            .as_shared()
+                    })
+                    .collect();
+                let write_fingerprints: Vec<Rep3PrimeFieldShare<F>> = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| {
+                        rep3::arithmetic::add_public(*read_fingerprint, gamma_squared, party_id)
+                    })
+                    .collect();
+                [read_fingerprints, write_fingerprints]
+            })
+            .collect::<Vec<_>>();
 
-        let init_final_leaves = final_subtables.as_ref().map(|subtables| {
-            let offset = subtables[0].1[0];
-            subtables
-                .into_par_iter()
-                .flat_map_iter(|(subtable_index, memories)| {
-                    let has_init =
-                        preprocessing.subtable_to_memory_indices[*subtable_index][0] == memories[0];
-                    let subtable = &preprocessing.materialized_subtables[*subtable_index];
-                    let mut leaves_len = M * memories.len();
-                    if has_init {
-                        leaves_len += M;
-                    }
-                    let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); leaves_len];
-                    let mut leaf_index = 0;
+        let offset = final_subtables[0].1[0];
+        let init_final_leaves = final_subtables
+            .par_iter()
+            .flat_map_iter(|(subtable_index, memories)| {
+                let subtable = subtable_index.map(|i| &preprocessing.materialized_subtables[i]);
+                let mut leaves_len = M * memories.len();
+                if subtable.is_some() {
+                    leaves_len += M;
+                }
+                let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); leaves_len];
+                let mut leaf_index = 0;
 
-                    // Init leaves
-                    if has_init {
-                        (0..M).for_each(|i| {
-                            let a = &F::from_u16(i as u16);
-                            let v: u32 = subtable[i];
-                            // Compute h(a,v,t) where t == 0
-                            leaves[i] = rep3::arithmetic::promote_to_trivial_share(
-                                party_id,
-                                v.field_mul(*gamma) + *a - *tau,
-                            );
-                        });
-                        leaf_index = M;
-                    }
+                // Init leaves
+                if let Some(subtable) = subtable {
+                    (0..M).for_each(|i| {
+                        let a = &F::from_u16(i as u16);
+                        let v: u32 = subtable[i];
+                        // Compute h(a,v,t) where t == 0
+                        leaves[i] = rep3::arithmetic::promote_to_trivial_share(
+                            party_id,
+                            v.field_mul(*gamma) + *a - *tau,
+                        );
+                    });
+                    leaf_index = M;
+                }
 
-                    // Final leaves
-                    for memory_index in memories {
-                        let final_cts = &polynomials.final_cts[memory_index - offset].as_shared();
-                        (0..M).for_each(|i| {
-                            leaves[leaf_index] = leaves[i]
-                                + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
-                            leaf_index += 1;
-                        });
-                    }
+                // Final leaves
+                for memory_index in memories {
+                    let final_cts = &polynomials.final_cts[memory_index - offset].as_shared();
+                    (0..M).for_each(|i| {
+                        leaves[leaf_index] =
+                            leaves[i] + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
+                        leaf_index += 1;
+                    });
+                }
 
-                    leaves
-                })
-                .collect::<Vec<_>>()
-        });
+                leaves
+            })
+            .collect::<Vec<_>>();
 
         let memory_flags = InstructionLookupsProof::<
             C,
@@ -756,29 +745,30 @@ where
                 .into_iter()
                 .map(|p| p.try_into().unwrap())
                 .collect(),
-            read_memories,
+            Some(read_memories),
         );
 
         // # init = # subtables; # final = # memories
         let init_final_batch_size = if io_ctx.log_num_workers() != 0 {
             final_subtables
-                .map(|subtables| {
-                    subtables
-                        .iter()
-                        .map(|(i, m)| {
-                            (m[0] == preprocessing.subtable_to_memory_indices[*i][0]) as usize
-                                + m.len()
-                        })
-                        .sum()
-                })
-                .unwrap_or(0)
+                .iter()
+                .map(|(i, m)| i.is_some() as usize + m.len())
+                .sum()
         } else {
             Subtables::COUNT + preprocessing.num_memories
         };
 
         Ok((
-            read_write_leaves.map(|leaves| (memory_flags, leaves)),
-            init_final_leaves.map(|leaves| (leaves, init_final_batch_size)),
+            (
+                memory_flags,
+                read_write_leaves,
+                preprocessing.num_memories * 2,
+            ),
+            (
+                init_final_leaves,
+                init_final_batch_size,
+                Subtables::COUNT + preprocessing.num_memories,
+            ),
         ))
     }
 }

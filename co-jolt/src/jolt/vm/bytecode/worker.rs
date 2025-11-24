@@ -48,8 +48,8 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
-        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
-        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
     )> {
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
@@ -139,8 +139,8 @@ where
 
         // TODO(moodlezoup): avoid concat
         Ok((
-            Some(([read_leaves, write_leaves].concat(), 2)),
-            Some(([init_leaves, final_leaves].concat(), 2)),
+            ([read_leaves, write_leaves].concat(), 2, 2),
+            ([init_leaves, final_leaves].concat(), 2, 2),
         ))
     }
 }

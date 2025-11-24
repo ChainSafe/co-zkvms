@@ -100,71 +100,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             num_workers,
             worker_idx,
         )
-        .map(|subtables| {
-            subtables
-                .into_iter()
-                .flat_map(|(_, memories)| memories)
-                .collect_vec()
-        });
-
-        if io_ctx.party_idx() == 0 {
-            // if io_ctx.worker_idx() == 0 {
-            //     println!(
-            //         "preprocessing.subtable_to_memory_indices {:?}",
-            //         preprocessing.subtable_to_memory_indices
-            //     );
-
-            //     for w in [2, 4, 8, 16] {
-            //         // println!(
-            //         //     "w={} | read_memories: {:?}",
-            //         //     w,
-            //         //     (0..w)
-            //         //         .map(|i| read_write_memories_for_worker(
-            //         //             preprocessing.num_memories,
-            //         //             w,
-            //         //             i
-            //         //         ))
-            //         //         .collect::<Vec<_>>()
-            //         // );
-            //         // println!(
-            //         //     "w={} | final_memories: {:?}",
-            //         //     w,
-            //         //     (0..w)
-            //         //         .map(|i| init_final_memories_for_worker(
-            //         //             &preprocessing.subtable_to_memory_indices,
-            //         //             preprocessing.num_memories,
-            //         //             w,
-            //         //             i
-            //         //         ))
-            //         //         .collect::<Vec<_>>()
-            //         // );
-
-            //         println!(
-            //             "w={} | final_subtables: {:?}",
-            //             w,
-            //             (0..w)
-            //                 .map(|i| init_final_subtables_for_worker(
-            //                     &preprocessing.subtable_to_memory_indices,
-            //                     // preprocessing.num_memories,
-            //                     w,
-            //                     i
-            //                 ))
-            //                 .collect::<Vec<_>>()
-            //         );
-            //     }
-            // }
-            println!(
-                "w={} | read_memories: {:?}",
-                io_ctx.worker_idx(),
-                read_memories
-            );
-
-            println!(
-                "w={} | final_memories: {:?}",
-                io_ctx.worker_idx(),
-                final_memories
-            );
-        }
+        .into_iter()
+        .flat_map(|(_, memories)| memories)
+        .collect_vec();
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_cyclic(0..preprocessing.num_memories, |memory_index, io_ctx| {
@@ -172,13 +110,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                 let access_sequence = &subtable_lookup_indices[dim_index];
 
-                let is_read_cts = read_memories
-                    .as_ref()
-                    .is_some_and(|m| m.contains(&memory_index));
+                let is_read_cts = read_memories.contains(&memory_index);
 
-                let is_final_cts = final_memories
-                    .as_ref()
-                    .is_some_and(|m| m.contains(&memory_index));
+                let is_final_cts = final_memories.contains(&memory_index);
 
                 let trace_range = if is_read_cts || is_final_cts {
                     0..m
@@ -501,262 +435,229 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
     }
 }
 
-/// Largest feasible number of workers ≤ `req_workers` that actually receive memories,
-/// with per-full-worker chunk size = C (power of two memories) and last worker non-empty.
-/// Closed-form (no search):
-///   W_eff = ceil( M / C* ),  where  C* = next_pow2( ceil(M / req_workers) )
-pub fn read_write_effective_workers(num_memories: usize, log_num_workers: usize) -> usize {
-    assert_ne!(num_memories, 0);
-    let num_workers = 1 << log_num_workers;
-    let base = num_memories.div_ceil(num_workers);
-    let c = base.next_power_of_two();
-    num_memories.div_ceil(c)
+/// Compute per-worker delta in *chunks* for given batch_size (in chunks) and num_workers (power of 2).
+///
+/// Old element-based version was:
+///   N_worker = floor(N / W)
+///   t = floor(log2(N_worker))
+///   M_elems = 2^(t + L - 1)
+///   P_layer = N_worker * 2^L
+///   delta_elems = P_layer mod M_elems, with sign rule:
+///       if delta_elems == M_elems/2 -> +delta_elems
+///       else                         -> -delta_elems
+///
+/// Dividing by 2^L (chunk_size), this simplifies in *chunks* to:
+///   M_chunks = 2^(t-1)
+///   delta_chunks_base = N_worker mod M_chunks
+///   if delta_chunks_base == 0      -> 0
+///   else if delta_chunks_base == M_chunks/2 -> +delta_chunks_base
+///   else                           -> -delta_chunks_base
+pub fn calculate_delta_per_worker(batch_size: usize, num_workers: usize) -> usize {
+    assert!(num_workers > 0 && num_workers.is_power_of_two());
+
+    // N_worker = floor(N / W)
+    let n_worker = batch_size / num_workers;
+    if n_worker == 0 {
+        return 0;
+    }
+
+    // t = floor(log2(N_worker))
+    let t = (usize::BITS - 1 - n_worker.leading_zeros()) as u32;
+
+    // For t == 0 or 1, the original element-wise delta is always 0.
+    if t <= 1 {
+        return 0;
+    }
+
+    let m_chunks: usize = 1usize << (t - 1); // 2^(t-1)
+    let delta_base: usize = n_worker % m_chunks; // in chunks
+
+    if delta_base == 0 {
+        return 0;
+    }
+
+    let half: usize = m_chunks >> 1; // 2^(t-2)
+
+    // if delta_base == half {
+    //     delta_base as isize // +delta
+    // } else {
+    //     -(delta_base as isize) // -delta
+    // }
+    delta_base
 }
 
+/// Given:
+/// - num_memories = M (each memory = 2 chunks),
+/// - num_workers = W (power of 2),
+/// split the big polynomial [0 .. 2*M chunks) among workers using the delta trick,
+/// and return which memories this `worker_idx` touches.
+///
+/// The big poly is in *chunks*:
+///   N = 2 * M
+///   N_worker = floor(N / W)
+///   delta_chunks = calculate_delta_per_worker(N, W)
+/// Non-last workers get `base_len_chunks = N_worker + delta_chunks` chunks;
+/// last worker gets the remainder.
+/// A memory i occupies chunks [2*i, 2*i + 2).
 pub fn read_write_memories_for_worker(
     num_memories: usize,
     num_workers: usize,
     worker_idx: usize,
-) -> Option<Vec<usize>> {
+) -> Vec<usize> {
+    assert!(num_memories > 0);
+    assert!(num_workers > 0 && num_workers.is_power_of_two());
+    assert!(worker_idx < num_workers);
+
+    // Total chunks and per-worker baseline
+    let n_chunks = 2 * num_memories; // N = M * 2
+    let n_worker = n_chunks / num_workers; // floor(N/W)
+    assert!(n_worker > 0, "not enough chunks per worker");
+
+    // Shared delta in *chunks*
+    let delta_chunks = calculate_delta_per_worker(n_chunks, num_workers);
+
+    // Length (in chunks) of a non-last worker's portion
+    let base_len_chunks = n_worker - delta_chunks;
     assert!(
-        num_memories != 0
-            && num_workers != 0
-            && num_workers.is_power_of_two()
-            && worker_idx < num_workers,
-        "Invalid inputs"
+        base_len_chunks > 0,
+        "non-last worker chunk_len must be positive"
     );
 
-    if num_workers == 1 {
-        return Some((0..num_memories).collect());
-    }
+    let total_chunks = n_chunks;
 
-    // C = next power of two of ceil(M/W)
-    let base = (num_memories + num_workers - 1) / num_workers; // ceil
-    let mut c = 1usize;
-    while c < base {
-        c <<= 1;
-    }
-
-    // worker's contiguous bin [start, start+C); trailing workers may be empty (None)
-    let start = worker_idx.saturating_mul(c);
-    if start >= num_memories {
-        return None; // this worker has no memories
-    }
-    let end = (start + c).min(num_memories);
-    Some((start..end).collect())
-}
-
-/// Given the subtable layout and a requested power-of-two worker count,
-/// return how many workers actually receive (≥1) memory under equal chunk size.
-/// Chunks are in **blocks** (header+memories), size C blocks where
-/// C = next_pow2( ceil(B / W_req) ), B = headers + memories.
-/// If C == 1, only chunks landing on memory blocks allocate; result = total memories.
-pub fn init_final_effective_workers(
-    subtable_to_memory_indices: &[Vec<usize>],
-    log_num_workers: usize,
-) -> usize {
-    let num_workers = 1 << log_num_workers;
-
-    let init_blocks = subtable_to_memory_indices.len();
-    let final_blocks: usize = subtable_to_memory_indices.iter().map(|v| v.len()).sum();
-    let blocks = init_blocks + final_blocks;
-    if blocks == 0 {
-        return 0;
-    }
-
-    let base = blocks.div_ceil(num_workers);
-    let c = base.next_power_of_two();
-    let w_chunks = blocks.div_ceil(c);
-
-    if c == 1 {
-        // each chunk is one block; only memory blocks allocate
-        final_blocks.min(w_chunks)
+    // Compute this worker's chunk range [start_chunk, end_chunk)
+    let (start_chunk, end_chunk) = if worker_idx + 1 < num_workers {
+        let start = base_len_chunks * worker_idx;
+        let end = start + base_len_chunks;
+        (start, end)
     } else {
-        // with non-empty subtables (≥1 mem each), every chunk (full or last) contains a memory
-        w_chunks
+        // last worker gets the remainder
+        let start = base_len_chunks * (num_workers - 1);
+        let end = total_chunks;
+        (start, end)
+    };
+
+    // Each memory i occupies chunks [2*i, 2*i + 2)
+    let mut memories = Vec::new();
+    for mem_idx in 0..num_memories {
+        let mem_start = 2 * mem_idx;
+        let mem_end = mem_start + 2;
+        // non-empty intersection with [start_chunk, end_chunk)
+        if mem_start < end_chunk && mem_end > start_chunk {
+            memories.push(mem_idx);
+        }
     }
+
+    memories
 }
 
-// /// Assigns memories to a worker so that:
-// /// - All workers share the same chunk size in blocks (C * M), with C a power of two,
-// /// - First W-1 workers are full (C blocks), the last is partial (rem blocks, 1..=C),
-// /// - If `num_workers` is infeasible, falls back to the largest W' < num_workers that is feasible,
-// ///   and returns `None` if `worker_idx >= W'`.
-// pub fn init_final_memories_for_worker(
-//     subtable_to_memory_indices: &[Vec<usize>],
-//     num_memories: usize,
-//     num_workers: usize,
-//     worker_idx: usize,
-// ) -> Option<Vec<usize>> {
-//     assert!(
-//         num_memories != 0
-//             && num_workers != 0
-//             && num_workers.is_power_of_two()
-//             && worker_idx < num_workers,
-//         "Invalid inputs"
-//     );
-
-//     if num_workers == 1 {
-//         return Some((0..num_memories).collect());
-//     }
-
-//     // Total blocks = headers + memories
-//     let total_blocks: usize = subtable_to_memory_indices
-//         .iter()
-//         .map(|st| 1 + st.len())
-//         .sum();
-//     if total_blocks == 0 {
-//         return None;
-//     }
-
-//     // Helper: pick C (power-of-two blocks per full worker) and rem for a given W
-//     fn pick_c_rem(total_blocks: usize, workers: usize) -> Option<(usize, usize)> {
-//         if workers < 2 {
-//             return None;
-//         }
-//         let lower = total_blocks.div_ceil(workers);
-//         let upper = total_blocks / (workers - 1);
-//         let mut c = 1usize;
-//         while c < lower {
-//             c <<= 1;
-//         }
-//         if c > upper {
-//             return None;
-//         }
-//         let rem = total_blocks - c * (workers - 1);
-//         if rem == 0 {
-//             return None;
-//         } // last must be non-empty
-//         Some((c, rem))
-//     }
-
-//     // Fallback search: largest W' <= num_workers that is feasible
-//     let mut chosen_w = None;
-//     let mut chosen_c_rem = None;
-//     for w in (2..=num_workers).rev() {
-//         if let Some(cr) = pick_c_rem(total_blocks, w) {
-//             chosen_w = Some(w);
-//             chosen_c_rem = Some(cr);
-//             break;
-//         }
-//     }
-//     let w_eff = chosen_w?;
-//     let (c, rem) = chosen_c_rem?;
-
-//     if worker_idx >= w_eff {
-//         return None;
-//     }
-
-//     // Compute this worker's block range [start, end)
-//     let (start_block, take_blocks) = if worker_idx + 1 < w_eff {
-//         (c * worker_idx, c)
-//     } else {
-//         (c * (w_eff - 1), rem)
-//     };
-//     let end_block = start_block + take_blocks;
-
-//     // Stream through blocks; collect memory ids that land in [start, end)
-//     let mut cur = 0usize;
-//     let mut out = Vec::new();
-//     'outer: for st in subtable_to_memory_indices {
-//         // header block
-//         if cur >= end_block {
-//             break;
-//         }
-//         cur += 1; // header occupies one block (never yields a memory)
-
-//         // memory blocks
-//         for &mem in st {
-//             if cur >= end_block {
-//                 break 'outer;
-//             }
-//             if cur >= start_block {
-//                 out.push(mem);
-//             }
-//             cur += 1;
-//         }
-//     }
-//     Some(out)
-// }
-
-/// For a given worker, return the exact memories per subtable that land in its chunk.
-/// Chunks are in block-space (1 header + k memories), with equal chunk size C for all
-/// but the last (which is shorter and padded). We choose
-///   C = next_pow2( ceil(B / req_workers) ),  B = total blocks,
-/// and fall back to W_eff = ceil(B / C) workers. If `worker_idx >= W_eff` → None.
+/// For a given worker, return a sequence of "segments" in the global memory layout:
+/// - `Option<usize>` is `Some(subtable_idx)` if the worker owns the header block of that subtable,
+///   or `None` if it only owns some memories from that subtable.
+/// - `Vec<usize>` are the memory indices (from subtable_to_memory_indices) that fall into this
+///   worker's polynomial slice.
 ///
-/// Output pairs (st_idx, Vec<memory_ids>) only for subtables that contribute ≥1 memory.
+/// Layout in *blocks/chunks*:
+///   for each subtable i:
+///       [header_block] + [mem_block_0] + [mem_block_1] + ...
+///
+/// Splitting:
+///   B = total_blocks
+///   N = B
+///   N_worker = floor(N / num_workers)
+///   delta_chunks = calculate_delta_per_worker(N, num_workers)
+///   non-last workers:  len_chunks = N_worker + delta_chunks
+///   last worker:        len_chunks = N - len_chunks * (num_workers - 1)
+///
+/// A header of subtable i is at block index `pref[i]`.
+/// A memory j in subtable i is at block index `pref[i] + 1 + j`.
 pub fn init_final_subtables_for_worker(
     subtable_to_memory_indices: &[Vec<usize>],
     num_workers: usize, // power of two
     worker_idx: usize,
-) -> Option<Vec<(usize, Vec<usize>)>> {
+) -> Vec<(Option<usize>, Vec<usize>)> {
     assert!(
-        num_workers != 0 && num_workers.is_power_of_two() && worker_idx < num_workers,
-        "Invalid inputs"
+        num_workers > 0 && num_workers.is_power_of_two(),
+        "num_workers must be power of two"
     );
+    assert!(worker_idx < num_workers, "worker_idx out of bounds");
 
-    if num_workers == 1 {
-        return Some(
-            subtable_to_memory_indices
-                .iter()
-                .cloned()
-                .enumerate()
-                .collect(),
-        );
-    }
-
-    // Prefix sums in block space.
+    // Prefix sums in *block* space: each subtable contributes 1 header + |st| memory blocks.
     let mut pref = Vec::with_capacity(subtable_to_memory_indices.len() + 1);
     pref.push(0usize);
     for st in subtable_to_memory_indices {
-        pref.push(pref.last().copied().unwrap() + 1 + st.len()); // 1 header + |st| memories
+        pref.push(pref.last().copied().unwrap() + 1 + st.len());
     }
-    let b = *pref.last().unwrap();
-    if b == 0 {
-        return None;
-    }
+    let total_blocks = *pref.last().unwrap(); // B == N
+    assert!(total_blocks > 0, "no blocks to allocate");
 
-    // Chunk params (no search): C and effective workers.
-    let base = (b + num_workers - 1) / num_workers; // ceil(B/W_req)
-    let c = base.next_power_of_two(); // chunk size in blocks
-    let w_eff = (b + c - 1) / c; // ceil(B/C)
-    if worker_idx >= w_eff {
-        return None;
-    }
+    let batch_size = total_blocks; // N
+    let n_worker = batch_size / num_workers; // floor(N / W)
+    assert!(n_worker > 0, "not enough blocks per worker");
 
-    let start = if worker_idx + 1 < w_eff {
-        c * worker_idx
+    // delta in *chunks/blocks*
+    let delta_chunks = calculate_delta_per_worker(batch_size, num_workers);
+
+    // Length of a non-last worker's slice, in blocks.
+    let base_len_chunks = n_worker - delta_chunks;
+    assert!(
+        base_len_chunks > 0,
+        "non-last worker slice must be positive"
+    );
+
+    let total_chunks = batch_size; // one chunk per block
+
+    // Chunk range [start_chunk, end_chunk) for this worker.
+    let (start_chunk, end_chunk) = if worker_idx + 1 < num_workers {
+        let start = base_len_chunks * worker_idx;
+        let end = start + base_len_chunks;
+        (start, end)
     } else {
-        c * (w_eff - 1)
+        let start = base_len_chunks * (num_workers - 1);
+        let end = total_chunks;
+        (start, end)
     };
-    let end = if worker_idx + 1 < w_eff { start + c } else { b };
 
-    let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+    // Map chunk interval [start_chunk, end_chunk) back to per-subtable segments.
+    let mut out: Vec<(Option<usize>, Vec<usize>)> = Vec::new();
 
     for (i, st) in subtable_to_memory_indices.iter().enumerate() {
-        let st_beg = pref[i];
-        let st_end = pref[i + 1];
-        if st_beg >= end {
-            break;
-        } // past the window
-        if st_end <= start {
-            continue;
-        } // before the window
+        let st_beg_block = pref[i];
+        let st_end_block = pref[i + 1];
 
-        // Overlap with this subtable's memory blocks (skip its header).
-        let mems_beg_block = st_beg + 1;
-        let ov_beg = start.max(mems_beg_block);
-        let ov_end = end.min(st_end);
-        if ov_beg < ov_end {
-            let mem_start = ov_beg - mems_beg_block; // index into st[]
-            let mem_end = mem_start + (ov_end - ov_beg); // exclusive
-            if mem_start < mem_end {
-                out.push((i, st[mem_start..mem_end].to_vec()));
+        if st_beg_block >= end_chunk {
+            break; // past this worker's range
+        }
+        if st_end_block <= start_chunk {
+            continue; // entirely before this worker's range
+        }
+
+        // Header block index
+        let header_block = st_beg_block;
+        let header_in_range = header_block >= start_chunk && header_block < end_chunk;
+
+        // Memory blocks
+        let mems_beg_block = st_beg_block + 1;
+        let mut mems_for_worker = Vec::new();
+
+        for (j, &mem_id) in st.iter().enumerate() {
+            let blk = mems_beg_block + j;
+            if blk >= end_chunk {
+                break; // remaining mems from this subtable are beyond this worker
+            }
+            if blk >= start_chunk {
+                mems_for_worker.push(mem_id);
             }
         }
+
+        // Include subtable if either header or at least one memory is in range.
+        if header_in_range || !mems_for_worker.is_empty() {
+            let header_tag = if header_in_range { Some(i) } else { None };
+            out.push((header_tag, mems_for_worker));
+        }
     }
-    Some(out)
+
+    out
 }
 
 #[tracing::instrument(skip_all, name = "Rep3LassoWitnessSolver::subtable_lookup_indices")]

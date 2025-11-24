@@ -206,8 +206,8 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
-        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
-        Option<(Vec<Rep3PrimeFieldShare<F>>, usize)>,
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
     )> {
         let gamma_squared = gamma.square();
         let gamma = *gamma;
@@ -366,8 +366,12 @@ where
             .collect();
 
         Ok((
-            Some((read_write_leaves, 2 * MEMORY_OPS_PER_INSTRUCTION)),
-            Some(([init_fingerprints, final_fingerprints].concat(), 2)),
+            (
+                read_write_leaves,
+                2 * MEMORY_OPS_PER_INSTRUCTION,
+                2 * MEMORY_OPS_PER_INSTRUCTION,
+            ),
+            ([init_fingerprints, final_fingerprints].concat(), 2, 2),
         ))
     }
 }

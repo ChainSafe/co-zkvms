@@ -644,7 +644,7 @@ pub fn rep3_zk_sumcheck_coordinator<
     let mut tot_time = time.elapsed();
     // assert!(1 << log_num_workers == size);
 
-    for _round in 0..poly_info.num_variables - network.log_num_workers_per_party() {
+    for _round in 0..poly_info.num_variables - network.log_num_workers() {
         let responses_chunked: Vec<_> = network.receive_responses::<M>()?;
         let time = Instant::now();
 
@@ -653,7 +653,7 @@ pub fn rep3_zk_sumcheck_coordinator<
             responses_chunked[1].clone(),
             responses_chunked[2].clone(),
         ]);
-        for i in 1..1 << network.log_num_workers_per_party() {
+        for i in 1..1 << network.log_num_workers() {
             let tmp = M::open_to_msg(&vec![
                 responses_chunked[3 * i + 0].clone(),
                 responses_chunked[3 * i + 1].clone(),
@@ -691,14 +691,14 @@ pub fn rep3_zk_sumcheck_coordinator<
 
     let responses = network.receive_responses()?;
 
-    let sumcheck_polys = sumcheck_polys_builder(&responses, network.log_num_workers_per_party());
+    let sumcheck_polys = sumcheck_polys_builder(&responses, network.log_num_workers());
 
     let time = Instant::now();
 
     let mut prover_state = IPForMLSumcheck::prover_init(&sumcheck_polys);
     let mut verifier_msg = None;
 
-    for _ in poly_info.num_variables - network.log_num_workers_per_party()..poly_info.num_variables
+    for _ in poly_info.num_variables - network.log_num_workers()..poly_info.num_variables
     {
         let prover_message = IPForMLSumcheck::prove_round(&mut prover_state, &verifier_msg);
         let mask = IPForMLSumcheck::mask_round(&mut prover_zk_state, &v_msg);
@@ -852,7 +852,7 @@ pub fn rep3_eval_poly_coordinator<E: Pairing, N: MpcStarNetCoordinator>(
     let mut evals = Vec::new();
     for i in 0..num_poly {
         let mut e = Vec::new();
-        for j in 0..1 << network.log_num_workers_per_party() {
+        for j in 0..1 << network.log_num_workers() {
             e.push(
                 responses_chunked[3 * j + 0][i]
                     + responses_chunked[3 * j + 1][i]
@@ -860,10 +860,10 @@ pub fn rep3_eval_poly_coordinator<E: Pairing, N: MpcStarNetCoordinator>(
             );
         }
         let ep =
-            DenseMultilinearExtension::from_evaluations_vec(network.log_num_workers_per_party(), e);
+            DenseMultilinearExtension::from_evaluations_vec(network.log_num_workers(), e);
 
         evals.push(ep.evaluate(
-            &final_point[num_var - network.log_num_workers_per_party()..num_var].to_vec(),
+            &final_point[num_var - network.log_num_workers()..num_var].to_vec(),
         ));
     }
 
@@ -883,7 +883,7 @@ pub fn batch_open_poly_coordinator<'a, E: Pairing, N: MpcStarNetCoordinator>(
     log_num_pub_workers: usize,
 ) -> Result<(BatchOracleEval<E>, Duration)> {
     let log_num_workers = if rep3 {
-        network.log_num_workers_per_party()
+        network.log_num_workers()
     } else {
         log_num_pub_workers
     };

@@ -51,13 +51,10 @@ where
     fn cooridinate_prove_grand_product(
         &self,
         claimed_outputs: Vec<F>,
-        // remaining_layers: Option<Vec<impl BatchedGrandProductLayer<F, ProofTranscript>>>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
-        let mut proof_layers = Vec::with_capacity(
-            self.num_layers() + remaining_layers.as_ref().map_or(0, |v| v.len()),
-        );
+        let mut proof_layers = Vec::with_capacity(self.num_layers());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
@@ -65,13 +62,6 @@ where
         let output_mle = DensePolynomial::new_padded(claimed_outputs);
         let mut r_grand_product: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r_grand_product);
-
-        if let Some(remaining_layers) = remaining_layers {
-            for mut layer in remaining_layers {
-                proof_layers.push(layer.prove_layer(&mut claim, &mut r_grand_product, transcript));
-            }
-        }
-
         network.broadcast_request(r_grand_product.clone())?;
 
         for layer in self.layers() {
@@ -105,6 +95,8 @@ where
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
     fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self>;
 
+    fn batch_size_minus_delta(&self) -> usize;
+
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
 
@@ -127,8 +119,10 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let mut r = io_ctx.network().receive_request()?;
+        let mut eq_chunk_size = self.batch_size_minus_delta();
         for layer in self.layers().into_iter() {
-            layer.prove_layer(&mut r, io_ctx)?;
+            layer.prove_layer(&mut r, eq_chunk_size, io_ctx)?;
+            eq_chunk_size *= 2;
         }
 
         Ok(r)
@@ -192,12 +186,20 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     fn prove_layer(
         &mut self,
         r_grand_product: &mut Vec<F>,
+        eq_chunk_size: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new_chunk(
-            r_grand_product,
+        // let mut eq_poly = SplitEqPolynomial::new_chunk(
+        //     r_grand_product,
+        //     io_ctx.log_num_workers(),
+        //     io_ctx.worker_idx(),
+        // );
+
+        let mut eq_poly = SplitEqPolynomial::new_chunk_custom(
+            &r_grand_product,
             io_ctx.log_num_workers(),
             io_ctx.worker_idx(),
+            eq_chunk_size,
         );
 
         let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
@@ -219,6 +221,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
 
 pub struct Rep3BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<Rep3DenseInterleavedPolynomial<F>>,
+    batch_size_minus_delta: usize,
 }
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
@@ -229,7 +232,7 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
+    type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize, usize);
 
     #[tracing::instrument(
         skip_all,
@@ -237,9 +240,17 @@ where
         level = "trace"
     )]
     fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
-        let (leaves, batch_size) = leaves;
+        let (leaves, batch_size, batch_size_full) = leaves;
         assert!(leaves.len() % batch_size == 0);
         assert!((leaves.len() / batch_size).is_power_of_two());
+
+        // Number of chunks allocated to each worker except the last one, need to calculate equal poly chunk offset
+        let batch_size_minus_delta =
+            if io_ctx.log_num_workers() > 0 && io_ctx.worker_idx() == io_ctx.num_workers() - 1 {
+                (batch_size_full - batch_size) / (io_ctx.num_workers() - 1)
+            } else {
+                batch_size
+            };
 
         let num_layers = (leaves.len() / batch_size).log_2();
         let mut layers: Vec<Rep3DenseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
@@ -251,7 +262,14 @@ where
             layers.push(new_layer);
         }
 
-        Ok(Self { layers })
+        Ok(Self {
+            layers,
+            batch_size_minus_delta,
+        })
+    }
+
+    fn batch_size_minus_delta(&self) -> usize {
+        self.batch_size_minus_delta
     }
 
     fn num_layers(&self) -> usize {
@@ -291,6 +309,7 @@ where
     fn construct(num_layers: usize) -> Self {
         Self {
             layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers],
+            batch_size_minus_delta: 0,
         }
     }
 

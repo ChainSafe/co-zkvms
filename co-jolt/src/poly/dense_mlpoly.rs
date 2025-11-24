@@ -305,6 +305,14 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         &self.coeffs[self.chunk_range.0..self.chunk_range.1]
     }
 
+    pub fn bound_coeffs(&self) -> &[Rep3PrimeFieldShare<F>] {
+        if self.is_bound() {
+            &self.bound_coeffs
+        } else {
+            &self.coeffs[self.chunk_range.0..self.chunk_range.1]
+        }
+    }
+
     pub fn zero() -> Self {
         Rep3DensePolynomial {
             num_vars: 0,

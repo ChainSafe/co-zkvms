@@ -46,16 +46,23 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         let mut previous_claim = *claim;
+
+        let worker_num_rounds = if log_num_workers > 0 {
+            num_rounds - log_num_workers - 2
+        } else {
+            num_rounds
+        };
+
         let (mut sumcheck_proof, mut r) = coordinate_prove_arbitrary_distributed(
             &mut previous_claim,
-            num_rounds - log_num_workers,
+            worker_num_rounds,
             transcript,
             network,
         )?;
 
-        let final_claims = if network.log_num_workers_per_party() > 0 {
+        let final_claims = if network.log_num_workers() > 0 {
             self.prove_remaining_rounds(
                 &mut r,
                 previous_claim,
@@ -71,20 +78,13 @@ where
     }
 
     fn receive_final_claims(&self, network: &mut Network) -> eyre::Result<(F, F)> {
-        let (final_claims_shares_l, final_claims_shares_r): (
-            Vec<AdditiveShare<F>>,
-            Vec<AdditiveShare<F>>,
-        ) = network
-            .receive_responses::<(AdditiveShare<F>, AdditiveShare<F>)>()?
+        let final_claims: Vec<_> = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
-            .unzip();
+            .flat_map(additive::combine_additive_vec)
+            .collect();
 
-        let final_claims = (
-            additive::combine_additive_share(final_claims_shares_l),
-            additive::combine_additive_share(final_claims_shares_r),
-        );
-
-        Ok(final_claims)
+        Ok((final_claims[0], final_claims[1]))
     }
 
     fn prove_remaining_rounds(
@@ -95,24 +95,18 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(F, F)> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         let evals = network
-            .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
-            .flat_map(|shares| {
-                let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
-                vec![
-                    additive::combine_additive_share(final_l),
-                    additive::combine_additive_share(final_r),
-                ]
-            })
+            .flat_map(additive::combine_additive_vec)
             .collect();
 
         // Assumption: At round N-log_num_workers E_1 is completely bound,
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
         let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
         let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
+        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2, log_num_workers);
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
 
@@ -137,7 +131,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         party_id: PartyID,
     ) -> Vec<AdditiveShare<F>>;
 
-    fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>);
+    fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>>;
 
     #[tracing::instrument(
         skip_all,
@@ -149,7 +143,11 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         eq_poly: &mut SplitEqPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        let num_rounds = eq_poly.get_num_vars();
+        let mut num_rounds = eq_poly.get_num_vars();
+
+        if io_ctx.log_num_workers() > 0 {
+            num_rounds -= 2;
+        };
 
         // let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
@@ -173,11 +171,8 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        let final_claims = self.final_claims(party_id);
-        io_ctx.network().send_response((
-            final_claims.0.into_additive(),
-            final_claims.1.into_additive(),
-        ))?;
+        let final_evals = self.final_evals(party_id);
+        io_ctx.network().send_response(final_evals)?;
 
         if io_ctx.log_num_workers() > 0 {
             if io_ctx.party_id() == PartyID::ID0 {
@@ -212,7 +207,7 @@ where
 
     let mut tmp_e = vec![];
     for _round in 0..num_rounds {
-        let mut round_evals = if network.log_num_workers_per_party() == 0 {
+        let mut round_evals = if network.log_num_workers() == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
             let subnet_responces =

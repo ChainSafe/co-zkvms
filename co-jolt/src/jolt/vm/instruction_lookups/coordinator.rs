@@ -123,7 +123,7 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F)> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         // if log_num_workers > 0 {
         //     network.extend_with_worker_subnets(1 << log_num_workers)?;
         // }
@@ -205,7 +205,7 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Vec<CompressedUniPoly<F>>, Vec<F>, Vec<F>, F)> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
 
         let mut r: Vec<F> = Vec::with_capacity(log_num_workers);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(log_num_workers);
@@ -335,22 +335,5 @@ where
             ProofTranscript,
             Network,
         >>::construct(num_lookups.log_2() + 1 - log_num_workers)
-    }
-
-    fn read_write_effective_workers(
-        preprocessing: &Self::Preprocessing,
-        log_num_workers: usize,
-    ) -> usize {
-        witness::read_write_effective_workers(preprocessing.num_memories, log_num_workers)
-    }
-
-    fn init_final_effective_workers(
-        preprocessing: &Self::Preprocessing,
-        log_num_workers: usize,
-    ) -> usize {
-        witness::init_final_effective_workers(
-            &preprocessing.subtable_to_memory_indices,
-            log_num_workers,
-        )
     }
 }

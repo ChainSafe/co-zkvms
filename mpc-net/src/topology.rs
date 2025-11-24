@@ -41,7 +41,7 @@ pub trait MpcStarNetCoordinator: Sized {
         data: T,
     ) -> Result<()>;
 
-    fn log_num_workers_per_party(&self) -> usize;
+    fn log_num_workers(&self) -> usize;
     fn total_bandwidth_used(&self) -> (u64, u64);
 
     /// Print the connection stats of the network

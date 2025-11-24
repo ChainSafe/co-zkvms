@@ -266,14 +266,14 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         party_id: PartyID,
     ) -> Result<Vec<T>> {
         let mut responses = Vec::new();
-        for worker_id in 0..(1 << self.log_num_workers_per_party()) {
+        for worker_id in 0..(1 << self.log_num_workers()) {
             let response = self.receive_response::<T>(party_id, worker_id)?;
             responses.push(response);
         }
         Ok(responses)
     }
 
-    fn log_num_workers_per_party(&self) -> usize {
+    fn log_num_workers(&self) -> usize {
         self.log_num_workers_per_party
     }
 

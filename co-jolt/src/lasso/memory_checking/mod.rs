@@ -111,20 +111,9 @@ where
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
 
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         let num_workers = 1 << log_num_workers;
 
-        let read_write_effective_workers =
-            Self::read_write_effective_workers(preprocessing, log_num_workers);
-        let init_final_effective_workers =
-            Self::init_final_effective_workers(preprocessing, log_num_workers);
-
-        println!(
-            "read_write_effective_workers {} init_final_effective_workers {}",
-            read_write_effective_workers, init_final_effective_workers
-        );
-
-        network.set_worker_subnets(read_write_effective_workers);
         let mut read_write_hashes = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
             .context("while receiving hashes")?
@@ -134,7 +123,6 @@ where
 
         println!("read_write_hashes: {:?}", read_write_hashes.len());
 
-        network.set_worker_subnets(init_final_effective_workers);
         let mut init_final_hashes = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
             .context("while receiving hashes")?
@@ -143,14 +131,6 @@ where
             .collect::<Vec<_>>();
 
         println!("init_final_hashes: {:?}", init_final_hashes.len());
-
-        // let rw_remaining_layers = (log_num_workers > 0).then(|| {
-        //     Self::construct_remaining_layers(&mut read_write_hashes, read_write_effective_workers)
-        // });
-
-        // let init_final_remaining_layers = (log_num_workers > 0).then(|| {
-        //     Self::construct_remaining_layers(&mut init_final_hashes, init_final_effective_workers)
-        // });
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
@@ -166,13 +146,11 @@ where
         let init_final_circuit =
             Self::init_final_grand_product_rep3(preprocessing, memory_size, log_num_workers);
 
-        network.set_worker_subnets(read_write_effective_workers);
         let (read_write_grand_product, r_read_write) = read_write_circuit
-            .cooridinate_prove_grand_product(read_write_hashes, None, transcript, network)?;
+            .cooridinate_prove_grand_product(read_write_hashes, transcript, network)?;
 
-        network.set_worker_subnets(init_final_effective_workers);
         let (init_final_grand_product, r_init_final) = init_final_circuit
-            .cooridinate_prove_grand_product(init_final_hashes, None, transcript, network)?;
+            .cooridinate_prove_grand_product(init_final_hashes, transcript, network)?;
 
         Ok((
             read_write_grand_product,
@@ -194,7 +172,7 @@ where
         let mut exogenous_openings = Self::ExogenousOpenings::default();
         let mut openings = Self::Openings::initialize(preprocessing);
 
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
 
         let read_write_openings: Vec<_> = openings
             .read_write_values_mut()
@@ -264,20 +242,6 @@ where
         Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2() - log_num_workers)
     }
 
-    fn read_write_effective_workers(
-        _preprocessing: &Self::Preprocessing,
-        log_num_workers: usize,
-    ) -> usize {
-        1 << log_num_workers
-    }
-
-    fn init_final_effective_workers(
-        _preprocessing: &Self::Preprocessing,
-        log_num_workers: usize,
-    ) -> usize {
-        1 << log_num_workers
-    }
-
     fn construct_remaining_layers(
         hashes: &mut Vec<F>,
         num_workers: usize,
@@ -298,7 +262,7 @@ where
         num_openings: usize,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         let r_remaining = r.split_off(r.len() - log_num_workers);
 
         let chi = EqPolynomial::evals(&r_remaining);

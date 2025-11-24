@@ -11,6 +11,7 @@ use crate::subprotocols::sumcheck::{
 };
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
+use itertools::chain;
 use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::subprotocols::grand_product::BatchedGrandProductLayerProof;
@@ -830,15 +831,18 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         cubic_evals
     }
 
-    fn final_claims(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
+    fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>> {
         assert_eq!(self.layer_len, 2);
         let flags = self.coalesced_flags.as_ref().unwrap();
         let fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
-        (
-            rep3::arithmetic::promote_to_trivial_share(party_id, flags[0]),
-            fingerprints[0],
+        chain!(
+            flags
+                .iter()
+                .map(|e| additive::promote_to_trivial_share(*e, party_id)),
+            fingerprints.iter().map(|e| e.into_additive()),
         )
+        .collect()
     }
 }
 
@@ -856,7 +860,7 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(F, F)> {
-        let log_num_workers = network.log_num_workers_per_party();
+        let log_num_workers = network.log_num_workers();
         let (coalesced_flags, coalesced_fingerprints) = network
             .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
             .into_iter()
@@ -881,7 +885,7 @@ where
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
         let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
         let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_binded(E1, E2, log_num_workers);
+        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2, log_num_workers);
 
         let mut layer = BatchedGrandProductToggleLayer {
             flag_indices: vec![],
@@ -889,7 +893,7 @@ where
             fingerprints: vec![],
             coalesced_flags: Some(coalesced_flags),
             coalesced_fingerprints: Some(coalesced_fingerprints),
-            layer_len: 1 << network.log_num_workers_per_party(),
+            layer_len: 1 << network.log_num_workers(),
             batched_layer_len: 0,
         };
 
@@ -914,10 +918,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
     fn prove_layer(
         &mut self,
         r_grand_product: &mut Vec<F>,
+        eq_chunk_size: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new_chunk(
+        let mut eq_poly = SplitEqPolynomial::new_chunk_custom(
             r_grand_product,
+            eq_chunk_size,
             io_ctx.log_num_workers(),
             io_ctx.worker_idx(),
         );
@@ -973,7 +979,7 @@ where
 }
 
 pub struct Rep3ToggledBatchedGrandProduct<F: JoltField> {
-    // batch_size: usize,
+    batch_size_minus_delta: usize,
     toggle_layer: Rep3BatchedGrandProductToggleLayer<F>,
     sparse_layers: Vec<Rep3SparseInterleavedPolynomial<F>>,
     // quark_poly: Option<Vec<F>>,
@@ -988,13 +994,20 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    type Leaves = (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>); // (flags, fingerprints)
+    type Leaves = (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>, usize); // (flags, fingerprints)
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
-        let (flags, fingerprints) = leaves;
-        // let batch_size = fingerprints.len();
+        let (flags, fingerprints, batch_size_full) = leaves;
+        let batch_size = fingerprints.len();
         let tree_depth = fingerprints[0].len().log_2();
+
+        let batch_size_minus_delta =
+            if io_ctx.log_num_workers() > 0 && io_ctx.worker_idx() == io_ctx.num_workers() - 1 {
+                (batch_size_full - batch_size) / (io_ctx.num_workers() - 1)
+            } else {
+                batch_size
+            };
 
         let num_sparse_layers = tree_depth - 1;
 
@@ -1009,7 +1022,7 @@ where
         }
 
         Ok(Self {
-            // batch_size,
+            batch_size_minus_delta,
             toggle_layer,
             sparse_layers,
         })
@@ -1041,6 +1054,10 @@ where
             )
             .rev()
     }
+
+    fn batch_size_minus_delta(&self) -> usize {
+        self.batch_size_minus_delta
+    }
 }
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
@@ -1053,7 +1070,7 @@ where
     fn construct(num_layers: usize) -> Self {
         let sparse_layers = num_layers - 1;
         Self {
-            // batch_size: 1,
+            batch_size_minus_delta: 0,
             toggle_layer: Rep3BatchedGrandProductToggleLayer::default(),
             sparse_layers: vec![Rep3SparseInterleavedPolynomial::default(); sparse_layers],
         }

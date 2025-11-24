@@ -367,11 +367,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         cubic_evals
     }
 
-    fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
-        assert_eq!(self.len(), 2);
-        let left_claim = self.coeffs[0];
-        let right_claim = self.coeffs[1];
-        (left_claim, right_claim)
+    fn final_evals(&self, _: PartyID) -> Vec<AdditiveShare<F>> {
+        // assert_eq!(self.len(), 2);
+        self.coeffs.par_iter().map(|c| c.into_additive()).collect()
     }
 }
 

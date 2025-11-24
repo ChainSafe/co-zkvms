@@ -47,33 +47,28 @@ where
     ) -> eyre::Result<()> {
         tracing::info!("worker: prove_memory_checking - start");
 
-        let (read_write, init_final) = Self::prove_grand_products(
-            preprocessing,
-            polynomials,
-            jolt_polynomials,
-            opening_accumulator,
-            io_ctx,
-            pcs_setup,
-        )
-        .context("while proving grand products")?;
+        let (r_read_write, r_init_final, (read_write_batch_size, init_final_batch_size)) =
+            Self::prove_grand_products(
+                preprocessing,
+                polynomials,
+                jolt_polynomials,
+                opening_accumulator,
+                io_ctx,
+                pcs_setup,
+            )
+            .context("while proving grand products")?;
 
-        let r_read_write_point = read_write.map(|(r_read_write, read_write_batch_size)| {
-            let (_, r_read_write_point) =
-                r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
-            r_read_write_point.to_vec()
-        });
-        let r_init_final_point = init_final.map(|(r_init_final, init_final_batch_size)| {
-            let (_, r_init_final_point) =
-                r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
-            r_init_final_point.to_vec()
-        });
+        let (_, r_read_write_opening) =
+            r_read_write.split_at(read_write_batch_size.next_power_of_two().log_2());
+        let (_, r_init_final_opening) =
+            r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         Self::compute_openings(
             opening_accumulator,
             polynomials,
             jolt_polynomials,
-            r_read_write_point,
-            r_init_final_point,
+            r_read_write_opening,
+            r_init_final_opening,
             io_ctx,
         )?;
 
@@ -88,7 +83,7 @@ where
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         io_ctx: &mut IoContextPool<Network>,
         pcs_setup: &PCS::Setup,
-    ) -> Result<(Option<(Vec<F>, usize)>, Option<(Vec<F>, usize)>)> {
+    ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
         let (gamma, tau) = tracing::trace_span!("receive_gamma_tau")
             .in_scope(|| io_ctx.network().receive_request())?;
 
@@ -101,134 +96,94 @@ where
             io_ctx,
         )?;
 
-        let (read_write_circuit, read_write_hashes) = read_write_leaves
-            .map(|leaves| {
-                Self::read_write_grand_product(preprocessing, polynomials, leaves, io_ctx)
-                    .context("while computing read-write grand product")
-            })
-            .transpose()?
-            .unzip();
+        let (mut read_write_circuit, read_write_hashes) =
+            Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves, io_ctx)
+                .context("while computing read-write grand product")?;
 
-        let read_write_batch_size = read_write_hashes
-            .map(|hashes| {
-                let batch_size = hashes.len();
-                io_ctx.network().send_response(hashes)?;
-                eyre::Ok(batch_size)
-            })
-            .transpose()?;
+        let (mut init_final_circuit, init_final_hashes) =
+            Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves, io_ctx)
+                .context("while computing init-final grand product")?;
 
-        if io_ctx.party_idx() == 0 {
-            println!("read_write_batch_size: {:?}", read_write_batch_size);
-        }
+        io_ctx
+            .network()
+            .send_response((read_write_hashes.clone(), init_final_hashes.clone()))?;
 
-        let (init_final_circuit, init_final_hashes) = init_final_leaves
-            .map(|leaves| {
-                Self::init_final_grand_product(preprocessing, polynomials, leaves, io_ctx)
-                    .context("while computing init-final grand product")
-            })
-            .transpose()?
-            .unzip();
+        let r_read_write = read_write_circuit.prove_grand_product_worker(
+            Some(opening_accumulator),
+            Some(pcs_setup),
+            io_ctx,
+        )?;
+        let r_init_final = init_final_circuit.prove_grand_product_worker(
+            Some(opening_accumulator),
+            Some(pcs_setup),
+            io_ctx,
+        )?;
 
-        let init_final_batch_size = init_final_hashes
-            .map(|hashes| {
-                let batch_size = hashes.len();
-                io_ctx.network().send_response(hashes)?;
-                eyre::Ok(batch_size)
-            })
-            .transpose()?;
+        let read_write_batch_size = read_write_hashes.len();
+        let init_final_batch_size = init_final_hashes.len();
 
-        if io_ctx.party_idx() == 0 {
-            println!("init_final_batch_size: {:?}", init_final_batch_size);
-        }
-
-        let read_write = if let Some(mut circuit) = read_write_circuit {
-            let batch_size = read_write_batch_size.expect("batch size expected");
-            let r_read_write = circuit.prove_grand_product_worker(
-                Some(opening_accumulator),
-                Some(pcs_setup),
-                io_ctx,
-            )?;
-
-            Some((r_read_write, batch_size))
-        } else {
-            None
-        };
-
-        let init_final = if let Some(mut circuit) = init_final_circuit {
-            let batch_size = init_final_batch_size.expect("batch size expected");
-            let r_init_final = circuit.prove_grand_product_worker(
-                Some(opening_accumulator),
-                Some(pcs_setup),
-                io_ctx,
-            )?;
-
-            Some((r_init_final, batch_size))
-        } else {
-            None
-        };
-
-        Ok((read_write, init_final))
+        Ok((
+            r_read_write,
+            r_init_final,
+            (read_write_batch_size, init_final_batch_size),
+        ))
     }
 
     fn compute_openings(
         opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
-        r_read_write: Option<Vec<F>>,
-        r_init_final: Option<Vec<F>>,
+        r_read_write: &[F],
+        r_init_final: &[F],
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let log_num_workers = io_ctx.log_num_workers();
 
-        if let Some(r_read_write) = r_read_write {
-            let read_write_polys: Vec<&_> = polynomials
-                .read_write_values()
-                .into_iter()
-                .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
-                .collect::<Vec<_>>();
+        let read_write_polys: Vec<&_> = polynomials
+            .read_write_values()
+            .into_iter()
+            .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
+            .collect::<Vec<_>>();
 
-            let (read_write_evals, eq_read_write) = Rep3MultilinearPolynomial::batch_evaluate(
-                &read_write_polys,
-                &r_read_write[..r_read_write.len() - log_num_workers],
-            );
+        let (read_write_evals, eq_read_write) = Rep3MultilinearPolynomial::batch_evaluate(
+            &read_write_polys,
+            &r_read_write[..r_read_write.len() - log_num_workers],
+        );
 
-            io_ctx.network().send_response(
-                read_write_evals
-                    .iter()
-                    .map(|x| x.into_additive(party_id))
-                    .collect::<Vec<_>>(),
-            )?;
+        io_ctx.network().send_response(
+            read_write_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
 
-            opening_accumulator.append_with_known_claim(
-                &read_write_polys,
-                DensePolynomial::new(eq_read_write),
-                r_read_write.to_vec(),
-                io_ctx.main(),
-            )?;
-        }
+        opening_accumulator.append_with_known_claim(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            io_ctx.main(),
+        )?;
         println!("worker append read_write_polys opennings");
 
-        if let Some(r_init_final) = r_init_final {
-            let init_final_polys = polynomials.init_final_values();
-            let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate(
-                &init_final_polys,
-                &r_init_final[..r_init_final.len() - log_num_workers],
-            );
-            io_ctx.network().send_response(
-                init_final_evals
-                    .iter()
-                    .map(|x| x.into_additive(party_id))
-                    .collect::<Vec<_>>(),
-            )?;
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate(
+            &init_final_polys,
+            &r_init_final[..r_init_final.len() - log_num_workers],
+        );
+        io_ctx.network().send_response(
+            init_final_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
 
-            opening_accumulator.append_with_known_claim(
-                &polynomials.init_final_values(),
-                DensePolynomial::new(eq_init_final),
-                r_init_final.to_vec(),
-                io_ctx.main(),
-            )?;
-        }
+        opening_accumulator.append_with_known_claim(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            io_ctx.main(),
+        )?;
 
         Ok(())
     }
@@ -244,22 +199,18 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(
-        Option<
-            <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
-                F,
-                PCS,
-                ProofTranscript,
-                Network,
-            >>::Leaves,
-        >,
-        Option<
-            <Self::InitFinalGrandProduct as Rep3BatchedGrandProductWorker<
-                F,
-                PCS,
-                ProofTranscript,
-                Network,
-            >>::Leaves,
-        >,
+        <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
+        <Self::InitFinalGrandProduct as Rep3BatchedGrandProductWorker<
+            F,
+            PCS,
+            ProofTranscript,
+            Network,
+        >>::Leaves,
     )>;
 
     /// Constructs a batched grand product circuit for the read and write multisets associated
