@@ -150,6 +150,8 @@ where
                     })
             };
 
+            // tracing::info!("Round evaluations: {:?}", round_evals);
+
             round_evals.insert(1, previous_claim - round_evals[0]);
             let round_poly = UniPoly::from_evals(&round_evals);
 

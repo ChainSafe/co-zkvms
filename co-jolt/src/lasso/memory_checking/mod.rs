@@ -132,9 +132,6 @@ where
         let read_write_hashes = read_write_hashes.concat();
         let init_final_hashes = init_final_hashes.concat();
 
-        println!("read_write_hashes: {:?}", read_write_hashes);
-        println!("init_final_hashes: {:?}", init_final_hashes);
-
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
             read_write_hashes.clone(),

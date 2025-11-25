@@ -109,6 +109,13 @@ where
             .collect();
         let eq_poly = MultilinearPolynomial::from(eq_evals);
 
+        // let mut instruction_flags = polynomials
+        //     .instruction_lookups
+        //     .instruction_flags
+        //     .iter()
+        //     .map(|p| Rep3MultilinearPolynomial::poly_shard_for_worker(&p, num_rounds, worker_idx))
+        //     .collect::<Vec<_>>();
+
         let r_primary_sumchecks = Self::prove_primary_sumcheck(
             preprocessing,
             num_rounds,
@@ -120,6 +127,10 @@ where
         )?;
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
+
+        if io_ctx.party_idx() == 0 {
+            tracing::info!("r_primary_sumcheck: {:?}", r_primary_sumcheck);
+        }
 
         let primary_sumcheck_polys = chain![
             &polynomials.instruction_lookups.E_polys,
@@ -658,6 +669,14 @@ where
             worker_idx,
         );
 
+        if io_ctx.party_idx() == 0 {
+            tracing::info!(
+                "Worker {} final_subtables: {:?}",
+                worker_idx,
+                final_subtables
+            );
+        }
+
         let offset = read_memories[0];
         let read_write_leaves = read_memories
             .par_iter()
@@ -689,40 +708,39 @@ where
             })
             .collect::<Vec<_>>();
 
-        let offset = final_subtables[0].1[0];
+        let offset = final_subtables[0].2[0];
         let init_final_leaves = final_subtables
             .par_iter()
-            .flat_map_iter(|(subtable_index, memories)| {
-                let subtable = subtable_index.map(|i| &preprocessing.materialized_subtables[i]);
-                let mut leaves_len = M * memories.len();
-                if subtable.is_some() {
-                    leaves_len += M;
-                }
-                let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); leaves_len];
+            .flat_map_iter(|(subtable_index, has_init, memories)| {
+                let subtable = &preprocessing.materialized_subtables[*subtable_index];
+                let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); M * (memories.len() + 1)];
                 let mut leaf_index = 0;
 
                 // Init leaves
-                if let Some(subtable) = subtable {
-                    (0..M).for_each(|i| {
-                        let a = &F::from_u16(i as u16);
-                        let v: u32 = subtable[i];
-                        // Compute h(a,v,t) where t == 0
-                        leaves[i] = rep3::arithmetic::promote_to_trivial_share(
-                            party_id,
-                            v.field_mul(*gamma) + *a - *tau,
-                        );
-                    });
-                    leaf_index = M;
-                }
+                (0..M).for_each(|i| {
+                    let a = &F::from_u16(i as u16);
+                    let v: u32 = subtable[i];
+                    // Compute h(a,v,t) where t == 0
+                    leaves[i] = rep3::arithmetic::promote_to_trivial_share(
+                        party_id,
+                        v.field_mul(*gamma) + *a - *tau,
+                    );
+                });
+                leaf_index = M;
 
                 // Final leaves
                 for memory_index in memories {
                     let final_cts = &polynomials.final_cts[memory_index - offset].as_shared();
+
                     (0..M).for_each(|i| {
                         leaves[leaf_index] =
                             leaves[i] + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
                         leaf_index += 1;
                     });
+                }
+
+                if !has_init {
+                    leaves = leaves.split_off(M);
                 }
 
                 leaves
@@ -752,11 +770,17 @@ where
         let init_final_batch_size = if io_ctx.log_num_workers() != 0 {
             final_subtables
                 .iter()
-                .map(|(i, m)| i.is_some() as usize + m.len())
+                .map(|(_, init, m)| *init as usize + m.len())
                 .sum()
         } else {
             Subtables::COUNT + preprocessing.num_memories
         };
+
+        tracing::info!(
+            "worker {} init_final_batch_size: {}",
+            io_ctx.worker_idx(),
+            init_final_batch_size
+        );
 
         Ok((
             (

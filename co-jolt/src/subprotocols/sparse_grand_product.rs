@@ -860,32 +860,36 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(F, F)> {
-        let log_num_workers = network.log_num_workers();
+        tracing::info!("sparse prove_remaining_rounds");
         let (coalesced_flags, coalesced_fingerprints) = network
-            .receive_responses_from_subnets::<(AdditiveShare<F>, AdditiveShare<F>)>()?
+            .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()?
             .into_iter()
             .map(|shares| {
-                let (final_l, final_r): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
+                let (flags, fingerprints): (Vec<_>, Vec<_>) = shares.into_iter().unzip();
 
                 (
-                    additive::combine_additive_share(final_l),
-                    additive::combine_additive_share(final_r),
+                    additive::combine_additive_vec(flags),
+                    additive::combine_additive_vec(fingerprints),
                 )
             })
             .fold(
                 (vec![], vec![]),
-                |(mut final_evals_l, mut final_evals_r), (final_l, final_r)| {
-                    final_evals_l.push(final_l);
-                    final_evals_r.push(final_r);
-                    (final_evals_l, final_evals_r)
+                |(mut flags, mut fingerprints), (final_l, final_r)| {
+                    flags.extend(final_l);
+                    fingerprints.extend(final_r);
+                    (flags, fingerprints)
                 },
             );
 
         // Assumption: At round N-log_num_workers E_1 is completely bound,
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
-        let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
+        let E2 = network
+            .receive_response_from_workers::<Vec<F>>(PartyID::ID0)?
+            .into_iter()
+            .flatten()
+            .collect();
         let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2, log_num_workers);
+        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2);
 
         let mut layer = BatchedGrandProductToggleLayer {
             flag_indices: vec![],
@@ -929,6 +933,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
         );
 
         let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
+        tracing::info!("r_sumcheck: {:?}", r_sumcheck[0]);
 
         drop_in_background_thread(eq_poly);
 

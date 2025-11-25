@@ -141,6 +141,21 @@ where
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
+        <PST13<E> as Rep3CommitmentScheme<E::ScalarField, ProofTranscript>>::distributed_commit_rep3(
+            poly,
+            poly.len(),
+            setup,
+            commit_to_public,
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "PST13::distribute_commit_rep3", level = "trace")]
+    fn distributed_commit_rep3(
+        poly: &Rep3MultilinearPolynomial<E::ScalarField>,
+        len: usize,
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> MaybeShared<Self::Commitment> {
         match poly {
             Rep3MultilinearPolynomial::Public { poly, .. } => {
                 if commit_to_public {
@@ -153,7 +168,7 @@ where
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
                 let poly_a =
-                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form());
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form(len));
                 let commitment =
                     <Self as CommitmentScheme<ProofTranscript>>::commit(&poly_a, setup);
                 MaybeShared::Shared(commitment)
@@ -202,14 +217,10 @@ where
             .par_iter()
             .enumerate()
             .map(|(i, poly)| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { .. } => {
-                    let commitment = if commit_to_public {
-                        MaybeShared::Public(Some(PST13Commitment::default()))
-                    } else {
-                        MaybeShared::Public(None)
-                    };
-                    (polys_offseted[i].as_ref().unwrap(), commitment)
-                }
+                Rep3MultilinearPolynomial::Public { .. } => (
+                    polys_offseted[i].as_ref().unwrap(),
+                    MaybeShared::Public(commit_to_public.then_some(PST13Commitment::default())),
+                ),
                 Rep3MultilinearPolynomial::Shared(_) => (
                     polys_offseted[i].as_ref().unwrap(),
                     MaybeShared::Shared(PST13Commitment::default()),
@@ -233,7 +244,7 @@ where
 
     fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment {
         PST13Commitment {
-            nv: a.nv + b.nv,
+            nv: a.nv,
             g_product: (a.g_product + b.g_product).into_affine(),
         }
     }
@@ -571,8 +582,12 @@ mod tests {
 
         let v1 = vec![F::from(1); 8];
         let v2 = vec![F::from(2); 8];
-        let p1 = MultilinearPolynomial::<F>::from([v1.clone(), vec![F::from(0); 8]].concat());
-        let p2 = MultilinearPolynomial::<F>::from([vec![F::from(0); 8], v2.clone()].concat());
+        let mut v1_ = vec![F::from(0); 16];
+        v1_.splice(0..8, v1.clone());
+        let mut v2_ = vec![F::from(0); 16];
+        v2_.splice(8..16, v2.clone());
+        let p1 = MultilinearPolynomial::<F>::from(v1_);
+        let p2 = MultilinearPolynomial::<F>::from(v2_);
         let p = MultilinearPolynomial::<F>::from([v1, v2].concat());
 
         let c1 = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p1, &setup);

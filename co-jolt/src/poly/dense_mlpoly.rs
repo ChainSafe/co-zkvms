@@ -28,6 +28,7 @@ pub struct Rep3DensePolynomial<F: JoltField> {
     binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
     len: usize,
     chunk_range: (usize, usize),
+    global_chunk_range: Option<(usize, usize)>,
 }
 
 impl<F: JoltField> Rep3DensePolynomial<F> {
@@ -41,6 +42,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             coeffs: Arc::new(coeffs),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 
@@ -58,6 +60,8 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             (worker_idx * chunk_size, (worker_idx + 1) * chunk_size)
         };
 
+        let global_chunk_range = Some((worker_idx * chunk_size, (worker_idx + 1) * chunk_size));
+
         Rep3DensePolynomial {
             num_vars: shard_nv,
             len: chunk_size,
@@ -65,6 +69,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             coeffs: Arc::new(coeffs),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range,
         }
     }
 
@@ -76,6 +81,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             bound_coeffs: bound_coeffs.clone(),
             coeffs: Arc::new(bound_coeffs),
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 
@@ -93,6 +99,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             coeffs: Arc::new(poly_coeffs),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 
@@ -125,7 +132,9 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     pub fn into_distributed_commit_form(&self, len: usize) -> DensePolynomial<F> {
         let mut coeffs = vec![F::ZERO; len];
         coeffs.splice(
-            self.chunk_range.0..self.chunk_range.1,
+            self.global_chunk_range
+                .map(|(start, end)| start..end)
+                .unwrap_or(self.chunk_range.0..self.chunk_range.1),
             self.coeffs[self.chunk_range.0..self.chunk_range.1]
                 .iter()
                 .map(|share| share.a),
@@ -332,6 +341,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             coeffs: Arc::new(vec![Rep3PrimeFieldShare::zero()]),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 

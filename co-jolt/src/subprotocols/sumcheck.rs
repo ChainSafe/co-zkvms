@@ -95,7 +95,6 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(F, F)> {
-        let log_num_workers = network.log_num_workers();
         let evals = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
@@ -104,9 +103,13 @@ where
 
         // Assumption: At round N-log_num_workers E_1 is completely bound,
         // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
-        let E2 = network.receive_response_from_workers::<F>(PartyID::ID0)?;
+        let E2 = network
+            .receive_response_from_workers::<Vec<F>>(PartyID::ID0)?
+            .into_iter()
+            .flatten()
+            .collect();
         let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2, log_num_workers);
+        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2);
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
 
@@ -154,6 +157,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         let party_id = io_ctx.party_id();
         for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, party_id);
+            tracing::info!("compute_cubic round {}", _round);
             // append the prover's message to the transcript
             io_ctx.network().send_response(cubic_poly)?;
             let r_j = io_ctx.network().receive_request()?;
@@ -163,6 +167,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             self.bind(r_j, party_id);
             eq_poly.bind(r_j);
 
+            tracing::info!("bind round {}", _round);
             // poly coeffs are additive shares but evaluation requires multiplication
             // e = poly.evaluate(&r_j);
             // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
@@ -175,8 +180,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         io_ctx.network().send_response(final_evals)?;
 
         if io_ctx.log_num_workers() > 0 {
+            tracing::trace!("send remaining");
             if io_ctx.party_id() == PartyID::ID0 {
-                io_ctx.network().send_response(eq_poly.E2[0])?;
+                io_ctx.network().send_response(eq_poly.E2.clone())?;
             }
 
             // Coordinator runs remaining sumcheck rounds

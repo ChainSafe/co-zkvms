@@ -231,56 +231,14 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 let span = tracing::span!(tracing::Level::INFO, "combine_read_write_values");
                 let _guard = span.enter();
 
-                // multizip((
-                //     commitments_shares[0].read_write_values(),
-                //     commitments_shares[1].read_write_values(),
-                //     commitments_shares[2].read_write_values(),
-                // ))
-                // .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                // .zip(commitments.read_write_values_mut())
-                // .for_each(|(commitment, dest)| *dest = commitment);
-                // drop(_guard);
-
                 multizip((
-                    &commitments_shares[0].instruction_lookups.dim,
-                    &commitments_shares[1].instruction_lookups.dim,
-                    &commitments_shares[2].instruction_lookups.dim,
+                    commitments_shares[0].read_write_values(),
+                    commitments_shares[1].read_write_values(),
+                    commitments_shares[2].read_write_values(),
                 ))
                 .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                .zip(&mut commitments.instruction_lookups.dim)
+                .zip(commitments.read_write_values_mut())
                 .for_each(|(commitment, dest)| *dest = commitment);
-                multizip((
-                    &commitments_shares[0].instruction_lookups.instruction_flags,
-                    &commitments_shares[1].instruction_lookups.instruction_flags,
-                    &commitments_shares[2].instruction_lookups.instruction_flags,
-                ))
-                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                .zip(&mut commitments.instruction_lookups.instruction_flags)
-                .for_each(|(commitment, dest)| *dest = commitment);
-                multizip((
-                    &commitments_shares[0].instruction_lookups.E_polys,
-                    &commitments_shares[1].instruction_lookups.E_polys,
-                    &commitments_shares[2].instruction_lookups.E_polys,
-                ))
-                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                .zip(&mut commitments.instruction_lookups.E_polys)
-                .for_each(|(commitment, dest)| *dest = commitment);
-                multizip((
-                    &commitments_shares[0].instruction_lookups.read_cts,
-                    &commitments_shares[1].instruction_lookups.read_cts,
-                    &commitments_shares[2].instruction_lookups.read_cts,
-                ))
-                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                .zip(&mut commitments.instruction_lookups.read_cts)
-                .for_each(|(commitment, dest)| *dest = commitment);
-                // multizip((
-                //     commitments_shares[0].instruction_lookups.lookup_outputs,
-                //     commitments_shares[1].instruction_lookups.lookup_outputs,
-                //     commitments_shares[2].instruction_lookups.lookup_outputs,
-                // ))
-                // .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                // .zip(&mut commitments.instruction_lookups.lookup_outputs)
-                // .for_each(|(commitment, dest)| *dest = commitment);
                 drop(_guard);
 
                 let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
@@ -320,37 +278,22 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 commitments
             })
             .reduce(|mut acc, next| {
-                // let read_cts_start = 19 + C;
-                // let acc_read_cts_len = acc.instruction_lookups.read_cts.len();
-                // let mut next_rw_comms = next.read_write_values();
-                // let mut acc_rw_comms = acc.read_write_values_mut();
+                let read_cts_start = 19 + C;
+                let acc_read_cts_len = acc.instruction_lookups.read_cts.len();
+                let mut next_rw_comms = next.read_write_values();
+                let mut acc_rw_comms = acc.read_write_values_mut();
 
-                // let _: Vec<_> = next_rw_comms
-                //     .drain(read_cts_start..read_cts_start + next.instruction_lookups.read_cts.len())
-                //     .collect();
-                // let _: Vec<_> = acc_rw_comms
-                //     .drain(read_cts_start..read_cts_start + acc_read_cts_len)
-                //     .collect();
+                let _: Vec<_> = next_rw_comms
+                    .drain(read_cts_start..read_cts_start + next.instruction_lookups.read_cts.len())
+                    .collect();
+                let _: Vec<_> = acc_rw_comms
+                    .drain(read_cts_start..read_cts_start + acc_read_cts_len)
+                    .collect();
 
-                // assert_eq!(acc_rw_comms.len(), next_rw_comms.len());
+                assert_eq!(acc_rw_comms.len(), next_rw_comms.len());
 
-                izip!(
-                    &mut acc.instruction_lookups.dim,
-                    &next.instruction_lookups.dim
-                )
-                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
-                izip!(
-                    &mut acc.instruction_lookups.E_polys,
-                    &next.instruction_lookups.E_polys
-                )
-                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
-                izip!(
-                    &mut acc.instruction_lookups.instruction_flags,
-                    &next.instruction_lookups.instruction_flags
-                )
-                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
-                // izip!(acc_rw_comms, next_rw_comms)
-                //     .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
+                izip!(acc_rw_comms, next_rw_comms)
+                    .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
                 acc.instruction_lookups
                     .read_cts
                     .extend(next.instruction_lookups.read_cts);
@@ -390,7 +333,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
-        let
+        let trace_len = self.instruction_lookups.read_cts[0].len();
         let mut trace_polys = self.read_write_values();
 
         if io_ctx.log_num_workers() != 0 {
@@ -404,48 +347,6 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 .truncate(self.instruction_lookups.final_cts.len());
         }
 
-        {
-            if io_ctx.party_idx() == 0 {
-                println!(
-                    "worker {} instruction_flags {:?}",
-                    io_ctx.worker_idx(),
-                    &self.instruction_lookups.instruction_flags[0]
-                        .as_public()
-                        .coeffs_as_field_elements()[..10]
-                );
-            }
-            commitments.instruction_lookups.dim = PCS::batch_commit_rep3(
-                &self.instruction_lookups.dim,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-            commitments.instruction_lookups.instruction_flags = PCS::batch_commit_rep3(
-                &self.instruction_lookups.instruction_flags,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-            commitments.instruction_lookups.E_polys = PCS::batch_commit_rep3(
-                &self.instruction_lookups.E_polys,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-            commitments.instruction_lookups.read_cts = PCS::batch_commit_rep3(
-                &self.instruction_lookups.read_cts,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-            commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
-                &self.instruction_lookups.final_cts,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-            commitments.instruction_lookups.lookup_outputs = PCS::commit_rep3(
-                &self.instruction_lookups.lookup_outputs,
-                &preprocessing.generators,
-                id == PartyID::ID0,
-            );
-        }
-
         // let read_cts_comms = (io_ctx.log_num_workers() != 0).then(|| {
         //     let before_read_cts = 19 + C;
         //     let read_cts_len = self.instruction_lookups.read_cts.len();
@@ -457,19 +358,23 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         //     PCS::batch_commit_rep3(&read_cts, &preprocessing.generators, false)
         // });
 
-        // let mut trace_commitments =
-        //     PCS::batch_commit_rep3(&trace_polys, &preprocessing.generators, id == PartyID::ID0);
+        let trace_commitments = PCS::batch_commit_rep3(
+            &trace_polys,
+            trace_len,
+            &preprocessing.generators,
+            id == PartyID::ID0,
+        );
 
         // if let Some(read_cts_comms) = read_cts_comms {
         //     let before_read_cts = 19 + C;
         //     trace_commitments.splice(before_read_cts..before_read_cts, read_cts_comms.into_iter());
         // }
 
-        // commitments
-        //     .read_write_values_mut()
-        //     .into_iter()
-        //     .zip(trace_commitments.into_iter())
-        //     .for_each(|(dest, src)| *dest = src);
+        commitments
+            .read_write_values_mut()
+            .into_iter()
+            .zip(trace_commitments.into_iter())
+            .for_each(|(dest, src)| *dest = src);
         drop(_guard);
         drop(span);
 
@@ -512,6 +417,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let _guard = span.enter();
         commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
             &self.instruction_lookups.final_cts,
+            self.instruction_lookups.final_cts[0].len(),
             &preprocessing.generators,
             false, // no public polys in final_cts
         );
