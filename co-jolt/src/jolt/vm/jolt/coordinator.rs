@@ -106,8 +106,35 @@ where
         //     &program_io.memory_layout,
         //     trace_length,
         // );
+        tracing::info!("base: {}", transcript.challenge_scalar::<F>());
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
+
+        tracing::info!(
+            "jolt_commitments: {:?}",
+            &jolt_commitments.instruction_lookups.read_write_values()
+        );
+
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.read_cts);
+        tracing::info!("read_cts check: {}", transcript.challenge_scalar::<F>());
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.final_cts);
+        tracing::info!("final_cts check: {}", transcript.challenge_scalar::<F>());
+
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.instruction_flags);
+        tracing::info!(
+            "instruction_flags check: {}",
+            transcript.challenge_scalar::<F>()
+        );
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.dim);
+        tracing::info!("dim check: {}", transcript.challenge_scalar::<F>());
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.lookup_outputs);
+        tracing::info!(
+            "lookup_outputs check: {}",
+            transcript.challenge_scalar::<F>()
+        );
+
+        transcript.append_serializable(&jolt_commitments.instruction_lookups.E_polys);
+        tracing::info!("E_polys check: {}", transcript.challenge_scalar::<F>());
 
         transcript.append_scalar(&spartan_key.vk_digest);
 

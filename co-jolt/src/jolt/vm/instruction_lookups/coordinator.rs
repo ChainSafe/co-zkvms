@@ -54,6 +54,7 @@ where
 
         let num_rounds = num_ops.log_2();
         let r_eq = transcript.challenge_vector::<F>(num_rounds);
+        // tracing::info!("r_eq: {:?}", r_eq);
         network.broadcast_request(r_eq)?;
 
         let (primary_sumcheck_proof, flag_evals, E_evals, outputs_eval) =

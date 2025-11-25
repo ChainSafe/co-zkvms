@@ -152,7 +152,8 @@ where
                 }
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
-                let poly_a = MultilinearPolynomial::LargeScalars(poly.copy_share_a());
+                let poly_a =
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form());
                 let commitment =
                     <Self as CommitmentScheme<ProofTranscript>>::commit(&poly_a, setup);
                 MaybeShared::Shared(commitment)
@@ -163,6 +164,7 @@ where
     #[tracing::instrument(skip_all, name = "PST13::batch_commit_rep3", level = "trace")]
     fn batch_commit_rep3<U>(
         polys: &[U],
+        len: usize,
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> Vec<MaybeShared<Self::Commitment>>
@@ -184,13 +186,15 @@ where
                 .count()
         );
 
-        let shared_polys_a = polys
+        let polys_offseted = polys
             .par_iter()
             .map(|poly| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { .. } => None,
-                Rep3MultilinearPolynomial::Shared(poly) => {
-                    Some(MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
+                Rep3MultilinearPolynomial::Public { poly, .. } => {
+                    Some(poly.into_distributed_commit_form(len))
                 }
+                Rep3MultilinearPolynomial::Shared(poly) => Some(
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form(len)),
+                ),
             })
             .collect::<Vec<_>>();
 
@@ -198,16 +202,16 @@ where
             .par_iter()
             .enumerate()
             .map(|(i, poly)| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { poly, .. } => {
+                Rep3MultilinearPolynomial::Public { .. } => {
                     let commitment = if commit_to_public {
                         MaybeShared::Public(Some(PST13Commitment::default()))
                     } else {
                         MaybeShared::Public(None)
                     };
-                    (poly, commitment)
+                    (polys_offseted[i].as_ref().unwrap(), commitment)
                 }
                 Rep3MultilinearPolynomial::Shared(_) => (
-                    shared_polys_a[i].as_ref().unwrap(),
+                    polys_offseted[i].as_ref().unwrap(),
                     MaybeShared::Shared(PST13Commitment::default()),
                 ),
             })
@@ -406,6 +410,12 @@ pub struct PST13Commitment<E: Pairing> {
     pub(crate) g_product: E::G1Affine,
 }
 
+// impl<E: Pairing> std::fmt::Debug for PST13Commitment<E> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.write_str(&format!("{:?}", &self.g_product.xy()))
+//     }
+// }
+
 impl<E: Pairing> Default for PST13Commitment<E> {
     fn default() -> Self {
         Self {
@@ -552,5 +562,31 @@ mod tests {
         let opening = agg_poly.evaluate(&r);
         let mut transcript = ProofTranscript::new(b"test");
         PST13::<E>::verify(&pf, &setup, &mut transcript, &r, &opening, &agg_commitment).unwrap();
+    }
+
+    #[test]
+    fn test_concat_commitments() {
+        let mut rng = test_rng();
+        let setup = PST13::<E>::setup(1 << 4, &mut rng);
+
+        let v1 = vec![F::from(1); 8];
+        let v2 = vec![F::from(2); 8];
+        let p1 = MultilinearPolynomial::<F>::from([v1.clone(), vec![F::from(0); 8]].concat());
+        let p2 = MultilinearPolynomial::<F>::from([vec![F::from(0); 8], v2.clone()].concat());
+        let p = MultilinearPolynomial::<F>::from([v1, v2].concat());
+
+        let c1 = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p1, &setup);
+        let c2 = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p2, &setup);
+        let c = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p, &setup);
+
+        let c_check = PST13Commitment {
+            nv: c1.nv,
+            g_product: (c1.g_product + c2.g_product).into_affine(),
+        };
+
+        println!("c : {:?}", c);
+        println!("c_check : {:?}", c_check);
+
+        assert_eq!(c_check, c);
     }
 }

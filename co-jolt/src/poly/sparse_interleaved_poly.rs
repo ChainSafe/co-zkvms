@@ -18,7 +18,7 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 
 /// Represents a single layer of a sparse grand product circuit.
 #[derive(Default, Debug, Clone)]

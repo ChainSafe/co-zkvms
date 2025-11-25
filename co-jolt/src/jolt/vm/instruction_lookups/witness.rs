@@ -104,6 +104,11 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         .flat_map(|(_, memories)| memories)
         .collect_vec();
 
+        if io_ctx.party_idx() == 0 {
+            tracing::info!("worker {} read_memories: {:?}", worker_idx, read_memories);
+            tracing::info!("worker {} final_memories: {:?}", worker_idx, final_memories);
+        }
+
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_cyclic(0..preprocessing.num_memories, |memory_index, io_ctx| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];

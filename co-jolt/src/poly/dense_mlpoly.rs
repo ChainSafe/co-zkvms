@@ -122,6 +122,17 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         (DensePolynomial::new(a), DensePolynomial::new(b))
     }
 
+    pub fn into_distributed_commit_form(&self, len: usize) -> DensePolynomial<F> {
+        let mut coeffs = vec![F::ZERO; len];
+        coeffs.splice(
+            self.chunk_range.0..self.chunk_range.1,
+            self.coeffs[self.chunk_range.0..self.chunk_range.1]
+                .iter()
+                .map(|share| share.a),
+        );
+        DensePolynomial::new(coeffs)
+    }
+
     #[inline]
     pub fn copy_share_a(&self) -> DensePolynomial<F> {
         DensePolynomial::new(

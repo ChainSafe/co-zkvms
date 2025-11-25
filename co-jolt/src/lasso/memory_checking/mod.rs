@@ -111,26 +111,29 @@ where
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
 
+        println!("gamma: {:?}", gamma);
+
         let log_num_workers = network.log_num_workers();
-        let num_workers = 1 << log_num_workers;
 
-        let mut read_write_hashes = network
-            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
+        let (read_write_hashes, init_final_hashes): (Vec<_>, Vec<_>) = network
+            .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()
             .context("while receiving hashes")?
             .into_iter()
-            .flat_map(additive::combine_additive_vec)
-            .collect::<Vec<_>>();
+            .map(|worker_hashes| {
+                let (rw_shares, if_shares) = worker_hashes.into_iter().unzip();
 
-        println!("read_write_hashes: {:?}", read_write_hashes.len());
+                (
+                    additive::combine_additive_vec(rw_shares),
+                    additive::combine_additive_vec(if_shares),
+                )
+            })
+            .unzip();
 
-        let mut init_final_hashes = network
-            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
-            .context("while receiving hashes")?
-            .into_iter()
-            .flat_map(additive::combine_additive_vec)
-            .collect::<Vec<_>>();
+        let read_write_hashes = read_write_hashes.concat();
+        let init_final_hashes = init_final_hashes.concat();
 
-        println!("init_final_hashes: {:?}", init_final_hashes.len());
+        println!("read_write_hashes: {:?}", read_write_hashes);
+        println!("init_final_hashes: {:?}", init_final_hashes);
 
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
