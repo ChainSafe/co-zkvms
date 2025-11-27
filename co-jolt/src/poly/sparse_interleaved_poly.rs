@@ -1,5 +1,6 @@
 use super::dense_interleaved_poly::Rep3DenseInterleavedPolynomial;
 use crate::field::JoltField;
+use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::poly::Rep3DensePolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedGrandProductLayerWorker;
 use crate::subprotocols::sumcheck::{Rep3BatchedCubicSumcheckWorker, Rep3Bindable};
@@ -413,10 +414,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     )]
     fn compute_cubic(
         &self,
-        eq_poly: &SplitEqPolynomial<F>,
+        eq_poly: &DistributedSplitEqPolynomial<F>,
         // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> Vec<AdditiveShare<F>> {
+    ) -> [AdditiveShare<F>; 3] {
         if let Some(coalesced) = &self.coalesced {
             let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::coalesced");
             let _enter = span.enter();
@@ -437,7 +438,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm with optimizations for sparsity.
 
-            let eq_evals: Vec<(F, F, F)> = eq_poly
+            let eq_evals: Vec<[F; 3]> = eq_poly
                 .E2
                 .par_chunks(2)
                 .take(self.dense_len / 4)
@@ -446,24 +447,24 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let m_eq = eq_chunk[1] - eq_chunk[0];
                     let eval_point_2 = eq_chunk[1] + m_eq;
                     let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    [eval_point_0, eval_point_2, eval_point_3]
                 })
                 .collect();
             // This is what \sum_{x} eq(r, x) * left(x) * right(x) would be if
             // `left` and `right` were both all ones.
-            let eq_eval_sums: (F, F, F) = eq_evals
+            let eq_eval_sums: [F; 3] = eq_evals
                 .par_iter()
                 .fold(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 )
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
             // Now we compute the deltas, correcting `eq_eval_sums` for the
             // elements of `left` and `right` that aren't ones.
-            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) = self
+            let deltas: [AdditiveShare<F>; 3] = self
                 .coeffs
                 .par_iter()
                 .flat_map(|segment| {
@@ -490,40 +491,34 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
                             let eq_evals = eq_evals[block_index];
                             let e0 = additive::sub_shared_by_public(
-                                left.0 * right.0 * eq_evals.0,
-                                eq_evals.0,
+                                left.0 * right.0 * eq_evals[0],
+                                eq_evals[0],
                                 party_id,
                             );
                             let e1 = additive::sub_shared_by_public(
-                                left_eval_2 * right_eval_2 * eq_evals.1,
-                                eq_evals.1,
+                                left_eval_2 * right_eval_2 * eq_evals[1],
+                                eq_evals[1],
                                 party_id,
                             );
                             let e2 = additive::sub_shared_by_public(
-                                left_eval_3 * right_eval_3 * eq_evals.2,
-                                eq_evals.2,
+                                left_eval_3 * right_eval_3 * eq_evals[2],
+                                eq_evals[2],
                                 party_id,
                             );
 
-                            (e0, e1, e2)
+                            [e0, e1, e2]
                         })
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
 
-            (
-                additive::add_public(deltas.0, eq_eval_sums.0, party_id),
-                additive::add_public(deltas.1, eq_eval_sums.1, party_id),
-                additive::add_public(deltas.2, eq_eval_sums.2, party_id),
-            )
+            [
+                additive::add_public(deltas[0], eq_eval_sums[0], party_id),
+                additive::add_public(deltas[1], eq_eval_sums[1], party_id),
+                additive::add_public(deltas[2], eq_eval_sums[2], party_id),
+            ]
         } else {
             let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1");
             let _enter = span.enter();
@@ -571,11 +566,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             a_x2 == b_x2
                         })
                         .map(|chunk| {
-                            let mut inner_sum = (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                            );
+                            let mut inner_sum = [AdditiveShare::<F>::zero(); 3];
 
                             for sparse_block in chunk.chunk_by(|x, y| x.index / 4 == y.index / 4) {
                                 let block_index = sparse_block[0].index / 4;
@@ -614,29 +605,19 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                         party_id,
                                     ) * E1_evals[x1].2,
                                 );
-                                inner_sum.0 += delta.0;
-                                inner_sum.1 += delta.1;
-                                inner_sum.2 += delta.2;
+                                inner_sum[0] += delta.0;
+                                inner_sum[1] += delta.1;
+                                inner_sum[2] += delta.2;
                             }
 
                             let x2 = (chunk[0].index / 4) >> num_x1_bits;
 
-                            (
-                                inner_sum.0 * eq_poly.E2[x2],
-                                inner_sum.1 * eq_poly.E2[x2],
-                                inner_sum.2 * eq_poly.E2[x2],
-                            )
+                            inner_sum.map(|x| x * eq_poly.E2[x2])
                         })
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
 
             // The cubic evals assuming all the coefficients are ones is affected by the
@@ -701,19 +682,12 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 }
             };
 
-            (
-                additive::add_public(deltas.0, evals_assuming_all_ones.0, party_id),
-                additive::add_public(deltas.1, evals_assuming_all_ones.1, party_id),
-                additive::add_public(deltas.2, evals_assuming_all_ones.2, party_id),
-            )
+            [
+                additive::add_public(deltas[0], evals_assuming_all_ones.0, party_id),
+                additive::add_public(deltas[1], evals_assuming_all_ones.1, party_id),
+                additive::add_public(deltas[2], evals_assuming_all_ones.2, party_id),
+            ]
         };
-
-        let cubic_evals = vec![
-            cubic_evals.0,
-            // (previous_round_claim - cubic_evals.0),
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
 
         cubic_evals
     }

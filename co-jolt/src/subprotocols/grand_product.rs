@@ -17,7 +17,7 @@ use mpc_core::protocols::{
 
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use crate::{field::JoltField, poly::split_eq_poly::DistributedSplitEqPolynomial};
 use crate::{
     poly::{
         dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
@@ -190,13 +190,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         eq_chunk_size: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        // let mut eq_poly = SplitEqPolynomial::new_chunk(
-        //     r_grand_product,
-        //     io_ctx.log_num_workers(),
-        //     io_ctx.worker_idx(),
-        // );
-
-        let mut eq_poly = SplitEqPolynomial::new_chunk_custom(
+        let mut eq_poly = DistributedSplitEqPolynomial::new(
             &r_grand_product,
             io_ctx.log_num_workers(),
             io_ctx.worker_idx(),

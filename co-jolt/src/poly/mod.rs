@@ -1,12 +1,12 @@
 pub mod commitment;
 pub mod dense_interleaved_poly;
 pub mod dense_mlpoly;
-// pub mod dense_split_poly;
 pub mod mixed_polynomial;
 pub mod multilinear_polynomial;
 pub mod opening_proof;
 pub mod sparse_interleaved_poly;
 pub mod spartan_interleaved_poly;
+pub mod split_eq_poly;
 pub mod unipoly;
 
 pub use dense_mlpoly::*;

@@ -2,6 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
+use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::types::Rep3Value;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
@@ -129,10 +130,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 {
     fn compute_cubic(
         &self,
-        eq_poly: &SplitEqPolynomial<F>,
-        // previous_round_claim: AdditiveShare<F>,
+        eq_poly: &DistributedSplitEqPolynomial<F>,
         party_id: PartyID,
-    ) -> Vec<AdditiveShare<F>>;
+    ) -> [AdditiveShare<F>; 3];
 
     fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>>;
 
@@ -143,7 +143,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     )]
     fn prove_sumcheck(
         &mut self,
-        eq_poly: &mut SplitEqPolynomial<F>,
+        eq_poly: &mut DistributedSplitEqPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let mut num_rounds = eq_poly.get_num_vars();

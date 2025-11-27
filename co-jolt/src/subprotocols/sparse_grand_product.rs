@@ -2,6 +2,7 @@ use crate::field::JoltField;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::sparse_interleaved_poly::Rep3SparseInterleavedPolynomial;
+use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::subprotocols::grand_product::{
     Rep3BatchedGrandProduct, Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker,
     Rep3BatchedGrandProductWorker,
@@ -301,10 +302,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     )]
     fn compute_cubic(
         &self,
-        eq_poly: &SplitEqPolynomial<F>,
+        eq_poly: &DistributedSplitEqPolynomial<F>,
         // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> Vec<AdditiveShare<F>> {
+    ) -> [AdditiveShare<F>; 3] {
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
@@ -437,7 +438,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     )
             };
 
-            let cubic_evals = vec![cubic_evals.0, cubic_evals.1, cubic_evals.2];
+            let cubic_evals = [cubic_evals.0, cubic_evals.1, cubic_evals.2];
             return cubic_evals;
         }
 
@@ -821,12 +822,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             )
         };
 
-        let cubic_evals = vec![
-            cubic_evals.0,
-            // (previous_round_claim - cubic_evals.0),
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
+        let cubic_evals = [cubic_evals.0, cubic_evals.1, cubic_evals.2];
 
         cubic_evals
     }
@@ -925,7 +921,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
         eq_chunk_size: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new_chunk_custom(
+        let mut eq_poly = DistributedSplitEqPolynomial::new(
             r_grand_product,
             eq_chunk_size,
             io_ctx.log_num_workers(),
