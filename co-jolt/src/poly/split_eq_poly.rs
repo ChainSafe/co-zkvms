@@ -33,6 +33,13 @@ pub struct DistributedSplitEqPolynomial<F> {
     /// Current number of rows in the Dao–Thaler factorization: 2^{|A|+|B|_active}.
     pub E2_len: usize,
 
+    /// Length of this worker’s Eq slice in *points*:
+    ///   len = global_end - global_start
+    ///
+    /// This is the number of Eq points this worker logically owns, even if after binding
+    /// the attached polynomial P only covers a prefix of them.
+    pub len: usize,
+
     /// Global row index of E2[0]. I.e. E2[row_offset] corresponds to the global row
     /// with index row_start + row_offset in the full Eq table.
     pub row_start: usize,
@@ -43,18 +50,12 @@ pub struct DistributedSplitEqPolynomial<F> {
 
     /// One-past last global Eq index assigned to this worker.
     pub global_end: usize,
-
-    /// Length of this worker’s Eq slice in *points*:
-    ///   worker_len = global_end - global_start
-    ///
-    /// This is the number of Eq points this worker logically owns, even if after binding
-    /// the attached polynomial P only covers a prefix of them.
-    pub worker_len: usize,
 }
 
 impl<F: JoltField> DistributedSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "DistributedSplitEqPolynomial::new", level = "trace")]
     pub fn new(w: &[F], log_chunks: usize, k: usize, eq_pairs: usize) -> Self {
+        tracing::info!("split eq with {} points", w.len());
         // Build the *global* SplitEqPolynomial over all variables A|C|B.
         let base = SplitEqPolynomial::new(w);
 
@@ -108,7 +109,7 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
         let E2 = base.E2[e2_start..e2_end].to_vec();
 
         // Worker’s logical Eq slice length in points.
-        let worker_len = global_end - global_start;
+        let len = global_end - global_start;
 
         Self {
             num_vars: w.len() - log_chunks,
@@ -116,10 +117,10 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
             E1_len: base.E1_len,
             E2,
             E2_len: e2_len,
+            len,
             row_start,
             global_start,
             global_end,
-            worker_len,
         }
     }
 
@@ -132,7 +133,7 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
     pub fn len(&self) -> usize {
         // Number of Eq points in this worker's contiguous slice
         // [global_start, global_end), after any bindings.
-        self.worker_len
+        self.len
     }
 
     /// Bind one sumcheck variable (same order/convention as `SplitEqPolynomial::bind`).
@@ -203,7 +204,7 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
         self.global_end = (self.global_end + 1) >> 1;
 
         // Length of this worker’s Eq slice in points also halves, rounded up.
-        self.worker_len = (self.worker_len + 1) >> 1;
+        self.len = (self.len + 1) >> 1;
     }
 
     #[cfg(test)]

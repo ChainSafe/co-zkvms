@@ -519,7 +519,7 @@ where
             &r1cs_builder,
             padded_trace_length,
         );
-        transcript.append_scalar(&spartan_key.vk_digest);
+        // transcript.append_scalar(&spartan_key.vk_digest);
 
         // let r1cs_proof = R1CSProof {
         //     key: spartan_key,
@@ -527,11 +527,22 @@ where
         //     _marker: PhantomData,
         // };
 
+        // commitments
+        //     .read_write_values()
+        //     .iter()
+        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+        // commitments
+        //     .init_final_values()
+        //     .iter()
+        //     .for_each(|value| value.append_to_transcript(&mut transcript));
+
         commitments
+            .instruction_lookups
             .read_write_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
         commitments
+            .instruction_lookups
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));

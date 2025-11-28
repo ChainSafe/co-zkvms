@@ -147,8 +147,13 @@ where
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
         let num_rounds = r_grand_product.len();
 
-        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.coordinate_prove_sumcheck(claim, num_rounds, transcript, network)?;
+        let (sumcheck_proof, r_sumcheck, sumcheck_claims) = self.coordinate_prove_sumcheck(
+            claim,
+            r_grand_product,
+            num_rounds,
+            transcript,
+            network,
+        )?;
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);

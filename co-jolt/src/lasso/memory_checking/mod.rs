@@ -146,6 +146,8 @@ where
         let init_final_circuit =
             Self::init_final_grand_product_rep3(preprocessing, memory_size, log_num_workers);
 
+        tracing::info!("init_final layers: {:?}", init_final_circuit.num_layers());
+
         let (read_write_grand_product, r_read_write) = read_write_circuit
             .cooridinate_prove_grand_product(read_write_hashes, transcript, network)?;
 
@@ -183,7 +185,11 @@ where
         let read_write_evals = if log_num_workers == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
-            Self::compute_remaining_openings(r_read_write, read_write_openings.len(), network)?
+            network
+                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+                .into_iter()
+                .flat_map(additive::combine_additive_vec)
+                .collect()
         };
 
         read_write_openings
@@ -202,11 +208,11 @@ where
         let init_final_evals = if log_num_workers == 0 {
             additive::combine_additive_vec(network.receive_responses()?)
         } else {
-            Self::compute_remaining_openings(
-                r_init_final,
-                openings.init_final_values().len(),
-                network,
-            )?
+            network
+                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+                .into_iter()
+                .flat_map(additive::combine_additive_vec)
+                .collect()
         };
 
         openings
@@ -255,31 +261,6 @@ where
         *hashes = BatchedGrandProduct::<F, PCS, ProofTranscript>::claimed_outputs(&grand_product);
 
         grand_product.into_layers()
-    }
-
-    fn compute_remaining_openings(
-        mut r: Vec<F>,
-        num_openings: usize,
-        network: &mut Network,
-    ) -> eyre::Result<Vec<F>> {
-        let log_num_workers = network.log_num_workers();
-        let r_remaining = r.split_off(r.len() - log_num_workers);
-
-        let chi = EqPolynomial::evals(&r_remaining);
-
-        let read_write_evals: Vec<_> = network
-            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
-            .into_iter()
-            .map(additive::combine_additive_vec)
-            .fold(vec![vec![]; num_openings], |mut evals, eval| {
-                izip!(evals.iter_mut(), eval).for_each(|(a, b)| a.push(b));
-                evals
-            })
-            .into_par_iter()
-            .map(|evals| DensePolynomial::new(evals).evaluate_at_chi_low_optimized(&chi))
-            .collect();
-
-        Ok(read_write_evals)
     }
 }
 

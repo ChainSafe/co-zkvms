@@ -829,8 +829,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
     fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>> {
         assert_eq!(self.layer_len, 2);
-        let flags = self.coalesced_flags.as_ref().unwrap();
-        let fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
+        let flags = &self.coalesced_flags.as_ref().unwrap()[..self.layer_len];
+        let fingerprints = &self.coalesced_fingerprints.as_ref().unwrap()[..self.layer_len];
 
         chain!(
             flags
@@ -850,6 +850,7 @@ where
 {
     fn prove_remaining_rounds(
         &self,
+        r_grand_product: &[F],
         r: &mut Vec<F>,
         claim: F,
         proof: &mut SumcheckInstanceProof<F, ProofTranscript>,
@@ -877,15 +878,7 @@ where
                 },
             );
 
-        // Assumption: At round N-log_num_workers E_1 is completely bound,
-        // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
-        let E2 = network
-            .receive_response_from_workers::<Vec<F>>(PartyID::ID0)?
-            .into_iter()
-            .flatten()
-            .collect();
-        let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2);
+        let mut eq_poly = SplitEqPolynomial::new_bind(r_grand_product, r);
 
         let mut layer = BatchedGrandProductToggleLayer {
             flag_indices: vec![],
@@ -956,11 +949,15 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        // let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
         let num_rounds = r_grand_product.len();
 
-        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.coordinate_prove_sumcheck(previous_claim, num_rounds, transcript, network)?;
+        let (sumcheck_proof, r_sumcheck, sumcheck_claims) = self.coordinate_prove_sumcheck(
+            previous_claim,
+            r_grand_product,
+            num_rounds,
+            transcript,
+            network,
+        )?;
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);

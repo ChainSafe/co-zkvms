@@ -305,8 +305,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             //
             // This worker is logically responsible for `worker_len` Eq points starting
             // at `global_start`, but we must not read beyond what `poly` actually has.
-            let slice_end =
-                eq_poly.global_start + core::cmp::min(eq_poly.worker_len, self.len() / 2);
+            let slice_end = eq_poly.global_start + core::cmp::min(eq_poly.len, self.len() / 2);
 
             // Upper bound (exclusive) on E2 indices this worker can actually use:
             //
@@ -334,7 +333,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     // Intersection with the worker’s assigned slice [global_start, worker_end),
                     // expressed in global Eq indices.
                     let eq_first = eq_poly.global_start.max(row_first);
-                    let eq_last = (eq_poly.global_start + eq_poly.worker_len).min(row_last);
+                    let eq_last = (eq_poly.global_start + eq_poly.len).min(row_last);
 
                     // We expect this row to intersect the slice if it is within E2_local_bound.
                     debug_assert!(eq_last > eq_first);
@@ -411,7 +410,10 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
     fn final_evals(&self, _: PartyID) -> Vec<AdditiveShare<F>> {
         // assert_eq!(self.len(), 2);
-        self.coeffs.par_iter().map(|c| c.into_additive()).collect()
+        self.coeffs[..self.len()]
+            .par_iter()
+            .map(|c| c.into_additive())
+            .collect()
     }
 }
 

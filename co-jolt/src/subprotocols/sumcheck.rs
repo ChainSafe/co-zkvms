@@ -43,6 +43,7 @@ where
     fn coordinate_prove_sumcheck(
         &self,
         claim: &F,
+        r_grand_product: &[F],
         num_rounds: usize,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -65,6 +66,7 @@ where
 
         let final_claims = if network.log_num_workers() > 0 {
             self.prove_remaining_rounds(
+                r_grand_product,
                 &mut r,
                 previous_claim,
                 &mut sumcheck_proof,
@@ -90,6 +92,7 @@ where
 
     fn prove_remaining_rounds(
         &self,
+        r_grand_product: &[F],
         r: &mut Vec<F>,
         previous_claim: F,
         proof: &mut SumcheckInstanceProof<F, ProofTranscript>,
@@ -102,17 +105,10 @@ where
             .flat_map(additive::combine_additive_vec)
             .collect();
 
-        // Assumption: At round N-log_num_workers E_1 is completely bound,
-        // meaning we switched over to the linear-time sumcheck prover, using E_2 := E_1 * E_2
-        let E2 = network
-            .receive_response_from_workers::<Vec<F>>(PartyID::ID0)?
-            .into_iter()
-            .flatten()
-            .collect();
-        let E1 = vec![F::zero()];
-        let mut eq_poly = SplitEqPolynomial::new_bound(E1, E2);
+        let mut eq_poly = SplitEqPolynomial::new_bind(r_grand_product, r);
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
+        tracing::info!("remaining poly len {}", layer.len());
 
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
@@ -157,9 +153,8 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         let party_id = io_ctx.party_id();
         for _round in 0..num_rounds {
             let cubic_poly = self.compute_cubic(eq_poly, party_id);
-            tracing::info!("compute_cubic round {}", _round);
             // append the prover's message to the transcript
-            io_ctx.network().send_response(cubic_poly)?;
+            io_ctx.network().send_response(cubic_poly.to_vec())?;
             let r_j = io_ctx.network().receive_request()?;
 
             r.push(r_j);
@@ -167,7 +162,6 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             self.bind(r_j, party_id);
             eq_poly.bind(r_j);
 
-            tracing::info!("bind round {}", _round);
             // poly coeffs are additive shares but evaluation requires multiplication
             // e = poly.evaluate(&r_j);
             // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
@@ -181,9 +175,6 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         if io_ctx.log_num_workers() > 0 {
             tracing::trace!("send remaining");
-            if io_ctx.party_id() == PartyID::ID0 {
-                io_ctx.network().send_response(eq_poly.E2.clone())?;
-            }
 
             // Coordinator runs remaining sumcheck rounds
             r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
@@ -219,6 +210,7 @@ where
             let subnet_responces =
                 network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
             let degree = subnet_responces[0][0].len();
+
             subnet_responces
                 .into_iter()
                 .map(|shares| additive::combine_additive_vec(shares))
