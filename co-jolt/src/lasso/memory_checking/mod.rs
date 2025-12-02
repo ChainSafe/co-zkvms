@@ -60,23 +60,20 @@ where
     ) -> eyre::Result<
         MemoryCheckingProof<F, PCS, Self::Openings, Self::ExogenousOpenings, ProofTranscript>,
     > {
-        let (
-            read_write_grand_product,
-            init_final_grand_product,
-            r_read_write,
-            r_init_final,
-            multiset_hashes,
-        ) = Self::prove_grand_products_rep3(
-            preprocessing,
-            num_lookups,
-            memory_size,
-            network,
-            transcript,
-        )
-        .context("while proving grand products")?;
+        let (read_write_grand_product, init_final_grand_product, multiset_hashes) =
+            Self::prove_grand_products_rep3(
+                preprocessing,
+                num_lookups,
+                memory_size,
+                network,
+                transcript,
+            )
+            .context("while proving grand products")?;
 
         let (openings, exogenous_openings) =
             Self::receive_openings(preprocessing, transcript, network)?;
+
+        println!("DONE MEM CHEKC");
 
         Ok(MemoryCheckingProof {
             multiset_hashes,
@@ -96,8 +93,6 @@ where
     ) -> eyre::Result<(
         BatchedGrandProductProof<PCS, ProofTranscript>,
         BatchedGrandProductProof<PCS, ProofTranscript>,
-        Vec<F>,
-        Vec<F>,
         MultisetHashes<F>,
     )> {
         // Fiat-Shamir randomness for multiset hashes
@@ -140,11 +135,17 @@ where
         let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
         let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
 
-        let (read_write_grand_product, r_read_write) = read_write_circuit
-            .cooridinate_prove_grand_product(read_write_hashes, transcript, network)?;
+        let (read_write_grand_product, _) = read_write_circuit.cooridinate_prove_grand_product(
+            read_write_hashes,
+            transcript,
+            network,
+        )?;
 
-        let (init_final_grand_product, r_init_final) = init_final_circuit
-            .cooridinate_prove_grand_product(init_final_hashes, transcript, network)?;
+        let (init_final_grand_product, _) = init_final_circuit.cooridinate_prove_grand_product(
+            init_final_hashes,
+            transcript,
+            network,
+        )?;
 
         if network.is_distributed() {
             network.broadcast_request((read_write_batch_size, init_final_batch_size))?;
@@ -153,14 +154,36 @@ where
         Ok((
             read_write_grand_product,
             init_final_grand_product,
-            r_read_write,
-            r_init_final,
             multiset_hashes,
         ))
     }
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
+        preprocessing: &Self::Preprocessing,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
+        println!("Receiving openings");
+        let (mut openings, exogenous_openings) =
+            Self::receive_read_write_openings(preprocessing, transcript, network)?;
+        println!("Received RW");
+
+        let init_final_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+
+        openings
+            .init_final_values_mut()
+            .into_par_iter()
+            .zip(init_final_evals.par_iter())
+            .for_each(|(opening, eval)| {
+                *opening = *eval;
+            });
+
+        Ok((openings, exogenous_openings))
+    }
+
+    fn receive_read_write_openings(
         preprocessing: &Self::Preprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -180,17 +203,6 @@ where
         read_write_openings
             .into_par_iter()
             .zip(read_write_evals.par_iter())
-            .for_each(|(opening, eval)| {
-                *opening = *eval;
-            });
-
-        let init_final_evals: Vec<F> =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
-
-        openings
-            .init_final_values_mut()
-            .into_par_iter()
-            .zip(init_final_evals.par_iter())
             .for_each(|(opening, eval)| {
                 *opening = *eval;
             });

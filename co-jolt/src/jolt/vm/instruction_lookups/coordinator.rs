@@ -11,6 +11,9 @@ use crate::{
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, izip, Itertools};
+use jolt_core::lasso::memory_checking::{
+    ExogenousOpenings, Initializable, StructuredPolynomialData,
+};
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding,
 };
@@ -323,6 +326,80 @@ where
 {
     type Rep3ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
+
+    fn receive_read_write_openings(
+        preprocessing: &Self::Preprocessing,
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
+        let exogenous_openings = Self::ExogenousOpenings::default();
+        let mut openings = Self::Openings::initialize(preprocessing);
+
+        if !network.is_distributed() {
+            let read_write_evals: Vec<F> =
+                Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+
+            openings
+                .read_write_values_grand_product_mut()
+                .into_par_iter()
+                .zip(read_write_evals.par_iter())
+                .for_each(|(opening, eval)| {
+                    *opening = *eval;
+                });
+
+            // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
+
+            return Ok((openings, exogenous_openings));
+        }
+
+        let num_workers = 1 << network.log_num_workers();
+        let openings = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+            .into_iter()
+            .enumerate()
+            .map(|(worker_idx, shares)| {
+                let evals = additive::combine_additive_vec(shares);
+                let mut openings = Self::Openings::initialize(preprocessing);
+
+                let read_memories = witness::read_write_memories_for_worker(
+                    preprocessing.num_memories,
+                    num_workers,
+                    worker_idx,
+                );
+
+                openings.E_polys.truncate(read_memories.len());
+                openings.read_cts.truncate(read_memories.len());
+
+                openings
+                    .read_write_values_grand_product_mut()
+                    .into_par_iter()
+                    .zip(evals.par_iter())
+                    .for_each(|(opening, eval)| {
+                        *opening = *eval;
+                    });
+
+                openings
+            })
+            .reduce(|mut acc, next| {
+                acc.E_polys.extend(next.E_polys);
+                acc.read_cts.extend(next.read_cts);
+                // acc.instruction_flags.extend(next.instruction_flags);
+                acc
+            })
+            .unwrap();
+
+        let claims = openings
+            .read_write_values_grand_product()
+            .into_iter()
+            .copied()
+            .collect::<Vec<_>>();
+
+        // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
+
+        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(&claims, transcript, network)?;
+
+        Ok((openings, exogenous_openings))
+    }
 
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,

@@ -127,10 +127,6 @@ where
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
-        if io_ctx.party_idx() == 0 {
-            tracing::info!("r_primary_sumcheck: {:?}", r_primary_sumcheck);
-        }
-
         let primary_sumcheck_polys = chain![
             &polynomials.instruction_lookups.E_polys,
             &polynomials.instruction_lookups.instruction_flags,

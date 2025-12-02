@@ -790,10 +790,9 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     }
 
     fn final_evals(&self, worker_len: usize, party_id: PartyID) -> Vec<AdditiveShare<F>> {
-        if self.layer_len == 2 {
-            let flags = self.coalesced_flags.as_ref().unwrap();
-            let fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
-
+        let flags = self.coalesced_flags.as_ref().unwrap();
+        let fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
+        if flags.len() == 1 {
             vec![
                 additive::promote_to_trivial_share(flags[0], party_id),
                 fingerprints[0].into_additive(),
@@ -835,14 +834,12 @@ where
     ) -> eyre::Result<(F, F)> {
         let mut eq_poly = SplitEqPolynomial::new_bind(r_grand_product, r);
 
-        let (coalesced_flags, coalesced_fingerprints) = network
+        let (mut coalesced_flags, mut coalesced_fingerprints) = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
             .map(|shares| {
                 let mut flags = additive::combine_additive_vec(shares);
-                flags.resize(eq_poly.len(), F::one());
-                let mut fingerprints = flags.split_off(flags.len() / 2);
-                fingerprints.resize(eq_poly.len(), F::zero());
+                let fingerprints = flags.split_off(flags.len() / 2);
 
                 (flags, fingerprints)
             })
@@ -854,6 +851,16 @@ where
                     (flags, fingerprints)
                 },
             );
+
+        tracing::info!(
+            "eq_poly.len: {} coalesced_flags: {} coalesced_fingerprints: {}",
+            eq_poly.len(),
+            coalesced_flags.len(),
+            coalesced_fingerprints.len()
+        );
+
+        coalesced_flags.resize(eq_poly.len(), F::one());
+        coalesced_fingerprints.resize(eq_poly.len(), F::zero());
 
         let mut layer = BatchedGrandProductToggleLayer {
             coalesced_flags: Some(coalesced_flags),
