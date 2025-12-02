@@ -306,6 +306,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
     ) -> [AdditiveShare<F>; 3] {
+        let E1_len = eq_poly.E1_len;
+
         if let Some(coalesced_flags) = &self.coalesced_flags {
             let coalesced_fingerprints = self.coalesced_fingerprints.as_ref().unwrap();
 
@@ -333,7 +335,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let fingerprint_eval_2 = fingerprints[1] + m_fingerprint;
                         let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                        (
+                        [
                             additive::add_public(
                                 fingerprints[0].into_additive() * flags[0],
                                 F::one() - flags[0],
@@ -349,17 +351,11 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 F::one() - flag_eval_3,
                                 party_id,
                             ) * eq_evals.2,
-                        )
+                        ]
                     })
                     .reduce(
-                        || {
-                            (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                            )
-                        },
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                        || [AdditiveShare::<F>::zero(); 3],
+                        |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                     )
             } else {
                 // 2. Flags/fingerprints are coalesced, and E1 isn't fully bound
@@ -375,24 +371,43 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     })
                     .collect();
 
-                let flag_chunk_size = coalesced_flags.len().next_power_of_two() / eq_poly.E2_len;
-                let fingerprint_chunk_size =
-                    coalesced_fingerprints.len().next_power_of_two() / eq_poly.E2_len;
+                let eq_slice_end =
+                    eq_poly.global_start + core::cmp::min(eq_poly.len, self.batched_layer_len / 2);
+                let E2_local_bound = eq_slice_end
+                    .div_ceil(E1_len) // first row index strictly after slice_end
+                    .saturating_sub(eq_poly.row_start)
+                    .min(eq_poly.E2_len);
 
-                eq_poly.E2[..eq_poly.E2_len]
+                eq_poly.E2[..E2_local_bound]
                     .par_iter()
-                    .zip(coalesced_flags.par_chunks(flag_chunk_size))
-                    .zip(coalesced_fingerprints.par_chunks(fingerprint_chunk_size))
-                    .map(|((E2_eval, flag_x2), fingerprint_x2)| {
-                        let mut inner_sum = (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
+                    .enumerate()
+                    .map(|(x2, E2_eval)| {
+                        let row_global = eq_poly.row_start + x2;
+                        let row_first = row_global * E1_len;
+                        let row_last = row_first + E1_len;
+                        let eq_first = eq_poly.global_start.max(row_first);
+                        let eq_last = (eq_poly.global_start + eq_poly.len).min(row_last);
+                        debug_assert!(eq_last > eq_first);
+                        let col_from = eq_first - row_first;
+                        let col_to = eq_last - row_first;
+                        debug_assert!(
+                            col_from % 2 == 0 && col_to % 2 == 0,
+                            "misaligned Eq slice within row"
                         );
+
+                        let E1_from = col_from / 2;
+                        let E1_to = col_to / 2;
+                        let poly_from = eq_first - eq_poly.global_start;
+                        debug_assert!(
+                            poly_from < self.batched_layer_len,
+                            "coeff_start out of bounds"
+                        );
+
+                        let mut inner_sum = [AdditiveShare::<F>::zero(); 3];
                         for ((E1_evals, flag_chunk), fingerprint_chunk) in E1_evals
                             .iter()
-                            .zip(flag_x2.chunks(2))
-                            .zip(fingerprint_x2.chunks(2))
+                            .zip(coalesced_flags[poly_from..].chunks(2))
+                            .zip(coalesced_fingerprints[poly_from..].chunks(2))
                         {
                             let m_flag = flag_chunk[1] - flag_chunk[0];
                             let m_fingerprint = fingerprint_chunk[1] - fingerprint_chunk[0];
@@ -403,46 +418,35 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             let fingerprint_eval_2 = fingerprint_chunk[1] + m_fingerprint;
                             let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
 
-                            inner_sum.0 += additive::add_public(
+                            inner_sum[0] += additive::add_public(
                                 fingerprint_chunk[0].into_additive() * flag_chunk[0],
                                 F::one() - flag_chunk[0],
                                 party_id,
                             ) * E1_evals.0;
-                            inner_sum.1 += additive::add_public(
+                            inner_sum[1] += additive::add_public(
                                 fingerprint_eval_2.into_additive() * flag_eval_2,
                                 F::one() - flag_eval_2,
                                 party_id,
                             ) * E1_evals.1;
-                            inner_sum.2 += additive::add_public(
+                            inner_sum[2] += additive::add_public(
                                 fingerprint_eval_3.into_additive() * flag_eval_3,
                                 F::one() - flag_eval_3,
                                 party_id,
                             ) * E1_evals.2;
                         }
 
-                        (
-                            inner_sum.0 * *E2_eval,
-                            inner_sum.1 * *E2_eval,
-                            inner_sum.2 * *E2_eval,
-                        )
+                        inner_sum.map(|inner_sum| inner_sum * *E2_eval)
                     })
                     .reduce(
-                        || {
-                            (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                            )
-                        },
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                        || [AdditiveShare::<F>::zero(); 3],
+                        |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                     )
             };
 
-            let cubic_evals = [cubic_evals.0, cubic_evals.1, cubic_evals.2];
             return cubic_evals;
         }
 
-        let cubic_evals = if eq_poly.E1_len == 1 {
+        if eq_poly.E1_len == 1 {
             // 3. Flags/fingerprints aren't coalesced, and E1 is fully bound
             // This is similar to the if case of `SparseInterleavedPolynomial::compute_cubic`
             let eq_evals: Vec<(F, F, F)> = eq_poly.E2[..eq_poly.E2_len]
@@ -467,126 +471,115 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
 
-            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) =
-                (0..self.fingerprints.len())
-                    .into_par_iter()
-                    .map(|batch_index| {
-                        // Computes:
-                        //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
-                        // for the evaluation points {0, 2, 3}
+            let deltas: [AdditiveShare<F>; 3] = (0..self.fingerprints.len())
+                .into_par_iter()
+                .map(|batch_index| {
+                    // Computes:
+                    //     ∆ := Σ eq_evals[j] * (flag[j] * fingerprint[j] - flag[j])    ∀j where flag[j] ≠ 0
+                    // for the evaluation points {0, 2, 3}
 
-                        let fingerprints = &self.fingerprints[batch_index];
-                        let flag_indices = &self.flag_indices[batch_index / 2];
+                    let fingerprints = &self.fingerprints[batch_index];
+                    let flag_indices = &self.flag_indices[batch_index / 2];
 
-                        let unbound = self.flag_values.is_empty();
-                        let mut delta = (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        );
+                    let unbound = self.flag_values.is_empty();
+                    let mut delta = [AdditiveShare::<F>::zero(); 3];
 
-                        let mut next_index_to_process = 0usize;
-                        for (j, index) in flag_indices.iter().enumerate() {
-                            if *index < next_index_to_process {
-                                // This node was already processed in a previous iteration
-                                continue;
-                            }
-
-                            let (flags, fingerprints) = if index % 2 == 0 {
-                                let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
-                                let flags = if neighbor == index + 1 {
-                                    // Neighbor is flag's sibling
-                                    if unbound {
-                                        (F::one(), F::one())
-                                    } else {
-                                        (
-                                            self.flag_values[batch_index / 2][j],
-                                            self.flag_values[batch_index / 2][j + 1],
-                                        )
-                                    }
-                                } else {
-                                    // This flag's sibling wasn't found, so it must have value 0.
-                                    if unbound {
-                                        (F::one(), F::zero())
-                                    } else {
-                                        (self.flag_values[batch_index / 2][j], F::zero())
-                                    }
-                                };
-                                let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
-
-                                next_index_to_process = index + 2;
-                                (flags, fingerprints)
-                            } else {
-                                // This flag's sibling wasn't encountered in a previous iteration,
-                                // so it must have had value 0.
-                                let flags = if unbound {
-                                    (F::zero(), F::one())
-                                } else {
-                                    (F::zero(), self.flag_values[batch_index / 2][j])
-                                };
-                                let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
-
-                                next_index_to_process = index + 1;
-                                (flags, fingerprints)
-                            };
-
-                            let m_flag = flags.1 - flags.0;
-                            let m_fingerprint = fingerprints.1 - fingerprints.0;
-
-                            // If flags are still unbound, flag evals will mostly be 0s and 1s
-                            // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
-                            let flag_eval_2 = flags.1 + m_flag;
-                            let flag_eval_3 = flag_eval_2 + m_flag;
-
-                            let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
-                            let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
-
-                            let block_index = (self.layer_len * batch_index) / 4 + index / 2;
-                            let eq_evals = eq_evals[block_index];
-
-                            delta.0 += additive::sub_shared_by_public(
-                                fingerprints
-                                    .0
-                                    .into_additive()
-                                    .mul_public_01_optimized(flags.0),
-                                flags.0,
-                                party_id,
-                            ) * eq_evals.0;
-                            delta.1 += additive::sub_shared_by_public(
-                                fingerprint_eval_2
-                                    .into_additive()
-                                    .mul_public_01_optimized(flag_eval_2),
-                                flag_eval_2,
-                                party_id,
-                            ) * eq_evals.1;
-                            delta.2 += additive::sub_shared_by_public(
-                                fingerprint_eval_3
-                                    .into_additive()
-                                    .mul_public_01_optimized(flag_eval_3),
-                                flag_eval_3,
-                                party_id,
-                            ) * eq_evals.2;
+                    let mut next_index_to_process = 0usize;
+                    for (j, index) in flag_indices.iter().enumerate() {
+                        if *index < next_index_to_process {
+                            // This node was already processed in a previous iteration
+                            continue;
                         }
 
-                        (delta.0, delta.1, delta.2)
-                    })
-                    .reduce(
-                        || {
-                            (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                            )
-                        },
-                        |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                    );
+                        let (flags, fingerprints) = if index % 2 == 0 {
+                            let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
+                            let flags = if neighbor == index + 1 {
+                                // Neighbor is flag's sibling
+                                if unbound {
+                                    (F::one(), F::one())
+                                } else {
+                                    (
+                                        self.flag_values[batch_index / 2][j],
+                                        self.flag_values[batch_index / 2][j + 1],
+                                    )
+                                }
+                            } else {
+                                // This flag's sibling wasn't found, so it must have value 0.
+                                if unbound {
+                                    (F::one(), F::zero())
+                                } else {
+                                    (self.flag_values[batch_index / 2][j], F::zero())
+                                }
+                            };
+                            let fingerprints = (fingerprints[*index], fingerprints[index + 1]);
+
+                            next_index_to_process = index + 2;
+                            (flags, fingerprints)
+                        } else {
+                            // This flag's sibling wasn't encountered in a previous iteration,
+                            // so it must have had value 0.
+                            let flags = if unbound {
+                                (F::zero(), F::one())
+                            } else {
+                                (F::zero(), self.flag_values[batch_index / 2][j])
+                            };
+                            let fingerprints = (fingerprints[index - 1], fingerprints[*index]);
+
+                            next_index_to_process = index + 1;
+                            (flags, fingerprints)
+                        };
+
+                        let m_flag = flags.1 - flags.0;
+                        let m_fingerprint = fingerprints.1 - fingerprints.0;
+
+                        // If flags are still unbound, flag evals will mostly be 0s and 1s
+                        // Bound flags are still mostly 0s, so flag evals will mostly be 0s.
+                        let flag_eval_2 = flags.1 + m_flag;
+                        let flag_eval_3 = flag_eval_2 + m_flag;
+
+                        let fingerprint_eval_2 = fingerprints.1 + m_fingerprint;
+                        let fingerprint_eval_3 = fingerprint_eval_2 + m_fingerprint;
+
+                        let block_index = (self.layer_len * batch_index) / 4 + index / 2;
+                        let eq_evals = eq_evals[block_index];
+
+                        delta[0] += additive::sub_shared_by_public(
+                            fingerprints
+                                .0
+                                .into_additive()
+                                .mul_public_01_optimized(flags.0),
+                            flags.0,
+                            party_id,
+                        ) * eq_evals.0;
+                        delta[1] += additive::sub_shared_by_public(
+                            fingerprint_eval_2
+                                .into_additive()
+                                .mul_public_01_optimized(flag_eval_2),
+                            flag_eval_2,
+                            party_id,
+                        ) * eq_evals.1;
+                        delta[2] += additive::sub_shared_by_public(
+                            fingerprint_eval_3
+                                .into_additive()
+                                .mul_public_01_optimized(flag_eval_3),
+                            flag_eval_3,
+                            party_id,
+                        ) * eq_evals.2;
+                    }
+
+                    delta
+                })
+                .reduce(
+                    || [AdditiveShare::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
+                );
             // eq_eval_sum + ∆ = Σ eq_evals[i] + Σ eq_evals[i] * (flag[i] * fingerprint[i] - flag[i]))
             //                 = Σ eq_evals[j] * (flag[i] * fingerprint[i] + 1 - flag[i])
-            (
-                additive::add_public(deltas.0, eq_eval_sums.0, party_id),
-                additive::add_public(deltas.1, eq_eval_sums.1, party_id),
-                additive::add_public(deltas.2, eq_eval_sums.2, party_id),
-            )
+            [
+                additive::add_public(deltas[0], eq_eval_sums.0, party_id),
+                additive::add_public(deltas[1], eq_eval_sums.1, party_id),
+                additive::add_public(deltas[2], eq_eval_sums.2, party_id),
+            ]
         } else {
             // 4. Flags/fingerprints aren't coalesced, and E1 isn't fully bound
             // This is similar to the else case of `SparseInterleavedPolynomial::compute_cubic`
@@ -600,16 +593,22 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect();
-            let E1_eval_sums: (F, F, F) = E1_evals
-                .par_iter()
-                .fold(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                );
+
+            let mut prefix_sums = vec![[F::zero(); 3]; E1_len + 1];
+            for (i, e) in E1_evals.iter().enumerate() {
+                prefix_sums[i + 1][0] = prefix_sums[i][0] + e.0;
+                prefix_sums[i + 1][1] = prefix_sums[i][1] + e.1;
+                prefix_sums[i + 1][2] = prefix_sums[i][2] + e.2;
+            }
+
+            let eq_slice_start = eq_poly.global_start;
+            let eq_slice_end =
+                eq_slice_start + core::cmp::min(eq_poly.len, self.batched_layer_len / 2);
+
+            let E2_local_bound = eq_slice_end
+                .div_ceil(E1_len)
+                .saturating_sub(eq_poly.row_start)
+                .min(eq_poly.E2_len);
 
             let num_x1_bits = eq_poly.E1_len.log_2() - 1;
             let x1_bitmask = (1 << num_x1_bits) - 1;
@@ -625,17 +624,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let flag_indices = &self.flag_indices[batch_index / 2];
 
                     let unbound = self.flag_values.is_empty();
-                    // let mut delta = (F::zero(), F::zero(), F::zero());
-                    let mut delta = (
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                    );
-                    let mut inner_sum = (
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                    );
+                    let mut delta = [AdditiveShare::<F>::zero(); 3];
+                    let mut inner_sum = [AdditiveShare::<F>::zero(); 3];
 
                     let mut prev_x2: usize = 0;
 
@@ -698,20 +688,16 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let block_index = (self.layer_len * batch_index) / 4 + index / 2;
                         let x2 = block_index >> num_x1_bits;
                         if x2 != prev_x2 {
-                            delta.0 += inner_sum.0 * eq_poly.E2[prev_x2];
-                            delta.1 += inner_sum.1 * eq_poly.E2[prev_x2];
-                            delta.2 += inner_sum.2 * eq_poly.E2[prev_x2];
-                            inner_sum = (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                            );
+                            delta[0] += inner_sum[0] * eq_poly.E2[prev_x2];
+                            delta[1] += inner_sum[1] * eq_poly.E2[prev_x2];
+                            delta[2] += inner_sum[2] * eq_poly.E2[prev_x2];
+                            inner_sum = [AdditiveShare::<F>::zero(); 3];
                             prev_x2 = x2;
                         }
 
                         let x1 = block_index & x1_bitmask;
 
-                        inner_sum.0 += additive::sub_shared_by_public(
+                        inner_sum[0] += additive::sub_shared_by_public(
                             fingerprints
                                 .0
                                 .into_additive()
@@ -719,14 +705,14 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             flags.0,
                             party_id,
                         ) * E1_evals[x1].0;
-                        inner_sum.1 += additive::sub_shared_by_public(
+                        inner_sum[1] += additive::sub_shared_by_public(
                             fingerprint_eval_2
                                 .into_additive()
                                 .mul_public_01_optimized(flag_eval_2),
                             flag_eval_2,
                             party_id,
                         ) * E1_evals[x1].1;
-                        inner_sum.2 += additive::sub_shared_by_public(
+                        inner_sum[2] += additive::sub_shared_by_public(
                             fingerprint_eval_3
                                 .into_additive()
                                 .mul_public_01_optimized(flag_eval_3),
@@ -735,96 +721,72 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         ) * E1_evals[x1].2;
                     }
 
-                    delta.0 += inner_sum.0 * eq_poly.E2[prev_x2];
-                    delta.1 += inner_sum.1 * eq_poly.E2[prev_x2];
-                    delta.2 += inner_sum.2 * eq_poly.E2[prev_x2];
+                    delta[0] += inner_sum[0] * eq_poly.E2[prev_x2];
+                    delta[1] += inner_sum[1] * eq_poly.E2[prev_x2];
+                    delta[2] += inner_sum[2] * eq_poly.E2[prev_x2];
 
                     delta
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
 
             // The cubic evals assuming all the coefficients are ones is affected by the
             // `batched_layer_len`, since we implicitly pad the `batched_layer_len` to a power of 2.
             // By pad here we mean that flags are padded with 1s, and fingerprints are
             // padded with 0s.
-            //
-            // As a refresher, the cubic evals we're computing are:
-            //
-            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            let evals_assuming_all_ones = if self.batched_layer_len.is_power_of_two() {
-                // If `batched_layer_len` is a power of 2, there is no 0-padding.
-                //
-                // So we have:
-                // \sum_x2 (E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
-                //   = \sum_x2 (E2[x2] * \sum_x1 E1_evals[x1])
-                //   = (\sum_x2 E2[x2]) * (\sum_x1 E1_evals[x1])
-                //   = 1 * E1_eval_sums
-                E1_eval_sums
-            } else {
-                let chunk_size = self.batched_layer_len.next_power_of_two() / eq_poly.E2_len;
-                let num_all_one_chunks = self.batched_layer_len / chunk_size;
-                let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
-                if self.batched_layer_len % chunk_size == 0 {
-                    // If `batched_layer_len` isn't a power of 2 but evenly divides `chunk_size`,
-                    // that means that for the last values of x2, we have:
-                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
-                    // due to the 0-padding.
-                    //
-                    // This makes the entire inner sum 0 for those values of x2.
-                    // So we can simply sum over E2 for the _other_ values of x2, and
-                    // multiply by `E1_eval_sums`.
-                    (
-                        E2_sum * E1_eval_sums.0,
-                        E2_sum * E1_eval_sums.1,
-                        E2_sum * E1_eval_sums.2,
-                    )
-                } else {
-                    // If `batched_layer_len` isn't a power of 2 and doesn't divide `chunk_size`,
-                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
-                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
-                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
-                    //
-                    // This handles this last chunk:
-                    let last_chunk_evals = E1_evals[..(self.batched_layer_len % chunk_size) / 4]
-                        .par_iter()
-                        .fold(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        )
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        );
-                    (
-                        E2_sum * E1_eval_sums.0
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.0,
-                        E2_sum * E1_eval_sums.1
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.1,
-                        E2_sum * E1_eval_sums.2
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.2,
-                    )
-                }
-            };
+            // Optimized baseline assuming all P == 1 on the active part of this worker's slice.
+            let evals_assuming_all_ones: [F; 3] = eq_poly.E2[..E2_local_bound]
+                .par_iter()
+                .enumerate()
+                .map(|(E2_i, E2_eval)| {
+                    let row_global = eq_poly.row_start + E2_i;
+                    let row_first = row_global * E1_len;
+                    let row_last = row_first + E1_len;
 
-            (
-                additive::add_public(deltas.0, evals_assuming_all_ones.0, party_id),
-                additive::add_public(deltas.1, evals_assuming_all_ones.1, party_id),
-                additive::add_public(deltas.2, evals_assuming_all_ones.2, party_id),
-            )
-        };
+                    // Intersection with this worker’s slice [slice_start, slice_end).
+                    let eq_first = eq_slice_start.max(row_first);
+                    let eq_last = eq_slice_end.min(row_last);
+                    assert!(eq_first < eq_last);
 
-        let cubic_evals = [cubic_evals.0, cubic_evals.1, cubic_evals.2];
+                    // Column offsets inside the row (in Eq points).
+                    let col_from = eq_first - row_first;
+                    let col_to = eq_last - row_first;
 
-        cubic_evals
+                    // Each Dao–Thaler E1 entry spans 2 Eq points; enforce alignment.
+                    debug_assert!(
+                        col_from % 2 == 0 && col_to % 2 == 0,
+                        "misaligned Eq slice within row"
+                    );
+
+                    // Local offset in the dense polynomial (each Eq point → 2 coeffs).
+                    let poly_from = (eq_first - eq_poly.global_start) * 2;
+                    debug_assert!(poly_from < self.batched_layer_len);
+                    let poly_bound = (self.batched_layer_len - poly_from) / 4;
+
+                    // Range of C-indices (pairs) in this row that belong to this worker.
+                    let E1_from = col_from / 2;
+                    let E1_to = (col_to / 2).min(poly_bound);
+                    debug_assert!(E1_from < E1_to);
+
+                    let s0 = prefix_sums[E1_to][0] - prefix_sums[E1_from][0];
+                    let s1 = prefix_sums[E1_to][1] - prefix_sums[E1_from][1];
+                    let s2 = prefix_sums[E1_to][2] - prefix_sums[E1_from][2];
+
+                    [*E2_eval * s0, *E2_eval * s1, *E2_eval * s2]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
+                );
+
+            [
+                additive::add_public(deltas[0], evals_assuming_all_ones[0], party_id),
+                additive::add_public(deltas[1], evals_assuming_all_ones[1], party_id),
+                additive::add_public(deltas[2], evals_assuming_all_ones[2], party_id),
+            ]
+        }
     }
 
     fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>> {

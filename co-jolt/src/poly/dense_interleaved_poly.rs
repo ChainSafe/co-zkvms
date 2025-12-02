@@ -305,14 +305,14 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             //
             // This worker is logically responsible for `worker_len` Eq points starting
             // at `global_start`, but we must not read beyond what `poly` actually has.
-            let slice_end = eq_poly.global_start + core::cmp::min(eq_poly.len, self.len() / 2);
+            let eq_slice_end = eq_poly.global_start + core::cmp::min(eq_poly.len, self.len() / 2);
 
             // Upper bound (exclusive) on E2 indices this worker can actually use:
             //
             //   - A row with global index r covers global Eq indices [r * E1_len, (r+1)*E1_len),
             //   - we only care about rows that intersect [global_start, slice_end),
             //   - convert that intersection into a local row-offset range for this worker.
-            let E2_local_bound = slice_end
+            let E2_local_bound = eq_slice_end
                 .div_ceil(E1_len) // first row index strictly after slice_end
                 .saturating_sub(eq_poly.row_start)
                 .min(eq_poly.E2_len);

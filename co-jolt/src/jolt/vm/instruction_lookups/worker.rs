@@ -714,7 +714,6 @@ where
             .flat_map_iter(|(subtable_index, has_init, memories)| {
                 let subtable = &preprocessing.materialized_subtables[*subtable_index];
                 let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); M * (memories.len() + 1)];
-                let mut leaf_index = 0;
 
                 // Init leaves
                 (0..M).for_each(|i| {
@@ -726,7 +725,7 @@ where
                         v.field_mul(*gamma) + *a - *tau,
                     );
                 });
-                leaf_index = M;
+                let mut leaf_index = M;
 
                 // Final leaves
                 for memory_index in memories {
