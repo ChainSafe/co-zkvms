@@ -10,6 +10,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
+use jolt_core::utils::compute_dotproduct;
 use jolt_core::{
     field::OptimizedMul,
     poly::compact_polynomial::{CompactPolynomial, SmallScalar},
@@ -461,6 +462,61 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::public(MultilinearPolynomial::U8Scalars(
             CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
         ))
+    }
+
+    pub fn batch_evaluate_full(
+        polys: &[&Rep3MultilinearPolynomial<F>],
+        r: &[F],
+    ) -> (Vec<Rep3Value<F>>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+
+        let evals: Vec<_> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                Rep3MultilinearPolynomial::Public {
+                    poly: MultilinearPolynomial::LargeScalars(poly),
+                    ..
+                } => Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&eq)),
+                Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                    MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, &eq),
+                    MultilinearPolynomial::U8Scalars(poly) => poly
+                        .coeffs
+                        .par_iter()
+                        .zip_eq(eq.par_iter())
+                        .map(|(a, b)| a.field_mul(*b))
+                        .sum(),
+                    MultilinearPolynomial::U16Scalars(poly) => poly
+                        .coeffs
+                        .par_iter()
+                        .zip_eq(eq.par_iter())
+                        .map(|(a, b)| a.field_mul(*b))
+                        .sum(),
+                    MultilinearPolynomial::U32Scalars(poly) => poly
+                        .coeffs
+                        .par_iter()
+                        .zip_eq(eq.par_iter())
+                        .map(|(a, b)| a.field_mul(*b))
+                        .sum(),
+                    MultilinearPolynomial::U64Scalars(poly) => poly
+                        .coeffs
+                        .par_iter()
+                        .zip_eq(eq.par_iter())
+                        .map(|(a, b)| a.field_mul(*b))
+                        .sum(),
+                    MultilinearPolynomial::I64Scalars(poly) => poly
+                        .coeffs
+                        .par_iter()
+                        .zip_eq(eq.par_iter())
+                        .map(|(a, b)| a.field_mul(*b))
+                        .sum(),
+                }
+                .into(),
+                Rep3MultilinearPolynomial::Shared(poly) => {
+                    Rep3Value::Additive(poly.evaluate_at_chi_optimized_full(&eq))
+                }
+            })
+            .collect();
+        (evals, eq)
     }
 }
 

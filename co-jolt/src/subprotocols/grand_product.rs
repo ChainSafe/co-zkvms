@@ -64,6 +64,7 @@ where
         let mut claim = output_mle.evaluate(&r_grand_product);
         network.broadcast_request(r_grand_product.clone())?;
 
+        tracing::info!("num layers {}", self.num_layers());
         for layer in self.layers() {
             proof_layers.push(layer.coordinate_prove_layer(
                 &mut claim,
@@ -121,7 +122,6 @@ where
         let mut r = io_ctx.network().receive_request()?;
         let mut eq_chunk_size = self.batch_size_minus_delta();
         for (i, layer) in self.layers().into_iter().enumerate() {
-            tracing::info!("proving layer {}", i);
             layer.prove_layer(&mut r, eq_chunk_size, io_ctx)?;
             eq_chunk_size *= 2;
         }
@@ -203,7 +203,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         );
 
         let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
-        tracing::trace!("r_sumcheck: {:?}", r_sumcheck[0]);
 
         drop_in_background_thread(eq_poly);
 

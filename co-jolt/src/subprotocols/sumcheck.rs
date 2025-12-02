@@ -48,11 +48,10 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
-        let log_num_workers = network.log_num_workers();
         let mut previous_claim = *claim;
 
-        let worker_num_rounds = if log_num_workers > 0 {
-            num_rounds - log_num_workers - 2
+        let worker_num_rounds = if network.is_distributed() {
+            num_rounds - network.log_num_workers() - 2
         } else {
             num_rounds
         };
@@ -64,7 +63,7 @@ where
             network,
         )?;
 
-        let final_claims = if network.log_num_workers() > 0 {
+        let final_claims = if network.is_distributed() {
             self.prove_remaining_rounds(
                 r_grand_product,
                 &mut r,
@@ -108,7 +107,6 @@ where
         let mut eq_poly = SplitEqPolynomial::new_bind(r_grand_product, r);
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
-        tracing::info!("remaining poly len {}", layer.len());
 
         let (proof_, r_, final_claims) =
             layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
@@ -130,7 +128,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         party_id: PartyID,
     ) -> [AdditiveShare<F>; 3];
 
-    fn final_evals(&self, party_id: PartyID) -> Vec<AdditiveShare<F>>;
+    fn final_evals(&self, worker_len: usize, party_id: PartyID) -> Vec<AdditiveShare<F>>;
 
     #[tracing::instrument(
         skip_all,
@@ -165,17 +163,14 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             // poly coeffs are additive shares but evaluation requires multiplication
             // e = poly.evaluate(&r_j);
             // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
-            // previous_claim = additive::promote_to_trivial_share(next_claim, party_id);
         }
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        let final_evals = self.final_evals(party_id);
+        let final_evals = self.final_evals(eq_poly.len(), party_id);
         io_ctx.network().send_response(final_evals)?;
 
         if io_ctx.log_num_workers() > 0 {
-            tracing::trace!("send remaining");
-
             // Coordinator runs remaining sumcheck rounds
             r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
         }
@@ -204,9 +199,7 @@ where
 
     let mut tmp_e = vec![];
     for _round in 0..num_rounds {
-        let mut round_evals = if network.log_num_workers() == 0 {
-            additive::combine_additive_vec(network.receive_responses()?)
-        } else {
+        let mut round_evals = if network.is_distributed() {
             let subnet_responces =
                 network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
             let degree = subnet_responces[0][0].len();
@@ -220,6 +213,8 @@ where
                     });
                     acc
                 })
+        } else {
+            additive::combine_additive_vec(network.receive_responses()?)
         };
         round_evals.insert(1, *claim - round_evals[0]);
 

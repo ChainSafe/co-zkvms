@@ -240,6 +240,19 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .sum()
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3DensePolynomial::evaluate_at_chi",
+        level = "trace"
+    )]
+    pub fn evaluate_at_chi_optimized_full(&self, chis: &[F]) -> AdditiveShare<F> {
+        self.coeffs
+            .par_iter()
+            .zip_eq(chis.par_iter())
+            .map(|(&eval, &chi)| eval.into_additive().mul_public_01_optimized(chi))
+            .sum()
+    }
+
     #[tracing::instrument(skip_all, name = "Rep3DensePolynomial::batch_evaluate")]
     pub fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<AdditiveShare<F>>, Vec<F>) {
         let eq = EqPolynomial::evals(r);

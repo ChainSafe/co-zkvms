@@ -728,7 +728,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
         cubic_evals
     }
 
-    fn final_evals(&self, _: PartyID) -> Vec<AdditiveShare<F>> {
+    fn final_evals(&self, _: usize, _: PartyID) -> Vec<AdditiveShare<F>> {
         // assert_eq!(self.dense_len, 2);
         let dense = self.to_dense();
         dense

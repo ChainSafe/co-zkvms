@@ -119,7 +119,17 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        todo!()
+        let claims = if network.is_distributed() {
+            network
+                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+                .into_iter()
+                .flat_map(additive::combine_additive_vec)
+                .collect()
+        } else {
+            additive::combine_additive_vec(network.receive_responses()?)
+        };
+        Self::coordinate_with_known_claims(&claims, transcript, network)?;
+        Ok(claims)
     }
 
     #[tracing::instrument(skip_all, name = "Rep3ProverOpeningAccumulator::receive_claims")]

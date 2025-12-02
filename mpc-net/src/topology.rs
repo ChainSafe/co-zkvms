@@ -43,6 +43,9 @@ pub trait MpcStarNetCoordinator: Sized {
 
     fn log_num_workers(&self) -> usize;
     fn total_bandwidth_used(&self) -> (u64, u64);
+    fn is_distributed(&self) -> bool {
+        self.log_num_workers() > 0
+    }
 
     /// Print the connection stats of the network
     fn log_connection_stats(&self, label: Option<&str>);
@@ -61,7 +64,9 @@ pub trait MpcStarNetWorker: Sized + Clone {
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
     fn log_num_workers(&self) -> usize;
-    // fn rank(&self) -> usize;
+    fn is_distributed(&self) -> bool {
+        self.log_num_workers() > 0
+    }
 
     fn io_stats_total(&self) -> (u64, u64);
     fn io_stats_per_party(&self) -> BTreeMap<usize, (u64, u64)>;

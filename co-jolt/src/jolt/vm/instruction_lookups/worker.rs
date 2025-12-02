@@ -12,7 +12,6 @@ use crate::{
     utils::{transcript::Transcript, transpose_flatten, transpose_hashmap, types::Rep3Value},
 };
 use color_eyre::eyre::Result;
-use core::num;
 use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
@@ -230,8 +229,6 @@ where
         lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        let log_num_workers = io_ctx.log_num_workers();
-
         let (mut r_primary_sumchecks, eq_evals, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck_inner(
                 preprocessing,
@@ -248,7 +245,7 @@ where
             .map(|eval| eval.into_additive())
             .collect();
 
-        if log_num_workers > 0 {
+        if io_ctx.network().is_distributed() {
             // Coordinator runs remaining sumcheck rounds
             io_ctx.network().send_response((
                 eq_evals,

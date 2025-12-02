@@ -125,17 +125,12 @@ where
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F)> {
         let log_num_workers = network.log_num_workers();
-        // if log_num_workers > 0 {
-        //     network.extend_with_worker_subnets(1 << log_num_workers)?;
-        // }
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         for _ in 0..num_rounds - log_num_workers {
-            let mut round_evals = if log_num_workers == 0 {
-                additive::combine_additive_vec(network.receive_responses()?)
-            } else {
+            let mut round_evals = if network.is_distributed() {
                 let subnet_responces =
                     network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
                 let degree = subnet_responces[0][0].len();
@@ -148,6 +143,8 @@ where
                         });
                         acc
                     })
+            } else {
+                additive::combine_additive_vec(network.receive_responses()?)
             };
 
             // tracing::info!("Round evaluations: {:?}", round_evals);
@@ -167,7 +164,7 @@ where
         }
 
         // Remaining rounds
-        if log_num_workers > 0 {
+        if network.is_distributed() {
             let (remaining_polys, flag_evals, E_evals, outputs_eval) =
                 Self::prove_remaining_primary_sumcheck(
                     preprocessing,
@@ -330,13 +327,12 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
-        log_num_workers: usize,
     ) -> Rep3ToggledBatchedGrandProduct<F> {
         <Rep3ToggledBatchedGrandProduct<F> as Rep3BatchedGrandProduct<
             F,
             PCS,
             ProofTranscript,
             Network,
-        >>::construct(num_lookups.log_2() + 1 - log_num_workers)
+        >>::construct(num_lookups.log_2() + 1)
     }
 }

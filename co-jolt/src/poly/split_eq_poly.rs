@@ -54,13 +54,11 @@ pub struct DistributedSplitEqPolynomial<F> {
 
 impl<F: JoltField> DistributedSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "DistributedSplitEqPolynomial::new", level = "trace")]
-    pub fn new(w: &[F], log_chunks: usize, k: usize, eq_pairs: usize) -> Self {
-        tracing::info!("split eq with {} points", w.len());
-        // Build the *global* SplitEqPolynomial over all variables A|C|B.
+    pub fn new(w: &[F], log_workers: usize, worker: usize, eq_pairs: usize) -> Self {
         let base = SplitEqPolynomial::new(w);
 
-        let n_workers = 1usize << log_chunks;
-        assert!(k < n_workers, "worker index {} out of {}", k, n_workers);
+        let num_workers = 1usize << log_workers;
+        assert!(worker < num_workers);
 
         // E1_len = number of columns = 2^{|C|}.
         // E2_len = number of rows    = 2^{|A|+|B|}.
@@ -70,17 +68,17 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
 
         // The coordinator assigns each worker a *contiguous* 1D slice of the flattened Eq
         // table using [global_start, global_end), measured in Eq points (not rows).
-        let global_start = k * eq_pairs;
+        let global_start = worker * eq_pairs;
         assert!(
             global_start < total_points,
             "worker {} starts past end of eq table (start={}, total={})",
-            k,
+            worker,
             global_start,
             total_points
         );
 
         // All non-last workers get exactly `eq_pairs` points, last worker runs to the end.
-        let global_end = if k + 1 == n_workers {
+        let global_end = if worker + 1 == num_workers {
             total_points
         } else {
             core::cmp::min(global_start + eq_pairs, total_points)
@@ -112,7 +110,7 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
         let len = global_end - global_start;
 
         Self {
-            num_vars: w.len() - log_chunks,
+            num_vars: w.len() - log_workers,
             E1: base.E1,
             E1_len: base.E1_len,
             E2,

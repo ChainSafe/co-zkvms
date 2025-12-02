@@ -1,15 +1,17 @@
+use std::ops::Index;
+
 use color_eyre::eyre::Result;
 use eyre::Context;
 use jolt_core::{
     jolt::vm::JoltStuff,
     lasso::memory_checking::{ExogenousOpenings, Initializable, StructuredPolynomialData},
-    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
+    poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
-use crate::{field::JoltField, jolt::vm::read_write_memory};
+use crate::field::JoltField;
 use crate::{
     poly::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
@@ -113,14 +115,19 @@ where
             Some(pcs_setup),
             io_ctx,
         )?;
+        tracing::info!("read_write_grand_product - done");
+
         let r_init_final = init_final_circuit.prove_grand_product_worker(
             Some(opening_accumulator),
             Some(pcs_setup),
             io_ctx,
         )?;
 
-        let read_write_batch_size = read_write_hashes.len();
-        let init_final_batch_size = init_final_hashes.len();
+        let (read_write_batch_size, init_final_batch_size) = if io_ctx.log_num_workers() > 0 {
+            io_ctx.network().receive_request()?
+        } else {
+            (read_write_hashes.len(), init_final_hashes.len())
+        };
 
         Ok((
             r_read_write,
@@ -138,50 +145,40 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
-        let log_num_workers = io_ctx.log_num_workers();
 
         let read_write_polys: Vec<&_> = polynomials
-            .read_write_values()
+            .read_write_values_grand_product()
             .into_iter()
             .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
             .collect::<Vec<_>>();
 
-        let (read_write_evals, eq_read_write) = Rep3MultilinearPolynomial::batch_evaluate(
-            &read_write_polys,
-            &r_read_write[..r_read_write.len() - log_num_workers],
-        );
+        let (read_write_evals, eq_read_write) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
 
-        io_ctx.network().send_response(
-            read_write_evals
-                .iter()
-                .map(|x| x.into_additive(party_id))
-                .collect::<Vec<_>>(),
-        )?;
-
-        opening_accumulator.append_with_known_claim(
+        opening_accumulator.append(
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
-            io_ctx.main(),
-        )?;
-        println!("worker append read_write_polys opennings");
-
-        let init_final_polys = polynomials.init_final_values();
-        let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate(
-            &init_final_polys,
-            &r_init_final[..r_init_final.len() - log_num_workers],
-        );
-        io_ctx.network().send_response(
-            init_final_evals
+            &read_write_evals
                 .iter()
                 .map(|x| x.into_additive(party_id))
                 .collect::<Vec<_>>(),
+            io_ctx.main(),
         )?;
+        tracing::info!("worker append read_write_polys opennings");
 
-        opening_accumulator.append_with_known_claim(
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+        opening_accumulator.append(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
             r_init_final.to_vec(),
+            &init_final_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
             io_ctx.main(),
         )?;
 

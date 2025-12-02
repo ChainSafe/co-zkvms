@@ -75,13 +75,8 @@ where
         )
         .context("while proving grand products")?;
 
-        let (openings, exogenous_openings) = Self::receive_openings(
-            r_read_write,
-            r_init_final,
-            preprocessing,
-            transcript,
-            network,
-        )?;
+        let (openings, exogenous_openings) =
+            Self::receive_openings(preprocessing, transcript, network)?;
 
         Ok(MemoryCheckingProof {
             multiset_hashes,
@@ -113,8 +108,6 @@ where
 
         println!("gamma: {:?}", gamma);
 
-        let log_num_workers = network.log_num_workers();
-
         let (read_write_hashes, init_final_hashes): (Vec<_>, Vec<_>) = network
             .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()
             .context("while receiving hashes")?
@@ -132,6 +125,9 @@ where
         let read_write_hashes = read_write_hashes.concat();
         let init_final_hashes = init_final_hashes.concat();
 
+        let read_write_batch_size = read_write_hashes.len();
+        let init_final_batch_size = init_final_hashes.len();
+
         let multiset_hashes = Self::uninterleave_hashes(
             preprocessing,
             read_write_hashes.clone(),
@@ -141,18 +137,18 @@ where
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 
-        let read_write_circuit =
-            Self::read_write_grand_product_rep3(preprocessing, num_lookups, log_num_workers);
-        let init_final_circuit =
-            Self::init_final_grand_product_rep3(preprocessing, memory_size, log_num_workers);
-
-        tracing::info!("init_final layers: {:?}", init_final_circuit.num_layers());
+        let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
+        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
 
         let (read_write_grand_product, r_read_write) = read_write_circuit
             .cooridinate_prove_grand_product(read_write_hashes, transcript, network)?;
 
         let (init_final_grand_product, r_init_final) = init_final_circuit
             .cooridinate_prove_grand_product(init_final_hashes, transcript, network)?;
+
+        if network.is_distributed() {
+            network.broadcast_request((read_write_batch_size, init_final_batch_size))?;
+        }
 
         Ok((
             read_write_grand_product,
@@ -165,8 +161,6 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
-        r_read_write: Vec<F>,
-        r_init_final: Vec<F>,
         preprocessing: &Self::Preprocessing,
         transcript: &mut ProofTranscript,
         network: &mut Network,
@@ -174,23 +168,14 @@ where
         let mut exogenous_openings = Self::ExogenousOpenings::default();
         let mut openings = Self::Openings::initialize(preprocessing);
 
-        let log_num_workers = network.log_num_workers();
+        let read_write_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
         let read_write_openings: Vec<_> = openings
-            .read_write_values_mut()
+            .read_write_values_grand_product_mut()
             .into_iter()
             .chain(exogenous_openings.openings_mut())
             .collect();
-
-        let read_write_evals = if log_num_workers == 0 {
-            additive::combine_additive_vec(network.receive_responses()?)
-        } else {
-            network
-                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
-                .into_iter()
-                .flat_map(additive::combine_additive_vec)
-                .collect()
-        };
 
         read_write_openings
             .into_par_iter()
@@ -199,21 +184,8 @@ where
                 *opening = *eval;
             });
 
-        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
-            &read_write_evals,
-            transcript,
-            network,
-        )?;
-
-        let init_final_evals = if log_num_workers == 0 {
-            additive::combine_additive_vec(network.receive_responses()?)
-        } else {
-            network
-                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
-                .into_iter()
-                .flat_map(additive::combine_additive_vec)
-                .collect()
-        };
+        let init_final_evals: Vec<F> =
+            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
 
         openings
             .init_final_values_mut()
@@ -223,29 +195,21 @@ where
                 *opening = *eval;
             });
 
-        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(
-            &init_final_evals,
-            transcript,
-            network,
-        )?;
-
         Ok((openings, exogenous_openings))
     }
 
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
-        log_num_workers: usize,
     ) -> Self::Rep3ReadWriteGrandProduct {
-        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2() - log_num_workers)
+        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2())
     }
 
     fn init_final_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         memory_size: usize,
-        log_num_workers: usize,
     ) -> Self::Rep3InitFinalGrandProduct {
-        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2() - log_num_workers)
+        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2())
     }
 
     fn construct_remaining_layers(
