@@ -135,7 +135,8 @@ where
         Network: Rep3NetworkWorker,
     {
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        let (pf, _) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
+        let (pf, _claim) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
+        tracing::info!("joint_claim: {:?}", _claim);
         network.send_response(pf.proofs)
     }
 
@@ -357,7 +358,8 @@ impl<E: Pairing> PST13Setup<E> {
             h,
         } = self.ck();
         let nv_worker = nv - log_num_workers;
-        let mut chunk_size = 1 << nv;
+        tracing::info!("full ck nv {nv} nv_worker {nv_worker}");
+        let mut chunk_size = 1 << nv_worker;
 
         let mut ck_worker = CommitterKey {
             nv: nv_worker,

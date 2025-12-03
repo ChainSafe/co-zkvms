@@ -73,7 +73,7 @@ where
         let (openings, exogenous_openings) =
             Self::receive_openings(preprocessing, transcript, network)?;
 
-        println!("DONE MEM CHEKC");
+        println!("DONE MEM CHECK");
 
         Ok(MemoryCheckingProof {
             multiset_hashes,

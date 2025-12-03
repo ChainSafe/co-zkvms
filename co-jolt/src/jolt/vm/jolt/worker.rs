@@ -241,7 +241,7 @@ where
         // Batch-prove all openings
         opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
             &preprocessing.shared.generators,
-            self.io_ctx.main(),
+            &mut self.io_ctx,
         )?;
 
         Ok(())
