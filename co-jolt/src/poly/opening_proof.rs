@@ -242,7 +242,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .receive_responses_from_subnets::<AdditiveShare<F>>()?
             .into_iter()
             .map(additive::combine_additive_share)
-            .sum::<F>();
+            // .sum::<F>();
+            .collect::<Vec<F>>()[0]; // TODO: move openings batched_claims into coordinator flow
 
         tracing::info!("combined_claim: {}", combined_claim);
 
@@ -340,6 +341,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        tracing::info!("rho_powers: {:?}", rho_powers);
+
         // TODO: surely there's a better way to do this
         let unbound_polys = self
             .openings
@@ -424,8 +427,10 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         // Compute random linear combination of the claims, accounting for the fact that the
         // polynomials may be of different sizes
         let e: AdditiveShare<F> = coeffs
-            .par_iter()
-            .zip(self.openings.par_iter_mut())
+            // .par_iter()
+            .iter()
+            // .zip(self.openings.par_iter_mut())
+            .zip(self.openings.iter_mut())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.polynomial.get_num_vars() != max_num_vars {
                     rep3::arithmetic::mul_public(
@@ -437,6 +442,12 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                 } else {
                     opening.claim
                 };
+                // let claim_open = rep3::arithmetic::open(scaled_claim, io_ctx.main()).unwrap();
+                // tracing::info!(
+                //     "worker {} opening claim {}",
+                //     io_ctx.worker_idx(),
+                //     claim_open
+                // );
                 scaled_claim.into_additive() * *coeff
             })
             .sum();
@@ -448,7 +459,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
-            let evals = self.compute_quadratic(coeffs, remaining_rounds, io_ctx.party_id());
+            let evals =
+                self.compute_quadratic(coeffs, remaining_rounds, io_ctx.party_id(), io_ctx.main());
             io_ctx.network().send_response(evals.to_vec())?;
 
             // append the prover's message to the transcript
@@ -487,25 +499,30 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         name = "Rep3ProverOpeningAccumulator::compute_quadratic",
         level = "trace"
     )]
-    fn compute_quadratic(
+    fn compute_quadratic<Network: Rep3NetworkWorker>(
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
         party_id: PartyID,
+        io_ctx: &mut IoContext<Network>,
     ) -> [AdditiveShare<F>; 2] {
         let evals: Vec<(AdditiveShare<F>, AdditiveShare<F>)> = self
             .openings
-            .par_iter()
+            // .par_iter()
+            .iter()
             .map(|opening| {
                 if remaining_sumcheck_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
                     let eval_0 = (0..mle_half)
                         .map(|i| {
-                            opening
+                            let e = opening
                                 .polynomial
                                 .get_bound_coeff(i)
                                 .mul_public(opening.eq_poly.get_bound_coeff(i))
-                                .into_additive(party_id)
+                                .into_additive(party_id);
+                            let e_open = additive::open(e.into_fe(), io_ctx).unwrap();
+                            tracing::info!("mle_half_i {} eval_0: {}", i, e_open);
+                            e
                         })
                         .sum();
                     let eval_2 = (0..mle_half)
@@ -515,9 +532,21 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                                 .get_bound_coeff(i + mle_half)
                                 .add(&opening.polynomial.get_bound_coeff(i + mle_half), party_id)
                                 .sub(&opening.polynomial.get_bound_coeff(i), party_id);
+                            let open = additive::open(
+                                poly_bound_point.into_additive(party_id).into_fe(),
+                                io_ctx,
+                            )
+                            .unwrap();
                             let eq_bound_point = opening.eq_poly.get_bound_coeff(i + mle_half)
                                 + opening.eq_poly.get_bound_coeff(i + mle_half)
                                 - opening.eq_poly.get_bound_coeff(i);
+                            tracing::info!(
+                                "mle_half_i {} poly_bound_point: {} eq_bound_point: {}",
+                                i,
+                                open,
+                                eq_bound_point
+                            );
+
                             poly_bound_point
                                 .mul_public(eq_bound_point)
                                 .into_additive(party_id)
@@ -525,6 +554,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
                         .sum();
                     (eval_0, eval_2)
                 } else {
+                    tracing::warn!("Scaling claim!");
                     // debug_assert!(!opening.polynomial.is_bound());
                     let remaining_variables =
                         remaining_sumcheck_rounds - opening.opening_point.len() - 1;

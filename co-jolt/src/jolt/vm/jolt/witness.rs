@@ -213,7 +213,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 .try_into()
                 .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
-        let commitments = worker_commitments_shares
+        let mut commitments = worker_commitments_shares
             .into_iter()
             .map(|mut commitments_shares| {
                 let mut commitments =
@@ -297,12 +297,14 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 acc.instruction_lookups
                     .read_cts
                     .extend(next.instruction_lookups.read_cts);
-                // acc.instruction_lookups
-                //     .final_cts
-                //     .extend(next.instruction_lookups.final_cts);
+                acc.instruction_lookups
+                    .final_cts
+                    .extend(next.instruction_lookups.final_cts);
                 acc
             })
             .unwrap();
+
+        commitments.instruction_lookups.final_cts = vec![];
 
         Ok(commitments)
     }
