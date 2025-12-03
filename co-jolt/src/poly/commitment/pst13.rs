@@ -7,6 +7,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
+use itertools::izip;
 use jolt_core::msm::{use_icicle, Icicle, VariableBaseMSM};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
@@ -17,7 +18,10 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::{
+    additive::{self, AdditiveShare},
+    rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
+};
 use rand::RngCore;
 use std::{borrow::Borrow, marker::PhantomData, ops::Add};
 
@@ -133,6 +137,73 @@ where
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         let (pf, _) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
         network.send_response(pf.proofs)
+    }
+
+    #[tracing::instrument(skip_all, name = "PST13::distributed_prove_rep3", level = "trace")]
+    fn distributed_prove_rep3<Network>(
+        poly: &Rep3DensePolynomial<E::ScalarField>,
+        setup: &Self::Setup,
+        opening_point: &[E::ScalarField],
+        network: &mut Network,
+    ) -> eyre::Result<()>
+    where
+        Network: Rep3NetworkWorker,
+    {
+        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
+        let (pf, claim) = open(
+            &setup.ck_worker(network.worker_idx(), network.log_num_workers()),
+            &poly.copy_share_a(),
+            &opening_point_rev,
+        );
+        network.send_response(pf.proofs)?;
+        network.send_response(claim)
+    }
+
+    #[tracing::instrument(skip_all, name = "PST13::merge_proofs_rep3", level = "trace")]
+    fn merge_proofs_rep3<Network>(
+        setup: &Self::Setup,
+        opening_point: &[E::ScalarField],
+        network: &mut Network,
+    ) -> eyre::Result<Self::Proof>
+    where
+        Network: Rep3NetworkCoordinator,
+    {
+        let worker_proofs = network
+            .receive_responses_from_subnets::<Vec<E::G1Affine>>()?
+            .into_iter()
+            .map(|shares| {
+                let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] = shares.try_into().unwrap();
+                itertools::multizip((pf0, pf1, pf2))
+                    .map(|(a, b, c)| (a + b + c).into_affine())
+                    .collect::<Vec<_>>()
+            })
+            .reduce(|prev, next| {
+                izip!(prev, next)
+                    .map(|(p, n)| (p + n).into_affine())
+                    .collect()
+            })
+            .unwrap();
+        let evals: Vec<_> = network
+            .receive_responses_from_subnets::<AdditiveShare<E::ScalarField>>()?
+            .into_iter()
+            .map(additive::combine_additive_share)
+            .collect();
+
+        let remaining_poly = DensePolynomial::new(evals);
+        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
+
+        let log_num_workers = network.log_num_workers();
+        let (remaining_proof, _) = open(
+            &setup.ck_merge(log_num_workers),
+            &remaining_poly,
+            &opening_point_rev[opening_point_rev.len() - log_num_workers..],
+        );
+
+        let proofs = izip!(worker_proofs, remaining_proof.proofs)
+            .map(|(p, n)| (p + n).into_affine())
+            .collect();
+
+        Ok(Proof { proofs })
     }
 
     #[tracing::instrument(skip_all, name = "PST13::commit_rep3", level = "trace")]
@@ -275,6 +346,68 @@ impl<E: Pairing> Default for PST13Setup<E> {
 impl<E: Pairing> PST13Setup<E> {
     pub fn ck(&self) -> CommitterKey<E> {
         MultilinearPC::trim(&self.uni_params, self.uni_params.num_vars).0
+    }
+
+    pub fn ck_worker(&self, worker: usize, log_num_workers: usize) -> CommitterKey<E> {
+        let CommitterKey {
+            nv,
+            powers_of_g,
+            powers_of_h,
+            g,
+            h,
+        } = self.ck();
+        let nv_worker = nv - log_num_workers;
+        let mut chunk_size = 1 << nv;
+
+        let mut ck_worker = CommitterKey {
+            nv: nv_worker,
+            powers_of_g: vec![],
+            powers_of_h: vec![],
+            g,
+            h,
+        };
+
+        for i in 0..nv {
+            ck_worker
+                .powers_of_g
+                .push(powers_of_g[i][chunk_size * worker..chunk_size * (worker + 1)].to_vec());
+            ck_worker
+                .powers_of_h
+                .push(powers_of_h[i][chunk_size * worker..chunk_size * (worker + 1)].to_vec());
+            chunk_size /= 2;
+        }
+
+        ck_worker
+    }
+
+    pub fn ck_merge(&self, log_num_workers: usize) -> CommitterKey<E> {
+        let CommitterKey {
+            nv,
+            mut powers_of_g,
+            mut powers_of_h,
+            g,
+            h,
+        } = self.ck();
+        let nv_worker = nv - log_num_workers;
+
+        let mut ck_merge = CommitterKey {
+            nv: log_num_workers,
+            powers_of_g: vec![],
+            powers_of_h: vec![],
+            g,
+            h,
+        };
+
+        for i in 0..log_num_workers {
+            ck_merge
+                .powers_of_g
+                .push(std::mem::take(&mut powers_of_g[nv_worker + i]));
+            ck_merge
+                .powers_of_h
+                .push(std::mem::take(&mut powers_of_h[nv_worker + i]));
+        }
+
+        ck_merge
     }
 
     pub fn vk(&self) -> VerifierKey<E> {

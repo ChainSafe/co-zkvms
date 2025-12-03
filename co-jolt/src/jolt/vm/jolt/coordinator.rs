@@ -185,8 +185,11 @@ where
         //     UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
         //         .expect("r1cs proof failed");
 
-        // let opening_proof =
-        //     Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
+        let opening_proof = Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(
+            &preprocessing.generators,
+            &mut transcript,
+            network,
+        )?;
 
         let jolt_proof = JoltProof {
             // bytecode: bytecode_proof,
@@ -194,7 +197,7 @@ where
             // read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
             // r1cs: r1cs_proof,
-            // opening_proof,
+            opening_proof,
             _marker: PhantomData,
         };
 

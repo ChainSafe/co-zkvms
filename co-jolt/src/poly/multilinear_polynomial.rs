@@ -156,6 +156,13 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    pub fn original_len(&self) -> usize {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.original_len(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.coeffs_ref().len(),
+        }
+    }
+
     pub fn get_num_vars(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_num_vars(),
@@ -211,7 +218,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     ) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
-        let max_length = polynomials.iter().map(|poly| poly.len()).max().unwrap();
+        let max_length = polynomials
+            .iter()
+            .map(|poly| poly.original_len())
+            .max()
+            .unwrap();
         let num_chunks = rayon::current_num_threads()
             .next_power_of_two()
             .min(max_length);
@@ -229,7 +240,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 let mut chunk = vec![Rep3Value::Public(F::zero()); chunk_size];
 
                 for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.len();
+                    let poly_len = poly.original_len();
                     if index >= poly_len {
                         continue;
                     }
@@ -292,7 +303,19 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             })
             .collect();
 
+        tracing::info!("lc_coeffs: {:?}", lc_coeffs.len());
+
         if result_is_shared {
+            // tracing::info!(
+            //     "num non shared: {}",
+            //     lc_coeffs
+            //         .par_iter()
+            //         .map(|c| !matches!(c, Rep3Value::Shared(_)) as usize)
+            //         .sum::<usize>()
+            // );
+            assert!(lc_coeffs
+                .par_iter()
+                .all(|c| matches!(c, Rep3Value::Shared(_))));
             Rep3MultilinearPolynomial::from_shared_coeffs(
                 lc_coeffs.into_par_iter().map(|x| x.as_shared()).collect(),
             )

@@ -1,4 +1,7 @@
+use std::os::unix::net;
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::izip;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding,
@@ -83,7 +86,9 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     ) -> eyre::Result<()> {
         assert_eq!(polynomials.len(), claims.len());
         io_ctx.network.send_response(claims.to_vec())?;
-        self.append_with_known_claim(polynomials, eq_poly, opening_point, io_ctx)
+        let (rho, batched_claim): (F, F) = io_ctx.network.receive_request()?;
+        Ok(())
+        // self.append_with_known_claim(polynomials, eq_poly, opening_point, io_ctx)
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
@@ -210,6 +215,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS, ProofTranscript, Network>(
+        pcs_setup: &PCS::Setup,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReducedOpeningProof<F, PCS, ProofTranscript>>
@@ -222,38 +228,84 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         let rho: F = transcript.challenge_scalar();
         network.broadcast_request(rho)?;
 
-        let max_num_vars = network.receive_response(PartyID::ID0, 0)?;
+        let max_num_vars: usize = network
+            .receive_response_from_workers::<usize>(PartyID::ID0)?
+            .into_iter()
+            .max()
+            .unwrap();
+
+        tracing::info!("max_num_vars: {}", max_num_vars);
+
+        let mut combined_claim = network
+            .receive_responses_from_subnets::<AdditiveShare<F>>()?
+            .into_iter()
+            .map(additive::combine_additive_share)
+            .sum::<F>();
+
+        tracing::info!("combined_claim: {}", combined_claim);
+
+        // network.broadcast_request(e)?;
 
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        // let log_num_workers = network.log_num_workers();
+
         for _round in 0..max_num_vars {
-            let uni_poly =
-                UniPoly::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
+            let mut round_evals = if network.is_distributed() {
+                network
+                    .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+                    .into_iter()
+                    .map(|shares| additive::combine_additive_vec(shares))
+                    .fold(vec![F::zero(); 2], |mut acc, coeff| {
+                        acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
+                            *acc += coeff;
+                        });
+                        acc
+                    })
+            } else {
+                additive::combine_additive_vec(network.receive_responses()?)
+            };
+            round_evals.insert(1, combined_claim - round_evals[0]);
+            let uni_poly = UniPoly::from_evals(&round_evals);
             let compressed_poly = uni_poly.compress();
 
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
             r.push(r_j);
-            let new_claim = uni_poly.evaluate(&r_j);
+            combined_claim = uni_poly.evaluate(&r_j);
 
-            network.broadcast_request((r_j, new_claim))?;
+            network.broadcast_request(r_j)?;
 
             compressed_polys.push(compressed_poly);
         }
 
+        // if network.is_distributed() {
+        //     for _round in 0..log_num_workers {
+        //
+        //     }
+        // }
+
         let sumcheck_proof = SumcheckInstanceProof::new(compressed_polys);
 
-        let sumcheck_claims = additive::combine_additive_vec(network.receive_responses()?);
-
+        let sumcheck_claims = if network.is_distributed() {
+            network
+                .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+                .into_iter()
+                .map(|shares| additive::combine_additive_vec(shares))
+                .reduce(|acc, coeff| izip!(acc, coeff).map(|(a, b)| a + b).collect())
+                .unwrap()
+        } else {
+            additive::combine_additive_vec(network.receive_responses()?)
+        };
         transcript.append_scalars(&sumcheck_claims);
 
         let gamma: F = transcript.challenge_scalar();
         network.broadcast_request(gamma)?;
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::coordinate_prove(network)?;
+        let joint_opening_proof = PCS::merge_proofs_rep3(pcs_setup, &r, network)?;
 
         Ok(ReducedOpeningProof {
             sumcheck_proof,
@@ -282,7 +334,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
-        // TODO(moodlezoup): surely there's a better way to do this
+        // TODO: surely there's a better way to do this
         let unbound_polys = self
             .openings
             .iter()
@@ -301,11 +353,21 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
+        tracing::info!(
+            "unbound_polys: {:?}",
+            unbound_polys
+                .iter()
+                .map(|poly| poly.len())
+                .collect::<Vec<_>>()
+        );
+
         let joint_poly = Rep3MultilinearPolynomial::linear_combination(
             &unbound_polys.iter().collect::<Vec<_>>(),
             &gamma_powers,
             io_ctx.id,
         );
+
+        tracing::info!("joint polynomial: {:?}", joint_poly.len());
 
         let joint_poly = match joint_poly {
             Rep3MultilinearPolynomial::Shared(poly) => poly,
@@ -315,7 +377,7 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         };
 
         // Reduced opening proof
-        PCS::prove_rep3(&joint_poly, pcs_setup, &r_sumcheck, &mut io_ctx.network)?;
+        PCS::distributed_prove_rep3(&joint_poly, pcs_setup, &r_sumcheck, &mut io_ctx.network)?;
 
         Ok(())
     }
@@ -327,6 +389,14 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         coeffs: &[F],
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)> {
+        tracing::info!(
+            "openings: {:?}",
+            self.openings
+                .iter()
+                .map(|p| p.polynomial.get_num_vars())
+                .collect::<Vec<_>>()
+        );
+
         let max_num_vars = self
             .openings
             .iter()
@@ -335,12 +405,14 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             .unwrap();
 
         if io_ctx.id == PartyID::ID0 {
+            tracing::info!("max_num_vars: {}", max_num_vars);
+
             io_ctx.network.send_response(max_num_vars)?;
         }
 
         // Compute random linear combination of the claims, accounting for the fact that the
         // polynomials may be of different sizes
-        let mut e: AdditiveShare<F> = coeffs
+        let e: AdditiveShare<F> = coeffs
             .par_iter()
             .zip(self.openings.par_iter_mut())
             .map(|(coeff, opening)| {
@@ -358,17 +430,20 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             })
             .sum();
 
+        io_ctx.network.send_response(e)?;
+        // e = io_ctx.network.receive_request()?;
+
         let mut r: Vec<F> = Vec::new();
 
         for round in 0..max_num_vars {
             let remaining_rounds = max_num_vars - round;
-            let uni_poly = self.compute_quadratic(coeffs, remaining_rounds, e, io_ctx.id);
-            io_ctx.network.send_response(uni_poly.as_vec())?;
+            let evals = self.compute_quadratic(coeffs, remaining_rounds, io_ctx.id);
+            io_ctx.network.send_response(evals.to_vec())?;
 
             // append the prover's message to the transcript
-            let (r_j, new_claim) = io_ctx.network.receive_request()?;
+            let r_j = io_ctx.network.receive_request()?;
             r.push(r_j);
-            e = additive::promote_to_trivial_share(new_claim, io_ctx.id);
+            // e = additive::promote_to_trivial_share(new_claim, io_ctx.id);
 
             self.openings.par_iter_mut().for_each(|opening| {
                 if remaining_rounds <= opening.opening_point.len() {
@@ -405,9 +480,8 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
         &self,
         coeffs: &[F],
         remaining_sumcheck_rounds: usize,
-        previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<F> {
+    ) -> [AdditiveShare<F>; 2] {
         let evals: Vec<(AdditiveShare<F>, AdditiveShare<F>)> = self
             .openings
             .par_iter()
@@ -450,18 +524,11 @@ impl<F: JoltField> Rep3ProverOpeningAccumulator<F> {
             })
             .collect();
 
-        let evals_combined_0: F = (0..evals.len())
-            .map(|i| evals[i].0.into_fe() * coeffs[i])
-            .sum();
-        let evals_combined_2: F = (0..evals.len())
-            .map(|i| evals[i].1.into_fe() * coeffs[i])
-            .sum();
-        let evals = vec![
-            evals_combined_0,
-            previous_round_claim.into_fe() - evals_combined_0,
-            evals_combined_2,
-        ];
+        let evals_combined_0: AdditiveShare<F> =
+            (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
+        let evals_combined_2: AdditiveShare<F> =
+            (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
 
-        UniPoly::from_evals(&evals)
+        [evals_combined_0, evals_combined_2]
     }
 }

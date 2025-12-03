@@ -238,11 +238,11 @@ where
 
         // self.io_ctx.sync_with_parties()?;
 
-        // // Batch-prove all openings
-        // opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
-        //     &preprocessing.shared.generators,
-        //     self.io_ctx.main(),
-        // )?;
+        // Batch-prove all openings
+        opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
+            &preprocessing.shared.generators,
+            self.io_ctx.main(),
+        )?;
 
         Ok(())
     }

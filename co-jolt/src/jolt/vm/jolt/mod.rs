@@ -129,7 +129,7 @@ pub struct JoltProof<
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
-    // pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
+    pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     // pub opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
     _marker: PhantomData<I>,
 }
@@ -199,7 +199,7 @@ where
             (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
             max_memory_size.next_power_of_two(),
-            M,
+            // M,
         ]
         .into_iter()
         .max()
@@ -587,15 +587,15 @@ where
         // .map_err(|e| eyre::eyre!(e))
         // .context("failed to verify r1cs")?;
 
-        // // Batch-verify all openings
-        // opening_accumulator
-        //     .reduce_and_verify(
-        //         &preprocessing.generators,
-        //         &proof.opening_proof,
-        //         &mut transcript,
-        //     )
-        //     .map_err(|e| eyre::eyre!(e))
-        //     .context("failed to verify reduced openings")?;
+        // Batch-verify all openings
+        opening_accumulator
+            .reduce_and_verify(
+                &preprocessing.generators,
+                &proof.opening_proof,
+                &mut transcript,
+            )
+            .map_err(|e| eyre::eyre!(e))
+            .context("failed to verify reduced openings")?;
 
         Ok(())
     }

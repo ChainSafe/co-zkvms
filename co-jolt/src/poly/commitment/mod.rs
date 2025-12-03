@@ -56,6 +56,23 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = Kecca
     where
         Network: Rep3NetworkWorker;
 
+    fn distributed_prove_rep3<Network>(
+        poly: &Rep3DensePolynomial<F>,
+        setup: &Self::Setup,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<()>
+    where
+        Network: Rep3NetworkWorker;
+
+    fn merge_proofs_rep3<Network>(
+        setup: &Self::Setup,
+        opening_point: &[F],
+        network: &mut Network,
+    ) -> eyre::Result<Self::Proof>
+    where
+        Network: Rep3NetworkCoordinator;
+
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<Self::Commitment>],
     ) -> Self::Commitment;
