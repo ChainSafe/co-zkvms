@@ -584,6 +584,7 @@ mod simulation {
     use ark_poly_commit::multilinear_pc::data_structures::Proof;
     use ark_std::test_rng;
     use ark_std::One;
+    use itertools::chain;
     use itertools::Itertools;
     use jolt_core::{
         msm::Icicle,
@@ -610,7 +611,19 @@ mod simulation {
             .unwrap();
 
         type F = ark_bn254::Fr;
-        let NUM_POLYS = 1usize;
+        let NUM_CHUNKED_POLYS = env::var("NUM_CHUNKED_POLYS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse()
+            .unwrap();
+        let W: usize = env::var("NUM_WORKERS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse()
+            .unwrap();
+        let NUM_FULL_POLYS = env::var("NUM_FULL_POLYS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<usize>()
+            .unwrap()
+            * W;
         let P: usize = env::var("P")
             .unwrap_or_else(|_| "8".to_string())
             .parse()
@@ -620,27 +633,42 @@ mod simulation {
         //     .parse()
         //     .unwrap();
 
-        let polys = (0..NUM_POLYS)
-            .map(|_| MultilinearPolynomial::from((0..P).map(|e| F::from(e as u64)).collect_vec()))
+        let polys1 = (0..NUM_CHUNKED_POLYS)
+            .map(|i| {
+                MultilinearPolynomial::from((0..P).map(|e| F::from((e + i) as u64)).collect_vec())
+            })
             .collect_vec();
+
+        let polys2 = (0..NUM_FULL_POLYS)
+            .map(|i| {
+                MultilinearPolynomial::from(
+                    (0..P)
+                        .map(|e| F::from((e + i + NUM_CHUNKED_POLYS) as u64))
+                        .collect_vec(),
+                )
+            })
+            .collect_vec();
+
+        let polys1_ref = polys1.iter().collect_vec();
+        let polys2_ref = polys2.iter().collect_vec();
+
+        let comms = MockCommitScheme::<F, KeccakTranscript>::batch_commit(&polys1_ref, &());
+        let comms2 = MockCommitScheme::<F, KeccakTranscript>::batch_commit(&polys2_ref, &());
+
+        println!("\n/------------ Append ------------/");
+
         println!(
-            "polys: {:?}",
-            polys
+            "polys1: {:?}",
+            polys1
                 .iter()
                 .map(|p| p.coeffs_as_field_elements())
                 .collect_vec()
         );
-        let polys_ref = polys.iter().collect_vec();
-
-        println!("\n/------------ Prover ------------/");
-
-        let comms = MockCommitScheme::<F, KeccakTranscript>::batch_commit(&polys_ref, &());
 
         let mut transcript = KeccakTranscript::new(&[]);
         let mut opening_accum = ProverOpeningAccumulator::<F, KeccakTranscript>::new();
 
         let r_point = transcript.challenge_vector(P.log_2());
-        println!("r_point: {:?}", r_point);
 
         // {
         //     let r_point = r_point.iter().rev().copied().collect_vec();
@@ -655,16 +683,37 @@ mod simulation {
         //             .evaluate(&r_point[r_point.len() - 1..])
         //     );
         // }
-        let (claims, eq_r) = MultilinearPolynomial::batch_evaluate(&polys_ref, &r_point);
-        println!("claims: {:?}", claims);
+        let (claims1, eq_r1) = MultilinearPolynomial::batch_evaluate(&polys1_ref, &r_point);
+        println!("claims1: {:?}", claims1);
         opening_accum.append(
-            &polys_ref,
-            DensePolynomial::new(eq_r),
+            &polys1_ref,
+            DensePolynomial::new(eq_r1),
             r_point.clone(),
-            &claims,
+            &claims1,
             &mut transcript,
         );
 
+        println!("\n/------------ Append 2 ------------/");
+        println!(
+            "polys2: {:?}",
+            polys2
+                .iter()
+                .map(|p| p.coeffs_as_field_elements())
+                .collect_vec()
+        );
+        let r_point2 = transcript.challenge_vector(P.log_2());
+        let (claims2, eq_r2) = MultilinearPolynomial::batch_evaluate(&polys2_ref, &r_point2);
+        println!("claims2: {:?}", claims2);
+
+        opening_accum.append(
+            &polys2_ref,
+            DensePolynomial::new(eq_r2),
+            r_point.clone(),
+            &claims2,
+            &mut transcript,
+        );
+
+        println!("\n/------------ Prover ------------/");
         let proof = opening_accum
             .reduce_and_prove::<MockCommitScheme<F, KeccakTranscript>>(&(), &mut transcript);
 
@@ -682,7 +731,16 @@ mod simulation {
         opening_accum.append(
             &comms.iter().collect_vec(),
             r_point,
-            &claims.iter().collect_vec(),
+            &claims1.iter().collect_vec(),
+            &mut transcript,
+        );
+
+        let r2_point = transcript.challenge_vector(P.log_2());
+
+        opening_accum.append(
+            &comms2.iter().collect_vec(),
+            r2_point,
+            &claims2.iter().collect_vec(),
             &mut transcript,
         );
 
@@ -700,7 +758,14 @@ mod simulation {
 
         type E = ark_bn254::Bn254;
         type F = ark_bn254::Fr;
-        let NUM_POLYS = 1usize;
+        let NUM_CHUNKED_POLYS = env::var("NUM_CHUNKED_POLYS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse()
+            .unwrap();
+        let NUM_FULL_POLYS = env::var("NUM_FULL_POLYS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse()
+            .unwrap();
         let P: usize = env::var("P")
             .unwrap_or_else(|_| "8".to_string())
             .parse()
@@ -713,13 +778,17 @@ mod simulation {
         let W_log2 = W.log_2();
         let P_worker = P / W;
 
-        let worker_polys = (0..W)
+        println!(
+            "W={W}, P={P}, NUM_CHUNKED_POLYS={NUM_CHUNKED_POLYS}, NUM_FULL_POLYS={NUM_FULL_POLYS}"
+        );
+
+        let worker_polys1 = (0..W)
             .map(|w| {
-                (0..NUM_POLYS)
-                    .map(|_| {
+                (0..NUM_CHUNKED_POLYS)
+                    .map(|i| {
                         MultilinearPolynomial::from(
                             (w * P_worker..P_worker * (w + 1))
-                                .map(|e| F::from(e as u64))
+                                .map(|e| F::from((e + i) as u64))
                                 .collect_vec(),
                         )
                     })
@@ -727,33 +796,35 @@ mod simulation {
             })
             .collect_vec();
 
-        println!(
-            "worker_polys: {:?}",
-            worker_polys
-                .iter()
-                .map(|wp| wp
-                    .iter()
-                    .map(|p| p.coeffs_as_field_elements())
-                    .collect_vec())
-                .collect_vec()
-        );
-
-        let worker_polys_ref = worker_polys
-            .iter()
-            .map(|w| w.iter().collect_vec())
-            .collect_vec();
-
-        println!("\n/------------ Prover ------------/");
-
-        let full_polys = (0..NUM_POLYS)
-            .map(|i| {
-                MultilinearPolynomial::from(
-                    (0..W)
-                        .flat_map(|w| worker_polys_ref[w][i].coeffs_as_field_elements())
-                        .collect_vec(),
-                )
+        let worker_polys2 = (0..W)
+            .map(|w| {
+                (0..NUM_FULL_POLYS)
+                    .map(|i| {
+                        MultilinearPolynomial::from(
+                            (0..P)
+                                .map(|e| F::from((NUM_CHUNKED_POLYS + i + e + w) as u64))
+                                .collect_vec(),
+                        )
+                    })
+                    .collect_vec()
             })
             .collect_vec();
+
+        let full_polys = chain![
+            (0..NUM_CHUNKED_POLYS)
+                .map(|i| {
+                    MultilinearPolynomial::from(
+                        (0..W)
+                            .flat_map(|w| worker_polys1[w][i].coeffs_as_field_elements())
+                            .collect_vec(),
+                    )
+                })
+                .collect_vec(),
+            (0..W).flat_map(|w| (0..NUM_FULL_POLYS)
+                .map(|i| worker_polys2[w][i].clone())
+                .collect_vec())
+        ]
+        .collect_vec();
 
         let mut rng = test_rng();
         let setup = PST13::setup(P, &mut rng);
@@ -765,16 +836,31 @@ mod simulation {
             .map(|_| ProverOpeningAccumulator::<F, KeccakTranscript>::new())
             .collect_vec();
 
+        println!("\n/------------ Append 1 ------------/");
+
+        println!(
+            "worker_polys1: {:?}",
+            worker_polys1
+                .iter()
+                .map(|wp| wp
+                    .iter()
+                    .map(|p| p.coeffs_as_field_elements())
+                    .collect_vec())
+                .collect_vec()
+        );
+
         let r_point = transcript.challenge_vector(P_nv);
 
         let rem_evals = (0..W)
             .map(|w| {
-                let (claims, _) =
-                    MultilinearPolynomial::batch_evaluate(&worker_polys_ref[w], &r_point[W_log2..]);
+                let (claims, _) = MultilinearPolynomial::batch_evaluate(
+                    &worker_polys1[w].iter().collect_vec(),
+                    &r_point[W_log2..],
+                );
 
                 claims
             })
-            .fold(vec![vec![]; NUM_POLYS], |mut acc, next| {
+            .fold(vec![vec![]; NUM_CHUNKED_POLYS], |mut acc, next| {
                 izip!(acc.iter_mut(), next).for_each(|(a, b)| {
                     a.push(b);
                 });
@@ -783,23 +869,20 @@ mod simulation {
 
         println!("rem_evals: {:?}", rem_evals);
 
-        let claims = rem_evals
+        let claims1 = rem_evals
             .iter()
             .cloned()
             .map(|evals| MultilinearPolynomial::from(evals).evaluate(&r_point[..W_log2]))
             .collect_vec();
 
-        println!("claims: {:?}", claims);
+        println!("claims: {:?}", claims1);
 
+        let tr_clone = transcript.clone();
         for w in 0..W {
-            let mut tr_clone = transcript.clone();
-            let transcript = if w != 0 {
-                &mut tr_clone
-            } else {
-                &mut transcript
-            };
+            let mut tr_tmp = tr_clone.clone();
+            let transcript = if w != 0 { &mut tr_tmp } else { &mut transcript };
             let chunk = 1usize << (P_nv - W_log2);
-            let worker_polys_padded = worker_polys[w]
+            let worker_polys_padded = worker_polys1[w]
                 .iter()
                 .map(|p| {
                     let mut padded_evals = vec![F::ZERO; P];
@@ -812,10 +895,65 @@ mod simulation {
                 &worker_polys_padded.iter().collect_vec(),
                 DensePolynomial::new(EqPolynomial::evals(&r_point)),
                 r_point.clone(),
-                &claims,
+                &claims1,
                 transcript,
             );
         }
+
+        println!("\n/------------ Append 2 ------------/");
+
+        println!(
+            "worker_polys2: {:?}",
+            worker_polys2
+                .iter()
+                .map(|wp| wp
+                    .iter()
+                    .map(|p| p.coeffs_as_field_elements())
+                    .collect_vec())
+                .collect_vec()
+        );
+
+        let r2_point = transcript.challenge_vector(P_nv);
+
+        let claims2 = (0..W)
+            .flat_map(|w| {
+                (0..NUM_FULL_POLYS)
+                    .map(|i| worker_polys2[w][i].evaluate(&r2_point))
+                    .collect_vec()
+            })
+            .collect_vec();
+
+        println!("claims2: {:?}", claims2);
+
+        {
+            let rho: F = transcript.challenge_scalar();
+            let mut rho_powers = vec![F::one()];
+            for i in 1..NUM_FULL_POLYS * W {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
+
+            let batched_claim: F = rho_powers
+                .iter()
+                .zip(claims2.iter())
+                .map(|(scalar, eval)| *scalar * *eval)
+                .sum();
+
+            for w in 0..W {
+                let batched_poly = MultilinearPolynomial::linear_combination(
+                    &worker_polys2[w].iter().collect_vec(),
+                    &rho_powers[NUM_FULL_POLYS * w..NUM_FULL_POLYS * (w + 1)],
+                );
+                let opening = ProverOpening::new(
+                    batched_poly,
+                    DensePolynomial::new(EqPolynomial::evals(&r2_point)),
+                    r2_point.clone(),
+                    batched_claim,
+                );
+                accums[w].openings.push(opening);
+            }
+        }
+
+        println!("\n/------------ Prover ------------/");
 
         let proof = simulate_distributed_reduce_and_prove(&mut accums, &setup, &mut transcript);
 
@@ -827,9 +965,18 @@ mod simulation {
         let r_point = transcript.challenge_vector(P.log_2());
 
         opening_accum.append(
-            &comms.iter().collect_vec(),
+            &comms[..NUM_CHUNKED_POLYS].iter().collect_vec(),
             r_point,
-            &claims.iter().collect_vec(),
+            &claims1.iter().collect_vec(),
+            &mut transcript,
+        );
+
+        let r_point2 = transcript.challenge_vector(P.log_2());
+
+        opening_accum.append(
+            &comms[NUM_CHUNKED_POLYS..].iter().collect_vec(),
+            r_point2,
+            &claims2.iter().collect_vec(),
             &mut transcript,
         );
 
@@ -975,12 +1122,6 @@ mod simulation {
             })
             .unwrap();
 
-        // #[cfg(test)]
-        // self.openings
-        //     .iter_mut()
-        //     .zip(unbound_polys.into_iter())
-        //     .for_each(|(opening, poly)| opening.polynomial = poly);
-
         ReducedOpeningProof {
             sumcheck_proof,
             sumcheck_claims,
@@ -998,6 +1139,7 @@ mod simulation {
             .par_iter()
             .map(|opening| {
                 println!("--------------");
+                println!("poly: {:?}", opening.polynomial.coeffs_as_field_elements());
                 if remaining_rounds <= opening.opening_point.len() {
                     let mle_half = opening.polynomial.len() / 2;
                     let eval_0: F = (0..mle_half)
