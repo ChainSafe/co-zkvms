@@ -2,7 +2,7 @@ use crate::{
     jolt::vm::instruction_lookups::witness,
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
         Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
@@ -90,7 +90,7 @@ where
     pub fn prove<PCS, ProofTranscript>(
         preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
         polynomials: &mut Rep3JoltPolynomials<F>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         pcs_setup: &PCS::Setup,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<()>
@@ -135,7 +135,7 @@ where
         .collect::<Vec<_>>();
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
-        opening_accumulator.append_with_known_claim(
+        opening_accumulator.append_sharded(
             &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,

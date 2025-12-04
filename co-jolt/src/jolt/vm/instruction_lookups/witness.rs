@@ -76,7 +76,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         )?;
 
         let lookup_outputs =
-            compute_lookup_outputs_rep3(&trace[trace_worker_range.clone()], m_worker, io_ctx)?;
+            compute_lookup_outputs_rep3(&trace[trace_worker_range.clone()], m, m_worker, io_ctx)?;
         let subtable_lookup_indices =
             subtable_lookup_indices_rep3::<C, F, Network, Instructions>(trace, io_ctx, M)?;
 
@@ -274,6 +274,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                     e,
                     m_worker_nv,
                     worker_idx,
+                    m,
                 ));
                 (read_acc, final_acc, e_acc)
             },
@@ -313,7 +314,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let dim = dim
             .into_iter()
             .map(|dim| {
-                Rep3MultilinearPolynomial::shard_from_shared_coeffs(dim, m_worker_nv, worker_idx)
+                Rep3MultilinearPolynomial::shard_from_shared_coeffs(dim, m_worker_nv, worker_idx, m)
             })
             .collect();
 
@@ -734,6 +735,7 @@ fn compute_lookup_outputs_rep3<
     Instructions: Rep3JoltInstructionSet,
 >(
     ops: &[JoltTraceStep<Instructions>],
+    m: usize,
     num_reads: usize,
     io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<Rep3MultilinearPolynomial<F>> {
@@ -767,6 +769,6 @@ fn compute_lookup_outputs_rep3<
 
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
     Ok(Rep3MultilinearPolynomial::Shared(
-        Rep3DensePolynomial::new_shard(outputs, num_reads.log_2(), io_ctx.worker_idx()),
+        Rep3DensePolynomial::new_shard(outputs, num_reads.log_2(), io_ctx.worker_idx(), m),
     ))
 }

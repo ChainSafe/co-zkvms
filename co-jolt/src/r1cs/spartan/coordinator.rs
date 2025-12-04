@@ -11,7 +11,7 @@ use jolt_core::utils::transcript::Transcript;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck;
 use crate::subprotocols::sumcheck_spartan::coordinate_eq_sumcheck_round;
 use jolt_core::r1cs::inputs::ConstraintInput;
@@ -114,10 +114,10 @@ where
         drop(span);
 
         let claimed_witness_evals =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
         let shift_sumcheck_witness_evals =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],

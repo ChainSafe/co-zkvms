@@ -55,8 +55,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
         shard_nv: usize,
         worker_idx: usize,
+        full_len: usize,
     ) -> Self {
-        Self::shared(Rep3DensePolynomial::new_shard(coeffs, shard_nv, worker_idx))
+        Self::shared(Rep3DensePolynomial::new_shard(
+            coeffs, shard_nv, worker_idx, full_len,
+        ))
     }
 
     pub fn as_shared(&self) -> &Rep3DensePolynomial<F> {
@@ -81,9 +84,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::shared(Rep3DensePolynomial::new(coeffs))
     }
 
-    pub fn from_shared_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Self::shared(Rep3DensePolynomial::from_bound_coeffs(bound_coeffs))
-    }
+    // pub fn from_shared_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+    //     Self::shared(Rep3DensePolynomial::from_bound_coeffs(bound_coeffs))
+    // }
 
     pub fn public_zero(num_evals: usize) -> Self {
         Self::public(MultilinearPolynomial::from(vec![F::zero(); num_evals]))
@@ -485,6 +488,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::public(MultilinearPolynomial::U8Scalars(
             CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
         ))
+    }
+
+    pub fn into_masked_shard_mle(&self) -> Self {
+        // TODO: avoid copying
+        match self {
+            Self::Public { poly, .. } => Self::public(poly.into_masked_shard_mle()),
+            Self::Shared(poly) => Self::shared(poly.into_masked_shard_mle()),
+        }
     }
 
     pub fn batch_evaluate_full(

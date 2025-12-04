@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::field::JoltField;
 use crate::lasso::memory_checking::Rep3MemoryCheckingProver;
-use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
@@ -90,7 +90,7 @@ where
     let (sumcheck_proof, _) =
         sumcheck::coordinate_prove_arbitrary::<F, _, Network>(num_rounds, transcript, network)?;
 
-    let sumcheck_openings = Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+    let sumcheck_openings = Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
     Ok(OutputSumcheckProof {
         num_rounds,

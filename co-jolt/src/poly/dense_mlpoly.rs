@@ -7,7 +7,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::{additive::AdditiveShare, rep3};
 use rand::{Rng, SeedableRng};
-use std::ops::Index;
+use std::ops::{Index, Range};
 use std::sync::Arc;
 
 use crate::field::JoltField;
@@ -29,6 +29,7 @@ pub struct Rep3DensePolynomial<F: JoltField> {
     len: usize,
     chunk_range: (usize, usize),
     global_chunk_range: Option<(usize, usize)>,
+    full_len: usize,
 }
 
 impl<F: JoltField> Rep3DensePolynomial<F> {
@@ -38,6 +39,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars,
             len: coeffs.len(),
+            full_len: coeffs.len(),
             chunk_range: (0, coeffs.len()),
             coeffs: Arc::new(coeffs),
             bound_coeffs: vec![],
@@ -50,6 +52,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
         shard_nv: usize,
         worker_idx: usize,
+        full_len: usize,
     ) -> Self {
         let num_vars = coeffs.len().log_2();
         let chunk_size = 1 << shard_nv;
@@ -70,20 +73,22 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             bound_coeffs: vec![],
             binding_scratch_space: None,
             global_chunk_range,
+            full_len,
         }
     }
 
-    pub fn from_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Rep3DensePolynomial {
-            num_vars: bound_coeffs.len().log_2(),
-            len: bound_coeffs.len(),
-            chunk_range: (0, bound_coeffs.len()),
-            bound_coeffs: bound_coeffs.clone(),
-            coeffs: Arc::new(bound_coeffs),
-            binding_scratch_space: None,
-            global_chunk_range: None,
-        }
-    }
+    // pub fn from_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+    //     Rep3DensePolynomial {
+    //         num_vars: bound_coeffs.len().log_2(),
+    //         len: bound_coeffs.len(),
+    //         chunk_range: (0, bound_coeffs.len()),
+    //         bound_coeffs: bound_coeffs.clone(),
+    //         coeffs: Arc::new(bound_coeffs),
+    //         binding_scratch_space: None,
+    //         global_chunk_range: None,
+    //         full_len: 0,
+    //     }
+    // }
 
     pub fn new_padded(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
@@ -95,6 +100,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars,
             len: 1 << num_vars,
+            full_len: 1 << num_vars,
             chunk_range: (0, poly_coeffs.len()),
             coeffs: Arc::new(poly_coeffs),
             bound_coeffs: vec![],
@@ -314,6 +320,20 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.len
     }
 
+    pub fn into_masked_shard_mle(&self) -> Self {
+        let mut masked_evals = vec![Rep3PrimeFieldShare::zero_share(); self.full_len];
+        masked_evals[self.shard_global_range()].copy_from_slice(&self.coeffs_ref());
+        Self::new(masked_evals)
+    }
+
+    pub fn shard_global_range(&self) -> Range<usize> {
+        if let Some((start, end)) = self.global_chunk_range {
+            start..end
+        } else {
+            0..self.len
+        }
+    }
+
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()
     }
@@ -350,6 +370,7 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars: 0,
             len: 1,
+            full_len: 1,
             chunk_range: (0, 1),
             coeffs: Arc::new(vec![Rep3PrimeFieldShare::zero()]),
             bound_coeffs: vec![],

@@ -1,8 +1,9 @@
 use crate::field::JoltField;
 use crate::jolt::vm::instruction_lookups::witness;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker},
     subprotocols::{
         grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
@@ -50,6 +51,7 @@ where
         num_ops: usize,
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         network: &mut Network,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
     ) -> Result<InstructionLookupsProof<C, M, F, PCS, Instructions, Subtables, ProofTranscript>>
     {
@@ -78,7 +80,8 @@ where
         let mut E_evals = vec![F::zero(); preprocessing.num_memories];
         let mut outputs_eval = F::zero();
 
-        Rep3ProverOpeningAccumulator::<F>::coordinate_with_known_claims(
+        opening_accumulator.append_with_claims(
+            num_rounds,
             &primary_sumcheck_claims,
             transcript,
             network,
@@ -338,7 +341,7 @@ where
 
         if !network.is_distributed() {
             let read_write_evals: Vec<F> =
-                Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+                Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
             openings
                 .read_write_values_grand_product_mut()
@@ -397,7 +400,7 @@ where
 
         // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
 
-        Rep3ProverOpeningAccumulator::coordinate_with_known_claims(&claims, transcript, network)?;
+        Rep3OpeningAccumulatorWorker::coordinate_with_known_claims(&claims, transcript, network)?;
 
         Ok((openings, exogenous_openings))
     }

@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
-    poly::opening_proof::Rep3ProverOpeningAccumulator,
+    poly::opening_proof::Rep3OpeningAccumulatorWorker,
     subprotocols::grand_product::Rep3BatchedGrandProduct,
     utils::{math::Math, transcript::Transcript},
 };
@@ -170,7 +170,7 @@ where
         println!("Received RW");
 
         let init_final_evals: Vec<F> =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
         openings
             .init_final_values_mut()
@@ -192,7 +192,7 @@ where
         let mut openings = Self::Openings::initialize(preprocessing);
 
         let read_write_evals: Vec<F> =
-            Rep3ProverOpeningAccumulator::receive_claims(transcript, network)?;
+            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
 
         let read_write_openings: Vec<_> = openings
             .read_write_values_grand_product_mut()

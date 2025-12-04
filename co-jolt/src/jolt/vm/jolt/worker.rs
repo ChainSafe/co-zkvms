@@ -8,7 +8,7 @@ use crate::{
         },
     },
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker},
     r1cs::{
         builder::CombinedUniformBuilder, constraints::R1CSConstraints,
         spartan::worker::Rep3UniformSpartanProver,
@@ -187,7 +187,7 @@ where
 
         self.io_ctx.sync_with_coordinator()?;
 
-        let mut opening_accumulator = Rep3ProverOpeningAccumulator::<F>::new();
+        let mut opening_accumulator = Rep3OpeningAccumulatorWorker::<F>::new();
 
         // let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
         // let _guard = span.enter();

@@ -6,7 +6,7 @@ use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::timestamp_range_check;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
@@ -57,7 +57,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &mut Rep3JoltPolynomials<F>,
         program_io: &Rep3ProgramIO<F>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         Self::prove_memory_checking(
@@ -116,7 +116,7 @@ where
     fn prove_outputs(
         polynomials: &Rep3ReadWriteMemoryPolynomials<F>,
         program_io: &Rep3ProgramIO<F>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let memory_size = polynomials.v_final.len();

@@ -23,7 +23,7 @@ use jolt_core::poly::{
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::mixed_polynomial::MixedPolynomial;
-use crate::poly::opening_proof::Rep3ProverOpeningAccumulator;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::PolyDegree;
 use crate::poly::Rep3MultilinearPolynomial;
@@ -63,7 +63,7 @@ where
         constraint_builder: &CombinedUniformBuilder<C, F, I>,
         key: &UniformSpartanKey<C, I, F>,
         polynomials: &Rep3JoltPolynomials<F>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();

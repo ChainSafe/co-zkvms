@@ -21,7 +21,7 @@ use crate::{field::JoltField, poly::split_eq_poly::DistributedSplitEqPolynomial}
 use crate::{
     poly::{
         dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
-        opening_proof::Rep3ProverOpeningAccumulator,
+        opening_proof::Rep3OpeningAccumulatorWorker,
     },
     subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
 };
@@ -115,7 +115,7 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product_worker(
         &mut self,
-        _opening_accumulator: Option<&mut Rep3ProverOpeningAccumulator<F>>,
+        _opening_accumulator: Option<&mut Rep3OpeningAccumulatorWorker<F>>,
         _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {

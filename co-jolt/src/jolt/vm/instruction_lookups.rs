@@ -663,6 +663,8 @@ where
             .chain([&proof.primary_sumcheck.openings.lookup_outputs_opening])
             .collect::<Vec<_>>();
 
+        let r_primary_sumcheck = transcript.challenge_vector(3);
+
         opening_accumulator.append(
             &primary_sumcheck_commitments,
             r_primary_sumcheck.clone(),

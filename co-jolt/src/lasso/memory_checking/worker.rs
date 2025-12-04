@@ -14,7 +14,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::field::JoltField;
 use crate::{
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
         Rep3MultilinearPolynomial,
     },
     subprotocols::grand_product::Rep3BatchedGrandProductWorker,
@@ -44,7 +44,7 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         tracing::info!("worker: prove_memory_checking - start");
@@ -82,7 +82,7 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
         pcs_setup: &PCS::Setup,
     ) -> Result<(Vec<F>, Vec<F>, (usize, usize))> {
@@ -137,7 +137,7 @@ where
     }
 
     fn compute_openings(
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
         r_read_write: &[F],
