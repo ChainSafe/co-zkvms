@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::field::JoltField;
 use crate::lasso::memory_checking::Rep3MemoryCheckingProver;
-use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
+use crate::poly::opening_proof::{Rep3OpeningAccumulatorCoordinator, Rep3OpeningAccumulatorWorker};
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
@@ -27,6 +27,7 @@ where
         num_ops: usize,
         memory_size: usize,
         preprocessing: &ReadWriteMemoryPreprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReadWriteMemoryProof<F, PCS, ProofTranscript>>;
@@ -46,6 +47,7 @@ where
         num_ops: usize,
         memory_size: usize,
         preprocessing: &ReadWriteMemoryPreprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<ReadWriteMemoryProof<F, PCS, ProofTranscript>> {
@@ -53,11 +55,13 @@ where
             preprocessing,
             num_ops,
             memory_size,
+            opening_accumulator,
             transcript,
             network,
         )?;
 
-        let output_proof = coordinate_prove_outputs(memory_size, transcript, network)?;
+        let output_proof =
+            coordinate_prove_outputs(memory_size, opening_accumulator, transcript, network)?;
 
         network.send_requests(vec![Some(transcript.state()), None, None])?;
 
@@ -75,6 +79,7 @@ where
 
 fn coordinate_prove_outputs<F, PCS, ProofTranscript, Network>(
     memory_size: usize,
+    opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
     transcript: &mut ProofTranscript,
     network: &mut Network,
 ) -> eyre::Result<OutputSumcheckProof<F, PCS, ProofTranscript>>
@@ -90,7 +95,7 @@ where
     let (sumcheck_proof, _) =
         sumcheck::coordinate_prove_arbitrary::<F, _, Network>(num_rounds, transcript, network)?;
 
-    let sumcheck_openings = Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+    let sumcheck_openings = opening_accumulator.append(num_rounds, transcript, network)?;
 
     Ok(OutputSumcheckProof {
         num_rounds,

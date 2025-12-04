@@ -320,6 +320,10 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.len
     }
 
+    pub fn full_len(&self) -> usize {
+        self.full_len
+    }
+
     pub fn into_masked_shard_mle(&self) -> Self {
         let mut masked_evals = vec![Rep3PrimeFieldShare::zero_share(); self.full_len];
         masked_evals[self.shard_global_range()].copy_from_slice(&self.coeffs_ref());

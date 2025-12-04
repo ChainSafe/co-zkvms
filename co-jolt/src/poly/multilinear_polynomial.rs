@@ -166,6 +166,13 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    pub fn full_len(&self) -> usize {
+        match self {
+            Rep3MultilinearPolynomial::Public { poly, .. } => poly.full_len(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly.full_len(),
+        }
+    }
+
     pub fn get_num_vars(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_num_vars(),

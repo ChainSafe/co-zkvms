@@ -155,7 +155,7 @@ where
         let (read_write_evals, eq_read_write) =
             Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
 
-        opening_accumulator.append(
+        opening_accumulator.append_batched(
             &read_write_polys,
             DensePolynomial::new(eq_read_write),
             r_read_write.to_vec(),
@@ -171,7 +171,7 @@ where
         let (init_final_evals, eq_init_final) =
             Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
 
-        opening_accumulator.append(
+        opening_accumulator.append_batched_(
             &polynomials.init_final_values(),
             DensePolynomial::new(eq_init_final),
             r_init_final.to_vec(),

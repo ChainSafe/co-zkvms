@@ -114,33 +114,32 @@ where
     where
         Network: Rep3NetworkCoordinator,
     {
-        return Ok(Proof { proofs: vec![] });
-        // let proofs = if network.is_distributed() {
-        //     network
-        //         .receive_responses_from_subnets::<Vec<E::G1Affine>>()?
-        //         .into_iter()
-        //         .map(|shares| {
-        //             let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] = shares.try_into().unwrap();
-        //             itertools::multizip((pf0, pf1, pf2))
-        //                 .map(|(a, b, c)| (a + b + c).into_affine())
-        //                 .collect::<Vec<_>>()
-        //         })
-        //         .reduce(|prev, next| {
-        //             izip!(prev, next)
-        //                 .map(|(p, n)| (p + n).into_affine())
-        //                 .collect()
-        //         })
-        //         .unwrap()
-        // } else {
-        //     let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
-        //         network.receive_responses()?.try_into().unwrap();
+        let proofs = if network.is_distributed() {
+            network
+                .receive_responses_from_subnets::<Vec<E::G1Affine>>()?
+                .into_iter()
+                .map(|shares| {
+                    let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] = shares.try_into().unwrap();
+                    itertools::multizip((pf0, pf1, pf2))
+                        .map(|(a, b, c)| (a + b + c).into_affine())
+                        .collect::<Vec<_>>()
+                })
+                .reduce(|prev, next| {
+                    izip!(prev, next)
+                        .map(|(p, n)| (p + n).into_affine())
+                        .collect()
+                })
+                .unwrap()
+        } else {
+            let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
+                network.receive_responses()?.try_into().unwrap();
 
-        //     itertools::multizip((pf0, pf1, pf2))
-        //         .map(|(a, b, c)| (a + b + c).into_affine())
-        //         .collect::<Vec<_>>()
-        // };
+            itertools::multizip((pf0, pf1, pf2))
+                .map(|(a, b, c)| (a + b + c).into_affine())
+                .collect::<Vec<_>>()
+        };
 
-        // Ok(Proof { proofs })
+        Ok(Proof { proofs })
     }
 
     #[tracing::instrument(skip_all, name = "PST13::prove_rep3", level = "trace")]
@@ -153,11 +152,10 @@ where
     where
         Network: Rep3NetworkWorker,
     {
-        // let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        // let (pf, _claim) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
-        // tracing::info!("joint_claim: {:?}", _claim);
-        // network.send_response(pf.proofs)
-        Ok(())
+        let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
+        let (pf, _claim) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
+        tracing::info!("joint_claim: {:?}", _claim);
+        network.send_response(pf.proofs)
     }
 
     #[tracing::instrument(skip_all, name = "PST13::distributed_prove_rep3", level = "trace")]

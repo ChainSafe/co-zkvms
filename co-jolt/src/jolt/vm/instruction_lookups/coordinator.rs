@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::jolt::vm::instruction_lookups::witness;
-use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
+use crate::poly::opening_proof::{Rep3CoordinatorOpening, Rep3OpeningAccumulatorCoordinator};
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker},
@@ -110,9 +110,15 @@ where
             _marker: PhantomData,
         };
 
-        let memory_checking =
-            Self::coordinate_memory_checking(preprocessing, num_ops, M, transcript, network)
-                .context("while proving memory checking")?;
+        let memory_checking = Self::coordinate_memory_checking(
+            preprocessing,
+            num_ops,
+            M,
+            opening_accumulator,
+            transcript,
+            network,
+        )
+        .context("while proving memory checking")?;
 
         Ok(InstructionLookupsProof {
             primary_sumcheck,
@@ -332,7 +338,9 @@ where
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
 
     fn receive_read_write_openings(
+        num_ops: usize,
         preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
@@ -341,7 +349,7 @@ where
 
         if !network.is_distributed() {
             let read_write_evals: Vec<F> =
-                Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+                opening_accumulator.append(num_ops.log_2(), transcript, network)?;
 
             openings
                 .read_write_values_grand_product_mut()
@@ -357,7 +365,7 @@ where
         }
 
         let num_workers = 1 << network.log_num_workers();
-        let openings = network
+        let (batch_lens, openings) = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
             .enumerate()
@@ -382,13 +390,13 @@ where
                         *opening = *eval;
                     });
 
-                openings
+                (vec![read_memories.len()], openings)
             })
-            .reduce(|mut acc, next| {
-                acc.E_polys.extend(next.E_polys);
-                acc.read_cts.extend(next.read_cts);
-                // acc.instruction_flags.extend(next.instruction_flags);
-                acc
+            .reduce(|(mut lens_acc, mut openings_acc), (len, opening)| {
+                openings_acc.E_polys.extend(opening.E_polys);
+                openings_acc.read_cts.extend(opening.read_cts);
+                lens_acc.push(len[0]);
+                (lens_acc, openings_acc)
             })
             .unwrap();
 
@@ -400,7 +408,36 @@ where
 
         // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
 
-        Rep3OpeningAccumulatorWorker::coordinate_with_known_claims(&claims, transcript, network)?;
+        let rho: F = transcript.challenge_scalar();
+        let mut rho_powers = vec![F::one()];
+        for i in 1..claims.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        // Compute the random linear combination of the claims
+        let claim: F = rho_powers
+            .iter()
+            .zip(claims.iter())
+            .map(|(scalar, eval)| *scalar * *eval)
+            .sum();
+
+        let mut worker_offset_rho_power = vec![F::one()];
+        let mut offset = batch_lens[0];
+        for len in &batch_lens[1..] {
+            worker_offset_rho_power.push(rho_powers[offset]);
+            offset += len;
+        }
+        network.send_requests_to_workers(
+            worker_offset_rho_power
+                .into_iter()
+                .map(|offset_rho_pow| (rho, offset_rho_pow, claim))
+                .collect(),
+        )?;
+
+        opening_accumulator.append_opening(Rep3CoordinatorOpening {
+            poly_num_vars: num_ops.log_2(),
+            claim,
+        });
 
         Ok((openings, exogenous_openings))
     }

@@ -243,6 +243,28 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()> {
+        self.channels_par()
+            .map(|(gid, channel)| {
+                let id = PartyWorkerID::from_global_worker_id(*gid);
+                let size = data[id.worker_idx()].uncompressed_size();
+                let mut ser_data = Vec::with_capacity(size);
+                data[id.worker_idx()]
+                    .serialize_uncompressed(&mut ser_data)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
+                    .context("while serializing data")?;
+                std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
+                Ok(())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,

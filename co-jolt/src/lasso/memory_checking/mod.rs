@@ -23,7 +23,7 @@ use mpc_core::protocols::{
 };
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use crate::{field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator};
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
     poly::opening_proof::Rep3OpeningAccumulatorWorker,
@@ -55,6 +55,7 @@ where
         preprocessing: &Self::Preprocessing,
         num_lookups: usize,
         memory_size: usize,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<
@@ -70,8 +71,14 @@ where
             )
             .context("while proving grand products")?;
 
-        let (openings, exogenous_openings) =
-            Self::receive_openings(preprocessing, transcript, network)?;
+        let (openings, exogenous_openings) = Self::receive_openings(
+            num_lookups,
+            memory_size,
+            preprocessing,
+            opening_accumulator,
+            transcript,
+            network,
+        )?;
 
         println!("DONE MEM CHECK");
 
@@ -160,17 +167,28 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3MemoryCheckingProver::receive_openings")]
     fn receive_openings(
+        read_write_chunk_size: usize,
+        init_final_chunk_size: usize,
         preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
         println!("Receiving openings");
-        let (mut openings, exogenous_openings) =
-            Self::receive_read_write_openings(preprocessing, transcript, network)?;
+        let (mut openings, exogenous_openings) = Self::receive_read_write_openings(
+            read_write_chunk_size,
+            preprocessing,
+            opening_accumulator,
+            transcript,
+            network,
+        )?;
         println!("Received RW");
 
-        let init_final_evals: Vec<F> =
-            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+        let init_final_evals: Vec<F> = opening_accumulator.append_batched(
+            init_final_chunk_size.log_2(),
+            transcript,
+            network,
+        )?;
 
         openings
             .init_final_values_mut()
@@ -184,7 +202,9 @@ where
     }
 
     fn receive_read_write_openings(
+        chunk_size: usize,
         preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
@@ -192,7 +212,7 @@ where
         let mut openings = Self::Openings::initialize(preprocessing);
 
         let read_write_evals: Vec<F> =
-            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+            opening_accumulator.append_batched(chunk_size.log_2(), transcript, network)?;
 
         let read_write_openings: Vec<_> = openings
             .read_write_values_grand_product_mut()
