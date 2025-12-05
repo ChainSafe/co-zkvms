@@ -2,7 +2,8 @@ use crate::{
     jolt::vm::instruction_lookups::witness,
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
+        commitment::Rep3CommitmentScheme,
+        opening_proof::{Rep3OpeningAccumulatorWorker, Rep3ProverOpening},
         Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
@@ -15,8 +16,11 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
-    jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
-    lasso::memory_checking::NoExogenousOpenings,
+    jolt::{
+        subtable::JoltSubtableSet,
+        vm::{instruction_lookups::InstructionLookupStuff, JoltStuff},
+    },
+    lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData},
     poly::{
         compact_polynomial::SmallScalar,
         dense_mlpoly::DensePolynomial,
@@ -27,7 +31,10 @@ use jolt_core::{
     },
     utils::{math::Math, thread::drop_in_background_thread},
 };
-use mpc_core::protocols::rep3::{network::IoContextPool, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    additive,
+    rep3::{network::IoContextPool, Rep3PrimeFieldShare},
+};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -151,7 +158,7 @@ where
             std::mem::take(&mut polynomials.instruction_lookups.E_polys)
                 .into_iter()
                 .enumerate()
-                .filter_map(|(i, p)| read_memories.contains(&i).then_some(p))
+                .filter_map(|(i, p)| read_memories.contains(&i).then_some(p.as_full_poly()))
                 .collect();
 
         // println!(
@@ -786,5 +793,141 @@ where
                 Subtables::COUNT + preprocessing.num_memories,
             ),
         ))
+    }
+
+    fn compute_openings(
+        preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        polynomials: &Self::Rep3Polynomials,
+        _: &JoltStuff<Rep3MultilinearPolynomial<F>>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<()> {
+        let party_id = io_ctx.party_id();
+
+        let read_write_polys = polynomials.read_write_values_grand_product();
+
+        let (read_write_evals, eq_read_write) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
+
+        {
+            io_ctx.network().send_response(
+                read_write_evals
+                    .iter()
+                    .map(|x| x.into_additive(party_id))
+                    .collect::<Vec<_>>(),
+            )?;
+
+            let (rho, rho_offsets, batched_claim): (F, Vec<usize>, F) =
+                io_ctx.network().receive_request()?;
+
+            let num_memories_worker = polynomials.read_cts.len();
+            let total_num_polys = 4 + preprocessing.num_memories * 2 + InstructionSet::COUNT;
+            let mut rho_powers = vec![F::one()];
+            for i in 1..total_num_polys {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
+
+            if io_ctx.party_idx() == 0 {
+                // tracing::info!(
+                //     "rho_powers: {:?}\n{:?}\n{:?}\n{:?}",
+                //     &rho_powers[..4],
+                //     &rho_powers[rho_offsets[0]..rho_offsets[0] + num_memories_worker],
+                //     &rho_powers[rho_offsets[1]..rho_offsets[1] + num_memories_worker],
+                //     &rho_powers[4 + preprocessing.num_memories * 2..],
+                // );
+            }
+
+            rho_powers = chain![
+                &rho_powers[..4],
+                &rho_powers[rho_offsets[0]..rho_offsets[0] + num_memories_worker],
+                &rho_powers[rho_offsets[1]..rho_offsets[1] + num_memories_worker],
+                &rho_powers[4 + preprocessing.num_memories * 2..],
+            ]
+            .copied()
+            .collect();
+
+            // let read_write_polys = polynomials
+            //     .read_cts
+            //     .iter()
+            //     // .chain(polynomials.read_cts.iter())
+            //     .chain(polynomials.E_polys.iter())
+            //     .collect::<Vec<_>>();
+
+            let masked_polys = read_write_polys
+                .iter()
+                .map(|p| p.into_masked_shard_mle()) // breaks with E_polys
+                .collect::<Vec<_>>();
+
+            tracing::info!(
+                "E_polys len: {:?} num_memories_worker {:?}",
+                polynomials.E_polys.len(),
+                num_memories_worker
+            );
+
+            let batched_poly = Rep3MultilinearPolynomial::linear_combination(
+                // &read_write_polys,
+                &masked_polys
+                    .iter()
+                    .chain(masked_polys.iter())
+                    .collect::<Vec<_>>(),
+                &rho_powers,
+                io_ctx.party_id(),
+            );
+
+            let batched_poly_open = match &batched_poly {
+                Rep3MultilinearPolynomial::Public {
+                    poly,
+                    trivial_share,
+                } => poly.clone(),
+                Rep3MultilinearPolynomial::Shared(rep3_dense_polynomial) => {
+                    MultilinearPolynomial::from(
+                        rep3::arithmetic::open_vec(
+                            rep3_dense_polynomial.coeffs_ref(),
+                            io_ctx.main(),
+                        )
+                        .unwrap(),
+                    )
+                }
+            };
+            if io_ctx.party_idx() == 0 {
+                tracing::info!(
+                    "batched_poly_open len: {:?} nv {}",
+                    batched_poly_open.len(),
+                    batched_poly_open.get_num_vars()
+                );
+
+                io_ctx
+                    .network()
+                    .send_response(batched_poly_open.evaluate(&r_read_write))
+                    .unwrap();
+            }
+            tracing::info!("batched_poly: {:?}", batched_poly.len());
+
+            opening_accumulator.append_opening(
+                batched_poly,
+                DensePolynomial::new(eq_read_write),
+                r_read_write.to_vec(),
+                additive::promote_to_trivial_share(batched_claim, io_ctx.party_id()),
+            );
+        }
+
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+        opening_accumulator.append_batched_(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &init_final_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+            io_ctx.main(),
+        )?;
+
+        Ok(())
     }
 }

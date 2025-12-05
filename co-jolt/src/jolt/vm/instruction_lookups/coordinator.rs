@@ -27,6 +27,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use std::iter::once;
 use std::marker::PhantomData;
@@ -409,10 +410,12 @@ where
         // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
 
         let rho: F = transcript.challenge_scalar();
+        let _span = tracing::trace_span!("rho_powers").entered();
         let mut rho_powers = vec![F::one()];
         for i in 1..claims.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
+        drop(_span);
 
         // Compute the random linear combination of the claims
         let claim: F = rho_powers
@@ -420,19 +423,38 @@ where
             .zip(claims.iter())
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
+        // let claim: F = rho_powers[4..claims.len() - Instructions::COUNT]
+        //     .iter()
+        //     .zip(&claims[4..claims.len() - Instructions::COUNT])
+        //     // .zip(openings.read_cts.iter())
+        //     .map(|(scalar, eval)| *scalar * *eval)
+        //     .sum();
 
-        let mut worker_offset_rho_power = vec![F::one()];
+        // tracing::info!("rho_powers: {:?}", rho_powers);
+
         let mut offset = batch_lens[0];
+        let mut rho_offsets = vec![vec![
+            4,                              // [dim]..
+            4 + preprocessing.num_memories, // [dim][read_cts]..
+        ]];
         for len in &batch_lens[1..] {
-            worker_offset_rho_power.push(rho_powers[offset]);
+            let prev = rho_offsets.last().unwrap();
+            rho_offsets.push(vec![prev[0] + offset, prev[1] + offset]);
             offset += len;
         }
         network.send_requests_to_workers(
-            worker_offset_rho_power
+            rho_offsets
                 .into_iter()
-                .map(|offset_rho_pow| (rho, offset_rho_pow, claim))
+                .map(|offsets| (rho, offsets, claim))
                 .collect(),
         )?;
+
+        let claim_check: F = network
+            .receive_response_from_workers::<F>(PartyID::ID0)
+            .unwrap()
+            .into_iter()
+            .sum();
+        assert_eq!(claim_check, claim);
 
         opening_accumulator.append_opening(Rep3CoordinatorOpening {
             poly_num_vars: num_ops.log_2(),

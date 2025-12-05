@@ -23,7 +23,7 @@ use rayon::prelude::*;
 pub struct Rep3DensePolynomial<F: JoltField> {
     // pub party_id: usize,
     num_vars: usize,
-    coeffs: Arc<Vec<Rep3PrimeFieldShare<F>>>,
+    pub(crate) coeffs: Arc<Vec<Rep3PrimeFieldShare<F>>>,
     bound_coeffs: Vec<Rep3PrimeFieldShare<F>>,
     binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
     len: usize,
@@ -322,6 +322,12 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
 
     pub fn full_len(&self) -> usize {
         self.full_len
+    }
+
+    pub fn as_full_poly(mut self) -> Self {
+        self.chunk_range = (0, self.full_len);
+        self.global_chunk_range = Some((0, self.full_len));
+        self
     }
 
     pub fn into_masked_shard_mle(&self) -> Self {

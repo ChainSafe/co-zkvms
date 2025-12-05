@@ -80,6 +80,22 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
+    pub fn append_opening(
+        &mut self,
+        polynomial: Rep3MultilinearPolynomial<F>,
+        eq_poly: DensePolynomial<F>,
+        opening_point: Vec<F>,
+        claim: AdditiveShare<F>,
+    ) {
+        self.openings.push(Rep3ProverOpening::new(
+            polynomial,
+            eq_poly,
+            opening_point,
+            claim,
+        ));
+    }
+
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append")]
     pub fn append<Network: Rep3NetworkWorker>(
         &mut self,
         polynomials: &[&Rep3MultilinearPolynomial<F>],
@@ -209,8 +225,37 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             rho_powers.push(rho_powers[i - 1] * rho);
         }
 
+        if io_ctx.id == PartyID::ID0 {
+            tracing::info!("rho_powers: {:?}", rho_powers);
+        }
+
         let batched_poly =
             Rep3MultilinearPolynomial::linear_combination(&polynomials, &rho_powers, io_ctx.id);
+
+        let batched_poly_open = match &batched_poly {
+            Rep3MultilinearPolynomial::Public {
+                poly,
+                trivial_share,
+            } => poly.clone(),
+            Rep3MultilinearPolynomial::Shared(rep3_dense_polynomial) => {
+                MultilinearPolynomial::from(
+                    rep3::arithmetic::open_vec(rep3_dense_polynomial.coeffs_ref(), io_ctx).unwrap(),
+                )
+            }
+        };
+        if io_ctx.id == PartyID::ID0 {
+            tracing::info!(
+                "batched_poly_open len: {:?} nv {}",
+                batched_poly_open.len(),
+                batched_poly_open.get_num_vars()
+            );
+
+            io_ctx
+                .network
+                .send_response(batched_poly_open.evaluate(&opening_point))
+                .unwrap();
+        }
+        tracing::info!("batched_poly: {:?}", batched_poly.len());
 
         self.openings.push(Rep3ProverOpening::new(
             batched_poly,
@@ -632,6 +677,13 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
 
         network.broadcast_request((rho, claim))?;
 
+        let claim_check: F = network
+            .receive_response_from_workers::<F>(PartyID::ID0)
+            .unwrap()
+            .into_iter()
+            .sum();
+        assert_eq!(claim_check, claim);
+
         self.openings.push(Rep3CoordinatorOpening {
             poly_num_vars,
             claim,
@@ -730,10 +782,10 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
         //     .into_iter()
         //     .sum();
         // assert_eq!(claim_check, claim);
-        self.openings.push(Rep3CoordinatorOpening {
-            poly_num_vars,
-            claim,
-        });
+        // self.openings.push(Rep3CoordinatorOpening {
+        //     poly_num_vars,
+        //     claim,
+        // });
         Ok(claims)
     }
 

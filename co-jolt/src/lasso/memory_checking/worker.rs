@@ -66,6 +66,7 @@ where
             r_init_final.split_at(init_final_batch_size.next_power_of_two().log_2());
 
         Self::compute_openings(
+            preprocessing,
             opening_accumulator,
             polynomials,
             jolt_polynomials,
@@ -137,6 +138,7 @@ where
     }
 
     fn compute_openings(
+        _: &Self::Preprocessing,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,

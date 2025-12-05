@@ -230,7 +230,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 
         let max_length = polynomials
             .iter()
-            .map(|poly| poly.original_len())
+            .map(|poly| poly.full_len())
             .max()
             .unwrap();
         let num_chunks = rayon::current_num_threads()
@@ -250,7 +250,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 let mut chunk = vec![Rep3Value::Public(F::zero()); chunk_size];
 
                 for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.original_len();
+                    let poly_len = poly.full_len();
                     if index >= poly_len {
                         continue;
                     }
@@ -299,7 +299,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                             }
                         },
                         Rep3MultilinearPolynomial::Shared(poly) => {
-                            let poly_evals = &poly.coeffs_ref()[index..];
+                            let poly_evals = &poly.coeffs[index..];
                             for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
                                 rlc.add_shared_assign(
                                     rep3::arithmetic::mul_public(*poly_eval, *coeff),
@@ -495,6 +495,13 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::public(MultilinearPolynomial::U8Scalars(
             CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
         ))
+    }
+
+    pub fn as_full_poly(self) -> Self {
+        match self {
+            Self::Public { .. } => unreachable!(),
+            Self::Shared(poly) => Self::shared(poly.as_full_poly()),
+        }
     }
 
     pub fn into_masked_shard_mle(&self) -> Self {
