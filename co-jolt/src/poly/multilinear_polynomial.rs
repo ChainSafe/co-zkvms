@@ -5,7 +5,7 @@ use crate::utils::types::Rep3Value;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -18,7 +18,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 use snarks_core::math::Math;
 
 // pub type MultilinearPolynomial<F> = DensePolynomial<F>;
@@ -205,11 +205,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
                 MultilinearPolynomial::LargeScalars(_) => (0, poly.full_len()),
-                MultilinearPolynomial::U8Scalars(p) => p.chunk_range,
-                MultilinearPolynomial::U16Scalars(p) => p.chunk_range,
-                MultilinearPolynomial::U32Scalars(p) => p.chunk_range,
-                MultilinearPolynomial::U64Scalars(p) => p.chunk_range,
-                MultilinearPolynomial::I64Scalars(p) => p.chunk_range,
+                MultilinearPolynomial::U8Scalars(p) => p.chunk_range(),
+                MultilinearPolynomial::U16Scalars(p) => p.chunk_range(),
+                MultilinearPolynomial::U32Scalars(p) => p.chunk_range(),
+                MultilinearPolynomial::U64Scalars(p) => p.chunk_range(),
+                MultilinearPolynomial::I64Scalars(p) => p.chunk_range(),
             },
             Rep3MultilinearPolynomial::Shared(poly) => {
                 poly.global_chunk_range.unwrap_or((0, poly.full_len()))
@@ -263,17 +263,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .iter()
             .any(|poly| matches!(poly, Rep3MultilinearPolynomial::Shared(_)));
 
-        println!("num_chunks {} chunk_size {}", num_chunks, chunk_size);
-
         let lc_coeffs: Vec<Rep3Value<F>> = (0..num_chunks)
             .into_par_iter()
             .flat_map_iter(|chunk_index| {
                 let global_index = chunk_index * chunk_size;
-                let mut chunk = if result_is_shared {
-                    vec![Rep3Value::Shared(Rep3PrimeFieldShare::zero_share()); chunk_size]
-                } else {
-                    vec![Rep3Value::Public(F::zero()); chunk_size]
-                };
+                let mut chunk = vec![Rep3Value::Public(F::zero()); chunk_size];
 
                 for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
                     let poly_len = poly.full_len();
@@ -289,15 +283,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                     let overlap_start = global_index.max(shard_start);
                     let overlap_end = chunk_end.min(shard_end);
 
-                    // Skip if there's no overlap
                     if overlap_start >= overlap_end {
                         continue;
                     }
 
                     // Calculate offsets
                     let chunk_offset = overlap_start - global_index;
-                    let poly_local_offset = overlap_start - shard_start;
-                    let overlap_len = overlap_end - overlap_start;
+                    let local_index = overlap_start - shard_start;
+                    // let overlap_len = overlap_end - overlap_start;
 
                     match poly {
                         Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
@@ -312,81 +305,28 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                                 }
                             }
                             MultilinearPolynomial::U8Scalars(poly) => {
-                                let poly_evals = &poly.coeffs
-                                    [poly_local_offset..poly_local_offset + overlap_len];
-                                for (rlc, poly_eval) in chunk
-                                    [chunk_offset..chunk_offset + overlap_len]
-                                    .iter_mut()
-                                    .zip(poly_evals.iter())
+                                for (rlc, poly_eval) in
+                                    chunk[chunk_offset..] // ..chunk_offset + overlap_len
+                                        .iter_mut()
+                                        .zip(&poly.coeffs_ref()[local_index..])
                                 {
                                     rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
                                 }
                             }
                             MultilinearPolynomial::U16Scalars(poly) => {
-                                let poly_evals = &poly.coeffs
-                                    [poly_local_offset..poly_local_offset + overlap_len];
-                                for (rlc, poly_eval) in chunk
-                                    [chunk_offset..chunk_offset + overlap_len]
+                                for (rlc, poly_eval) in chunk[chunk_offset..]
                                     .iter_mut()
-                                    .zip(poly_evals.iter())
+                                    .zip(&poly.coeffs_ref()[local_index..])
                                 {
                                     rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
                                 }
                             }
-                            MultilinearPolynomial::U32Scalars(poly) => {
-                                let poly_evals = &poly.coeffs
-                                    [poly_local_offset..poly_local_offset + overlap_len];
-                                for (rlc, poly_eval) in chunk
-                                    [chunk_offset..chunk_offset + overlap_len]
-                                    .iter_mut()
-                                    .zip(poly_evals.iter())
-                                {
-                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
-                                }
-                            }
-                            MultilinearPolynomial::U64Scalars(poly) => {
-                                let poly_evals = &poly.coeffs
-                                    [poly_local_offset..poly_local_offset + overlap_len];
-                                for (rlc, poly_eval) in chunk
-                                    [chunk_offset..chunk_offset + overlap_len]
-                                    .iter_mut()
-                                    .zip(poly_evals.iter())
-                                {
-                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
-                                }
-                            }
-                            MultilinearPolynomial::I64Scalars(poly) => {
-                                let poly_evals = &poly.coeffs
-                                    [poly_local_offset..poly_local_offset + overlap_len];
-                                for (rlc, poly_eval) in chunk
-                                    [chunk_offset..chunk_offset + overlap_len]
-                                    .iter_mut()
-                                    .zip(poly_evals.iter())
-                                {
-                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
-                                }
-                            }
+                            _ => unreachable!(),
                         },
                         Rep3MultilinearPolynomial::Shared(poly) => {
-                            // println!(
-                            //     "coeffs[{}..{}] poly_local_offset {} overlap_len {}",
-                            //     poly_local_offset,
-                            //     poly_local_offset + overlap_len,
-                            //     poly_local_offset,
-                            //     overlap_len
-                            // );
-                            // println!(
-                            //     "chunk[{}..{}] chunk_offset {} overlap_len {}",
-                            //     chunk_offset,
-                            //     chunk_offset + overlap_len,
-                            //     chunk_offset,
-                            //     overlap_len
-                            // );
-                            let poly_evals =
-                                &poly.coeffs[poly_local_offset..poly_local_offset + overlap_len];
-                            for (rlc, poly_eval) in chunk[chunk_offset..chunk_offset + overlap_len]
+                            for (rlc, poly_eval) in chunk[chunk_offset..]
                                 .iter_mut()
-                                .zip(poly_evals.iter())
+                                .zip(&poly.coeffs_ref()[local_index..])
                             {
                                 rlc.add_shared_assign(
                                     rep3::arithmetic::mul_public(*poly_eval, *coeff),
@@ -400,21 +340,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             })
             .collect();
 
-        tracing::info!("lc_coeffs: {:?}", lc_coeffs.len());
-
         if result_is_shared {
-            // tracing::info!(
-            //     "num non shared: {}",
-            //     lc_coeffs
-            //         .par_iter()
-            //         .map(|c| !matches!(c, Rep3Value::Shared(_)) as usize)
-            //         .sum::<usize>()
-            // );
-            assert!(lc_coeffs
-                .par_iter()
-                .all(|c| matches!(c, Rep3Value::Shared(_))));
             Rep3MultilinearPolynomial::from_shared_coeffs(
-                lc_coeffs.into_par_iter().map(|x| x.as_shared()).collect(),
+                lc_coeffs
+                    .into_par_iter()
+                    .map(|x| x.into_shared_rep3(party_id))
+                    .collect(),
             )
         } else {
             Rep3MultilinearPolynomial::public(MultilinearPolynomial::from(
@@ -424,68 +355,6 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                     .collect::<Vec<F>>(),
             ))
         }
-    }
-
-    pub fn poly_shard_for_worker(
-        &self,
-        shard_nv: usize,
-        worker_idx: usize,
-    ) -> Rep3MultilinearPolynomial<F> {
-        match self {
-            Rep3MultilinearPolynomial::Shared(poly) => {
-                Rep3DensePolynomial::poly_shard_for_worker(poly, shard_nv, worker_idx)
-            }
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
-                let log_workers = poly.get_num_vars() - shard_nv;
-                Rep3MultilinearPolynomial::public(std::mem::take(
-                    &mut split_public_poly(poly.clone(), 2)[worker_idx], // TODO: avoid cloning
-                ))
-            }
-        }
-    }
-
-    // pub fn poly_shard_for_worker_vec(
-    //     polys: &[Rep3MultilinearPolynomial<F>],
-    //     shard_nv: usize,
-    //     worker_idx: usize,
-    // ) -> Vec<Rep3MultilinearPolynomial<F>> {
-    //     polys
-    //         .iter()
-    //         .map(|poly| poly.poly_shard_for_worker(shard_nv, worker_idx))
-    //         .collect()
-    // }
-
-    pub fn split_poly(
-        poly: Rep3MultilinearPolynomial<F>,
-        log_workers: usize,
-    ) -> Vec<Rep3MultilinearPolynomial<F>> {
-        if log_workers == 0 {
-            return vec![poly];
-        }
-
-        match poly {
-            Rep3MultilinearPolynomial::Shared(poly) => {
-                Rep3DensePolynomial::split_poly(poly, log_workers)
-            }
-            Rep3MultilinearPolynomial::Public { poly, .. } => split_public_poly(poly, log_workers)
-                .into_iter()
-                .map(|poly| Rep3MultilinearPolynomial::public(poly))
-                .collect(),
-        }
-    }
-
-    pub fn split_poly_vec(
-        polys: Vec<Rep3MultilinearPolynomial<F>>,
-        log_workers: usize,
-    ) -> Vec<Vec<Rep3MultilinearPolynomial<F>>> {
-        let mut chunks = vec![vec![]; 1 << log_workers];
-        for poly in polys {
-            let poly_chunks = Self::split_poly(poly, log_workers);
-            for (chunk, poly_chunk) in chunks.iter_mut().zip(poly_chunks) {
-                chunk.push(poly_chunk);
-            }
-        }
-        chunks
     }
 
     #[inline]
@@ -591,14 +460,6 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn into_masked_shard_mle(&self) -> Self {
-        // TODO: avoid copying
-        match self {
-            Self::Public { poly, .. } => Self::public(poly.into_masked_shard_mle()),
-            Self::Shared(poly) => Self::shared(poly.into_masked_shard_mle()),
-        }
-    }
-
     pub fn batch_evaluate_full(
         polys: &[&Rep3MultilinearPolynomial<F>],
         r: &[F],
@@ -653,125 +514,6 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .collect();
         (evals, eq)
     }
-}
-
-#[test]
-fn test_rls() {
-    type F = ark_bn254::Fr;
-
-    const N: usize = 1 << 14;
-    const N_W: usize = N / 2;
-
-    // let worker1_polys = vec![Rep3MultilinearPolynomial::<F>::shard_from_public_bytes(
-    //     vec![1; 1024],
-    //     9,
-    //     0,
-    // )];
-    // let worker2_polys = vec![Rep3MultilinearPolynomial::<F>::shard_from_public_bytes(
-    //     vec![1; 1024],
-    //     9,
-    //     1,
-    // )];
-
-    let worker1_polys = vec![
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(vec![F::from(1); N], PartyID::ID0),
-            N.log_2() - 1,
-            0,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(vec![F::from(2); N], PartyID::ID0),
-            N.log_2() - 1,
-            0,
-            N,
-        ),
-    ];
-
-    let worker2_polys = vec![
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(vec![F::from(1); N], PartyID::ID0),
-            N.log_2() - 1,
-            1,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(vec![F::from(2); N], PartyID::ID0),
-            N.log_2() - 1,
-            1,
-            N,
-        ),
-    ];
-
-    let rls1 = Rep3MultilinearPolynomial::<F>::linear_combination(
-        &worker1_polys.iter().collect_vec(),
-        &vec![F::from(2), F::from(3)],
-        PartyID::ID0,
-    )
-    .as_shared()
-    .coeffs
-    .iter()
-    .map(|coeff| coeff.a)
-    .collect_vec();
-    let rls2 = Rep3MultilinearPolynomial::<F>::linear_combination(
-        &worker2_polys.iter().collect_vec(),
-        &vec![F::from(2), F::from(3)],
-        PartyID::ID0,
-    )
-    .as_shared()
-    .coeffs
-    .iter()
-    .map(|coeff| coeff.a)
-    .collect_vec();
-
-    assert_eq!(
-        rls1,
-        [vec![F::from(8); N_W], vec![F::from(0); N_W]].concat()
-    );
-    assert_eq!(
-        rls2,
-        [vec![F::from(0); N_W], vec![F::from(8); N_W]].concat()
-    );
-    // println!("{:?}", rls2);
-}
-
-pub fn split_public_poly<F: JoltField>(
-    mut poly: MultilinearPolynomial<F>,
-    log_workers: usize,
-) -> Vec<MultilinearPolynomial<F>> {
-    if log_workers == 0 {
-        return vec![poly];
-    }
-
-    let nv = poly.get_num_vars() - log_workers;
-    let chunk_size = 1 << nv;
-
-    let mut res = Vec::new();
-
-    for _ in 0..1 << log_workers {
-        match &mut poly {
-            MultilinearPolynomial::LargeScalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.Z.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-            MultilinearPolynomial::U8Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-            MultilinearPolynomial::U16Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-            MultilinearPolynomial::U32Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-            MultilinearPolynomial::U64Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-            MultilinearPolynomial::I64Scalars(poly) => res.push(MultilinearPolynomial::from(
-                poly.coeffs.drain(..chunk_size).collect::<Vec<_>>(),
-            )),
-        }
-    }
-
-    res
 }
 
 impl<F: JoltField> PolynomialBinding<F, Rep3Value<F>> for Rep3MultilinearPolynomial<F> {
@@ -1224,4 +966,145 @@ impl<F: JoltField> Valid for Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(poly) => poly.check(),
         }
     }
+}
+
+#[test]
+fn test_rls() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(8)
+        .build_global()
+        .expect("set global Rayon pool");
+    let env_filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy();
+    let subscriber = tracing_subscriber::layer::SubscriberExt::with(
+        tracing_subscriber::Registry::default(),
+        env_filter,
+    );
+    let _ =
+        tracing::subscriber::set_global_default(tracing_subscriber::layer::SubscriberExt::with(
+            subscriber,
+            tracing_forest::ForestLayer::default(),
+        ));
+    type F = ark_bn254::Fr;
+
+    const N: usize = 1 << 10;
+
+    let worker1_polys = vec![
+        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
+            rep3::arithmetic::promote_to_trivial_shares(
+                (0u64..N as u64).map(F::from).collect(),
+                // vec![F::from(1); N],
+                PartyID::ID0,
+            ),
+            N.log_2() - 1,
+            0,
+            N,
+        ),
+        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
+            rep3::arithmetic::promote_to_trivial_shares(
+                (1u64..N as u64 + 1).map(F::from).collect(),
+                // vec![F::from(2); N],
+                PartyID::ID0,
+            ),
+            N.log_2() - 1,
+            0,
+            N,
+        ),
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (2u64..N as u64 + 2).map(F::from).collect(),
+            // vec![F::from(2); N],
+            PartyID::ID0,
+        )),
+    ];
+
+    let worker2_polys = vec![
+        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
+            rep3::arithmetic::promote_to_trivial_shares(
+                (0u64..N as u64).map(F::from).collect(),
+                // vec![F::from(1); N],
+                PartyID::ID0,
+            ),
+            N.log_2() - 1,
+            1,
+            N,
+        ),
+        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
+            rep3::arithmetic::promote_to_trivial_shares(
+                (1u64..N as u64 + 1).map(F::from).collect(),
+                // vec![F::from(2); N],
+                PartyID::ID0,
+            ),
+            N.log_2() - 1,
+            1,
+            N,
+        ),
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (3u64..N as u64 + 3).map(F::from).collect(),
+            // vec![F::from(2); N],
+            PartyID::ID0,
+        )),
+    ];
+    tracing::info!("-------------worker 1-------------");
+    let rls1 = Rep3MultilinearPolynomial::<F>::linear_combination(
+        &worker1_polys.iter().collect_vec(),
+        &vec![F::from(2), F::from(3), F::from(4)],
+        PartyID::ID0,
+    )
+    .as_shared()
+    .coeffs
+    .iter()
+    .map(|coeff| coeff.a)
+    .collect_vec();
+    tracing::info!("-------------worker 2-------------");
+    let rls2 = Rep3MultilinearPolynomial::<F>::linear_combination(
+        &worker2_polys.iter().collect_vec(),
+        &vec![F::from(2), F::from(3), F::from(5)],
+        PartyID::ID0,
+    )
+    .as_shared()
+    .coeffs
+    .iter()
+    .map(|coeff| coeff.a)
+    .collect_vec();
+    tracing::info!("----------------------------");
+
+    let polys = vec![
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (0u64..N as u64).map(F::from).collect(),
+            // vec![F::from(1); N],
+            PartyID::ID0,
+        )),
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (1u64..N as u64 + 1).map(F::from).collect(),
+            // vec![F::from(2); N],
+            PartyID::ID0,
+        )),
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (2u64..N as u64 + 2).map(F::from).collect(),
+            // vec![F::from(2); N],
+            PartyID::ID0,
+        )),
+        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+            (3u64..N as u64 + 3).map(F::from).collect(),
+            // vec![F::from(2); N],
+            PartyID::ID0,
+        )),
+    ];
+
+    let rls = Rep3MultilinearPolynomial::<F>::linear_combination(
+        &polys.iter().collect_vec(),
+        &vec![F::from(2), F::from(3), F::from(4), F::from(5)],
+        PartyID::ID0,
+    )
+    .as_shared()
+    .coeffs
+    .iter()
+    .map(|coeff| coeff.a)
+    .collect_vec();
+
+    let rls_check = izip!(rls1, rls2).map(|(a, b)| a + b).collect_vec();
+
+    assert_eq!(rls_check, rls);
+    // println!("{:?}", rls2);
 }

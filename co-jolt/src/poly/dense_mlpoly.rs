@@ -28,7 +28,7 @@ pub struct Rep3DensePolynomial<F: JoltField> {
     binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
     len: usize,
     chunk_range: (usize, usize),
-    pub(crate) global_chunk_range: Option<(usize, usize)>,
+    pub(super) global_chunk_range: Option<(usize, usize)>,
     full_len: usize,
 }
 
@@ -76,19 +76,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             full_len,
         }
     }
-
-    // pub fn from_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-    //     Rep3DensePolynomial {
-    //         num_vars: bound_coeffs.len().log_2(),
-    //         len: bound_coeffs.len(),
-    //         chunk_range: (0, bound_coeffs.len()),
-    //         bound_coeffs: bound_coeffs.clone(),
-    //         coeffs: Arc::new(bound_coeffs),
-    //         binding_scratch_space: None,
-    //         global_chunk_range: None,
-    //         full_len: 0,
-    //     }
-    // }
 
     pub fn new_padded(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
@@ -328,12 +315,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.chunk_range = (0, self.full_len);
         self.global_chunk_range = Some((0, self.full_len));
         self
-    }
-
-    pub fn into_masked_shard_mle(&self) -> Self {
-        let mut masked_evals = vec![Rep3PrimeFieldShare::zero_share(); self.full_len];
-        masked_evals[self.shard_global_range()].copy_from_slice(&self.coeffs_ref());
-        Self::new(masked_evals)
     }
 
     pub fn shard_global_range(&self) -> Range<usize> {

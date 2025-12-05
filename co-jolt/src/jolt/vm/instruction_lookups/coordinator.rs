@@ -338,8 +338,9 @@ where
     type Rep3ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type Rep3InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
 
-    fn receive_read_write_openings(
+    fn receive_openings(
         num_ops: usize,
+        memory_size: usize,
         preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
@@ -360,13 +361,24 @@ where
                     *opening = *eval;
                 });
 
-            // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
+            let init_final_evals: Vec<F> =
+                opening_accumulator.append(memory_size.log_2(), transcript, network)?;
+
+            openings
+                .init_final_values_mut()
+                .into_par_iter()
+                .zip(init_final_evals.par_iter())
+                .for_each(|(opening, eval)| {
+                    *opening = *eval;
+                });
 
             return Ok((openings, exogenous_openings));
         }
 
+        //------------ read-write ------------//
+
         let num_workers = 1 << network.log_num_workers();
-        let (batch_lens, openings) = network
+        let (batch_lens, mut openings) = network
             .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
             .into_iter()
             .enumerate()
@@ -401,65 +413,63 @@ where
             })
             .unwrap();
 
-        let claims = openings
-            .read_write_values_grand_product()
-            .into_iter()
-            .copied()
-            .collect::<Vec<_>>();
-
-        // tracing::info!("instruction_flags claims: {:?}", openings.instruction_flags);
-
-        let rho: F = transcript.challenge_scalar();
-        let _span = tracing::trace_span!("rho_powers").entered();
-        let mut rho_powers = vec![F::one()];
-        for i in 1..claims.len() {
-            rho_powers.push(rho_powers[i - 1] * rho);
-        }
-        drop(_span);
-
-        // Compute the random linear combination of the claims
-        // let claim: F = rho_powers
-        //     .iter()
-        //     .zip(claims.iter())
-        //     .map(|(scalar, eval)| *scalar * *eval)
-        //     .sum();
-        let claim: F = rho_powers[..4 /*claims.len() - Instructions::COUNT*/]
-            .iter()
-            .zip(&claims[..4 /*claims.len() - Instructions::COUNT*/])
-            // .zip(openings.read_cts.iter())
-            .map(|(scalar, eval)| *scalar * *eval)
-            .sum();
-
-        // tracing::info!("rho_powers: {:?}", rho_powers);
-
-        let mut offset = batch_lens[0];
-        let mut rho_offsets = vec![vec![
-            4,                              // [dim]..
-            4 + preprocessing.num_memories, // [dim][read_cts]..
-        ]];
-        for len in &batch_lens[1..] {
-            let prev = rho_offsets.last().unwrap();
-            rho_offsets.push(vec![prev[0] + offset, prev[1] + offset]);
-            offset += len;
-        }
-        network.send_requests_to_workers(
-            rho_offsets
+        {
+            let claims = openings
+                .read_write_values_grand_product()
                 .into_iter()
-                .map(|offsets| (rho, offsets, claim))
-                .collect(),
-        )?;
+                .copied()
+                .collect::<Vec<_>>();
 
-        let claim_check: F = network
-            .receive_response_from_workers::<F>(PartyID::ID0)
-            .unwrap()
-            .into_iter()
-            .sum();
-        assert_eq!(claim_check, claim);
+            let rho: F = transcript.challenge_scalar();
+            let _span = tracing::trace_span!("rho_powers").entered();
+            let mut rho_powers = vec![F::one()];
+            for i in 1..claims.len() {
+                rho_powers.push(rho_powers[i - 1] * rho);
+            }
+            drop(_span);
 
-        opening_accumulator.append_opening(Rep3CoordinatorOpening {
-            poly_num_vars: num_ops.log_2(),
-            claim,
-        });
+            // Compute the random linear combination of the claims
+            let batched_claim: F = rho_powers
+                .iter()
+                .zip(claims.iter())
+                .map(|(scalar, eval)| *scalar * *eval)
+                .sum();
+
+            let mut offset = batch_lens[0];
+            let mut rho_offsets = vec![vec![
+                4,                              // [dim]..
+                4 + preprocessing.num_memories, // [dim][read_cts]..
+            ]];
+            for len in &batch_lens[1..] {
+                let prev = rho_offsets.last().unwrap();
+                rho_offsets.push(vec![prev[0] + offset, prev[1] + offset]);
+                offset += len;
+            }
+            network.send_requests_to_workers(
+                rho_offsets
+                    .into_iter()
+                    .map(|offsets| (rho, offsets, batched_claim))
+                    .collect(),
+            )?;
+
+            opening_accumulator.append_opening(Rep3CoordinatorOpening {
+                poly_num_vars: num_ops.log_2(),
+                claim: batched_claim,
+            });
+        }
+
+        //------------ init-final ------------//
+
+        let init_final_evals: Vec<F> =
+            opening_accumulator.append_batched(memory_size.log_2(), transcript, network)?;
+
+        openings
+            .init_final_values_mut()
+            .into_par_iter()
+            .zip(init_final_evals.par_iter())
+            .for_each(|(opening, eval)| {
+                *opening = *eval;
+            });
 
         Ok((openings, exogenous_openings))
     }

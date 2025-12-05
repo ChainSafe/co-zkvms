@@ -196,10 +196,10 @@ where
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
         let max_poly_len: usize = [
-            // (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
+            (max_bytecode_size + 1).next_power_of_two(), // Account for no-op prepended to bytecode
             max_trace_length.next_power_of_two(),
-            // max_memory_size.next_power_of_two(),
-            // M,
+            max_memory_size.next_power_of_two(),
+            M,
         ]
         .into_iter()
         .max()

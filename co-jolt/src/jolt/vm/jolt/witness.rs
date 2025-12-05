@@ -213,7 +213,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 .try_into()
                 .map_err(|_| eyre::eyre!("failed to receive commitments"))?;
 
-        let mut commitments = worker_commitments_shares
+        let commitments = worker_commitments_shares
             .into_iter()
             .map(|mut commitments_shares| {
                 let mut commitments =
@@ -241,16 +241,16 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 .for_each(|(commitment, dest)| *dest = commitment);
                 drop(_guard);
 
-                // let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
-                // let _guard = span.enter();
-                // commitments.instruction_lookups.final_cts = multizip((
-                //     &commitments_shares[0].instruction_lookups.final_cts,
-                //     &commitments_shares[1].instruction_lookups.final_cts,
-                //     &commitments_shares[2].instruction_lookups.final_cts,
-                // ))
-                // .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
-                // .collect_vec();
-                // drop(_guard);
+                let span = tracing::span!(tracing::Level::INFO, "combine_final_cts");
+                let _guard = span.enter();
+                commitments.instruction_lookups.final_cts = multizip((
+                    &commitments_shares[0].instruction_lookups.final_cts,
+                    &commitments_shares[1].instruction_lookups.final_cts,
+                    &commitments_shares[2].instruction_lookups.final_cts,
+                ))
+                .map(|(c0, c1, c2)| PCS::combine_commitment_shares(&[c0, c1, c2]))
+                .collect_vec();
+                drop(_guard);
 
                 let span = tracing::span!(tracing::Level::INFO, "combine_t_final");
                 let _guard = span.enter();
@@ -304,8 +304,6 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
             })
             .unwrap();
 
-        commitments.instruction_lookups.final_cts = vec![];
-
         Ok(commitments)
     }
 
@@ -336,9 +334,9 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
         let trace_len = self.instruction_lookups.read_cts[0].len();
-        let mut trace_polys = self.read_write_values();
+        let trace_polys = self.read_write_values();
 
-        if io_ctx.log_num_workers() != 0 {
+        if io_ctx.network().is_distributed() {
             commitments
                 .instruction_lookups
                 .read_cts
@@ -417,12 +415,12 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 
         let span = tracing::span!(tracing::Level::INFO, "commit::instruction_final_cts");
         let _guard = span.enter();
-        // commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
-        //     &self.instruction_lookups.final_cts,
-        //     self.instruction_lookups.final_cts[0].len(),
-        //     &preprocessing.generators,
-        //     false, // no public polys in final_cts
-        // );
+        commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
+            &self.instruction_lookups.final_cts,
+            self.instruction_lookups.final_cts[0].len(),
+            &preprocessing.generators,
+            false, // no public polys in final_cts
+        );
         drop(_guard);
         drop(span);
 

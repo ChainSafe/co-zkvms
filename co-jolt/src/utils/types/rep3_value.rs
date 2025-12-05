@@ -92,6 +92,14 @@ impl<F: JoltField> Rep3Value<F> {
         }
     }
 
+    pub fn into_shared_rep3(self, party_id: PartyID) -> Rep3PrimeFieldShare<F> {
+        match self {
+            Rep3Value::Public(x) => rep3::arithmetic::promote_to_trivial_share(party_id, x),
+            Rep3Value::Shared(x) => x,
+            Rep3Value::Additive(_) => unreachable!(),
+        }
+    }
+
     pub fn into_additive(self, party_id: PartyID) -> AdditiveShare<F> {
         match self {
             Rep3Value::Public(x) => additive::promote_to_trivial_share(x, party_id),

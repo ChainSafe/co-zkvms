@@ -146,45 +146,14 @@ where
         r_init_final: &[F],
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let party_id = io_ctx.party_id();
-
-        let read_write_polys: Vec<&_> = polynomials
-            .read_write_values_grand_product()
-            .into_iter()
-            .chain(Self::ExogenousOpenings::exogenous_data(jolt_polynomials))
-            .collect::<Vec<_>>();
-
-        let (read_write_evals, eq_read_write) =
-            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
-
-        opening_accumulator.append_batched(
-            &read_write_polys,
-            DensePolynomial::new(eq_read_write),
-            r_read_write.to_vec(),
-            &read_write_evals
-                .iter()
-                .map(|x| x.into_additive(party_id))
-                .collect::<Vec<_>>(),
-            io_ctx.main(),
-        )?;
-        tracing::info!("worker append read_write_polys opennings");
-
-        let init_final_polys = polynomials.init_final_values();
-        let (init_final_evals, eq_init_final) =
-            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
-
-        opening_accumulator.append_batched_(
-            &polynomials.init_final_values(),
-            DensePolynomial::new(eq_init_final),
-            r_init_final.to_vec(),
-            &init_final_evals
-                .iter()
-                .map(|x| x.into_additive(party_id))
-                .collect::<Vec<_>>(),
-            io_ctx.main(),
-        )?;
-
-        Ok(())
+        compute_openings::<F, Self::ExogenousOpenings, _, _>(
+            opening_accumulator,
+            polynomials,
+            jolt_polynomials,
+            r_read_write,
+            r_init_final,
+            io_ctx,
+        )
     }
 
     /// Computes the MLE of the leaves of the read, write, init, and final grand product circuits,
@@ -249,4 +218,56 @@ where
         let claims = batched_circuit.claimed_outputs();
         Ok((batched_circuit, claims))
     }
+}
+
+pub(crate) fn compute_openings<F: JoltField, ExoOpenings, Polynomials, Network: Rep3NetworkWorker>(
+    opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+    polynomials: &Polynomials,
+    jolt_polynomials: &JoltStuff<Rep3MultilinearPolynomial<F>>,
+    r_read_write: &[F],
+    r_init_final: &[F],
+    io_ctx: &mut IoContextPool<Network>,
+) -> eyre::Result<()>
+where
+    Polynomials: StructuredPolynomialData<Rep3MultilinearPolynomial<F>> + ?Sized,
+    ExoOpenings: ExogenousOpenings<F> + Sync,
+{
+    let party_id = io_ctx.party_id();
+
+    let read_write_polys: Vec<&_> = polynomials
+        .read_write_values_grand_product()
+        .into_iter()
+        .chain(ExoOpenings::exogenous_data(jolt_polynomials))
+        .collect::<Vec<_>>();
+
+    let (read_write_evals, eq_read_write) =
+        Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
+
+    opening_accumulator.append(
+        &read_write_polys,
+        DensePolynomial::new(eq_read_write),
+        r_read_write.to_vec(),
+        &read_write_evals
+            .iter()
+            .map(|x| x.into_additive(party_id))
+            .collect::<Vec<_>>(),
+        io_ctx.main(),
+    )?;
+
+    let init_final_polys = polynomials.init_final_values();
+    let (init_final_evals, eq_init_final) =
+        Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+    opening_accumulator.append(
+        &polynomials.init_final_values(),
+        DensePolynomial::new(eq_init_final),
+        r_init_final.to_vec(),
+        &init_final_evals
+            .iter()
+            .map(|x| x.into_additive(party_id))
+            .collect::<Vec<_>>(),
+        io_ctx.main(),
+    )?;
+
+    Ok(())
 }

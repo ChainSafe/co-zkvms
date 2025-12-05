@@ -174,45 +174,11 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
-        println!("Receiving openings");
-        let (mut openings, exogenous_openings) = Self::receive_read_write_openings(
-            read_write_chunk_size,
-            preprocessing,
-            opening_accumulator,
-            transcript,
-            network,
-        )?;
-        println!("Received RW");
-
-        let init_final_evals: Vec<F> = opening_accumulator.append_batched(
-            init_final_chunk_size.log_2(),
-            transcript,
-            network,
-        )?;
-
-        openings
-            .init_final_values_mut()
-            .into_par_iter()
-            .zip(init_final_evals.par_iter())
-            .for_each(|(opening, eval)| {
-                *opening = *eval;
-            });
-
-        Ok((openings, exogenous_openings))
-    }
-
-    fn receive_read_write_openings(
-        chunk_size: usize,
-        preprocessing: &Self::Preprocessing,
-        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-    ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
         let mut exogenous_openings = Self::ExogenousOpenings::default();
         let mut openings = Self::Openings::initialize(preprocessing);
 
         let read_write_evals: Vec<F> =
-            opening_accumulator.append_batched(chunk_size.log_2(), transcript, network)?;
+            opening_accumulator.append(read_write_chunk_size.log_2(), transcript, network)?;
 
         let read_write_openings: Vec<_> = openings
             .read_write_values_grand_product_mut()
@@ -223,6 +189,17 @@ where
         read_write_openings
             .into_par_iter()
             .zip(read_write_evals.par_iter())
+            .for_each(|(opening, eval)| {
+                *opening = *eval;
+            });
+
+        let init_final_evals: Vec<F> =
+            opening_accumulator.append(init_final_chunk_size.log_2(), transcript, network)?;
+
+        openings
+            .init_final_values_mut()
+            .into_par_iter()
+            .zip(init_final_evals.par_iter())
             .for_each(|(opening, eval)| {
                 *opening = *eval;
             });
