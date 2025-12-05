@@ -238,106 +238,141 @@ where
 
         let party_id = io_ctx.party_id();
 
+        let worker_idx = io_ctx.worker_idx();
+        let num_workers = io_ctx.num_workers();
+        let full_batch_size = 2 * MEMORY_OPS_PER_INSTRUCTION;
+        assert!(io_ctx.num_workers() <= full_batch_size);
+        let worker_batch_size = full_batch_size / num_workers;
+        let chunk_size = if num_workers <= MEMORY_OPS_PER_INSTRUCTION {
+            2 * num_ops
+        } else {
+            num_ops * 8 / num_workers
+        };
+
+        assert!(
+            chunk_size >= num_ops,
+            "memory trace spliting is unimplemented"
+        );
+
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); 2 * MEMORY_OPS_PER_INSTRUCTION * num_ops];
-        for (i, chunk) in read_write_leaves.chunks_mut(2 * num_ops).enumerate() {
-            chunk[..num_ops]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(j, read_fingerprint)| {
-                    match i {
+            vec![Rep3PrimeFieldShare::zero_share(); worker_batch_size * num_ops];
+
+        let reg_offset = MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx; // 2 => [0, 2] 4 => [0, 1, 2, 3] 8 => [0, 0, 1, 1, 2, 2, 3, 3]
+
+        (0..8).for_each(|num_workers| {
+            println!(
+                "split for n_workers={}: {:?}",
+                num_workers,
+                (0..num_workers)
+                    .map(|worker_idx| MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx)
+                    .collect::<Vec<_>>()
+            )
+        });
+
+        for (i, chunk) in read_write_leaves.chunks_mut(chunk_size).enumerate() {
+            if num_workers <= full_batch_size || worker_idx % 2 == 0 {
+                chunk[..num_ops]
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(j, read_fingerprint)| {
+                        match reg_offset + i {
+                            RS1 => {
+                                *read_fingerprint = rep3::arithmetic::add_public(
+                                    rep3::arithmetic::mul_public(
+                                        v_read_rs1.as_shared().get_coeff(j),
+                                        gamma,
+                                    ),
+                                    t_read_rs1[j].field_mul(gamma_squared) + F::from_u8(a_rs1[j])
+                                        - *tau,
+                                    party_id,
+                                );
+                            }
+                            RS2 => {
+                                *read_fingerprint = rep3::arithmetic::add_public(
+                                    rep3::arithmetic::mul_public(
+                                        v_read_rs2.as_shared().get_coeff(j),
+                                        gamma,
+                                    ),
+                                    t_read_rs2[j].field_mul(gamma_squared) + F::from_u8(a_rs2[j])
+                                        - *tau,
+                                    party_id,
+                                );
+                            }
+                            RD => {
+                                *read_fingerprint = rep3::arithmetic::add_public(
+                                    rep3::arithmetic::mul_public(
+                                        v_read_rd.as_shared().get_coeff(j),
+                                        gamma,
+                                    ),
+                                    t_read_rd[j].field_mul(gamma_squared) + F::from_u8(a_rd[j])
+                                        - *tau,
+                                    party_id,
+                                );
+                            }
+                            RAM => {
+                                *read_fingerprint = rep3::arithmetic::add_public(
+                                    rep3::arithmetic::mul_public(
+                                        v_read_ram.as_shared().get_coeff(j),
+                                        gamma,
+                                    ),
+                                    t_read_ram[j].field_mul(gamma_squared) + F::from_u32(a_ram[j])
+                                        - *tau,
+                                    party_id,
+                                );
+                            }
+                            _ => unreachable!(),
+                        };
+                    });
+            }
+
+            if num_workers <= full_batch_size || worker_idx % 2 != 0 {
+                chunk[num_ops..]
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(j, write_fingerprint)| match reg_offset + i {
                         RS1 => {
-                            *read_fingerprint = rep3::arithmetic::add_public(
+                            *write_fingerprint = rep3::arithmetic::add_public(
                                 rep3::arithmetic::mul_public(
                                     v_read_rs1.as_shared().get_coeff(j),
                                     gamma,
                                 ),
-                                t_read_rs1[j].field_mul(gamma_squared) + F::from_u8(a_rs1[j])
-                                    - *tau,
+                                (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs1[j]) - *tau,
                                 party_id,
                             );
                         }
                         RS2 => {
-                            *read_fingerprint = rep3::arithmetic::add_public(
+                            *write_fingerprint = rep3::arithmetic::add_public(
                                 rep3::arithmetic::mul_public(
                                     v_read_rs2.as_shared().get_coeff(j),
                                     gamma,
                                 ),
-                                t_read_rs2[j].field_mul(gamma_squared) + F::from_u8(a_rs2[j])
-                                    - *tau,
+                                (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs2[j]) - *tau,
                                 party_id,
                             );
                         }
                         RD => {
-                            *read_fingerprint = rep3::arithmetic::add_public(
+                            *write_fingerprint = rep3::arithmetic::add_public(
                                 rep3::arithmetic::mul_public(
-                                    v_read_rd.as_shared().get_coeff(j),
+                                    v_write_rd.as_shared().get_coeff(j),
                                     gamma,
                                 ),
-                                t_read_rd[j].field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
+                                (j as u64).field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
                                 party_id,
                             );
                         }
                         RAM => {
-                            *read_fingerprint = rep3::arithmetic::add_public(
+                            *write_fingerprint = rep3::arithmetic::add_public(
                                 rep3::arithmetic::mul_public(
-                                    v_read_ram.as_shared().get_coeff(j),
+                                    v_write_ram.as_shared().get_coeff(j),
                                     gamma,
                                 ),
-                                t_read_ram[j].field_mul(gamma_squared) + F::from_u32(a_ram[j])
-                                    - *tau,
+                                (j as u64).field_mul(gamma_squared) + F::from_u32(a_ram[j]) - *tau,
                                 party_id,
                             );
                         }
                         _ => unreachable!(),
-                    };
-                });
-
-            chunk[num_ops..].par_iter_mut().enumerate().for_each(
-                |(j, write_fingerprint)| match i {
-                    RS1 => {
-                        *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(
-                                v_read_rs1.as_shared().get_coeff(j),
-                                gamma,
-                            ),
-                            (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs1[j]) - *tau,
-                            party_id,
-                        );
-                    }
-                    RS2 => {
-                        *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(
-                                v_read_rs2.as_shared().get_coeff(j),
-                                gamma,
-                            ),
-                            (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs2[j]) - *tau,
-                            party_id,
-                        );
-                    }
-                    RD => {
-                        *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(
-                                v_write_rd.as_shared().get_coeff(j),
-                                gamma,
-                            ),
-                            (j as u64).field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
-                            party_id,
-                        );
-                    }
-                    RAM => {
-                        *write_fingerprint = rep3::arithmetic::add_public(
-                            rep3::arithmetic::mul_public(
-                                v_write_ram.as_shared().get_coeff(j),
-                                gamma,
-                            ),
-                            (j as u64).field_mul(gamma_squared) + F::from_u32(a_ram[j]) - *tau,
-                            party_id,
-                        );
-                    }
-                    _ => unreachable!(),
-                },
-            );
+                    });
+            }
         }
 
         let v_init = polynomials.v_init.as_ref().unwrap().as_shared();

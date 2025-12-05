@@ -217,14 +217,14 @@ where
 
         // self.io_ctx.sync_with_parties()?;
 
-        // Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
-        //     &preprocessing.shared.generators,
-        //     &preprocessing.shared.read_write_memory,
-        //     polynomials,
-        //     &self.program_io,
-        //     &mut opening_accumulator,
-        //     &mut self.io_ctx,
-        // )?;
+        Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
+            &preprocessing.shared.generators,
+            &preprocessing.shared.read_write_memory,
+            polynomials,
+            &self.program_io,
+            &mut opening_accumulator,
+            &mut self.io_ctx,
+        )?;
 
         // self.io_ctx.sync_with_parties()?;
 

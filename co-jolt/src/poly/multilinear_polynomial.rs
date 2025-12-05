@@ -285,6 +285,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                                     rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
                                 }
                             }
+                            MultilinearPolynomial::U32Scalars(poly) => {
+                                for (rlc, poly_eval) in chunk[chunk_offset..]
+                                    .iter_mut()
+                                    .zip(&poly.coeffs_ref()[local_index..])
+                                {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
                             _ => unreachable!(),
                         },
                         Rep3MultilinearPolynomial::Shared(poly) => {
