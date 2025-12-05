@@ -1,18 +1,10 @@
-use std::panic;
-
 use eyre::Context;
-use itertools::{interleave, izip, Itertools};
 pub use jolt_core::lasso::memory_checking::{
     MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes, StructuredPolynomialData,
 };
 use jolt_core::{
     lasso::memory_checking::{ExogenousOpenings, Initializable},
-    poly::{
-        dense_interleaved_poly::DenseInterleavedPolynomial,
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-    },
+    poly::dense_interleaved_poly::DenseInterleavedPolynomial,
     subprotocols::grand_product::{
         BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
     },
@@ -26,7 +18,6 @@ use rayon::prelude::*;
 use crate::{field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator};
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
-    poly::opening_proof::Rep3OpeningAccumulatorWorker,
     subprotocols::grand_product::Rep3BatchedGrandProduct,
     utils::{math::Math, transcript::Transcript},
 };
@@ -80,8 +71,6 @@ where
             network,
         )?;
 
-        println!("DONE MEM CHECK");
-
         Ok(MemoryCheckingProof {
             multiset_hashes,
             read_write_grand_product,
@@ -107,8 +96,6 @@ where
         let tau: F = transcript.challenge_scalar();
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
-
-        println!("gamma: {:?}", gamma);
 
         let (read_write_hashes, init_final_hashes): (Vec<_>, Vec<_>) = network
             .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()

@@ -11,7 +11,7 @@ use jolt_core::utils::transcript::Transcript;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
 use crate::subprotocols::sumcheck;
 use crate::subprotocols::sumcheck_spartan::coordinate_eq_sumcheck_round;
 use jolt_core::r1cs::inputs::ConstraintInput;
@@ -26,6 +26,7 @@ where
     #[tracing::instrument(skip_all, name = "Rep3UniformSpartan::prove")]
     fn prove_rep3<PCS>(
         key: &UniformSpartanKey<C, I, F>,
+        opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<UniformSpartanProof<C, I, F, ProofTranscript>>
@@ -114,10 +115,10 @@ where
         drop(span);
 
         let claimed_witness_evals =
-            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+            opening_accumulator.append(num_rounds_x, transcript, network)?;
 
         let shift_sumcheck_witness_evals =
-            Rep3OpeningAccumulatorWorker::receive_claims(transcript, network)?;
+            opening_accumulator.append(num_rounds_shift_sumcheck, transcript, network)?;
 
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],

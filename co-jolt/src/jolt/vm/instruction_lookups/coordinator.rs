@@ -3,7 +3,7 @@ use crate::jolt::vm::instruction_lookups::witness;
 use crate::poly::opening_proof::{Rep3CoordinatorOpening, Rep3OpeningAccumulatorCoordinator};
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker},
+    poly::commitment::Rep3CommitmentScheme,
     subprotocols::{
         grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
@@ -12,9 +12,7 @@ use crate::{
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, izip, Itertools};
-use jolt_core::lasso::memory_checking::{
-    ExogenousOpenings, Initializable, StructuredPolynomialData,
-};
+use jolt_core::lasso::memory_checking::{Initializable, StructuredPolynomialData};
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding,
 };
@@ -27,7 +25,6 @@ use jolt_core::{
 };
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use std::iter::once;
 use std::marker::PhantomData;
@@ -60,8 +57,7 @@ where
 
         let num_rounds = num_ops.log_2();
         let r_eq = transcript.challenge_vector::<F>(num_rounds);
-        tracing::info!("commitment check/r_eq: {:?}", r_eq[0]);
-        // tracing::info!("r_eq: {:?}", r_eq);
+        // tracing::info!("commitment check/r_eq: {:?}", r_eq[0]);
         network.broadcast_request(r_eq)?;
 
         let (primary_sumcheck_proof, flag_evals, E_evals, outputs_eval) =

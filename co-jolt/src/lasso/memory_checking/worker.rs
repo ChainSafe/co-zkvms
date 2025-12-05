@@ -1,5 +1,3 @@
-use std::ops::Index;
-
 use color_eyre::eyre::Result;
 use eyre::Context;
 use jolt_core::{

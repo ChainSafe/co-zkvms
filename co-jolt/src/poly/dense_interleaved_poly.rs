@@ -1,9 +1,6 @@
-use std::slice::Chunks;
-
 use crate::field::JoltField;
 use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::{
-    poly::unipoly::unipoly_from_additive_evals,
     subprotocols::{
         grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
         sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker, Rep3Bindable},
@@ -11,10 +8,8 @@ use crate::{
     utils::transcript::Transcript,
 };
 use eyre::Context;
-use itertools::{izip, Itertools};
-use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
-use jolt_core::subprotocols::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
-use mpc_core::protocols::additive;
+use std::slice::Chunks;
+
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -24,8 +19,6 @@ use mpc_core::protocols::{
     },
 };
 use rayon::{prelude::*, slice::Chunks as RayonChunks};
-
-use jolt_core::poly::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 
 /// Represents a single layer of a grand product circuit.
 ///

@@ -6,7 +6,6 @@ use crate::{
     poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial},
     utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt},
 };
-use ark_ff::Zero;
 use itertools::{izip, Itertools};
 #[cfg(feature = "debug")]
 use jolt_core::jolt::vm::instruction_lookups::InstructionLookupPolynomials;
@@ -18,14 +17,13 @@ use jolt_core::{
 use mpc_core::protocols::{
     rep3::{
         network::{IoContext, IoContextPool, Rep3NetworkWorker},
-        PartyID, Rep3PrimeFieldShare,
+        Rep3PrimeFieldShare,
     },
     rep3_ring::{self, ring::ring_impl::RingElement, Rep3RingShare},
 };
 
 use mpc_net::topology::MpcRingNetWorkerExt;
 use rayon::prelude::*;
-use tokio::io;
 
 use crate::jolt::{
     instruction::Rep3JoltInstructionSet,
@@ -56,7 +54,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
     {
         let m = trace.len().next_power_of_two();
-        println!("m={}", m);
         let worker_idx = io_ctx.worker_idx();
         let num_workers = 1usize << io_ctx.log_num_workers();
 
@@ -103,11 +100,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         .into_iter()
         .flat_map(|(_, _, memories)| memories)
         .collect_vec();
-
-        if io_ctx.party_idx() == 0 {
-            tracing::info!("worker {} read_memories: {:?}", worker_idx, read_memories);
-            tracing::info!("worker {} final_memories: {:?}", worker_idx, final_memories);
-        }
 
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_cyclic(0..preprocessing.num_memories, |memory_index, io_ctx| {
@@ -270,7 +262,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 if let Some(final_evals) = final_evals {
                     final_acc.push(Rep3MultilinearPolynomial::from(final_evals));
                 }
-                e_acc.push(Rep3MultilinearPolynomial::shard_from_shared_coeffs(
+                e_acc.push(Rep3MultilinearPolynomial::new_shard_shared(
                     e,
                     m_worker_nv,
                     worker_idx,
@@ -313,9 +305,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         let dim = dim
             .into_iter()
-            .map(|dim| {
-                Rep3MultilinearPolynomial::shard_from_shared_coeffs(dim, m_worker_nv, worker_idx, m)
-            })
+            .map(|dim| Rep3MultilinearPolynomial::new_shard_shared(dim, m_worker_nv, worker_idx, m))
             .collect();
 
         drop(_guard);
@@ -332,7 +322,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let instruction_flags: Vec<_> = instruction_flag_bitvectors
             .into_par_iter()
             .map(|flag_bitvector| {
-                Rep3MultilinearPolynomial::shard_from_public_bytes(
+                Rep3MultilinearPolynomial::new_shard_public_u8(
                     flag_bitvector,
                     m_worker_nv,
                     worker_idx,
@@ -486,20 +476,13 @@ pub fn calculate_delta_per_worker(batch_size: usize, num_workers: usize) -> usiz
         return 0;
     }
 
-    let m_chunks: usize = 1usize << (t - 1); // 2^(t-1)
-    let delta_base: usize = n_worker % m_chunks; // in chunks
+    let m_chunks: usize = 1usize << (t - 1);
+    let delta_base: usize = n_worker % m_chunks;
 
     if delta_base == 0 {
         return 0;
     }
 
-    let half: usize = m_chunks >> 1; // 2^(t-2)
-
-    // if delta_base == half {
-    //     delta_base as isize // +delta
-    // } else {
-    //     -(delta_base as isize) // -delta
-    // }
     delta_base
 }
 
@@ -669,7 +652,6 @@ pub fn init_final_subtables_for_worker(
 
         // Include subtable if either header or at least one memory is in range.
         if header_in_range || !mems_for_worker.is_empty() {
-            let header_tag = if header_in_range { Some(i) } else { None };
             out.push((i, header_in_range, mems_for_worker));
         }
     }

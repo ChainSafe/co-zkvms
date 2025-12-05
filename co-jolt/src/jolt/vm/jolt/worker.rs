@@ -239,7 +239,7 @@ where
         // self.io_ctx.sync_with_parties()?;
 
         // Batch-prove all openings
-        opening_accumulator.reduce_and_prove_worker::<PCS, ProofTranscript, _>(
+        opening_accumulator.reduce_and_prove::<PCS, ProofTranscript, _>(
             &preprocessing.shared.generators,
             &mut self.io_ctx,
         )?;

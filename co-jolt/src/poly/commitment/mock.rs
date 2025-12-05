@@ -98,7 +98,7 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
+            Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let commitment =
                         <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
@@ -149,15 +149,15 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
         commitments
     }
 
-    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment {
+    fn concat_commitments(_a: &Self::Commitment, _b: &Self::Commitment) -> Self::Commitment {
         todo!()
     }
 
     fn distributed_prove_rep3<Network>(
-        poly: &Rep3DensePolynomial<F>,
-        setup: &Self::Setup,
-        opening_point: &[F],
-        network: &mut Network,
+        _poly: &Rep3DensePolynomial<F>,
+        _setup: &Self::Setup,
+        _opening_point: &[F],
+        _network: &mut Network,
     ) -> eyre::Result<()>
     where
         Network: Rep3NetworkWorker,
@@ -166,9 +166,9 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
     }
 
     fn merge_proofs_rep3<Network>(
-        setup: &Self::Setup,
-        opening_point: &[F],
-        network: &mut Network,
+        _setup: &Self::Setup,
+        _opening_point: &[F],
+        _network: &mut Network,
     ) -> eyre::Result<Self::Proof>
     where
         Network: Rep3NetworkCoordinator,

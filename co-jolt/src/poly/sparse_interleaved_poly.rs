@@ -10,16 +10,14 @@ use crate::subprotocols::{
 use crate::utils::future::{FutureExt, FutureRep3};
 
 use eyre::Context;
-use jolt_core::poly::{
-    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial,
-};
-use jolt_core::utils::{math::Math, transcript::Transcript};
+use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
+use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use rayon::{prelude::*, vec};
+use rayon::prelude::*;
 
 /// Represents a single layer of a sparse grand product circuit.
 #[derive(Default, Debug, Clone)]

@@ -154,7 +154,6 @@ where
     {
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
         let (pf, _claim) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
-        tracing::info!("joint_claim: {:?}", _claim);
         network.send_response(pf.proofs)
     }
 
@@ -247,7 +246,7 @@ where
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
+            Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let commitment =
                         <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
@@ -294,7 +293,7 @@ where
         let polys_offseted = polys
             .par_iter()
             .map(|poly| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { poly, .. } => {
+                Rep3MultilinearPolynomial::Public(poly) => {
                     Some(poly.into_distributed_commit_form(len))
                 }
                 Rep3MultilinearPolynomial::Shared(poly) => Some(
@@ -307,7 +306,7 @@ where
             .par_iter()
             .enumerate()
             .map(|(i, poly)| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { .. } => (
+                Rep3MultilinearPolynomial::Public(_) => (
                     polys_offseted[i].as_ref().unwrap(),
                     MaybeShared::Public(commit_to_public.then_some(PST13Commitment::default())),
                 ),

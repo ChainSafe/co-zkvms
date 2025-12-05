@@ -10,7 +10,7 @@ use std::{
 };
 
 use itertools::{izip, Itertools};
-use jolt_tracer::{RVTraceRow, RV32IM};
+use jolt_tracer::RV32IM;
 use mpc_core::protocols::rep3_ring::{self};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;

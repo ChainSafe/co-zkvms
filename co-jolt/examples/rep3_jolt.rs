@@ -179,7 +179,6 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
     tracing::info!("trace len: {}", trace.len());
-    println!("{} {} recieve trace", config.worker, config.my_id);
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -242,7 +241,7 @@ pub fn run_coordinator(
     let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
-    let (program_io, mut trace) = program.trace(&inputs);
+    let (program_io, trace) = program.trace(&inputs);
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -296,10 +295,7 @@ pub fn run_coordinator(
         .take(3 * args.num_workers_per_party)
         .collect::<bincode::Result<Vec<_>>>()
         .context("while serializing trace shares")?;
-    println!("worker_shares: {:?}", worker_shares.len());
     network.send_requests_blocking(worker_shares)?;
-
-    println!("send trace");
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
 
@@ -356,7 +352,7 @@ pub fn run_coordinator(
     RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
 
-    println!("VERIFIED!");
+    tracing::info!("VERIFIED!");
 
     network.log_connection_stats(None);
 

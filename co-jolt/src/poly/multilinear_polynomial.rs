@@ -5,7 +5,6 @@ use crate::utils::types::Rep3Value;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use itertools::{izip, Itertools};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -18,42 +17,34 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
-use rayon::{prelude::*, vec};
-use snarks_core::math::Math;
-
-// pub type MultilinearPolynomial<F> = DensePolynomial<F>;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rep3MultilinearPolynomial<F: JoltField> {
-    Public {
-        poly: MultilinearPolynomial<F>,
-        trivial_share: Option<Rep3DensePolynomial<F>>,
-    },
+    Public(MultilinearPolynomial<F>),
     Shared(Rep3DensePolynomial<F>),
 }
 
 impl<F: JoltField> Default for Rep3MultilinearPolynomial<F> {
     fn default() -> Self {
-        Self::Public {
-            poly: MultilinearPolynomial::default(),
-            trivial_share: None,
-        }
+        Self::Public(MultilinearPolynomial::default())
     }
 }
 
 impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     pub fn public(poly: MultilinearPolynomial<F>) -> Self {
-        Self::Public {
-            poly,
-            trivial_share: None,
-        }
+        Self::Public(poly)
     }
 
     pub fn shared(poly: Rep3DensePolynomial<F>) -> Self {
         Self::Shared(poly)
     }
 
-    pub fn shard_from_shared_coeffs(
+    pub fn from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+        Self::shared(Rep3DensePolynomial::new(coeffs))
+    }
+
+    pub fn new_shard_shared(
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
         shard_nv: usize,
         worker_idx: usize,
@@ -61,6 +52,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     ) -> Self {
         Self::shared(Rep3DensePolynomial::new_shard(
             coeffs, shard_nv, worker_idx, full_len,
+        ))
+    }
+
+    pub fn new_shard_public_u8(coeffs: Vec<u8>, shard_nv: usize, worker_idx: usize) -> Self {
+        Self::public(MultilinearPolynomial::U8Scalars(
+            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
         ))
     }
 
@@ -82,21 +79,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    pub fn from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Self::shared(Rep3DensePolynomial::new(coeffs))
-    }
-
-    // pub fn from_shared_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-    //     Self::shared(Rep3DensePolynomial::from_bound_coeffs(bound_coeffs))
-    // }
-
-    pub fn public_zero(num_evals: usize) -> Self {
-        Self::public(MultilinearPolynomial::from(vec![F::zero(); num_evals]))
-    }
-
     pub fn as_public(&self) -> &MultilinearPolynomial<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly,
+            Rep3MultilinearPolynomial::Public(poly) => poly,
             Rep3MultilinearPolynomial::Shared(_) => {
                 panic!("Not a public polynomial")
             }
@@ -105,21 +90,17 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 
     pub fn as_public_mut(&mut self) -> &mut MultilinearPolynomial<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly,
+            Rep3MultilinearPolynomial::Public(poly) => poly,
             Rep3MultilinearPolynomial::Shared(_) => {
                 panic!("Not a public polynomial")
             }
         }
     }
 
-    pub fn public_with_trivial_share(poly: MultilinearPolynomial<F>, party_id: PartyID) -> Self {
-        let trivial_share = Rep3DensePolynomial::new(rep3::arithmetic::promote_to_trivial_shares(
-            poly.coeffs_as_field_elements(),
-            party_id,
-        ));
-        Self::Public {
-            poly,
-            trivial_share: Some(trivial_share),
+    pub fn to_full_poly(self) -> Self {
+        match self {
+            Self::Public { .. } => unreachable!(),
+            Self::Shared(poly) => Self::shared(poly.as_full_poly()),
         }
     }
 
@@ -135,75 +116,58 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 
     pub fn dot_product_with_public(&self, other: &[F]) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.dot_product(other).into(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.dot_product(other).into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.dot_product_with_public(other).into(),
         }
     }
 
     pub fn get_coeff(&self, index: usize) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_coeff(index).into(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.get_coeff(index).into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.get_coeff(index).into(),
         }
     }
 
     pub fn get_bound_coeff(&self, index: usize) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_bound_coeff(index).into(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.get_bound_coeff(index).into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.get_bound_coeff(index).into(),
         }
     }
 
     pub fn len(&self) -> usize {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.len(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.len(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.len(),
         }
     }
 
     pub fn original_len(&self) -> usize {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.original_len(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.original_len(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.coeffs_ref().len(),
         }
     }
 
     pub fn full_len(&self) -> usize {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.full_len(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.full_len(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.full_len(),
         }
     }
 
     pub fn get_num_vars(&self) -> usize {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.get_num_vars(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.get_num_vars(),
         }
-    }
-
-    pub fn public_with_trivial_share_vec(
-        polys: Vec<MultilinearPolynomial<F>>,
-        party_id: PartyID,
-    ) -> Vec<Self> {
-        polys
-            .iter()
-            .map(|poly| Self::public_with_trivial_share(poly.clone(), party_id))
-            .collect()
-    }
-
-    pub fn public_vec(polys: Vec<MultilinearPolynomial<F>>) -> Vec<Self> {
-        polys
-            .iter()
-            .map(|poly| Self::public(poly.clone()))
-            .collect()
     }
 
     /// Returns the shard range (start, end) for this polynomial in global coordinates.
     /// For unsharded polynomials, returns (0, full_len).
     pub fn shard_range(&self) -> (usize, usize) {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+            Rep3MultilinearPolynomial::Public(poly) => match poly {
                 MultilinearPolynomial::LargeScalars(_) => (0, poly.full_len()),
                 MultilinearPolynomial::U8Scalars(p) => p.chunk_range(),
                 MultilinearPolynomial::U16Scalars(p) => p.chunk_range(),
@@ -225,7 +189,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         scaling_factor_r2_adjusted: F,
     ) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => Rep3Value::Public(poly.scale_coeff(
+            Rep3MultilinearPolynomial::Public(poly) => Rep3Value::Public(poly.scale_coeff(
                 index,
                 scaling_factor,
                 scaling_factor_r2_adjusted,
@@ -293,7 +257,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                     // let overlap_len = overlap_end - overlap_start;
 
                     match poly {
-                        Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                        Rep3MultilinearPolynomial::Public(poly) => match poly {
                             MultilinearPolynomial::LargeScalars(poly) => {
                                 debug_assert!(!poly.is_bound());
                                 let poly_evals = &poly.evals_ref()[global_index..];
@@ -366,97 +330,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         party_id: PartyID,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
-                rep3::arithmetic::promote_to_trivial_shares(
-                    poly.sumcheck_evals(index, degree, order),
-                    party_id,
-                )
-            }
+            Rep3MultilinearPolynomial::Public(poly) => rep3::arithmetic::promote_to_trivial_shares(
+                poly.sumcheck_evals(index, degree, order),
+                party_id,
+            ),
             Rep3MultilinearPolynomial::Shared(poly) => poly.sumcheck_evals(index, degree, order),
-        }
-    }
-
-    pub fn set_bound_coeff(&mut self, index: usize, coeff: Rep3Value<F>) {
-        match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
-                MultilinearPolynomial::LargeScalars(poly) => poly.Z[index] = coeff.as_public(),
-                MultilinearPolynomial::U8Scalars(poly) => {
-                    poly.bound_coeffs[index] = coeff.as_public()
-                }
-                MultilinearPolynomial::U16Scalars(poly) => {
-                    poly.bound_coeffs[index] = coeff.as_public()
-                }
-                MultilinearPolynomial::U32Scalars(poly) => {
-                    poly.bound_coeffs[index] = coeff.as_public()
-                }
-                MultilinearPolynomial::U64Scalars(poly) => {
-                    poly.bound_coeffs[index] = coeff.as_public()
-                }
-                MultilinearPolynomial::I64Scalars(poly) => {
-                    poly.bound_coeffs[index] = coeff.as_public()
-                }
-            },
-            Rep3MultilinearPolynomial::Shared(poly) => {
-                poly.set_bound_coeff(index, coeff.as_shared())
-            }
-        }
-    }
-
-    pub fn clone_with_bound_coeffs(&self) -> Self {
-        if !self.is_bound() {
-            return self.clone();
-        }
-
-        match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
-                MultilinearPolynomial::U8Scalars(poly) => {
-                    let mut cloned = poly.clone();
-                    cloned.bound_coeffs = poly.bound_coeffs.clone();
-                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U8Scalars(cloned))
-                }
-                MultilinearPolynomial::U16Scalars(poly) => {
-                    let mut cloned = poly.clone();
-                    cloned.bound_coeffs = poly.bound_coeffs.clone();
-                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U16Scalars(cloned))
-                }
-                MultilinearPolynomial::U32Scalars(poly) => {
-                    let mut cloned = poly.clone();
-                    cloned.bound_coeffs = poly.bound_coeffs.clone();
-                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U32Scalars(cloned))
-                }
-                MultilinearPolynomial::U64Scalars(poly) => {
-                    let mut cloned = poly.clone();
-                    cloned.bound_coeffs = poly.bound_coeffs.clone();
-                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::U64Scalars(cloned))
-                }
-                MultilinearPolynomial::I64Scalars(poly) => {
-                    let mut cloned = poly.clone();
-                    cloned.bound_coeffs = poly.bound_coeffs.clone();
-                    Rep3MultilinearPolynomial::public(MultilinearPolynomial::I64Scalars(cloned))
-                }
-                _ => self.clone(),
-            },
-            _ => self.clone(),
-        }
-    }
-
-    pub fn clone_with_bound_coeffs_vec(polys: &[Self]) -> Vec<Self> {
-        polys
-            .par_iter()
-            .map(|poly| poly.clone_with_bound_coeffs())
-            .collect()
-    }
-
-    pub fn shard_from_public_bytes(coeffs: Vec<u8>, shard_nv: usize, worker_idx: usize) -> Self {
-        Self::public(MultilinearPolynomial::U8Scalars(
-            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
-        ))
-    }
-
-    pub fn as_full_poly(self) -> Self {
-        match self {
-            Self::Public { .. } => unreachable!(),
-            Self::Shared(poly) => Self::shared(poly.as_full_poly()),
         }
     }
 
@@ -469,11 +347,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         let evals: Vec<_> = polys
             .into_par_iter()
             .map(|&poly| match poly {
-                Rep3MultilinearPolynomial::Public {
-                    poly: MultilinearPolynomial::LargeScalars(poly),
-                    ..
-                } => Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&eq)),
-                Rep3MultilinearPolynomial::Public { poly, .. } => match poly {
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::LargeScalars(poly)) => {
+                    Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&eq))
+                }
+                Rep3MultilinearPolynomial::Public(poly) => match poly {
                     MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, &eq),
                     MultilinearPolynomial::U8Scalars(poly) => poly
                         .coeffs
@@ -519,37 +396,21 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 impl<F: JoltField> PolynomialBinding<F, Rep3Value<F>> for Rep3MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.is_bound(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.is_bound(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.is_bound(),
         }
     }
 
     fn bind(&mut self, r: F, order: BindingOrder) {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
-                poly.bind(r, order);
-                if let Some(trivial_share) = trivial_share {
-                    trivial_share.bind(r, order);
-                }
-            }
+            Rep3MultilinearPolynomial::Public(poly) => poly.bind(r, order),
             Rep3MultilinearPolynomial::Shared(poly) => poly.bind(r, order),
         }
     }
 
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
-                poly.bind_parallel(r, order);
-                if let Some(trivial_share) = trivial_share {
-                    trivial_share.bind_parallel(r, order);
-                }
-            }
+            Rep3MultilinearPolynomial::Public(poly) => poly.bind_parallel(r, order),
             Rep3MultilinearPolynomial::Shared(poly) => poly.bind_parallel(r, order),
         }
     }
@@ -558,7 +419,7 @@ impl<F: JoltField> PolynomialBinding<F, Rep3Value<F>> for Rep3MultilinearPolynom
     /// Use `final_sumcheck_claim_additive` instead.
     fn final_sumcheck_claim(&self) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.final_sumcheck_claim().into(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.final_sumcheck_claim().into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim().into(),
         }
     }
@@ -567,7 +428,7 @@ impl<F: JoltField> PolynomialBinding<F, Rep3Value<F>> for Rep3MultilinearPolynom
 impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for Rep3MultilinearPolynomial<F> {
     fn evaluate(&self, r: &[F]) -> Rep3Value<F> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly.evaluate(r).into(),
+            Rep3MultilinearPolynomial::Public(poly) => poly.evaluate(r).into(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.evaluate(r).into(),
         }
     }
@@ -579,13 +440,10 @@ impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for Rep3MultilinearPoly
         let evals: Vec<_> = polys
             .into_par_iter()
             .map(|&poly| match poly {
-                Rep3MultilinearPolynomial::Public {
-                    poly: MultilinearPolynomial::LargeScalars(poly),
-                    ..
-                } => Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&eq)),
-                Rep3MultilinearPolynomial::Public { poly, .. } => {
-                    Rep3Value::Public(poly.dot_product(&eq))
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::LargeScalars(poly)) => {
+                    Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&eq))
                 }
+                Rep3MultilinearPolynomial::Public(poly) => Rep3Value::Public(poly.dot_product(&eq)),
                 Rep3MultilinearPolynomial::Shared(poly) => {
                     Rep3Value::Additive(poly.evaluate_at_chi_optimized(&eq))
                 }
@@ -602,7 +460,7 @@ impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for Rep3MultilinearPoly
         order: BindingOrder,
     ) -> Vec<Rep3Value<F>> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .sumcheck_evals(index, degree, order)
                 .into_iter()
                 .map(|x| x.into())
@@ -626,14 +484,14 @@ impl<F: JoltField> PolyDegree for Rep3MultilinearPolynomial<F> {
     }
 }
 
+//---------------- Conversion ----------------//
+
 impl<'a, F: JoltField> TryInto<&'a Rep3DensePolynomial<F>> for &'a Rep3MultilinearPolynomial<F> {
     type Error = eyre::Error;
 
     fn try_into(self) -> Result<&'a Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { trivial_share, .. } => trivial_share
-                .as_ref()
-                .ok_or(eyre::eyre!("No trivial share")),
+            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
             Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
         }
     }
@@ -646,9 +504,7 @@ impl<'a, F: JoltField> TryInto<&'a mut Rep3DensePolynomial<F>>
 
     fn try_into(self) -> Result<&'a mut Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { trivial_share, .. } => trivial_share
-                .as_mut()
-                .ok_or(eyre::eyre!("No trivial share")),
+            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
             Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
         }
     }
@@ -659,9 +515,7 @@ impl<F: JoltField> TryInto<Rep3DensePolynomial<F>> for Rep3MultilinearPolynomial
 
     fn try_into(self) -> Result<Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { trivial_share, .. } => {
-                trivial_share.ok_or(eyre::eyre!("No trivial share"))
-            }
+            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
             Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
         }
     }
@@ -672,7 +526,7 @@ impl<'a, F: JoltField> TryInto<&'a MultilinearPolynomial<F>> for &'a Rep3Multili
 
     fn try_into(self) -> Result<&'a MultilinearPolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => Ok(poly),
+            Rep3MultilinearPolynomial::Public(poly) => Ok(poly),
             Rep3MultilinearPolynomial::Shared(_) => Err(eyre::eyre!("No public polynomial")),
         }
     }
@@ -685,7 +539,7 @@ impl<'a, F: JoltField> TryInto<&'a mut MultilinearPolynomial<F>>
 
     fn try_into(self) -> Result<&'a mut MultilinearPolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => Ok(poly),
+            Rep3MultilinearPolynomial::Public(poly) => Ok(poly),
             Rep3MultilinearPolynomial::Shared(_) => Err(eyre::eyre!("No public polynomial")),
         }
     }
@@ -696,7 +550,7 @@ impl<F: JoltField> TryInto<MultilinearPolynomial<F>> for Rep3MultilinearPolynomi
 
     fn try_into(self) -> Result<MultilinearPolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public { poly, .. } => Ok(poly),
+            Rep3MultilinearPolynomial::Public(poly) => Ok(poly),
             Rep3MultilinearPolynomial::Shared(_) => Err(eyre::eyre!("No public polynomial")),
         }
     }
@@ -704,10 +558,7 @@ impl<F: JoltField> TryInto<MultilinearPolynomial<F>> for Rep3MultilinearPolynomi
 
 impl<F: JoltField> From<MultilinearPolynomial<F>> for Rep3MultilinearPolynomial<F> {
     fn from(poly: MultilinearPolynomial<F>) -> Self {
-        Rep3MultilinearPolynomial::Public {
-            poly,
-            trivial_share: None,
-        }
+        Rep3MultilinearPolynomial::Public(poly)
     }
 }
 
@@ -726,30 +577,21 @@ impl<F: JoltField> From<Vec<Rep3PrimeFieldShare<F>>> for Rep3MultilinearPolynomi
 impl<F: JoltField> From<Vec<u8>> for Rep3MultilinearPolynomial<F> {
     fn from(coeffs: Vec<u8>) -> Self {
         let poly = MultilinearPolynomial::U8Scalars(CompactPolynomial::from_coeffs(coeffs));
-        Self::Public {
-            poly,
-            trivial_share: None,
-        }
+        Self::Public(poly)
     }
 }
 
 impl<F: JoltField> From<Vec<u32>> for Rep3MultilinearPolynomial<F> {
     fn from(coeffs: Vec<u32>) -> Self {
         let poly = MultilinearPolynomial::U32Scalars(CompactPolynomial::from_coeffs(coeffs));
-        Self::Public {
-            poly,
-            trivial_share: None,
-        }
+        Self::Public(poly)
     }
 }
 
 impl<F: JoltField> From<Vec<u64>> for Rep3MultilinearPolynomial<F> {
     fn from(coeffs: Vec<u64>) -> Self {
         let poly = MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs));
-        Self::Public {
-            poly,
-            trivial_share: None,
-        }
+        Self::Public(poly)
     }
 }
 
@@ -758,7 +600,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a DensePo
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a dense polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -771,7 +613,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a Compact
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a u8 polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -784,7 +626,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a Compact
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a u16 polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -797,7 +639,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a Compact
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a u32 polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -810,7 +652,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a Compact
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a u64 polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -823,7 +665,7 @@ impl<'a, F: JoltField> TryFrom<&'a Rep3MultilinearPolynomial<F>> for &'a Compact
 
     fn try_from(poly: &'a Rep3MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => poly
+            Rep3MultilinearPolynomial::Public(poly) => poly
                 .try_into()
                 .map_err(|_| eyre::eyre!("Not a i64 polynomial")),
             _ => Err(eyre::eyre!("Not a public polynomial")),
@@ -881,6 +723,8 @@ where
     }
 }
 
+//---------------- Serialization ----------------//
+
 impl<F: JoltField> CanonicalSerialize for Rep3MultilinearPolynomial<F> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -888,13 +732,9 @@ impl<F: JoltField> CanonicalSerialize for Rep3MultilinearPolynomial<F> {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
+            Rep3MultilinearPolynomial::Public(poly) => {
                 (0_u8).serialize_with_mode(&mut writer, compress)?;
                 poly.serialize_with_mode(&mut writer, compress)?;
-                trivial_share.serialize_with_mode(&mut writer, compress)?;
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
                 (1_u8).serialize_with_mode(&mut writer, compress)?;
@@ -906,13 +746,8 @@ impl<F: JoltField> CanonicalSerialize for Rep3MultilinearPolynomial<F> {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
-                (0_u8).serialized_size(compress)
-                    + poly.serialized_size(compress)
-                    + trivial_share.serialized_size(compress)
+            Rep3MultilinearPolynomial::Public(poly) => {
+                (0_u8).serialized_size(compress) + poly.serialized_size(compress)
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
                 (1_u8).serialized_size(compress) + poly.serialized_size(compress)
@@ -929,26 +764,18 @@ impl<F: JoltField> CanonicalDeserialize for Rep3MultilinearPolynomial<F> {
     ) -> Result<Self, SerializationError> {
         // TODO(protoben) Can we use strum for this?
         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        let res = match discriminant {
-            0 => Rep3MultilinearPolynomial::Public {
-                poly: MultilinearPolynomial::deserialize_with_mode(
+        let res =
+            match discriminant {
+                0 => Rep3MultilinearPolynomial::Public(
+                    MultilinearPolynomial::deserialize_with_mode(&mut reader, compress, validate)?,
+                ),
+                1 => Rep3MultilinearPolynomial::Shared(Rep3DensePolynomial::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
-                )?,
-                trivial_share: Option::<Rep3DensePolynomial<F>>::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                )?,
-            },
-            1 => Rep3MultilinearPolynomial::Shared(Rep3DensePolynomial::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?),
-            _ => Err(SerializationError::InvalidData)?,
-        };
+                )?),
+                _ => Err(SerializationError::InvalidData)?,
+            };
         Ok(res)
     }
 }
@@ -956,155 +783,157 @@ impl<F: JoltField> CanonicalDeserialize for Rep3MultilinearPolynomial<F> {
 impl<F: JoltField> Valid for Rep3MultilinearPolynomial<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
-            Rep3MultilinearPolynomial::Public {
-                poly,
-                trivial_share,
-            } => {
-                poly.check()?;
-                trivial_share.check()
-            }
+            Rep3MultilinearPolynomial::Public(poly) => poly.check(),
             Rep3MultilinearPolynomial::Shared(poly) => poly.check(),
         }
     }
 }
 
-#[test]
-fn test_rls() {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
-        .build_global()
-        .expect("set global Rayon pool");
-    let env_filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing::Level::INFO.into())
-        .from_env_lossy();
-    let subscriber = tracing_subscriber::layer::SubscriberExt::with(
-        tracing_subscriber::Registry::default(),
-        env_filter,
-    );
-    let _ =
-        tracing::subscriber::set_global_default(tracing_subscriber::layer::SubscriberExt::with(
-            subscriber,
-            tracing_forest::ForestLayer::default(),
-        ));
-    type F = ark_bn254::Fr;
+#[cfg(test)]
+mod test {
+    use itertools::{izip, Itertools};
+    use snarks_core::math::Math;
 
-    const N: usize = 1 << 10;
+    use super::*;
 
-    let worker1_polys = vec![
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(
+    #[test]
+    fn test_rls() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build_global()
+            .expect("set global Rayon pool");
+        let env_filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing::Level::INFO.into())
+            .from_env_lossy();
+        let subscriber = tracing_subscriber::layer::SubscriberExt::with(
+            tracing_subscriber::Registry::default(),
+            env_filter,
+        );
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::layer::SubscriberExt::with(
+                subscriber,
+                tracing_forest::ForestLayer::default(),
+            ),
+        );
+        type F = ark_bn254::Fr;
+
+        const N: usize = 1 << 10;
+
+        let worker1_polys = vec![
+            Rep3MultilinearPolynomial::<F>::new_shard_shared(
+                rep3::arithmetic::promote_to_trivial_shares(
+                    (0u64..N as u64).map(F::from).collect(),
+                    // vec![F::from(1); N],
+                    PartyID::ID0,
+                ),
+                N.log_2() - 1,
+                0,
+                N,
+            ),
+            Rep3MultilinearPolynomial::<F>::new_shard_shared(
+                rep3::arithmetic::promote_to_trivial_shares(
+                    (1u64..N as u64 + 1).map(F::from).collect(),
+                    // vec![F::from(2); N],
+                    PartyID::ID0,
+                ),
+                N.log_2() - 1,
+                0,
+                N,
+            ),
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+                (2u64..N as u64 + 2).map(F::from).collect(),
+                // vec![F::from(2); N],
+                PartyID::ID0,
+            )),
+        ];
+
+        let worker2_polys = vec![
+            Rep3MultilinearPolynomial::<F>::new_shard_shared(
+                rep3::arithmetic::promote_to_trivial_shares(
+                    (0u64..N as u64).map(F::from).collect(),
+                    // vec![F::from(1); N],
+                    PartyID::ID0,
+                ),
+                N.log_2() - 1,
+                1,
+                N,
+            ),
+            Rep3MultilinearPolynomial::<F>::new_shard_shared(
+                rep3::arithmetic::promote_to_trivial_shares(
+                    (1u64..N as u64 + 1).map(F::from).collect(),
+                    // vec![F::from(2); N],
+                    PartyID::ID0,
+                ),
+                N.log_2() - 1,
+                1,
+                N,
+            ),
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+                (3u64..N as u64 + 3).map(F::from).collect(),
+                // vec![F::from(2); N],
+                PartyID::ID0,
+            )),
+        ];
+        tracing::info!("-------------worker 1-------------");
+        let rls1 = Rep3MultilinearPolynomial::<F>::linear_combination(
+            &worker1_polys.iter().collect_vec(),
+            &vec![F::from(2), F::from(3), F::from(4)],
+            PartyID::ID0,
+        )
+        .as_shared()
+        .coeffs
+        .iter()
+        .map(|coeff| coeff.a)
+        .collect_vec();
+        tracing::info!("-------------worker 2-------------");
+        let rls2 = Rep3MultilinearPolynomial::<F>::linear_combination(
+            &worker2_polys.iter().collect_vec(),
+            &vec![F::from(2), F::from(3), F::from(5)],
+            PartyID::ID0,
+        )
+        .as_shared()
+        .coeffs
+        .iter()
+        .map(|coeff| coeff.a)
+        .collect_vec();
+        tracing::info!("----------------------------");
+
+        let polys = vec![
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
                 (0u64..N as u64).map(F::from).collect(),
                 // vec![F::from(1); N],
                 PartyID::ID0,
-            ),
-            N.log_2() - 1,
-            0,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(
+            )),
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
                 (1u64..N as u64 + 1).map(F::from).collect(),
                 // vec![F::from(2); N],
                 PartyID::ID0,
-            ),
-            N.log_2() - 1,
-            0,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (2u64..N as u64 + 2).map(F::from).collect(),
-            // vec![F::from(2); N],
-            PartyID::ID0,
-        )),
-    ];
-
-    let worker2_polys = vec![
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(
-                (0u64..N as u64).map(F::from).collect(),
-                // vec![F::from(1); N],
-                PartyID::ID0,
-            ),
-            N.log_2() - 1,
-            1,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::shard_from_shared_coeffs(
-            rep3::arithmetic::promote_to_trivial_shares(
-                (1u64..N as u64 + 1).map(F::from).collect(),
+            )),
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+                (2u64..N as u64 + 2).map(F::from).collect(),
                 // vec![F::from(2); N],
                 PartyID::ID0,
-            ),
-            N.log_2() - 1,
-            1,
-            N,
-        ),
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (3u64..N as u64 + 3).map(F::from).collect(),
-            // vec![F::from(2); N],
-            PartyID::ID0,
-        )),
-    ];
-    tracing::info!("-------------worker 1-------------");
-    let rls1 = Rep3MultilinearPolynomial::<F>::linear_combination(
-        &worker1_polys.iter().collect_vec(),
-        &vec![F::from(2), F::from(3), F::from(4)],
-        PartyID::ID0,
-    )
-    .as_shared()
-    .coeffs
-    .iter()
-    .map(|coeff| coeff.a)
-    .collect_vec();
-    tracing::info!("-------------worker 2-------------");
-    let rls2 = Rep3MultilinearPolynomial::<F>::linear_combination(
-        &worker2_polys.iter().collect_vec(),
-        &vec![F::from(2), F::from(3), F::from(5)],
-        PartyID::ID0,
-    )
-    .as_shared()
-    .coeffs
-    .iter()
-    .map(|coeff| coeff.a)
-    .collect_vec();
-    tracing::info!("----------------------------");
+            )),
+            Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
+                (3u64..N as u64 + 3).map(F::from).collect(),
+                // vec![F::from(2); N],
+                PartyID::ID0,
+            )),
+        ];
 
-    let polys = vec![
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (0u64..N as u64).map(F::from).collect(),
-            // vec![F::from(1); N],
+        let rls = Rep3MultilinearPolynomial::<F>::linear_combination(
+            &polys.iter().collect_vec(),
+            &vec![F::from(2), F::from(3), F::from(4), F::from(5)],
             PartyID::ID0,
-        )),
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (1u64..N as u64 + 1).map(F::from).collect(),
-            // vec![F::from(2); N],
-            PartyID::ID0,
-        )),
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (2u64..N as u64 + 2).map(F::from).collect(),
-            // vec![F::from(2); N],
-            PartyID::ID0,
-        )),
-        Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
-            (3u64..N as u64 + 3).map(F::from).collect(),
-            // vec![F::from(2); N],
-            PartyID::ID0,
-        )),
-    ];
+        )
+        .as_shared()
+        .coeffs
+        .iter()
+        .map(|coeff| coeff.a)
+        .collect_vec();
 
-    let rls = Rep3MultilinearPolynomial::<F>::linear_combination(
-        &polys.iter().collect_vec(),
-        &vec![F::from(2), F::from(3), F::from(4), F::from(5)],
-        PartyID::ID0,
-    )
-    .as_shared()
-    .coeffs
-    .iter()
-    .map(|coeff| coeff.a)
-    .collect_vec();
+        let rls_check = izip!(rls1, rls2).map(|(a, b)| a + b).collect_vec();
 
-    let rls_check = izip!(rls1, rls2).map(|(a, b)| a + b).collect_vec();
-
-    assert_eq!(rls_check, rls);
-    // println!("{:?}", rls2);
+        assert_eq!(rls_check, rls);
+    }
 }

@@ -1,5 +1,4 @@
 use std::cmp::min;
-use std::ops::{Add, AddAssign};
 
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;

@@ -1,13 +1,20 @@
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+
+use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
+use crate::field::JoltField;
+use crate::jolt::{
+    instruction::Rep3JoltInstructionSet,
+    vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
+};
 use crate::{
     jolt::vm::instruction_lookups::witness,
     lasso::memory_checking::{self, worker::MemoryCheckingProverRep3Worker},
     poly::{
-        commitment::Rep3CommitmentScheme,
-        opening_proof::{Rep3OpeningAccumulatorWorker, Rep3ProverOpening},
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
         Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
-        grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
+        grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
     utils::{transcript::Transcript, transpose_flatten, transpose_hashmap, types::Rep3Value},
@@ -16,10 +23,7 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
 use jolt_core::{
-    jolt::{
-        subtable::JoltSubtableSet,
-        vm::{instruction_lookups::InstructionLookupStuff, JoltStuff},
-    },
+    jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
     lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData},
     poly::{
         compact_polynomial::SmallScalar,
@@ -29,7 +33,7 @@ use jolt_core::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
     },
-    utils::{math::Math, thread::drop_in_background_thread},
+    utils::thread::drop_in_background_thread,
 };
 use mpc_core::protocols::{
     additive,
@@ -43,28 +47,9 @@ use mpc_core::protocols::{
         PartyID,
     },
 };
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
-use tokio::io;
 use tracing::trace_span;
 
-use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
-use crate::field::JoltField;
-use crate::jolt::{
-    instruction::Rep3JoltInstructionSet,
-    vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
-};
-
-use rayon::{iter::once, prelude::*, ThreadPoolBuilder};
-
-use once_cell::sync::Lazy;
-use rayon::ThreadPool;
-pub static CPU_ONLY_POOL: Lazy<ThreadPool> = Lazy::new(|| {
-    ThreadPoolBuilder::new()
-        // .num_threads(16) // tune
-        .thread_name(|i| format!("cpu-only-{}", i))
-        .build()
-        .unwrap()
-});
+use rayon::prelude::*;
 
 pub struct Rep3InstructionLookupsProver<
     const C: usize,
@@ -116,13 +101,6 @@ where
             .collect();
         let eq_poly = MultilinearPolynomial::from(eq_evals);
 
-        // let mut instruction_flags = polynomials
-        //     .instruction_lookups
-        //     .instruction_flags
-        //     .iter()
-        //     .map(|p| Rep3MultilinearPolynomial::poly_shard_for_worker(&p, num_rounds, worker_idx))
-        //     .collect::<Vec<_>>();
-
         let r_primary_sumchecks = Self::prove_primary_sumcheck(
             preprocessing,
             num_rounds,
@@ -150,47 +128,20 @@ where
             io_ctx.main(),
         )?;
 
-        let read_memories = witness::read_write_memories_for_worker(
-            preprocessing.num_memories,
-            io_ctx.num_workers(),
-            io_ctx.worker_idx(),
-        );
-        polynomials.instruction_lookups.E_polys =
-            std::mem::take(&mut polynomials.instruction_lookups.E_polys)
-                .into_iter()
-                .enumerate()
-                .filter_map(|(i, p)| read_memories.contains(&i).then_some(p.as_full_poly()))
-                .collect();
-
-        // println!(
-        //     "instruction_flags {}",
-        //     polynomials.instruction_lookups.instruction_flags.len()
-        // );
-
-        // println!(
-        //     "instruction_to_memory_indices {:?}",
-        //     preprocessing.instruction_to_memory_indices
-        // );
-
-        // polynomials.instruction_lookups.instruction_flags =
-        //     std::mem::take(&mut polynomials.instruction_lookups.instruction_flags)
-        //         .into_iter()
-        //         .enumerate()
-        //         .filter_map(|(i, p)| {
-        //             // preprocessing.instruction_to_memory_indices[i]
-        //             read_memories
-        //                 .as_ref()
-        //                 .is_some_and(|m| m.contains(&i))
-        //                 .then_some(p)
-        //         })
-        //         .collect();
-
-        // println!(
-        //     "instruction_flags worker {}: {}",
-        //     io_ctx.worker_idx(),
-        //     polynomials.instruction_lookups.instruction_flags.len()
-        // );
-
+        // remove polynomials that won't be used anymore
+        {
+            let read_memories = witness::read_write_memories_for_worker(
+                preprocessing.num_memories,
+                io_ctx.num_workers(),
+                io_ctx.worker_idx(),
+            );
+            polynomials.instruction_lookups.E_polys =
+                std::mem::take(&mut polynomials.instruction_lookups.E_polys)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| read_memories.contains(&i).then_some(p.to_full_poly()))
+                    .collect();
+        }
         <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
             pcs_setup,
             preprocessing,
@@ -208,16 +159,6 @@ where
         drop_in_background_thread(std::mem::take(
             &mut polynomials.instruction_lookups.final_cts,
         ));
-        polynomials
-            .instruction_lookups
-            .instruction_flags
-            .par_iter_mut()
-            .for_each(|poly| match poly {
-                Rep3MultilinearPolynomial::Public { trivial_share, .. } => {
-                    drop_in_background_thread(trivial_share.take());
-                }
-                _ => unreachable!(),
-            });
 
         Ok(())
     }
@@ -325,18 +266,7 @@ where
             // Bind all polys
             let _bind_span = trace_span!("bind polys");
             let _bind_enter = _bind_span.enter();
-            // let (tx, rx) = tokio::sync::oneshot::channel();
-            // CPU_ONLY_POOL.spawn(move || {
-            //     flag_polys
-            //         .par_iter_mut()
-            //         .chain(E_polys.par_iter_mut())
-            //         .chain(rayon::iter::once(&mut lookup_outputs_poly))
-            //         .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-            //     eq_poly.bind(r_j, BindingOrder::LowToHigh);
-            //     tx.send((flag_polys, E_polys, lookup_outputs_poly, eq_poly))
-            //         .unwrap();
-            // });
-            // (flag_polys, E_polys, lookup_outputs_poly, eq_poly) = rx.blocking_recv().unwrap();
+
             flag_polys
                 .par_iter_mut()
                 .chain(E_polys.par_iter_mut())
@@ -635,8 +565,6 @@ where
 
     type Openings = InstructionLookupStuff<F>;
 
-    // type Commitments;
-
     type ExogenousOpenings = NoExogenousOpenings;
 
     #[tracing::instrument(skip_all, name = "Rep3InstructionLookupsProver::compute_leaves")]
@@ -669,14 +597,6 @@ where
             num_workers,
             worker_idx,
         );
-
-        if io_ctx.party_idx() == 0 {
-            tracing::info!(
-                "Worker {} final_subtables: {:?}",
-                worker_idx,
-                final_subtables
-            );
-        }
 
         let offset = read_memories[0];
         let read_write_leaves = read_memories
@@ -775,12 +695,6 @@ where
         } else {
             Subtables::COUNT + preprocessing.num_memories
         };
-
-        tracing::info!(
-            "worker {} init_final_batch_size: {}",
-            io_ctx.worker_idx(),
-            init_final_batch_size
-        );
 
         Ok((
             (
