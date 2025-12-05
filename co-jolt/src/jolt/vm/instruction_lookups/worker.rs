@@ -841,24 +841,24 @@ where
 
             rho_powers = chain![
                 &rho_powers[..4],
-                &rho_powers[rho_offsets[0]..rho_offsets[0] + num_memories_worker],
-                &rho_powers[rho_offsets[1]..rho_offsets[1] + num_memories_worker],
-                &rho_powers[4 + preprocessing.num_memories * 2..],
+                // &rho_powers[rho_offsets[0]..rho_offsets[0] + num_memories_worker],
+                // &rho_powers[rho_offsets[1]..rho_offsets[1] + num_memories_worker],
+                // &rho_powers[4 + preprocessing.num_memories * 2..],
             ]
             .copied()
             .collect();
 
-            // let read_write_polys = polynomials
-            //     .read_cts
-            //     .iter()
-            //     // .chain(polynomials.read_cts.iter())
-            //     .chain(polynomials.E_polys.iter())
-            //     .collect::<Vec<_>>();
-
-            let masked_polys = read_write_polys
+            let read_write_polys = polynomials
+                .dim
                 .iter()
-                .map(|p| p.into_masked_shard_mle()) // breaks with E_polys
+                // .chain(polynomials.read_cts.iter())
+                // .chain(polynomials.E_polys.iter())
                 .collect::<Vec<_>>();
+
+            // let masked_polys = read_write_polys
+            //     .iter()
+            //     .map(|p| p.into_masked_shard_mle()) // breaks with E_polys
+            //     .collect::<Vec<_>>();
 
             tracing::info!(
                 "E_polys len: {:?} num_memories_worker {:?}",
@@ -868,10 +868,7 @@ where
 
             let batched_poly = Rep3MultilinearPolynomial::linear_combination(
                 // &read_write_polys,
-                &masked_polys
-                    .iter()
-                    .chain(masked_polys.iter())
-                    .collect::<Vec<_>>(),
+                &read_write_polys,
                 &rho_powers,
                 io_ctx.party_id(),
             );

@@ -28,7 +28,7 @@ pub struct Rep3DensePolynomial<F: JoltField> {
     binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
     len: usize,
     chunk_range: (usize, usize),
-    global_chunk_range: Option<(usize, usize)>,
+    pub(crate) global_chunk_range: Option<(usize, usize)>,
     full_len: usize,
 }
 

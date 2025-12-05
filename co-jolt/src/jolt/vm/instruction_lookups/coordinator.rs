@@ -418,17 +418,17 @@ where
         drop(_span);
 
         // Compute the random linear combination of the claims
-        let claim: F = rho_powers
-            .iter()
-            .zip(claims.iter())
-            .map(|(scalar, eval)| *scalar * *eval)
-            .sum();
-        // let claim: F = rho_powers[4..claims.len() - Instructions::COUNT]
+        // let claim: F = rho_powers
         //     .iter()
-        //     .zip(&claims[4..claims.len() - Instructions::COUNT])
-        //     // .zip(openings.read_cts.iter())
+        //     .zip(claims.iter())
         //     .map(|(scalar, eval)| *scalar * *eval)
         //     .sum();
+        let claim: F = rho_powers[..4 /*claims.len() - Instructions::COUNT*/]
+            .iter()
+            .zip(&claims[..4 /*claims.len() - Instructions::COUNT*/])
+            // .zip(openings.read_cts.iter())
+            .map(|(scalar, eval)| *scalar * *eval)
+            .sum();
 
         // tracing::info!("rho_powers: {:?}", rho_powers);
 
