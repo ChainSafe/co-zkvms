@@ -1,19 +1,20 @@
-use std::{cmp::min, u32};
+use std::{cmp::min, marker::PhantomData, u32};
 
 use crate::{
     field::JoltField,
-    jolt::vm::read_write_memory::witness::Rep3ProgramIO,
+    jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::WorkerInitializable},
     poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial},
     utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, Itertools};
 #[cfg(feature = "debug")]
 use jolt_core::jolt::vm::instruction_lookups::InstructionLookupPolynomials;
-use jolt_core::utils::math::Math;
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
+use jolt_core::{jolt::vm::JoltStuff, utils::math::Math};
 use mpc_core::protocols::{
     rep3::{
         network::{IoContext, IoContextPool, Rep3NetworkWorker},
@@ -33,9 +34,91 @@ use crate::jolt::{
     },
 };
 
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct InstructionLookupsPreprocessingExt<const C: usize, F: JoltField> {
+    pub subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
+    pub instruction_to_memory_indices: Vec<Vec<usize>>,
+    pub memory_to_subtable_index: Vec<usize>,
+    pub memory_to_dimension_index: Vec<usize>,
+    pub materialized_subtables: Vec<Vec<u32>>,
+    pub num_memories: usize,
+    pub read_memories_worker: Vec<usize>, // TODO: Range
+    pub init_final_subtables_worker: Vec<(usize, bool, Vec<usize>)>,
+    pub final_memories_worker: Vec<usize>, // TODO: Range
+    pub _field: PhantomData<F>,
+}
+
+impl<F: JoltField, const C: usize> InstructionLookupsPreprocessingExt<C, F> {
+    pub fn for_worker(
+        verifier_preprocessing: InstructionLookupsPreprocessing<C, F>,
+        num_workers: usize,
+        worker_idx: usize,
+    ) -> Self {
+        let InstructionLookupsPreprocessing {
+            subtable_to_memory_indices,
+            instruction_to_memory_indices,
+            memory_to_subtable_index,
+            memory_to_dimension_index,
+            materialized_subtables,
+            num_memories,
+            _field,
+        } = verifier_preprocessing;
+
+        let read_memories_worker =
+            read_write_memories_for_worker(num_memories, num_workers, worker_idx);
+
+        let init_final_subtables_worker =
+            init_final_subtables_for_worker(&subtable_to_memory_indices, num_workers, worker_idx);
+
+        let final_memories_worker = init_final_subtables_worker
+            .iter()
+            .flat_map(|(_, _, memories)| memories)
+            .copied()
+            .collect_vec();
+
+        Self {
+            subtable_to_memory_indices,
+            instruction_to_memory_indices,
+            memory_to_subtable_index,
+            memory_to_dimension_index,
+            materialized_subtables,
+            num_memories,
+            read_memories_worker,
+            init_final_subtables_worker,
+            final_memories_worker,
+            _field: PhantomData,
+        }
+    }
+}
+
 pub type Rep3InstructionLookupPolynomials<F> = InstructionLookupStuff<Rep3MultilinearPolynomial<F>>;
 
-impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessing<C, F>>
+impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+    WorkerInitializable<T, InstructionLookupsPreprocessingExt<C, F>> for InstructionLookupStuff<T>
+{
+    fn worker_initialize(preprocessing: &InstructionLookupsPreprocessingExt<C, F>) -> Self {
+        Self {
+            dim: std::iter::repeat_with(|| T::default()).take(C).collect(),
+            read_cts: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.read_memories_worker.len())
+                .collect(),
+            final_cts: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.num_memories)
+                .collect(),
+            E_polys: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.read_memories_worker.len())
+                .collect(),
+            instruction_flags: std::iter::repeat_with(|| T::default())
+                .take(preprocessing.final_memories_worker.len())
+                .collect(),
+            lookup_outputs: T::default(),
+            a_init_final: None,
+            v_init_final: None,
+        }
+    }
+}
+
+impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreprocessingExt<C, F>>
     for Rep3InstructionLookupPolynomials<F>
 {
     #[cfg(feature = "debug")]
@@ -43,10 +126,10 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
+        preprocessing: &InstructionLookupsPreprocessingExt<C, F>,
         trace: &mut [JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
-        M: usize,
+        // M: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
     where
@@ -54,6 +137,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
     {
         let m = trace.len().next_power_of_two();
+        let M = preprocessing.materialized_subtables[0].len();
         let worker_idx = io_ctx.worker_idx();
         let num_workers = 1usize << io_ctx.log_num_workers();
 
@@ -89,18 +173,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             })
             .collect();
 
-        let read_memories =
-            read_write_memories_for_worker(preprocessing.num_memories, num_workers, worker_idx);
-
-        let final_memories = init_final_subtables_for_worker(
-            &preprocessing.subtable_to_memory_indices,
-            num_workers,
-            worker_idx,
-        )
-        .into_iter()
-        .flat_map(|(_, _, memories)| memories)
-        .collect_vec();
-
         let polys = tracing::info_span!("compute_polys").in_scope(|| {
             io_ctx.par_iter_cyclic(0..preprocessing.num_memories, |memory_index, io_ctx| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
@@ -108,8 +180,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 let access_sequence = &subtable_lookup_indices[dim_index];
                 let subtable = &materialized_subtable_luts[subtable_index];
 
-                let is_read_mem = read_memories.contains(&memory_index);
-                let is_final_mem = final_memories.contains(&memory_index);
+                let is_read_mem = preprocessing.read_memories_worker.contains(&memory_index);
+                let is_final_mem = preprocessing.final_memories_worker.contains(&memory_index);
 
                 let (used_ops, memory_addresses): (Vec<_>, Vec<_>) = trace
                     .iter()
@@ -344,7 +416,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
     #[cfg(feature = "debug")]
     fn combine_polynomials(
-        _: &InstructionLookupsPreprocessing<C, F>,
+        _: &InstructionLookupsPreprocessingExt<C, F>,
         polynomials_shares: Vec<Self>,
     ) -> InstructionLookupPolynomials<F> {
         use itertools::multizip;

@@ -32,11 +32,14 @@ use std::fmt::Debug;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub struct ConstantPreprocessing<const C: usize>;
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct R1CSPreprocessing<const C: usize> {
+    pub log_M: usize,
+}
 
 pub type Rep3R1CSPolynomials<F> = R1CSStuff<Rep3MultilinearPolynomial<F>>;
 
-impl<const C: usize, F> Rep3Polynomials<F, ConstantPreprocessing<C>> for Rep3R1CSPolynomials<F>
+impl<const C: usize, F> Rep3Polynomials<F, R1CSPreprocessing<C>> for Rep3R1CSPolynomials<F>
 where
     F: JoltField,
 {
@@ -45,10 +48,9 @@ where
 
     #[tracing::instrument(skip_all, name = "R1CS::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
-        _: &ConstantPreprocessing<C>,
+        R1CSPreprocessing { log_M }: &R1CSPreprocessing<C>,
         trace: &mut [JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
-        M: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
@@ -56,7 +58,6 @@ where
         Network: Rep3NetworkWorker,
     {
         let m = trace.len();
-        let log_M = log2(M) as usize;
 
         let mut chunks_x =
             vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
@@ -72,7 +73,7 @@ where
             .zip(circuit_flags.par_iter_mut())
             .for_each(|(((step, chunks_x), chunks_y), circuit_flags)| {
                 if let Some(instr) = &step.instruction_lookup {
-                    let (x, y) = instr.operand_chunks_rep3(C, log_M, id);
+                    let (x, y) = instr.operand_chunks_rep3(C, *log_M, id);
                     for i in 0..C {
                         chunks_x[i] = FutureRep3Ring::cast_to_field_b2a(x[i]);
                         chunks_y[i] = FutureRep3Ring::cast_to_field_b2a(y[i]);
@@ -127,7 +128,7 @@ where
 
     #[cfg(feature = "debug")]
     fn combine_polynomials(
-        _: &ConstantPreprocessing<C>,
+        _: &R1CSPreprocessing<C>,
         polynomials_shares: Vec<Self>,
     ) -> Self::PublicPolynomials {
         use itertools::{multizip, Itertools};

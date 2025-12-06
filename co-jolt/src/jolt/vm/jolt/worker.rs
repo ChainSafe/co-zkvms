@@ -1,20 +1,25 @@
+use std::sync::Arc;
+
 use crate::{
     jolt::vm::{
         bytecode::worker::Rep3BytecodeProver,
+        instruction_lookups::witness::InstructionLookupsPreprocessingExt,
         jolt::witness::JoltWitnessMeta,
         read_write_memory::{
             witness::{Rep3ProgramIO, Rep3ProgramIOInput},
             worker::Rep3ReadWriteMemoryProver,
         },
+        JoltWorkerPreprocessing,
     },
     lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker},
     r1cs::{
-        builder::CombinedUniformBuilder, constraints::R1CSConstraints,
+        builder::CombinedUniformBuilder, constraints::R1CSConstraints, inputs::R1CSPreprocessing,
         spartan::worker::Rep3UniformSpartanProver,
     },
     utils::transcript::{Transcript, TranscriptExt},
 };
+use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{
     network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
@@ -32,7 +37,10 @@ use crate::jolt::{
     },
 };
 use jolt_core::{
-    jolt::subtable::JoltSubtableSet, jolt::vm::JoltProverPreprocessing,
+    jolt::{
+        subtable::JoltSubtableSet,
+        vm::{JoltProverPreprocessing, JoltVerifierPreprocessing},
+    },
     r1cs::key::UniformSpartanKey,
 };
 
@@ -54,7 +62,7 @@ pub struct JoltRep3Prover<
     Network: Rep3NetworkWorker,
 {
     pub io_ctx: IoContextPool<Network>,
-    pub preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+    pub preprocessing: JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>,
     pub polynomials: Rep3JoltPolynomials<F>,
     pub r1cs_builder: CombinedUniformBuilder<C, F, Constraints::Inputs>,
     pub spartan_key: UniformSpartanKey<C, <Constraints as R1CSConstraints<C, F>>::Inputs, F>,
@@ -85,16 +93,56 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
 {
+    #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
+    fn worker_preprocess(
+        verifier_preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        num_workers: usize,
+        worker_idx: usize,
+    ) -> JoltWorkerPreprocessing<C, F, PCS, ProofTranscript> {
+        let small_value_lookup_tables = F::compute_lookup_tables();
+        F::initialize_lookup_tables(small_value_lookup_tables.clone());
+        let JoltVerifierPreprocessing {
+            generators,
+            instruction_lookups,
+            bytecode,
+            read_write_memory,
+            memory_layout,
+        } = verifier_preprocessing;
+
+        let instruction_lookups = Arc::new(InstructionLookupsPreprocessingExt::for_worker(
+            instruction_lookups,
+            num_workers,
+            worker_idx,
+        ));
+
+        let r1cs = R1CSPreprocessing { log_M: M.log_2() };
+
+        JoltWorkerPreprocessing {
+            generators,
+            instruction_lookups,
+            bytecode,
+            read_write_memory,
+            memory_layout,
+            r1cs,
+            field: small_value_lookup_tables,
+        }
+    }
+
     pub fn init(
         mut trace: Vec<JoltTraceStep<Instructions>>,
         program_io: Rep3ProgramIOInput,
-        preprocessing: JoltProverPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
         network: Network,
     ) -> eyre::Result<Self>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
+        let preprocessing = Self::worker_preprocess(
+            preprocessing,
+            1 << network.log_num_workers(),
+            network.worker_idx(),
+        );
         let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() as u32)?;
 
         let _guard = tracing::info_span!(
@@ -113,10 +161,9 @@ where
             Rep3ProgramIO::<F>::generate_witness_rep3(program_io, &trace, &mut io_ctx)?;
 
         let mut polynomials = Rep3JoltPolynomials::generate_witness_rep3(
-            &preprocessing.shared,
+            &preprocessing,
             &mut trace,
             &program_io,
-            M,
             &mut io_ctx,
         )?;
 
@@ -171,7 +218,7 @@ where
         let preprocessing = &mut self.preprocessing;
         let polynomials = &mut self.polynomials;
 
-        let srs_size = PCS::srs_size(&preprocessing.shared.generators);
+        let srs_size = PCS::srs_size(&preprocessing.generators);
 
         if self.padded_trace_length > srs_size {
             return Err(eyre::eyre!(
@@ -182,8 +229,7 @@ where
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
-        polynomials
-            .commit::<C, PCS, ProofTranscript, _>(&preprocessing.shared, &mut self.io_ctx)?;
+        polynomials.commit::<C, PCS, ProofTranscript, _>(&preprocessing, &mut self.io_ctx)?;
 
         self.io_ctx.sync_with_coordinator()?;
 
@@ -208,18 +254,18 @@ where
             PCS,
             ProofTranscript,
         >(
-            &preprocessing.shared.instruction_lookups,
+            &preprocessing.instruction_lookups,
             polynomials,
             &mut opening_accumulator,
-            &preprocessing.shared.generators,
+            &preprocessing.generators,
             &mut self.io_ctx,
         )?;
 
         // self.io_ctx.sync_with_parties()?;
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
-            &preprocessing.shared.generators,
-            &preprocessing.shared.read_write_memory,
+            &preprocessing.generators,
+            &preprocessing.read_write_memory,
             polynomials,
             &mut self.program_io,
             &mut opening_accumulator,
@@ -240,7 +286,7 @@ where
 
         // Batch-prove all openings
         opening_accumulator.reduce_and_prove::<PCS, ProofTranscript, _>(
-            &preprocessing.shared.generators,
+            &preprocessing.generators,
             &mut self.io_ctx,
         )?;
 

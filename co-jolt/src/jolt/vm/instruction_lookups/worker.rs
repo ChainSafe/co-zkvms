@@ -1,11 +1,9 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
+use super::witness::Rep3InstructionLookupPolynomials;
 use crate::field::JoltField;
-use crate::jolt::{
-    instruction::Rep3JoltInstructionSet,
-    vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
-};
+use crate::jolt::vm::instruction_lookups::witness::InstructionLookupsPreprocessingExt;
+use crate::jolt::{instruction::Rep3JoltInstructionSet, vm::witness::Rep3JoltPolynomials};
 use crate::{
     jolt::vm::instruction_lookups::witness,
     lasso::memory_checking::{self, worker::MemoryCheckingProverRep3Worker},
@@ -22,6 +20,7 @@ use crate::{
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
+use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::{
     jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
     lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData},
@@ -81,7 +80,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3InstructionLookups::prove")]
     pub fn prove<PCS, ProofTranscript>(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         polynomials: &mut Rep3JoltPolynomials<F>,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         pcs_setup: &PCS::Setup,
@@ -128,20 +127,19 @@ where
             io_ctx.main(),
         )?;
 
-        // remove polynomials that won't be used anymore
-        {
-            let read_memories = witness::read_write_memories_for_worker(
-                preprocessing.num_memories,
-                io_ctx.num_workers(),
-                io_ctx.worker_idx(),
-            );
-            polynomials.instruction_lookups.E_polys =
-                std::mem::take(&mut polynomials.instruction_lookups.E_polys)
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(i, p)| read_memories.contains(&i).then_some(p.to_full_poly()))
-                    .collect();
-        }
+        // remove polynomials that worker won't use anymore
+        polynomials.instruction_lookups.E_polys =
+            std::mem::take(&mut polynomials.instruction_lookups.E_polys)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, p)| {
+                    preprocessing
+                        .read_memories_worker
+                        .contains(&i)
+                        .then_some(p.to_full_poly())
+                })
+                .collect();
+
         <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
             pcs_setup,
             preprocessing,
@@ -166,7 +164,7 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         num_rounds: usize,
         eq_poly: MultilinearPolynomial<F>,
         instruction_flags: &mut [Rep3MultilinearPolynomial<F>],
@@ -214,7 +212,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner")]
     fn prove_primary_sumcheck_inner(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         num_rounds: usize,
         mut eq_poly: MultilinearPolynomial<F>,
         E_polys: &mut [Rep3MultilinearPolynomial<F>],
@@ -307,7 +305,7 @@ where
 
     #[tracing::instrument(skip_all, level = "trace")]
     fn primary_sumcheck_prover_message(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         eq_poly: &MultilinearPolynomial<F>,
         flag_polys: &[Rep3MultilinearPolynomial<F>],
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
@@ -431,7 +429,7 @@ where
     #[tracing::instrument(skip_all, name = "precompute_evals", level = "trace")]
     fn precompute_evals(
         mle_half: usize,
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
+        preprocessing: &InstructionLookupsPreprocessingExt<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
         flag_polys: &[Rep3MultilinearPolynomial<F>],
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
@@ -536,6 +534,39 @@ where
             .unwrap()
             + 2 // eq and flag
     }
+
+    /// Converts instruction flag bitvectors into a sparse representation of the corresponding memory flags.
+    /// A memory flag polynomial can be computed by summing over the instructions that use that memory: if a
+    /// given execution step accesses the memory, it must be executing exactly one of those instructions.
+    pub(crate) fn memory_flag_indices(
+        preprocessing: &InstructionLookupsPreprocessingExt<C, F>,
+        instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
+    ) -> Vec<Vec<usize>> {
+        let m = instruction_flag_polys[0].coeffs.len();
+
+        preprocessing
+            .read_memories_worker
+            .par_iter()
+            .map(|memory_index| {
+                let instruction_indices: Vec<_> = (0..InstructionSet::COUNT)
+                    .filter(|instruction_index| {
+                        preprocessing.instruction_to_memory_indices[*instruction_index]
+                            .contains(&memory_index)
+                    })
+                    .collect();
+                let mut memory_flag_indices = vec![];
+                for i in 0..m {
+                    for instruction_index in instruction_indices.iter() {
+                        if instruction_flag_polys[*instruction_index].coeffs[i] != 0 {
+                            memory_flag_indices.push(i);
+                            break;
+                        }
+                    }
+                }
+                memory_flag_indices
+            })
+            .collect()
+    }
 }
 
 impl<
@@ -558,7 +589,7 @@ where
     Network: Rep3NetworkWorker,
 {
     type Rep3Polynomials = Rep3InstructionLookupPolynomials<F>;
-    type Preprocessing = InstructionLookupsPreprocessing<C, F>;
+    type Preprocessing = InstructionLookupsPreprocessingExt<C, F>;
 
     type ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
@@ -586,20 +617,9 @@ where
         let num_workers = io_ctx.num_workers();
         let worker_idx = io_ctx.worker_idx();
 
-        let read_memories = witness::read_write_memories_for_worker(
-            preprocessing.num_memories,
-            num_workers,
-            worker_idx,
-        );
-
-        let final_subtables = witness::init_final_subtables_for_worker(
-            &preprocessing.subtable_to_memory_indices,
-            num_workers,
-            worker_idx,
-        );
-
-        let offset = read_memories[0];
-        let read_write_leaves = read_memories
+        let offset = preprocessing.read_memories_worker[0];
+        let read_write_leaves = preprocessing
+            .read_memories_worker
             .par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[*memory_index];
@@ -629,8 +649,9 @@ where
             })
             .collect::<Vec<_>>();
 
-        let offset = final_subtables[0].2[0];
-        let init_final_leaves = final_subtables
+        let offset = preprocessing.init_final_subtables_worker[0].2[0];
+        let init_final_leaves = preprocessing
+            .init_final_subtables_worker
             .par_iter()
             .flat_map_iter(|(subtable_index, has_init, memories)| {
                 let subtable = &preprocessing.materialized_subtables[*subtable_index];
@@ -667,28 +688,20 @@ where
             })
             .collect::<Vec<_>>();
 
-        let memory_flags = InstructionLookupsProof::<
-            C,
-            M,
-            F,
-            PCS,
-            InstructionSet,
-            Subtables,
-            ProofTranscript,
-        >::memory_flag_indices(
-            preprocessing,
+        let memory_flags = Self::memory_flag_indices(
+            &preprocessing,
             polynomials
                 .instruction_flags
                 .try_into_public()
                 .into_iter()
                 .map(|p| p.try_into().unwrap())
                 .collect(),
-            Some(read_memories),
         );
 
         // # init = # subtables; # final = # memories
         let init_final_batch_size = if io_ctx.log_num_workers() != 0 {
-            final_subtables
+            preprocessing
+                .init_final_subtables_worker
                 .iter()
                 .map(|(_, init, m)| *init as usize + m.len())
                 .sum()

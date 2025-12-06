@@ -2,7 +2,10 @@ use crate::{
     field::JoltField,
     jolt::{
         instruction::JoltInstructionSet,
-        vm::{read_write_memory::witness::Rep3ProgramIO, witness::Rep3Polynomials},
+        vm::{
+            read_write_memory::witness::Rep3ProgramIO,
+            witness::{Rep3Polynomials, WorkerInitializable},
+        },
     },
     poly::Rep3MultilinearPolynomial,
     utils::{
@@ -11,6 +14,7 @@ use crate::{
     },
 };
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 #[cfg(feature = "debug")]
 use jolt_core::jolt::vm::bytecode::BytecodePolynomials;
@@ -38,7 +42,6 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         preprocessing: &BytecodePreprocessing<F>,
         trace: &mut [crate::jolt::vm::JoltTraceStep<Instructions>],
         _: &Rep3ProgramIO<F>,
-        _: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
@@ -290,5 +293,13 @@ impl Into<jolt_core::jolt::vm::bytecode::BytecodeRow> for BytecodeRow {
             imm: *self.imm.as_public(),
             virtual_sequence_remaining: self.virtual_sequence_remaining,
         }
+    }
+}
+
+impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
+    WorkerInitializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
+{
+    fn worker_initialize(preprocessing: &BytecodePreprocessing<F>) -> Self {
+        <Self as jolt_core::lasso::memory_checking::Initializable<T, BytecodePreprocessing<F>>>::initialize(preprocessing)
     }
 }

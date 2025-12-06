@@ -7,24 +7,29 @@ use crate::jolt::vm::timestamp_range_check::{self};
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::r1cs::inputs::{ConstantPreprocessing, Rep3R1CSPolynomials};
+use crate::r1cs::inputs::{R1CSPreprocessing, Rep3R1CSPolynomials};
 use crate::utils::types::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, multizip, Itertools};
 use jolt_common::rv_trace::MemoryLayout;
+use jolt_core::jolt::vm::bytecode::BytecodeStuff;
+use jolt_core::jolt::vm::instruction_lookups::InstructionLookupStuff;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryStuff;
+use jolt_core::jolt::vm::timestamp_range_check::TimestampRangeCheckStuff;
 use jolt_core::jolt::vm::{JoltCommitments, JoltPolynomials, JoltStuff, JoltVerifierPreprocessing};
-use jolt_core::lasso::memory_checking::Initializable;
+use jolt_core::lasso::memory_checking::{Initializable, NoPreprocessing};
+use jolt_core::r1cs::inputs::R1CSStuff;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
 use mpc_net::topology::MpcRingNetWorkerExt;
+use snarks_core::field::FieldExt;
 
 use crate::jolt::instruction::Rep3JoltInstructionSet;
 use crate::jolt::vm::instruction_lookups::witness::Rep3InstructionLookupPolynomials;
-use crate::jolt::vm::JoltTraceStep;
+use crate::jolt::vm::{JoltTraceStep, JoltWorkerPreprocessing};
 
 #[derive(Debug, Clone, Copy, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltWitnessMeta {
@@ -43,7 +48,6 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
         preprocessing: &Preprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
-        M: usize,
         network: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
@@ -58,7 +62,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
 }
 
 impl<F: JoltField, const C: usize, PCS, ProofTranscript>
-    Rep3Polynomials<F, JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>>
+    Rep3Polynomials<F, JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>>
     for Rep3JoltPolynomials<F>
 where
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
@@ -69,10 +73,9 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::generate_witness_rep3")]
     fn generate_witness_rep3<Instructions, Network>(
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>,
         ops: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
-        M: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
@@ -85,7 +88,6 @@ where
             &preprocessing.instruction_lookups,
             ops,
             program_io,
-            M,
             io_ctx,
         )?;
 
@@ -95,10 +97,9 @@ where
             (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, ops.len());
 
         let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
-            &ConstantPreprocessing::<C>,
+            &preprocessing.r1cs,
             &mut ops[trace_worker_range.clone()],
             program_io,
-            M,
             io_ctx,
         )?;
 
@@ -106,7 +107,6 @@ where
             &preprocessing.read_write_memory,
             &mut ops[trace_worker_range.clone()],
             program_io,
-            M,
             io_ctx,
         )?;
 
@@ -114,7 +114,6 @@ where
             &preprocessing.bytecode,
             &mut ops[trace_worker_range.clone()],
             program_io,
-            M,
             io_ctx,
         )?;
 
@@ -136,7 +135,7 @@ where
 
     #[cfg(feature = "debug")]
     fn combine_polynomials(
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>,
         polynomials_shares: Vec<Self>,
     ) -> Self::PublicPolynomials {
         let (instructions_shares, r1cs, read_write_memory, bytecode): (
@@ -163,7 +162,7 @@ where
             instructions_shares,
         );
 
-        let r1cs = Rep3R1CSPolynomials::combine_polynomials(&ConstantPreprocessing::<C>, r1cs);
+        let r1cs = Rep3R1CSPolynomials::combine_polynomials(&preprocessing.r1cs, r1cs);
 
         let read_write_memory = Rep3ReadWriteMemoryPolynomials::combine_polynomials(
             &preprocessing.read_write_memory,
@@ -185,7 +184,7 @@ where
 pub trait Rep3JoltPolynomialsExt<F: JoltField> {
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()>
     where
@@ -318,7 +317,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
     #[tracing::instrument(skip_all, name = "Rep3JoltPolynomials::commit")]
     fn commit<const C: usize, PCS, ProofTranscript, Network>(
         &self,
-        preprocessing: &JoltVerifierPreprocessing<C, F, PCS, ProofTranscript>,
+        preprocessing: &JoltWorkerPreprocessing<C, F, PCS, ProofTranscript>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()>
     where
@@ -328,7 +327,7 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
     {
         let id = io_ctx.party_id();
         let mut commitments =
-            JoltMaybeSharedCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
+            JoltMaybeSharedCommitments::<PCS, ProofTranscript>::worker_initialize(preprocessing);
 
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
@@ -451,6 +450,48 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 ..Default::default()
             },
             ..Default::default()
+        }
+    }
+}
+
+pub trait WorkerInitializable<T, Preprocessing>: StructuredPolynomialData<T> + Default {
+    /// This function is used in lieu of `Default::default()` to initialize a
+    /// `StructuredPolynomialData` struct, which may contain `Vec` fields
+    /// whose lengths depend on some preprocessing.
+    ///
+    /// Note that the default implementation of initialize, however, does
+    /// just return `Default::default()`.
+    fn worker_initialize(_preprocessing: &Preprocessing) -> Self {
+        Default::default()
+    }
+}
+
+impl<
+        const C: usize,
+        T: CanonicalSerialize + CanonicalDeserialize + Default + Sync,
+        PCS: CommitmentScheme<ProofTranscript>,
+        ProofTranscript: Transcript,
+    > WorkerInitializable<T, JoltWorkerPreprocessing<C, PCS::Field, PCS, ProofTranscript>>
+    for JoltStuff<T>
+where
+    PCS::Field: FieldExt,
+{
+    fn worker_initialize(
+        preprocessing: &JoltWorkerPreprocessing<C, PCS::Field, PCS, ProofTranscript>,
+    ) -> Self {
+        Self {
+            bytecode: BytecodeStuff::worker_initialize(&preprocessing.bytecode),
+            read_write_memory: ReadWriteMemoryStuff::worker_initialize(
+                &preprocessing.read_write_memory,
+            ),
+            instruction_lookups: InstructionLookupStuff::worker_initialize(
+                &preprocessing.instruction_lookups,
+            ),
+            timestamp_range_check: <TimestampRangeCheckStuff<T> as Initializable<
+                T,
+                NoPreprocessing,
+            >>::initialize(&NoPreprocessing),
+            r1cs: <R1CSStuff<T> as Initializable<T, usize>>::initialize(&C),
         }
     }
 }

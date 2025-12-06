@@ -5,7 +5,13 @@ pub mod worker;
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    jolt::{trace::mem_op::MemoryOp, vm::bytecode::witness::BytecodeRow},
+    jolt::{
+        trace::mem_op::MemoryOp,
+        vm::{
+            bytecode::witness::BytecodeRow,
+            instruction_lookups::witness::InstructionLookupsPreprocessingExt,
+        },
+    },
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -13,8 +19,10 @@ use crate::{
             ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
         },
     },
+    r1cs::inputs::R1CSPreprocessing,
     utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -59,6 +67,22 @@ use jolt_core::{
         spartan::{self, UniformSpartanProof},
     },
 };
+
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct JoltWorkerPreprocessing<const C: usize, F, PCS, ProofTranscript>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<ProofTranscript, Field = F>,
+    ProofTranscript: Transcript,
+{
+    pub generators: PCS::Setup,
+    pub instruction_lookups: Arc<InstructionLookupsPreprocessingExt<C, F>>,
+    pub bytecode: BytecodePreprocessing<F>,
+    pub read_write_memory: ReadWriteMemoryPreprocessing,
+    pub memory_layout: MemoryLayout,
+    pub r1cs: R1CSPreprocessing<C>,
+    pub field: F::SmallValueLookupTables,
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
@@ -211,34 +235,9 @@ where
         JoltVerifierPreprocessing {
             generators,
             memory_layout,
-            instruction_lookups: Arc::new(instruction_lookups_preprocessing),
+            instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
-    fn prover_preprocess(
-        bytecode: Vec<ELFInstruction>,
-        memory_layout: MemoryLayout,
-        memory_init: Vec<(u64, u8)>,
-        max_bytecode_size: usize,
-        max_memory_size: usize,
-        max_trace_length: usize,
-    ) -> JoltProverPreprocessing<C, F, PCS, ProofTranscript> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
-        let shared = Self::verifier_preprocess(
-            bytecode,
-            memory_layout,
-            memory_init,
-            max_bytecode_size,
-            max_memory_size,
-            max_trace_length,
-        );
-        JoltProverPreprocessing {
-            shared,
-            field: small_value_lookup_tables,
         }
     }
 

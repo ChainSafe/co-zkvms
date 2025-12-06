@@ -27,7 +27,7 @@ use color_eyre::{
     Result,
 };
 use itertools::{izip, Itertools};
-use jolt_core::jolt::vm::JoltProverPreprocessing;
+use jolt_core::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool};
 use mpc_net::rep3::PartyWorkerID;
@@ -182,7 +182,7 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    let preprocessing = RV32IJoltVM::prover_preprocess(
+    let preprocessing = RV32IJoltVM::verifier_preprocess(
         bytecode,
         program_io.memory_layout,
         memory_init,
@@ -257,8 +257,8 @@ pub fn run_coordinator(
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
-        RV32IJoltVM::prover_preprocess(
+    let preprocessing: JoltVerifierPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
+        RV32IJoltVM::verifier_preprocess(
             bytecode,
             program_io.memory_layout,
             memory_init,
@@ -297,7 +297,7 @@ pub fn run_coordinator(
         .context("while serializing trace shares")?;
     network.send_requests_blocking(worker_shares)?;
 
-    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
 
     network.log_connection_stats(Some("IO witness: "));
     // network.reset_stats();
@@ -345,11 +345,11 @@ pub fn run_coordinator(
         meta,
         // &program_io,
         &spartan_key,
-        &preprocessing.shared,
+        &preprocessing,
         &mut network,
     )?;
 
-    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+    RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
 
     tracing::info!("VERIFIED!");

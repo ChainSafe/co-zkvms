@@ -1,7 +1,7 @@
 use crate::field::JoltField;
-use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::trace::mem_op::MemoryOp;
-use crate::jolt::vm::witness::Rep3Polynomials;
+use crate::jolt::vm::witness::{Rep3Polynomials, WorkerInitializable};
 use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use crate::utils::transpose;
@@ -57,11 +57,10 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         preprocessing: &ReadWriteMemoryPreprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
-        _: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         let m = trace.len();
@@ -569,5 +568,16 @@ impl<F: JoltField> Rep3ProgramIO<F> {
                 input_words_len: program_io.inputs.len() / 4,
             })
             .collect()
+    }
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
+    WorkerInitializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
+{
+    fn worker_initialize(preprocessing: &ReadWriteMemoryPreprocessing) -> Self {
+        <Self as jolt_core::lasso::memory_checking::Initializable<
+            T,
+            ReadWriteMemoryPreprocessing,
+        >>::initialize(preprocessing)
     }
 }

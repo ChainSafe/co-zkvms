@@ -1,5 +1,4 @@
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
-use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;

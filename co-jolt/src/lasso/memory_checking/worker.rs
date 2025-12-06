@@ -9,7 +9,7 @@ use jolt_core::{
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
-use crate::field::JoltField;
+use crate::{field::JoltField, jolt::vm::witness::WorkerInitializable};
 use crate::{
     poly::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
@@ -31,7 +31,7 @@ where
         + 'static;
 
     type Rep3Polynomials: StructuredPolynomialData<Rep3MultilinearPolynomial<F>> + ?Sized;
-    type Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Self::Preprocessing>;
+    type Openings: StructuredPolynomialData<F> + Sync + WorkerInitializable<F, Self::Preprocessing>;
     type ExogenousOpenings: ExogenousOpenings<F> + Sync;
 
     type Preprocessing;
