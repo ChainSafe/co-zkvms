@@ -48,12 +48,13 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         }
     }
 
-    pub fn new_shard(
+    pub(super) fn new_shard(
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
-        shard_nv: usize,
-        worker_idx: usize,
         full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
     ) -> Self {
+        let shard_nv = full_len.log_2() - log_num_workers;
         let num_vars = coeffs.len().log_2();
         let chunk_size = 1 << shard_nv;
 

@@ -115,7 +115,6 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
 
     fn distributed_commit_rep3(
         poly: &Rep3MultilinearPolynomial<F>,
-        _: usize,
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment>
@@ -127,7 +126,6 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
 
     fn batch_commit_rep3<U>(
         polys: &[U],
-        _: usize,
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> Vec<MaybeShared<Self::Commitment>>

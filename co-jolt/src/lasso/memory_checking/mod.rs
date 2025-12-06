@@ -15,7 +15,9 @@ use mpc_core::protocols::{
 };
 use rayon::prelude::*;
 
-use crate::{field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator};
+use crate::{
+    field::JoltField, jolt::vm::Jolt, poly::opening_proof::Rep3OpeningAccumulatorCoordinator,
+};
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
     subprotocols::grand_product::Rep3BatchedGrandProduct,
@@ -161,37 +163,14 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(Self::Openings, Self::ExogenousOpenings)> {
-        let mut exogenous_openings = Self::ExogenousOpenings::default();
-        let mut openings = Self::Openings::initialize(preprocessing);
-
-        let read_write_evals: Vec<F> =
-            opening_accumulator.append(read_write_chunk_size.log_2(), transcript, network)?;
-
-        let read_write_openings: Vec<_> = openings
-            .read_write_values_grand_product_mut()
-            .into_iter()
-            .chain(exogenous_openings.openings_mut())
-            .collect();
-
-        read_write_openings
-            .into_par_iter()
-            .zip(read_write_evals.par_iter())
-            .for_each(|(opening, eval)| {
-                *opening = *eval;
-            });
-
-        let init_final_evals: Vec<F> =
-            opening_accumulator.append(init_final_chunk_size.log_2(), transcript, network)?;
-
-        openings
-            .init_final_values_mut()
-            .into_par_iter()
-            .zip(init_final_evals.par_iter())
-            .for_each(|(opening, eval)| {
-                *opening = *eval;
-            });
-
-        Ok((openings, exogenous_openings))
+        receive_openings::<F, _, Self::Openings, Self::ExogenousOpenings, _, _>(
+            read_write_chunk_size,
+            init_final_chunk_size,
+            preprocessing,
+            opening_accumulator,
+            transcript,
+            network,
+        )
     }
 
     fn read_write_grand_product_rep3(
@@ -229,3 +208,51 @@ where
 /// the prover doesn't need to compute a witness polynomial or commitment because
 /// the verifier can compute the opening on its own.
 pub type VerifierComputedOpening<T> = Option<T>;
+
+pub(crate) fn receive_openings<F, Preprocessing, Openings, ExoOpenings, ProofTranscript, Network>(
+    read_write_chunk_size: usize,
+    init_final_chunk_size: usize,
+    preprocessing: &Preprocessing,
+    opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
+    transcript: &mut ProofTranscript,
+    network: &mut Network,
+) -> eyre::Result<(Openings, ExoOpenings)>
+where
+    F: JoltField,
+    Openings: StructuredPolynomialData<F> + Sync + Initializable<F, Preprocessing>,
+    ExoOpenings: ExogenousOpenings<F> + Sync,
+    ProofTranscript: Transcript,
+    Network: Rep3NetworkCoordinator,
+{
+    let mut exogenous_openings = ExoOpenings::default();
+    let mut openings = Openings::initialize(preprocessing);
+
+    let read_write_evals: Vec<F> =
+        opening_accumulator.append(read_write_chunk_size.log_2(), transcript, network)?;
+
+    let read_write_openings: Vec<_> = openings
+        .read_write_values_grand_product_mut()
+        .into_iter()
+        .chain(exogenous_openings.openings_mut())
+        .collect();
+
+    read_write_openings
+        .into_par_iter()
+        .zip(read_write_evals.par_iter())
+        .for_each(|(opening, eval)| {
+            *opening = *eval;
+        });
+
+    let init_final_evals: Vec<F> =
+        opening_accumulator.append(init_final_chunk_size.log_2(), transcript, network)?;
+
+    openings
+        .init_final_values_mut()
+        .into_par_iter()
+        .zip(init_final_evals.par_iter())
+        .for_each(|(opening, eval)| {
+            *opening = *eval;
+        });
+
+    Ok((openings, exogenous_openings))
+}

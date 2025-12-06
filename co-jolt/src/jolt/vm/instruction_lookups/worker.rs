@@ -120,7 +120,7 @@ where
         .collect::<Vec<_>>();
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
-        opening_accumulator.append_sharded(
+        opening_accumulator.append(
             &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,

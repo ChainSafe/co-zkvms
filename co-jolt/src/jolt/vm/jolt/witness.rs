@@ -299,6 +299,11 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                 acc.instruction_lookups
                     .final_cts
                     .extend(next.instruction_lookups.final_cts);
+                izip!(
+                    acc.read_write_memory.init_final_values_mut(),
+                    next.read_write_memory.init_final_values()
+                )
+                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
                 acc
             })
             .unwrap();
@@ -343,15 +348,10 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
-        let trace_len = self.instruction_lookups.read_cts[0].len();
         let trace_polys = self.read_write_values();
 
-        let trace_commitments = PCS::batch_commit_rep3(
-            &trace_polys,
-            trace_len,
-            &preprocessing.generators,
-            id == PartyID::ID0,
-        );
+        let trace_commitments =
+            PCS::batch_commit_rep3(&trace_polys, &preprocessing.generators, id == PartyID::ID0);
 
         commitments
             .read_write_values_mut()
@@ -400,7 +400,6 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let _guard = span.enter();
         commitments.instruction_lookups.final_cts = PCS::batch_commit_rep3(
             &self.instruction_lookups.final_cts,
-            self.instruction_lookups.final_cts[0].len(),
             &preprocessing.generators,
             false, // no public polys in final_cts
         );

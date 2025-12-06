@@ -168,7 +168,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let m = trace.len().next_power_of_two();
         let M = preprocessing.materialized_subtables[0].len();
         let worker_idx = io_ctx.worker_idx();
-        let num_workers = 1usize << io_ctx.log_num_workers();
+        let log_num_workers = io_ctx.log_num_workers();
+        let num_workers = 1usize << log_num_workers;
 
         let m_worker = m / num_workers;
         let m_worker_nv = m_worker.log_2();
@@ -365,9 +366,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
                 }
                 e_acc.push(Rep3MultilinearPolynomial::new_shard_shared(
                     e,
-                    m_worker_nv,
-                    worker_idx,
                     m,
+                    log_num_workers,
+                    worker_idx,
                 ));
                 (read_acc, final_acc, e_acc)
             },
@@ -406,7 +407,9 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
 
         let dim = dim
             .into_iter()
-            .map(|dim| Rep3MultilinearPolynomial::new_shard_shared(dim, m_worker_nv, worker_idx, m))
+            .map(|dim| {
+                Rep3MultilinearPolynomial::new_shard_shared(dim, m, log_num_workers, worker_idx)
+            })
             .collect();
 
         drop(_guard);
@@ -425,7 +428,8 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
             .map(|flag_bitvector| {
                 Rep3MultilinearPolynomial::new_shard_public_u8(
                     flag_bitvector,
-                    m_worker_nv,
+                    m,
+                    log_num_workers,
                     worker_idx,
                 )
             })
@@ -851,7 +855,10 @@ fn compute_lookup_outputs_rep3<
     let mut outputs = outputs_futures.fulfill_batched(io_ctx, |res, _| res)?;
 
     outputs.resize(num_reads, Rep3PrimeFieldShare::zero_share());
-    Ok(Rep3MultilinearPolynomial::Shared(
-        Rep3DensePolynomial::new_shard(outputs, num_reads.log_2(), io_ctx.worker_idx(), m),
+    Ok(Rep3MultilinearPolynomial::new_shard_shared(
+        outputs,
+        m,
+        io_ctx.log_num_workers(),
+        io_ctx.worker_idx(),
     ))
 }

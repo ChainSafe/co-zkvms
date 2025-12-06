@@ -239,7 +239,7 @@ where
         let (claimed_witness_evals, chis) =
             Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
 
-        opening_accumulator.append(
+        opening_accumulator.append_send_claims(
             &flattened_polys,
             DensePolynomial::new(chis),
             rx_step.to_vec(),
@@ -254,7 +254,7 @@ where
         let (shift_sumcheck_witness_evals, chis2) =
             Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
 
-        opening_accumulator.append(
+        opening_accumulator.append_send_claims(
             &flattened_polys,
             DensePolynomial::new(chis2),
             shift_sumcheck_r.to_vec(),

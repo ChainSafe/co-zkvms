@@ -26,6 +26,7 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
+use snarks_core::math::Math;
 
 const RS1: usize = 0;
 const RS2: usize = 1;
@@ -238,22 +239,40 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             }
         }
 
-        let [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram, t_final] =
-            map_to_polys_public([
-                a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram, t_final,
-            ]);
+        let log_num_workers = io_ctx.log_num_workers();
+        let worker_idx = io_ctx.worker_idx();
 
-        let [v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram, v_final, v_init] =
-            map_to_polys_shared([
-                v_read_rd,
-                v_read_rs1,
-                v_read_rs2,
-                v_read_ram,
-                v_write_rd,
-                v_write_ram,
-                v_final,
-                v_init,
-            ]);
+        let [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram] = map_to_polys_public(
+            [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram],
+            m,
+            log_num_workers,
+            worker_idx,
+        );
+
+        let t_final = Rep3MultilinearPolynomial::new_shard_public_u32(
+            t_final,
+            memory_size,
+            log_num_workers,
+            worker_idx,
+        );
+
+        let [v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram] =
+            map_to_polys_shared(
+                [
+                    v_read_rd,
+                    v_read_rs1,
+                    v_read_rs2,
+                    v_read_ram,
+                    v_write_rd,
+                    v_write_ram,
+                ],
+                m,
+                log_num_workers,
+                worker_idx,
+            );
+
+        let [v_init, v_final] =
+            map_to_polys_shared([v_init, v_final], memory_size, log_num_workers, worker_idx);
 
         Ok(Self {
             a_ram,
@@ -356,9 +375,19 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
 
 fn map_to_polys_public<F: JoltField, const N: usize>(
     vals: [Vec<u32>; N],
+    full_len: usize,
+    log_num_workers: usize,
+    worker_idx: usize,
 ) -> [Rep3MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|coeffs| {
+            Rep3MultilinearPolynomial::new_shard_public_u32(
+                coeffs,
+                full_len,
+                log_num_workers,
+                worker_idx,
+            )
+        })
         .collect::<Vec<Rep3MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()
@@ -366,9 +395,19 @@ fn map_to_polys_public<F: JoltField, const N: usize>(
 
 fn map_to_polys_shared<F: JoltField, const N: usize>(
     vals: [Vec<Rep3PrimeFieldShare<F>>; N],
+    full_len: usize,
+    log_num_workers: usize,
+    worker_idx: usize,
 ) -> [Rep3MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|coeffs| {
+            Rep3MultilinearPolynomial::new_shard_shared(
+                coeffs,
+                full_len,
+                log_num_workers,
+                worker_idx,
+            )
+        })
         .collect::<Vec<Rep3MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()

@@ -92,41 +92,11 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         polynomials: &[&Rep3MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
-        claims: &[AdditiveShare<F>],
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        io_ctx.network.send_response(claims.to_vec())?;
         let (rho, batched_claim): (F, F) = io_ctx.network.receive_request()?;
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let mut rho_powers = vec![F::one()];
-        for i in 1..polynomials.len() {
-            rho_powers.push(rho_powers[i - 1] * rho);
-        }
-
-        let batched_poly =
-            Rep3MultilinearPolynomial::linear_combination(polynomials, &rho_powers, io_ctx.id);
-
-        self.openings.push(Rep3ProverOpening::new(
-            batched_poly,
-            eq_poly,
-            opening_point,
-            additive::promote_to_trivial_share(batched_claim, io_ctx.id),
-        ));
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sharded")]
-    pub fn append_sharded<Network: Rep3NetworkWorker>(
-        &mut self,
-        polynomials: &[&Rep3MultilinearPolynomial<F>],
-        eq_poly: DensePolynomial<F>,
-        opening_point: Vec<F>,
-        io_ctx: &mut IoContext<Network>,
-    ) -> eyre::Result<()> {
-        let (rho, batched_claim): (F, F) = io_ctx.network.receive_request()?;
-
         let mut rho_powers = vec![F::one()];
         for i in 1..polynomials.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
@@ -143,6 +113,18 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         ));
 
         Ok(())
+    }
+
+    pub fn append_send_claims<Network: Rep3NetworkWorker>(
+        &mut self,
+        polynomials: &[&Rep3MultilinearPolynomial<F>],
+        eq_poly: DensePolynomial<F>,
+        opening_point: Vec<F>,
+        claims: &[AdditiveShare<F>],
+        io_ctx: &mut IoContext<Network>,
+    ) -> eyre::Result<()> {
+        io_ctx.network.send_response(claims.to_vec())?;
+        self.append(polynomials, eq_poly, opening_point, io_ctx)
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_batched")]
@@ -262,6 +244,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
+        assert!(!network.is_distributed());
         let claims = additive::combine_additive_vec(network.receive_responses()?);
         self.append_with_claims(poly_num_vars, &claims, transcript, network)?;
         Ok(claims)

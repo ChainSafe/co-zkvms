@@ -18,6 +18,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
 use rayon::prelude::*;
+use snarks_core::math::Math;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rep3MultilinearPolynomial<F: JoltField> {
@@ -46,17 +47,38 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 
     pub fn new_shard_shared(
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
-        shard_nv: usize,
-        worker_idx: usize,
         full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
     ) -> Self {
         Self::shared(Rep3DensePolynomial::new_shard(
-            coeffs, shard_nv, worker_idx, full_len,
+            coeffs,
+            full_len,
+            log_num_workers,
+            worker_idx,
         ))
     }
 
-    pub fn new_shard_public_u8(coeffs: Vec<u8>, shard_nv: usize, worker_idx: usize) -> Self {
+    pub fn new_shard_public_u8(
+        coeffs: Vec<u8>,
+        full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
+    ) -> Self {
+        let shard_nv = full_len.log_2() - log_num_workers;
         Self::public(MultilinearPolynomial::U8Scalars(
+            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+        ))
+    }
+
+    pub fn new_shard_public_u32(
+        coeffs: Vec<u32>,
+        full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
+    ) -> Self {
+        let shard_nv = full_len.log_2() - log_num_workers;
+        Self::public(MultilinearPolynomial::U32Scalars(
             CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
         ))
     }
@@ -848,9 +870,9 @@ mod test {
                     // vec![F::from(1); N],
                     PartyID::ID0,
                 ),
-                N.log_2() - 1,
-                0,
                 N,
+                1,
+                0,
             ),
             Rep3MultilinearPolynomial::<F>::new_shard_shared(
                 rep3::arithmetic::promote_to_trivial_shares(
@@ -858,9 +880,9 @@ mod test {
                     // vec![F::from(2); N],
                     PartyID::ID0,
                 ),
-                N.log_2() - 1,
-                0,
                 N,
+                1,
+                0,
             ),
             Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
                 (2u64..N as u64 + 2).map(F::from).collect(),
@@ -876,9 +898,9 @@ mod test {
                     // vec![F::from(1); N],
                     PartyID::ID0,
                 ),
-                N.log_2() - 1,
-                1,
                 N,
+                1,
+                1,
             ),
             Rep3MultilinearPolynomial::<F>::new_shard_shared(
                 rep3::arithmetic::promote_to_trivial_shares(
@@ -886,9 +908,9 @@ mod test {
                     // vec![F::from(2); N],
                     PartyID::ID0,
                 ),
-                N.log_2() - 1,
-                1,
                 N,
+                1,
+                1,
             ),
             Rep3MultilinearPolynomial::<F>::from(rep3::arithmetic::promote_to_trivial_shares(
                 (3u64..N as u64 + 3).map(F::from).collect(),

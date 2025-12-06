@@ -232,7 +232,6 @@ where
     ) -> MaybeShared<Self::Commitment> {
         <PST13<E> as Rep3CommitmentScheme<E::ScalarField, ProofTranscript>>::distributed_commit_rep3(
             poly,
-            poly.len(),
             setup,
             commit_to_public,
         )
@@ -241,23 +240,26 @@ where
     #[tracing::instrument(skip_all, name = "PST13::distribute_commit_rep3", level = "trace")]
     fn distributed_commit_rep3(
         poly: &Rep3MultilinearPolynomial<E::ScalarField>,
-        len: usize,
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
+        // TODO: avoid `into_distributed_commit_form` by making commit respect shard ranges
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
-                    let commitment =
-                        <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
+                    let commitment = <Self as CommitmentScheme<ProofTranscript>>::commit(
+                        &poly.into_distributed_commit_form(poly.full_len()),
+                        setup,
+                    );
                     MaybeShared::Public(Some(commitment))
                 } else {
                     MaybeShared::Public(None)
                 }
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
-                let poly_a =
-                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form(len));
+                let poly_a = MultilinearPolynomial::LargeScalars(
+                    poly.into_distributed_commit_form(poly.full_len()),
+                );
                 let commitment =
                     <Self as CommitmentScheme<ProofTranscript>>::commit(&poly_a, setup);
                 MaybeShared::Shared(commitment)
@@ -268,7 +270,6 @@ where
     #[tracing::instrument(skip_all, name = "PST13::batch_commit_rep3", level = "trace")]
     fn batch_commit_rep3<U>(
         polys: &[U],
-        len: usize,
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> Vec<MaybeShared<Self::Commitment>>
@@ -294,11 +295,13 @@ where
             .par_iter()
             .map(|poly| match poly.borrow() {
                 Rep3MultilinearPolynomial::Public(poly) => {
-                    Some(poly.into_distributed_commit_form(len))
+                    Some(poly.into_distributed_commit_form(poly.full_len()))
                 }
-                Rep3MultilinearPolynomial::Shared(poly) => Some(
-                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form(len)),
-                ),
+                Rep3MultilinearPolynomial::Shared(poly) => {
+                    Some(MultilinearPolynomial::LargeScalars(
+                        poly.into_distributed_commit_form(poly.full_len()),
+                    ))
+                }
             })
             .collect::<Vec<_>>();
 

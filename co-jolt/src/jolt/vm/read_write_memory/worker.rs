@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::timestamp_range_check;
+use crate::lasso::memory_checking;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
@@ -12,12 +13,14 @@ use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
 use crate::utils::types::Rep3Value;
+use itertools::Itertools;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     RegisterAddressOpenings,
 };
+use jolt_core::lasso::memory_checking::{ExogenousOpenings, StructuredPolynomialData};
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
@@ -31,6 +34,7 @@ use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
+use tokio::io;
 
 use super::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
@@ -171,7 +175,7 @@ where
 
         // `append` below sends sumcheck_openings/remaining evals; In distributed mode, coordinator would use them run remaining rounds
 
-        opening_accumulator.append(
+        opening_accumulator.append_send_claims(
             &[&polynomials.v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
@@ -412,5 +416,81 @@ where
             (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),
             (init_final_fingeprints, 1, 2),
         ))
+    }
+
+    fn compute_openings(
+        _: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &Rep3JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<()> {
+        if !io_ctx.network().is_distributed() {
+            return memory_checking::worker::compute_openings::<F, RegisterAddressOpenings<F>, _, _>(
+                opening_accumulator,
+                polynomials,
+                jolt_polynomials,
+                r_read_write,
+                r_init_final,
+                io_ctx,
+            );
+        }
+
+        let party_id = io_ctx.party_id();
+
+        let read_write_polys: Vec<&_> = polynomials
+            .read_write_values_grand_product()
+            .into_iter()
+            .chain(RegisterAddressOpenings::<F>::exogenous_data(
+                jolt_polynomials,
+            ))
+            .collect::<Vec<_>>();
+
+        // let (r_read_write_worker, _) =
+        //     r_read_write.split_at(r_read_write.len() - io_ctx.log_num_workers());
+        // let (read_write_evals, eq_read_write) =
+        //     Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, &r_read_write_worker);
+        let (read_write_evals, eq_read_write) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
+
+        io_ctx.network().send_response(
+            read_write_evals
+                .par_iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        opening_accumulator.append(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            io_ctx.main(),
+        )?;
+
+        let init_final_polys = polynomials.init_final_values();
+        // let (r_init_final_worker, _) =
+        //     r_init_final.split_at(r_init_final.len() - io_ctx.log_num_workers());
+        // let (init_final_evals, eq_init_final) =
+        //     Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, &r_init_final_worker);
+        let (init_final_evals, eq_init_final) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+        io_ctx.network().send_response(
+            init_final_evals
+                .par_iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            io_ctx.main(),
+        )?;
+
+        Ok(())
     }
 }
