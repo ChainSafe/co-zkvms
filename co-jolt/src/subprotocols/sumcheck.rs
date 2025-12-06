@@ -5,9 +5,10 @@ use crate::field::JoltField;
 use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::types::Rep3Value;
+use itertools::izip;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, PolynomialBinding, PolynomialEvaluation,
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
@@ -19,7 +20,7 @@ use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use crate::poly::PolyDegree;
+use crate::poly::Polynomial;
 use jolt_core::poly::split_eq_poly::SplitEqPolynomial;
 use jolt_core::utils::transcript::{AppendToTranscript, Transcript};
 
@@ -56,7 +57,7 @@ where
             num_rounds
         };
 
-        let (mut sumcheck_proof, mut r) = coordinate_prove_arbitrary_distributed(
+        let (mut sumcheck_proof, mut r) = coordinate_prove_arbitrary(
             &mut previous_claim,
             worker_num_rounds,
             transcript,
@@ -179,12 +180,8 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     }
 }
 
-#[tracing::instrument(
-    skip_all,
-    name = "coordinate_prove_arbitrary_distributed",
-    level = "trace"
-)]
-pub fn coordinate_prove_arbitrary_distributed<F: JoltField, ProofTranscript, Network>(
+#[tracing::instrument(skip_all, name = "coordinate_prove_arbitrary", level = "trace")]
+pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
     claim: &mut F,
     num_rounds: usize,
     transcript: &mut ProofTranscript,
@@ -238,43 +235,67 @@ where
     Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
 
-#[tracing::instrument(skip_all, name = "coordinate_prove_arbitrary", level = "trace")]
-pub fn coordinate_prove_arbitrary<F: JoltField, ProofTranscript, Network>(
+#[tracing::instrument(
+    skip_all,
+    name = "coordinate_prove_arbitrary_distributed",
+    level = "trace"
+)]
+pub fn coordinate_distributed_prove_arbitrary<F: JoltField, Func, ProofTranscript, Network>(
+    claim: &mut F,
     num_rounds: usize,
+    num_polys: usize,
+    degree: usize,
+    comb_func: Func,
     transcript: &mut ProofTranscript,
     network: &mut Network,
-) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>)>
+) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>)>
 where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
+    Func: Fn(&[F]) -> F + std::marker::Sync,
 {
-    let mut r: Vec<F> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+    let (mut proof, mut r) = coordinate_prove_arbitrary(claim, num_rounds, transcript, network)?;
 
-    for _round in 0..num_rounds {
-        let round_poly =
-            UniPoly::<F>::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
-        let compressed_poly = round_poly.compress();
+    if network.is_distributed() {
+        let mut remaining_polys: Vec<_> = network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?
+            .into_iter()
+            .map(additive::combine_additive_vec)
+            .fold(vec![vec![]; num_polys], |mut polys, coeffs| {
+                izip!(&mut polys, coeffs).for_each(|(p, c)| p.push(c));
+                polys
+            })
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect();
 
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-        // derive the verifier's challenge for the next round
-        let r_j = transcript.challenge_scalar();
-        r.push(r_j);
+        let (
+            SumcheckInstanceProof {
+                compressed_polys, ..
+            },
+            r_remaining,
+            final_claims,
+        ) = SumcheckInstanceProof::prove_arbitrary(
+            claim,
+            network.log_num_workers(),
+            &mut remaining_polys,
+            comb_func,
+            degree,
+            transcript,
+        );
 
-        let claim = round_poly.evaluate(&r_j);
+        proof.compressed_polys.extend(compressed_polys);
+        r.extend(r_remaining);
 
-        network.broadcast_request((r_j, claim))?;
-
-        cubic_polys.push(compressed_poly);
+        Ok((proof, r, final_claims))
+    } else {
+        let final_claims = additive::combine_additive_vec(network.receive_responses()?);
+        Ok((proof, r, final_claims))
     }
-
-    Ok((SumcheckInstanceProof::new(cubic_polys), r))
 }
 
 #[tracing::instrument(skip_all, name = "sumcheck::prove_arbitrary_worker")]
-pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
-    claim: &AdditiveShare<F>,
+pub fn distributed_prove_arbitrary_worker<F, Poly, Func, Network>(
     num_rounds: usize,
     polys: &mut Vec<Poly>,
     comb_func: Func,
@@ -285,19 +306,18 @@ where
     F: JoltField,
     Poly: PolynomialBinding<F, Rep3Value<F>>
         + PolynomialEvaluation<F, Rep3Value<F>>
-        + PolyDegree
+        + Polynomial<F>
         + Send
         + Sync,
     Func: Fn(&[Rep3Value<F>]) -> AdditiveShare<F> + std::marker::Sync,
     Network: Rep3NetworkWorker,
 {
-    let mut previous_claim = *claim;
     let mut r: Vec<F> = Vec::new();
 
     for _round in 0..num_rounds {
         // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
         // for points {0, ..., |g(x)|}
-        let mut eval_points = vec![AdditiveShare::<F>::zero(); combined_degree];
+        let mut round_evals = vec![AdditiveShare::<F>::zero(); combined_degree];
 
         let mle_half = polys[0].len() / 2;
 
@@ -321,34 +341,27 @@ where
             })
             .collect();
 
-        eval_points
+        round_evals
             .par_iter_mut()
             .enumerate()
             .for_each(|(poly_i, eval_point)| {
                 *eval_point = accum.par_iter().take(mle_half).map(|mle| mle[poly_i]).sum();
             });
 
-        eval_points.insert(1, previous_claim - eval_points[0]);
-        let univariate_poly = unipoly_from_additive_evals(&eval_points);
-        io_ctx.network().send_response(univariate_poly.coeffs)?;
+        io_ctx.network().send_response(round_evals)?;
 
-        // append the prover's message to the transcript
-        // compressed_poly.append_to_transcript(transcript);
-        // let r_j = transcript.challenge_scalar();
-        let (r_j, next_claim) = io_ctx.network().receive_request()?;
+        let r_j = io_ctx.network().receive_request()?;
         r.push(r_j);
 
         // bound all tables to the verifier's challenge
         polys
             .par_iter_mut()
             .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
-        previous_claim = additive::promote_to_trivial_share(next_claim, io_ctx.party_id());
     }
 
     let final_evals = polys
         .iter()
         .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.party_id()))
         .collect();
-
     Ok((r, final_evals))
 }

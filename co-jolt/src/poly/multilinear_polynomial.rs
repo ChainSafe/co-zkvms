@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
-use crate::poly::PolyDegree;
+use crate::poly::Polynomial;
 use crate::utils::types::Rep3Value;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -482,13 +482,27 @@ impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for Rep3MultilinearPoly
     }
 }
 
-impl<F: JoltField> PolyDegree for Rep3MultilinearPolynomial<F> {
+impl<F: JoltField> Polynomial<F> for Rep3MultilinearPolynomial<F> {
     fn len(&self) -> usize {
         self.len()
     }
 
     fn get_num_vars(&self) -> usize {
         self.get_num_vars()
+    }
+
+    fn get_bound_coeffs(&self) -> Vec<Rep3Value<F>> {
+        match self {
+            Rep3MultilinearPolynomial::Public(poly) => (0..self.len())
+                .map(|i| Rep3Value::Public(poly.get_bound_coeff(i)))
+                .collect(),
+            Rep3MultilinearPolynomial::Shared(poly) => poly
+                .bound_coeffs()
+                .iter()
+                .copied()
+                .map(|x| x.into())
+                .collect(),
+        }
     }
 }
 

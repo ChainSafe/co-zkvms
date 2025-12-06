@@ -1,7 +1,7 @@
 use std::ops::Index;
 
 use crate::field::JoltField;
-use crate::poly::PolyDegree;
+use crate::poly::Polynomial;
 use crate::utils::types::Rep3Value;
 use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, PolynomialBinding, PolynomialEvaluation,
@@ -174,13 +174,17 @@ impl<F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for MixedPolynomial<F> 
     }
 }
 
-impl<F: JoltField> PolyDegree for MixedPolynomial<F> {
+impl<F: JoltField> Polynomial<F> for MixedPolynomial<F> {
     fn len(&self) -> usize {
         self.len
     }
 
     fn get_num_vars(&self) -> usize {
         self.num_vars
+    }
+
+    fn get_bound_coeffs(&self) -> Vec<Rep3Value<F>> {
+        self.evals[..self.len].to_vec()
     }
 }
 

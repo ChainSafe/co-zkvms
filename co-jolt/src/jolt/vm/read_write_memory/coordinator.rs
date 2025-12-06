@@ -92,10 +92,22 @@ where
     let num_rounds = memory_size.log_2();
     let r_eq: Vec<F> = transcript.challenge_vector(num_rounds);
     network.broadcast_request(r_eq)?;
-    let (sumcheck_proof, _) =
-        sumcheck::coordinate_prove_arbitrary::<F, _, Network>(num_rounds, transcript, network)?;
+    let mut claim = F::zero();
 
-    let sumcheck_openings = opening_accumulator.append(num_rounds, transcript, network)?;
+    // eq * io_witness_range * (v_final - v_io)
+    let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
+
+    let (sumcheck_proof, _, sumcheck_openings) = sumcheck::coordinate_distributed_prove_arbitrary(
+        &mut claim,
+        num_rounds,
+        4,
+        3,
+        output_check_fn,
+        transcript,
+        network,
+    )?;
+
+    opening_accumulator.append_with_claims(num_rounds, &sumcheck_openings, transcript, network)?;
 
     Ok(OutputSumcheckProof {
         num_rounds,

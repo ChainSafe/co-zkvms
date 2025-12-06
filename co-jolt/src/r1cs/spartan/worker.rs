@@ -25,7 +25,7 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
-use crate::poly::PolyDegree;
+use crate::poly::Polynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck;
 use crate::utils::types::Rep3Value;
@@ -111,8 +111,7 @@ where
         let num_steps_bits = num_steps.ilog2() as usize;
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
-        let (inner_sumcheck_RLC, claim_inner_joint) =
-            io_ctx.network().receive_request::<(F, F)>()?;
+        let inner_sumcheck_RLC = io_ctx.network().receive_request::<F>()?;
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
 
@@ -164,8 +163,7 @@ where
             poly_evals[0].mul(&poly_evals[1]).into_additive(party_id)
         };
 
-        let (inner_sumcheck_r, _claims_inner) = sumcheck::prove_arbitrary_worker(
-            &additive::promote_to_trivial_share(claim_inner_joint, party_id),
+        let (inner_sumcheck_r, _claims_inner) = sumcheck::distributed_prove_arbitrary_worker(
             num_rounds_inner_sumcheck,
             &mut polys,
             comb_func,
@@ -224,14 +222,14 @@ where
 
         io_ctx.network().send_response(shift_sumcheck_claim)?;
 
-        let (shift_sumcheck_r, _shift_sumcheck_claims) = sumcheck::prove_arbitrary_worker(
-            &shift_sumcheck_claim,
-            num_rounds_shift_sumcheck,
-            &mut shift_sumcheck_polys,
-            comb_func,
-            2,
-            io_ctx,
-        )?;
+        let (shift_sumcheck_r, _shift_sumcheck_claims) =
+            sumcheck::distributed_prove_arbitrary_worker(
+                num_rounds_shift_sumcheck,
+                &mut shift_sumcheck_polys,
+                comb_func,
+                2,
+                io_ctx,
+            )?;
 
         drop(_guard);
         drop(span);

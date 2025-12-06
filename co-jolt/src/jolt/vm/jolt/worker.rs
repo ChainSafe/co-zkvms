@@ -221,7 +221,7 @@ where
             &preprocessing.shared.generators,
             &preprocessing.shared.read_write_memory,
             polynomials,
-            &self.program_io,
+            &mut self.program_io,
             &mut opening_accumulator,
             &mut self.io_ctx,
         )?;

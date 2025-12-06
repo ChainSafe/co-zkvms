@@ -13,8 +13,12 @@ pub use dense_mlpoly::*;
 pub use jolt_core::poly::{eq_poly, identity_poly};
 pub use multilinear_polynomial::*;
 
-pub trait PolyDegree {
+use crate::{field::JoltField, utils::types::Rep3Value};
+
+pub trait Polynomial<F: JoltField> {
     fn len(&self) -> usize;
 
     fn get_num_vars(&self) -> usize;
+
+    fn get_bound_coeffs(&self) -> Vec<Rep3Value<F>>;
 }

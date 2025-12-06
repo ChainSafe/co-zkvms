@@ -56,7 +56,7 @@ where
         pcs_setup: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &mut Rep3JoltPolynomials<F>,
-        program_io: &Rep3ProgramIO<F>,
+        program_io: &mut Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
@@ -70,7 +70,7 @@ where
         )?;
 
         Self::prove_outputs(
-            &polynomials.read_write_memory,
+            &mut polynomials.read_write_memory,
             program_io,
             opening_accumulator,
             io_ctx,
@@ -114,13 +114,16 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove_outputs", level = "trace")]
     fn prove_outputs(
-        polynomials: &Rep3ReadWriteMemoryPolynomials<F>,
-        program_io: &Rep3ProgramIO<F>,
+        polynomials: &mut Rep3ReadWriteMemoryPolynomials<F>,
+        program_io: &mut Rep3ProgramIO<F>,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let memory_size = polynomials.v_final.len();
-        let num_rounds = memory_size.log_2();
+        let memory_size = polynomials.v_final.full_len();
+        let memory_size_worker = polynomials.v_final.len();
+        debug_assert!(memory_size_worker == memory_size / io_ctx.num_workers());
+        let num_rounds = memory_size_worker.log_2();
+
         let r_eq: Vec<F> = io_ctx.network().receive_request()?;
         let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
 
@@ -131,7 +134,8 @@ where
         let ram_start_index =
             memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
 
-        let io_witness_range: Vec<u8> = (0..memory_size as u64)
+        let offset = (memory_size_worker * io_ctx.worker_idx()) as u64;
+        let io_witness_range: Vec<u8> = (offset..memory_size as u64)
             .map(|i| {
                 if i >= input_start_index && i < ram_start_index {
                     1
@@ -141,13 +145,11 @@ where
             })
             .collect();
 
-        let v_io = program_io.v_io.clone();
-
         let mut sumcheck_polys: Vec<Rep3MultilinearPolynomial<F>> = vec![
             eq.into(),
             MultilinearPolynomial::from(io_witness_range).into(),
-            polynomials.v_final.clone(),
-            Rep3MultilinearPolynomial::from(v_io),
+            std::mem::take(&mut polynomials.v_final),
+            std::mem::take(&mut program_io.v_io),
         ];
 
         // (v_final - v_io) * eq * io_witness_range
@@ -159,14 +161,15 @@ where
                 .into_additive(party_id)
         };
 
-        let (r_sumcheck, sumcheck_openings) = sumcheck::prove_arbitrary_worker(
-            &AdditiveShare::<F>::zero(),
+        let (r_sumcheck, sumcheck_openings) = sumcheck::distributed_prove_arbitrary_worker(
             num_rounds,
             &mut sumcheck_polys,
             output_check_fn,
             3,
             io_ctx,
         )?;
+
+        // `append` below sends sumcheck_openings/remaining evals; In distributed mode, coordinator would use them run remaining rounds
 
         opening_accumulator.append(
             &[&polynomials.v_final],
@@ -213,7 +216,7 @@ where
         let gamma = *gamma;
 
         let num_ops = polynomials.a_ram.len();
-        let memory_size = polynomials.v_final.len();
+        let memory_size = polynomials.v_final.full_len();
 
         let a_rd: &CompactPolynomial<u8, F> = (&jolt_polynomials.bytecode.v_read_write[2])
             .try_into()
@@ -240,9 +243,9 @@ where
 
         let worker_idx = io_ctx.worker_idx();
         let num_workers = io_ctx.num_workers();
-        let full_batch_size = 2 * MEMORY_OPS_PER_INSTRUCTION;
-        assert!(io_ctx.num_workers() <= full_batch_size);
-        let worker_batch_size = full_batch_size / num_workers;
+        let rw_batch_size_full = 2 * MEMORY_OPS_PER_INSTRUCTION;
+        assert!(io_ctx.num_workers() <= rw_batch_size_full);
+        let rw_batch_size_worker = rw_batch_size_full / num_workers;
         let chunk_size = if num_workers <= MEMORY_OPS_PER_INSTRUCTION {
             2 * num_ops
         } else {
@@ -255,7 +258,7 @@ where
         );
 
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); worker_batch_size * num_ops];
+            vec![Rep3PrimeFieldShare::zero_share(); rw_batch_size_worker * num_ops];
 
         let reg_offset = MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx; // 2 => [0, 2] 4 => [0, 1, 2, 3] 8 => [0, 0, 1, 1, 2, 2, 3, 3]
 
@@ -270,7 +273,7 @@ where
         });
 
         for (i, chunk) in read_write_leaves.chunks_mut(chunk_size).enumerate() {
-            if num_workers <= full_batch_size || worker_idx % 2 == 0 {
+            if num_workers <= rw_batch_size_full || worker_idx % 2 == 0 {
                 chunk[..num_ops]
                     .par_iter_mut()
                     .enumerate()
@@ -325,7 +328,7 @@ where
                     });
             }
 
-            if num_workers <= full_batch_size || worker_idx % 2 != 0 {
+            if num_workers <= rw_batch_size_full || worker_idx % 2 != 0 {
                 chunk[num_ops..]
                     .par_iter_mut()
                     .enumerate()
@@ -375,38 +378,39 @@ where
             }
         }
 
-        let v_init = polynomials.v_init.as_ref().unwrap().as_shared();
-        let init_fingerprints: Vec<Rep3PrimeFieldShare<F>> = (0..memory_size)
-            .into_par_iter()
-            .map(|i| {
-                rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
-                    F::from_u32(i as u32) - *tau,
-                    party_id,
-                )
-            })
-            .collect();
-
-        let v_final = &polynomials.v_final;
-        let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
-        let final_fingerprints: Vec<_> = (0..memory_size)
-            .into_par_iter()
-            .map(|i| {
-                rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
-                    t_final[i].field_mul(gamma_squared) + F::from_u32(i as u32) - *tau,
-                    party_id,
-                )
-            })
-            .collect();
+        let memory_size_worker = memory_size / num_workers;
+        let offset = worker_idx * memory_size_worker;
+        let init_final_fingeprints: Vec<_> = if worker_idx < num_workers / 2 {
+            let v_init = polynomials.v_init.as_ref().unwrap().as_shared();
+            (0..memory_size)
+                .into_par_iter()
+                .map(|i| {
+                    rep3::arithmetic::add_public(
+                        rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
+                        F::from_u32((offset + i) as u32) - *tau,
+                        party_id,
+                    )
+                })
+                .collect()
+        } else {
+            let v_final = &polynomials.v_final;
+            let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
+            (0..memory_size)
+                .into_par_iter()
+                .map(|i| {
+                    rep3::arithmetic::add_public(
+                        rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
+                        t_final[i].field_mul(gamma_squared) + F::from_u32((offset + i) as u32)
+                            - *tau,
+                        party_id,
+                    )
+                })
+                .collect()
+        };
 
         Ok((
-            (
-                read_write_leaves,
-                2 * MEMORY_OPS_PER_INSTRUCTION,
-                2 * MEMORY_OPS_PER_INSTRUCTION,
-            ),
-            ([init_fingerprints, final_fingerprints].concat(), 2, 2),
+            (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),
+            (init_final_fingeprints, 1, 2),
         ))
     }
 }

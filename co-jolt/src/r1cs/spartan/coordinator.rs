@@ -86,16 +86,20 @@ where
         let _guard = span.enter();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        let claim_inner_joint = claim_Az
+        let mut claim_inner_joint = claim_Az
             + inner_sumcheck_RLC * claim_Bz
             + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
 
-        network.broadcast_request((inner_sumcheck_RLC, claim_inner_joint))?;
+        network.broadcast_request(inner_sumcheck_RLC)?;
 
         let num_rounds_inner_sumcheck = (key.uniform_r1cs.num_vars.next_power_of_two() * 4).log_2();
 
-        let (inner_sumcheck_proof, _) =
-            sumcheck::coordinate_prove_arbitrary(num_rounds_inner_sumcheck, transcript, network)?;
+        let (inner_sumcheck_proof, _) = sumcheck::coordinate_prove_arbitrary(
+            &mut claim_inner_joint,
+            num_rounds_inner_sumcheck,
+            transcript,
+            network,
+        )?;
 
         drop(_guard);
         drop(span);
@@ -107,10 +111,15 @@ where
         let _guard = span.enter();
         let num_rounds_shift_sumcheck = key.num_steps.log_2();
 
-        let shift_sumcheck_claim = additive::combine_additive_share(network.receive_responses()?);
+        let mut shift_sumcheck_claim =
+            additive::combine_additive_share(network.receive_responses()?);
 
-        let (shift_sumcheck_proof, _) =
-            sumcheck::coordinate_prove_arbitrary(num_rounds_shift_sumcheck, transcript, network)?;
+        let (shift_sumcheck_proof, _) = sumcheck::coordinate_prove_arbitrary(
+            &mut shift_sumcheck_claim,
+            num_rounds_shift_sumcheck,
+            transcript,
+            network,
+        )?;
         drop(_guard);
         drop(span);
 
