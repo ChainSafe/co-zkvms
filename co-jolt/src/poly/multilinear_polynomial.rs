@@ -83,6 +83,18 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         ))
     }
 
+    pub fn new_shard_public_u64(
+        coeffs: Vec<u64>,
+        full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
+    ) -> Self {
+        let shard_nv = full_len.log_2() - log_num_workers;
+        Self::public(MultilinearPolynomial::U64Scalars(
+            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+        ))
+    }
+
     pub fn as_shared(&self) -> &Rep3DensePolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Shared(poly) => poly,
@@ -308,6 +320,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                                 }
                             }
                             MultilinearPolynomial::U32Scalars(poly) => {
+                                for (rlc, poly_eval) in chunk[chunk_offset..]
+                                    .iter_mut()
+                                    .zip(&poly.coeffs_ref()[local_index..])
+                                {
+                                    rlc.add_public_assign(poly_eval.field_mul(*coeff), party_id);
+                                }
+                            }
+                            MultilinearPolynomial::U64Scalars(poly) => {
                                 for (rlc, poly_eval) in chunk[chunk_offset..]
                                     .iter_mut()
                                     .zip(&poly.coeffs_ref()[local_index..])

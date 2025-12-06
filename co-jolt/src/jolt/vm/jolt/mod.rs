@@ -148,8 +148,8 @@ pub struct JoltProof<
     ProofTranscript: Transcript,
 {
     pub trace_length: usize,
-    // pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
-    pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
+    // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
@@ -546,14 +546,36 @@ where
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        // Self::verify_bytecode(
-        //     &preprocessing.bytecode,
-        //     &preprocessing.generators,
-        //     proof.bytecode,
-        //     &commitments,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
+        commitments
+            .bytecode
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .bytecode
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        commitments
+            .read_write_memory
+            .read_write_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+        commitments
+            .read_write_memory
+            .init_final_values()
+            .iter()
+            .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        Self::verify_bytecode(
+            &preprocessing.bytecode,
+            &preprocessing.generators,
+            proof.bytecode,
+            &commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
 
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
@@ -566,16 +588,16 @@ where
         .map_err(|e| eyre::eyre!(e))
         .context("failed to verify instruction lookups")?;
 
-        Self::verify_memory(
-            &mut preprocessing.read_write_memory,
-            &preprocessing.generators,
-            &preprocessing.memory_layout,
-            proof.read_write_memory,
-            &commitments,
-            program_io,
-            &mut opening_accumulator,
-            &mut transcript,
-        )?;
+        // Self::verify_memory(
+        //     &mut preprocessing.read_write_memory,
+        //     &preprocessing.generators,
+        //     &preprocessing.memory_layout,
+        //     proof.read_write_memory,
+        //     &commitments,
+        //     program_io,
+        //     &mut opening_accumulator,
+        //     &mut transcript,
+        // )?;
 
         // Self::verify_r1cs(
         //     r1cs_proof,

@@ -30,6 +30,7 @@ use mpc_core::protocols::{
 use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
+use snarks_core::math::Math;
 
 pub type Rep3BytecodePolynomials<F> = BytecodeStuff<Rep3MultilinearPolynomial<F>>;
 
@@ -48,11 +49,24 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
+        let num_workers = io_ctx.num_workers();
+        let worker_idx = io_ctx.worker_idx();
+
+        let half_net_log_num_workers = (num_workers >> 1).max(1).log_2();
+        let half_net_worker_idx = worker_idx % (num_workers >> 1);
+
         let num_ops = trace.len();
+        let num_ops_worker = num_ops / (num_workers >> 1).min(1); // when num_workers >= 4 worker generates sharded polys
 
         let mut a_read_write: Vec<u32> = vec![0; num_ops];
         let mut read_cts: Vec<u32> = vec![0; num_ops];
         let mut final_cts: Vec<u32> = vec![0; preprocessing.code_size];
+
+        let trace_range = if num_workers >= 4 {
+            num_ops_worker * half_net_worker_idx..num_ops_worker * (half_net_worker_idx + 1)
+        } else {
+            0..num_ops
+        };
 
         for (step_index, step) in trace.iter_mut().enumerate() {
             if !step.bytecode_row.address.is_zero() {
@@ -77,14 +91,15 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
             final_cts[*virtual_address] = counter + 1;
         }
 
-        let mut address = vec![0; num_ops];
-        let mut bitflags = vec![0; num_ops];
-        let mut rd = vec![0; num_ops];
-        let mut rs1 = vec![0; num_ops];
-        let mut rs2 = vec![0; num_ops];
-        let mut imm = vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); num_ops];
+        let mut address = vec![0; num_ops_worker];
+        let mut bitflags = vec![0; num_ops_worker];
+        let mut rd = vec![0; num_ops_worker];
+        let mut rs1 = vec![0; num_ops_worker];
+        let mut rs2 = vec![0; num_ops_worker];
+        let mut imm =
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); num_ops_worker];
 
-        trace
+        trace[trace_range]
             .into_par_iter()
             .zip(address.par_iter_mut())
             .zip(bitflags.par_iter_mut())
@@ -111,17 +126,65 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         let imm: Vec<Rep3PrimeFieldShare<F>> = imm.fulfill_batched(io_ctx, |res, _: ()| res)?;
         drop(_guard);
 
+        assert!(num_workers < 4, "unimplemented");
+
+        // TODO: when num_worker >= 4, shard ranges will be incorrect if we pass half_net_log_num_workers/half_net_worker_idx
         let v_read_write = [
-            Rep3MultilinearPolynomial::from(address),
-            Rep3MultilinearPolynomial::from(bitflags),
-            Rep3MultilinearPolynomial::from(rd),
-            Rep3MultilinearPolynomial::from(rs1),
-            Rep3MultilinearPolynomial::from(rs2),
-            Rep3MultilinearPolynomial::from(imm),
+            Rep3MultilinearPolynomial::new_shard_public_u64(
+                address,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
+            Rep3MultilinearPolynomial::new_shard_public_u64(
+                bitflags,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
+            Rep3MultilinearPolynomial::new_shard_public_u8(
+                rd,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
+            Rep3MultilinearPolynomial::new_shard_public_u8(
+                rs1,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
+            Rep3MultilinearPolynomial::new_shard_public_u8(
+                rs2,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
+            Rep3MultilinearPolynomial::new_shard_shared(
+                imm,
+                num_ops,
+                half_net_log_num_workers,
+                half_net_worker_idx,
+            ),
         ];
-        let t_read = Rep3MultilinearPolynomial::from(read_cts);
-        let t_final = Rep3MultilinearPolynomial::from(final_cts);
-        let a_read_write = Rep3MultilinearPolynomial::from(a_read_write);
+        let t_read = Rep3MultilinearPolynomial::new_shard_public_u32(
+            read_cts,
+            num_ops,
+            half_net_log_num_workers,
+            half_net_worker_idx,
+        );
+        let t_final = Rep3MultilinearPolynomial::new_shard_public_u32(
+            final_cts,
+            preprocessing.code_size,
+            half_net_log_num_workers,
+            half_net_worker_idx,
+        );
+        let a_read_write = Rep3MultilinearPolynomial::new_shard_public_u32(
+            a_read_write,
+            num_ops,
+            half_net_log_num_workers,
+            half_net_worker_idx,
+        );
 
         Ok(Self {
             a_read_write,

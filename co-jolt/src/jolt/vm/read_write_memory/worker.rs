@@ -261,6 +261,8 @@ where
             "memory trace spliting is unimplemented"
         );
 
+        // ------------- read_write ------------- //
+
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
             vec![Rep3PrimeFieldShare::zero_share(); rw_batch_size_worker * num_ops];
 
@@ -382,39 +384,41 @@ where
             }
         }
 
-        let memory_size_worker = memory_size / num_workers;
-        let offset = worker_idx * memory_size_worker;
-        let init_final_fingeprints: Vec<_> = if worker_idx < num_workers / 2 {
+        // ------------- init_final ------------- //
+
+        let memory_size_worker = polynomials.v_final.len();
+        // when num_workers >= 4 worker has sharded v_final and t_final, so we must offset index accordingly
+        let offset = memory_size_worker * worker_idx * (num_workers >= 4) as usize;
+        let mut init_final_fingeprints = Vec::with_capacity(memory_size_worker);
+        let init_final_batch_size_worker = 1 + (!io_ctx.network().is_distributed()) as usize; // is_distributed ? 1 : 2
+
+        if !io_ctx.network().is_distributed() || worker_idx < num_workers / 2 {
             let v_init = polynomials.v_init.as_ref().unwrap().as_shared();
-            (0..memory_size)
-                .into_par_iter()
-                .map(|i| {
-                    rep3::arithmetic::add_public(
-                        rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
-                        F::from_u32((offset + i) as u32) - *tau,
-                        party_id,
-                    )
-                })
-                .collect()
-        } else {
+
+            init_final_fingeprints.par_extend((0..memory_size).into_par_iter().map(|i| {
+                rep3::arithmetic::add_public(
+                    rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
+                    F::from_u32((offset + i) as u32) - *tau,
+                    party_id,
+                )
+            }));
+        }
+
+        if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
             let v_final = &polynomials.v_final;
             let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
-            (0..memory_size)
-                .into_par_iter()
-                .map(|i| {
-                    rep3::arithmetic::add_public(
-                        rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
-                        t_final[i].field_mul(gamma_squared) + F::from_u32((offset + i) as u32)
-                            - *tau,
-                        party_id,
-                    )
-                })
-                .collect()
-        };
+            init_final_fingeprints.par_extend((0..memory_size).into_par_iter().map(|i| {
+                rep3::arithmetic::add_public(
+                    rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
+                    t_final[i].field_mul(gamma_squared) + F::from_u32((offset + i) as u32) - *tau,
+                    party_id,
+                )
+            }));
+        }
 
         Ok((
             (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),
-            (init_final_fingeprints, 1, 2),
+            (init_final_fingeprints, init_final_batch_size_worker, 2),
         ))
     }
 

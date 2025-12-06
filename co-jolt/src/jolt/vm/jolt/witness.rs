@@ -304,6 +304,19 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                     next.read_write_memory.init_final_values()
                 )
                 .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
+                izip!(
+                    [
+                        &mut acc.bytecode.t_final,
+                        &mut acc.read_write_memory.v_final,
+                        &mut acc.read_write_memory.t_final
+                    ],
+                    [
+                        &next.bytecode.t_final,
+                        &next.read_write_memory.v_final,
+                        &next.read_write_memory.t_final
+                    ]
+                )
+                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
                 acc
             })
             .unwrap();

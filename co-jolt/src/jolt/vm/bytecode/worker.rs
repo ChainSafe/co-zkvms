@@ -1,13 +1,17 @@
 use std::marker::PhantomData;
 
 use crate::field::JoltField;
+use crate::lasso::memory_checking;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
-use jolt_core::lasso::memory_checking::NoExogenousOpenings;
+use jolt_core::lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData};
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
+use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
@@ -51,8 +55,9 @@ where
         (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
         (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
     )> {
-        let num_ops = polynomials.a_read_write.len();
-        let bytecode_size = preprocessing.v_init_final[0].len();
+        let worker_idx = io_ctx.worker_idx();
+        let num_workers = io_ctx.num_workers();
+        let batch_size_worker = 1 + (!io_ctx.network().is_distributed()) as usize; // is_distributed ? 1 : 2
 
         let mut gamma_terms = [F::zero(); 7];
         let mut gamma_term = F::one();
@@ -61,6 +66,8 @@ where
             gamma_terms[i] = gamma_term;
         }
 
+        // ------------- read_write ------------- //
+        let num_ops_worker = polynomials.a_read_write.len(); // when num_workers >= 4 worker has sharded polys
         let a: &CompactPolynomial<u32, F> = (&polynomials.a_read_write).try_into().unwrap();
         let v_address: &CompactPolynomial<u64, F> =
             (&polynomials.v_read_write[0]).try_into().unwrap();
@@ -73,7 +80,7 @@ where
         let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
 
         let party_id = io_ctx.party_id();
-        let read_leaves: Vec<_> = (0..num_ops)
+        let read_leaves: Vec<_> = (0..num_ops_worker)
             .into_par_iter()
             .map(|i| {
                 let public_term = a[i].field_mul(gamma_terms[0])
@@ -91,15 +98,23 @@ where
             })
             .collect();
 
-        let write_leaves: Vec<_> = read_leaves
-            .par_iter()
-            .map(|leaf| {
+        let mut read_write_fingeprints = Vec::with_capacity(num_ops_worker);
+
+        // write_fingeprints first to avoid cloning read_leaves
+        if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
+            read_write_fingeprints.par_extend(read_leaves.par_iter().map(|leaf| {
                 Rep3Value::Shared(*leaf)
                     .add_public(gamma_terms[6], party_id)
                     .as_shared()
-            })
-            .collect();
+            }))
+        }
 
+        if !io_ctx.network().is_distributed() || worker_idx < num_workers / 2 {
+            read_write_fingeprints.splice(0..0, read_leaves); // extend from back
+        }
+
+        // ------------- init_final ------------- //
+        let bytecode_size_worker = preprocessing.v_init_final[0].len();
         let v_address: &CompactPolynomial<u64, F> =
             (&preprocessing.v_init_final[0]).try_into().unwrap();
         let v_bitflags: &CompactPolynomial<u64, F> =
@@ -110,7 +125,7 @@ where
         let v_imm: &CompactPolynomial<i64, F> =
             (&preprocessing.v_init_final[5]).try_into().unwrap();
 
-        let init_leaves: Vec<F> = (0..bytecode_size)
+        let init_leaves: Vec<F> = (0..bytecode_size_worker)
             .into_par_iter()
             .map(|i| {
                 F::from_i64(v_imm[i])
@@ -120,27 +135,103 @@ where
                     + v_rd[i].field_mul(gamma_terms[3])
                     + v_rs1[i].field_mul(gamma_terms[4])
                     + v_rs2[i].field_mul(gamma_terms[5])
-                    // + gamma_terms[6] * 0
                     - tau
             })
             .collect();
 
-        let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
-        let final_leaves: Vec<F> = init_leaves
-            .par_iter()
-            .enumerate()
-            .map(|(i, leaf)| *leaf + t_final[i].field_mul(gamma_terms[6]))
-            .collect();
+        let mut init_final_fingeprints = Vec::with_capacity(num_ops_worker);
 
-        let init_leaves =
-            rep3::arithmetic::promote_to_trivial_shares(init_leaves, io_ctx.party_id());
-        let final_leaves =
-            rep3::arithmetic::promote_to_trivial_shares(final_leaves, io_ctx.party_id());
+        if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
+            let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
+            init_final_fingeprints.par_extend(
+                init_leaves
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, leaf)| *leaf + t_final[i].field_mul(gamma_terms[6])),
+            )
+        }
 
-        // TODO(moodlezoup): avoid concat
+        if io_ctx.network().is_distributed() && worker_idx < num_workers / 2 {
+            init_final_fingeprints.splice(0..0, init_leaves); // extend from back
+        }
+
+        // TODO: fallback to public grand product
+        let init_final_fingeprints =
+            rep3::arithmetic::promote_to_trivial_shares(init_final_fingeprints, io_ctx.party_id());
+
         Ok((
-            ([read_leaves, write_leaves].concat(), 2, 2),
-            ([init_leaves, final_leaves].concat(), 2, 2),
+            (read_write_fingeprints, batch_size_worker, 2),
+            (init_final_fingeprints, batch_size_worker, 2),
         ))
+    }
+
+    fn compute_openings(
+        _: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &Rep3JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<()> {
+        if !io_ctx.network().is_distributed() {
+            return memory_checking::worker::compute_openings::<F, NoExogenousOpenings, _, _>(
+                opening_accumulator,
+                polynomials,
+                jolt_polynomials,
+                r_read_write,
+                r_init_final,
+                io_ctx,
+            );
+        }
+
+        let party_id = io_ctx.party_id();
+
+        let read_write_polys = polynomials.read_write_values_grand_product();
+
+        // let (r_read_write_worker, _) =
+        //     r_read_write.split_at(r_read_write.len() - io_ctx.log_num_workers());
+        // let (read_write_evals, eq_read_write) =
+        //     Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, &r_read_write_worker);
+        let (read_write_evals, eq_read_write) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
+
+        io_ctx.network().send_response(
+            read_write_evals
+                .par_iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        opening_accumulator.append(
+            &read_write_polys,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            io_ctx.main(),
+        )?;
+
+        let init_final_polys = polynomials.init_final_values();
+        // let (r_init_final_worker, _) =
+        //     r_init_final.split_at(r_init_final.len() - io_ctx.log_num_workers());
+        // let (init_final_evals, eq_init_final) =
+        //     Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, &r_init_final_worker);
+        let (init_final_evals, eq_init_final) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+        io_ctx.network().send_response(
+            init_final_evals
+                .par_iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        opening_accumulator.append(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            io_ctx.main(),
+        )?;
+
+        Ok(())
     }
 }
