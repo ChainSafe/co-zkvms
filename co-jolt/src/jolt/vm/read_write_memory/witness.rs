@@ -574,6 +574,8 @@ impl<F: JoltField> Rep3ProgramIO<F> {
 impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
     WorkerInitializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
 {
+    type VerifierPreprocessing = ReadWriteMemoryPreprocessing;
+
     fn worker_initialize(preprocessing: &ReadWriteMemoryPreprocessing) -> Self {
         <Self as jolt_core::lasso::memory_checking::Initializable<
             T,

@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::jolt::vm::instruction_lookups::witness;
+use crate::jolt::vm::{instruction_lookups::witness, witness::WorkerInitializable};
 use crate::poly::opening_proof::{Rep3CoordinatorOpening, Rep3OpeningAccumulatorCoordinator};
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,
@@ -380,16 +380,9 @@ where
             .enumerate()
             .map(|(worker_idx, shares)| {
                 let evals = additive::combine_additive_vec(shares);
-                let mut openings = Self::Openings::initialize(preprocessing);
-
-                let read_memories = witness::read_write_memories_for_worker(
-                    preprocessing.num_memories,
-                    num_workers,
-                    worker_idx,
-                );
-
-                openings.E_polys.truncate(read_memories.len());
-                openings.read_cts.truncate(read_memories.len());
+                let mut openings =
+                    Self::Openings::initialize_for_worker(preprocessing, num_workers, worker_idx);
+                let num_read_memories_worker = openings.read_cts.len();
 
                 openings
                     .read_write_values_grand_product_mut()
@@ -399,7 +392,7 @@ where
                         *opening = *eval;
                     });
 
-                (vec![read_memories.len()], openings)
+                (vec![num_read_memories_worker], openings)
             })
             .reduce(|(mut lens_acc, mut openings_acc), (len, opening)| {
                 openings_acc.E_polys.extend(opening.E_polys);

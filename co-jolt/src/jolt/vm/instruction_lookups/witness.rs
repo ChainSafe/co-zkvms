@@ -11,7 +11,7 @@ use itertools::{izip, Itertools};
 #[cfg(feature = "debug")]
 use jolt_core::jolt::vm::instruction_lookups::InstructionLookupPolynomials;
 use jolt_core::{
-    jolt::vm::instruction_lookups::InstructionLookupStuff,
+    jolt::vm::instruction_lookups::InstructionLookupStuff, lasso::memory_checking::Initializable,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
 use jolt_core::{jolt::vm::JoltStuff, utils::math::Math};
@@ -103,18 +103,47 @@ impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize 
                 .take(preprocessing.read_memories_worker.len())
                 .collect(),
             final_cts: std::iter::repeat_with(|| T::default())
-                .take(preprocessing.num_memories)
+                .take(preprocessing.final_memories_worker.len())
                 .collect(),
             E_polys: std::iter::repeat_with(|| T::default())
                 .take(preprocessing.read_memories_worker.len())
                 .collect(),
             instruction_flags: std::iter::repeat_with(|| T::default())
-                .take(preprocessing.final_memories_worker.len())
+                .take(preprocessing.instruction_to_memory_indices.len())
                 .collect(),
             lookup_outputs: T::default(),
             a_init_final: None,
             v_init_final: None,
         }
+    }
+
+    type VerifierPreprocessing = InstructionLookupsPreprocessing<C, F>;
+
+    fn initialize_for_worker(
+        preprocessing: &Self::VerifierPreprocessing,
+        num_workers: usize,
+        worker_idx: usize,
+    ) -> Self
+    where
+        Self: Initializable<T, Self::VerifierPreprocessing>,
+    {
+        let read_memories_worker =
+            read_write_memories_for_worker(preprocessing.num_memories, num_workers, worker_idx)
+                .len();
+
+        let final_memories_worker = init_final_subtables_for_worker(
+            &preprocessing.subtable_to_memory_indices,
+            num_workers,
+            worker_idx,
+        )
+        .iter()
+        .flat_map(|(_, _, memories)| memories)
+        .count();
+
+        let mut init = Self::initialize(preprocessing);
+        init.read_cts.truncate(read_memories_worker);
+        init.final_cts.truncate(final_memories_worker);
+        init
     }
 }
 

@@ -214,6 +214,7 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
         let commitments = worker_commitments_shares
             .into_iter()
             .map(|mut commitments_shares| {
+                // can use `initialize_for_worker` but we can't truncate `read_cts` and `final_cts` based on shares form instead
                 let mut commitments =
                     JoltCommitments::<PCS, ProofTranscript>::initialize(preprocessing);
 
@@ -329,32 +330,21 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         let mut commitments =
             JoltMaybeSharedCommitments::<PCS, ProofTranscript>::worker_initialize(preprocessing);
 
+        if io_ctx.network().is_distributed() {
+            // `worker_initialize` assumes that worker holds all `preprocessing.instruction_lookups.read_memories_worker.len()` E_polys as for Memory checking
+            // But during commit and instructions primary sumcheck, workers hold all E_polys *shards*, so we must resize to original `num_memories`
+            commitments
+                .instruction_lookups
+                .E_polys
+                .resize_with(preprocessing.instruction_lookups.num_memories, || {
+                    Default::default()
+                });
+        }
+
         let span = tracing::span!(tracing::Level::INFO, "commit::trace_polys");
         let _guard = span.enter();
         let trace_len = self.instruction_lookups.read_cts[0].len();
         let trace_polys = self.read_write_values();
-
-        if io_ctx.network().is_distributed() {
-            commitments
-                .instruction_lookups
-                .read_cts
-                .truncate(self.instruction_lookups.read_cts.len());
-            commitments
-                .instruction_lookups
-                .final_cts
-                .truncate(self.instruction_lookups.final_cts.len());
-        }
-
-        // let read_cts_comms = (io_ctx.log_num_workers() != 0).then(|| {
-        //     let before_read_cts = 19 + C;
-        //     let read_cts_len = self.instruction_lookups.read_cts.len();
-        //     let read_cts: Vec<_> = trace_polys
-        //         .drain(before_read_cts..before_read_cts + read_cts_len)
-        //         .collect();
-
-        //     debug_assert_eq!(read_cts.len(), read_cts_len);
-        //     PCS::batch_commit_rep3(&read_cts, &preprocessing.generators, false)
-        // });
 
         let trace_commitments = PCS::batch_commit_rep3(
             &trace_polys,
@@ -362,11 +352,6 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
             &preprocessing.generators,
             id == PartyID::ID0,
         );
-
-        // if let Some(read_cts_comms) = read_cts_comms {
-        //     let before_read_cts = 19 + C;
-        //     trace_commitments.splice(before_read_cts..before_read_cts, read_cts_comms.into_iter());
-        // }
 
         commitments
             .read_write_values_mut()
@@ -455,6 +440,8 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
 }
 
 pub trait WorkerInitializable<T, Preprocessing>: StructuredPolynomialData<T> + Default {
+    type VerifierPreprocessing;
+
     /// This function is used in lieu of `Default::default()` to initialize a
     /// `StructuredPolynomialData` struct, which may contain `Vec` fields
     /// whose lengths depend on some preprocessing.
@@ -463,6 +450,17 @@ pub trait WorkerInitializable<T, Preprocessing>: StructuredPolynomialData<T> + D
     /// just return `Default::default()`.
     fn worker_initialize(_preprocessing: &Preprocessing) -> Self {
         Default::default()
+    }
+
+    fn initialize_for_worker(
+        preprocessing: &Self::VerifierPreprocessing,
+        _num_workers: usize,
+        _worker_idx: usize,
+    ) -> Self
+    where
+        Self: Initializable<T, Self::VerifierPreprocessing>,
+    {
+        Self::initialize(preprocessing)
     }
 }
 
@@ -476,6 +474,8 @@ impl<
 where
     PCS::Field: FieldExt,
 {
+    type VerifierPreprocessing = JoltVerifierPreprocessing<C, PCS::Field, PCS, ProofTranscript>;
+
     fn worker_initialize(
         preprocessing: &JoltWorkerPreprocessing<C, PCS::Field, PCS, ProofTranscript>,
     ) -> Self {
@@ -486,6 +486,38 @@ where
             ),
             instruction_lookups: InstructionLookupStuff::worker_initialize(
                 &preprocessing.instruction_lookups,
+            ),
+            timestamp_range_check: <TimestampRangeCheckStuff<T> as Initializable<
+                T,
+                NoPreprocessing,
+            >>::initialize(&NoPreprocessing),
+            r1cs: <R1CSStuff<T> as Initializable<T, usize>>::initialize(&C),
+        }
+    }
+
+    fn initialize_for_worker(
+        preprocessing: &Self::VerifierPreprocessing,
+        num_workers: usize,
+        worker_id: usize,
+    ) -> Self
+    where
+        Self: Initializable<T, Self::VerifierPreprocessing>,
+    {
+        Self {
+            bytecode: BytecodeStuff::initialize_for_worker(
+                &preprocessing.bytecode,
+                num_workers,
+                worker_id,
+            ),
+            read_write_memory: ReadWriteMemoryStuff::initialize_for_worker(
+                &preprocessing.read_write_memory,
+                num_workers,
+                worker_id,
+            ),
+            instruction_lookups: InstructionLookupStuff::initialize_for_worker(
+                &preprocessing.instruction_lookups,
+                num_workers,
+                worker_id,
             ),
             timestamp_range_check: <TimestampRangeCheckStuff<T> as Initializable<
                 T,

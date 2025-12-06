@@ -299,6 +299,8 @@ impl Into<jolt_core::jolt::vm::bytecode::BytecodeRow> for BytecodeRow {
 impl<F: JoltField, T: CanonicalSerialize + CanonicalDeserialize + Default>
     WorkerInitializable<T, BytecodePreprocessing<F>> for BytecodeStuff<T>
 {
+    type VerifierPreprocessing = BytecodePreprocessing<F>;
+
     fn worker_initialize(preprocessing: &BytecodePreprocessing<F>) -> Self {
         <Self as jolt_core::lasso::memory_checking::Initializable<T, BytecodePreprocessing<F>>>::initialize(preprocessing)
     }
