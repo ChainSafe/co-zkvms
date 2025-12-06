@@ -57,7 +57,6 @@ where
 
         let num_rounds = num_ops.log_2();
         let r_eq = transcript.challenge_vector::<F>(num_rounds);
-        // tracing::info!("commitment check/r_eq: {:?}", r_eq[0]);
         network.broadcast_request(r_eq)?;
 
         let (primary_sumcheck_proof, flag_evals, E_evals, outputs_eval) =
@@ -466,12 +465,13 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
+        read_write_batch_size: usize,
     ) -> Rep3ToggledBatchedGrandProduct<F> {
         <Rep3ToggledBatchedGrandProduct<F> as Rep3BatchedGrandProduct<
             F,
             PCS,
             ProofTranscript,
             Network,
-        >>::construct(num_lookups.log_2() + 1)
+        >>::construct(num_lookups.log_2() + 1, read_write_batch_size)
     }
 }

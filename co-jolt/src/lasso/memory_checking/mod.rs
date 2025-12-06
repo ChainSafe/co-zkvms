@@ -128,8 +128,10 @@ where
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 
-        let read_write_circuit = Self::read_write_grand_product_rep3(preprocessing, num_lookups);
-        let init_final_circuit = Self::init_final_grand_product_rep3(preprocessing, memory_size);
+        let read_write_circuit =
+            Self::read_write_grand_product_rep3(preprocessing, num_lookups, read_write_batch_size);
+        let init_final_circuit =
+            Self::init_final_grand_product_rep3(preprocessing, memory_size, init_final_batch_size);
 
         let (read_write_grand_product, _) = read_write_circuit.cooridinate_prove_grand_product(
             read_write_hashes,
@@ -176,15 +178,17 @@ where
     fn read_write_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         num_lookups: usize,
+        batch_size: usize,
     ) -> Self::Rep3ReadWriteGrandProduct {
-        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2())
+        Self::Rep3ReadWriteGrandProduct::construct(num_lookups.log_2(), batch_size)
     }
 
     fn init_final_grand_product_rep3(
         _preprocessing: &Self::Preprocessing,
         memory_size: usize,
+        batch_size: usize,
     ) -> Self::Rep3InitFinalGrandProduct {
-        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2())
+        Self::Rep3InitFinalGrandProduct::construct(memory_size.log_2(), batch_size)
     }
 
     fn construct_remaining_layers(

@@ -53,10 +53,17 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         let worker_idx = io_ctx.worker_idx();
 
         let half_net_log_num_workers = (num_workers >> 1).max(1).log_2();
-        let half_net_worker_idx = worker_idx % (num_workers >> 1);
+        let half_net_worker_idx = worker_idx % (num_workers >> 1).max(1);
 
         let num_ops = trace.len();
-        let num_ops_worker = num_ops / (num_workers >> 1).min(1); // when num_workers >= 4 worker generates sharded polys
+        let num_ops_worker = num_ops / (num_workers >> 1).max(1); // when num_workers >= 4 worker generates sharded polys
+
+        tracing::info!(
+            "bytecode num_ops: {:?} num_ops_worker {} code_size {}",
+            num_ops,
+            num_ops_worker,
+            preprocessing.code_size
+        );
 
         let mut a_read_write: Vec<u32> = vec![0; num_ops];
         let mut read_cts: Vec<u32> = vec![0; num_ops];
@@ -128,62 +135,58 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
 
         assert!(num_workers < 4, "unimplemented");
 
+        let log_num_workers = io_ctx.log_num_workers();
         // TODO: when num_worker >= 4, shard ranges will be incorrect if we pass half_net_log_num_workers/half_net_worker_idx
         let v_read_write = [
             Rep3MultilinearPolynomial::new_shard_public_u64(
                 address,
                 num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
+                log_num_workers,
+                worker_idx,
             ),
             Rep3MultilinearPolynomial::new_shard_public_u64(
                 bitflags,
                 num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
+                log_num_workers,
+                worker_idx,
             ),
             Rep3MultilinearPolynomial::new_shard_public_u8(
                 rd,
                 num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
+                log_num_workers,
+                worker_idx,
             ),
             Rep3MultilinearPolynomial::new_shard_public_u8(
                 rs1,
                 num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
+                log_num_workers,
+                worker_idx,
             ),
             Rep3MultilinearPolynomial::new_shard_public_u8(
                 rs2,
                 num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
+                log_num_workers,
+                worker_idx,
             ),
-            Rep3MultilinearPolynomial::new_shard_shared(
-                imm,
-                num_ops,
-                half_net_log_num_workers,
-                half_net_worker_idx,
-            ),
+            Rep3MultilinearPolynomial::new_shard_shared(imm, num_ops, log_num_workers, worker_idx),
         ];
         let t_read = Rep3MultilinearPolynomial::new_shard_public_u32(
             read_cts,
             num_ops,
-            half_net_log_num_workers,
-            half_net_worker_idx,
+            log_num_workers,
+            worker_idx,
         );
         let t_final = Rep3MultilinearPolynomial::new_shard_public_u32(
             final_cts,
             preprocessing.code_size,
-            half_net_log_num_workers,
-            half_net_worker_idx,
+            log_num_workers,
+            worker_idx,
         );
         let a_read_write = Rep3MultilinearPolynomial::new_shard_public_u32(
             a_read_write,
             num_ops,
-            half_net_log_num_workers,
-            half_net_worker_idx,
+            log_num_workers,
+            worker_idx,
         );
 
         Ok(Self {

@@ -67,7 +67,7 @@ where
         }
 
         // ------------- read_write ------------- //
-        let num_ops_worker = polynomials.a_read_write.len(); // when num_workers >= 4 worker has sharded polys
+        let num_ops_worker = polynomials.a_read_write.full_len() / (num_workers >> 1).max(1); // when num_workers >= 4 worker has sharded polys
         let a: &CompactPolynomial<u32, F> = (&polynomials.a_read_write).try_into().unwrap();
         let v_address: &CompactPolynomial<u64, F> =
             (&polynomials.v_read_write[0]).try_into().unwrap();
@@ -76,7 +76,7 @@ where
         let v_rd: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[2]).try_into().unwrap();
         let v_rs1: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[3]).try_into().unwrap();
         let v_rs2: &CompactPolynomial<u8, F> = (&polynomials.v_read_write[4]).try_into().unwrap();
-        let v_imm = &polynomials.v_read_write[5];
+        let v_imm = &polynomials.v_read_write[5].as_shared();
         let t: &CompactPolynomial<u32, F> = (&polynomials.t_read).try_into().unwrap();
 
         let party_id = io_ctx.party_id();
@@ -91,8 +91,7 @@ where
                     + v_rs2[i].field_mul(gamma_terms[5])
                     + t[i].field_mul(gamma_terms[6])
                     - tau;
-                v_imm
-                    .get_coeff(i)
+                Rep3Value::Shared(v_imm[i])
                     .add_public(public_term, party_id)
                     .as_shared()
             })
@@ -101,7 +100,7 @@ where
         let mut read_write_fingeprints = Vec::with_capacity(num_ops_worker);
 
         // write_fingeprints first to avoid cloning read_leaves
-        if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
+        if !io_ctx.network().is_distributed() || worker_idx >= num_workers >> 1 {
             read_write_fingeprints.par_extend(read_leaves.par_iter().map(|leaf| {
                 Rep3Value::Shared(*leaf)
                     .add_public(gamma_terms[6], party_id)
@@ -109,12 +108,13 @@ where
             }))
         }
 
-        if !io_ctx.network().is_distributed() || worker_idx < num_workers / 2 {
+        if !io_ctx.network().is_distributed() || worker_idx < num_workers >> 1 {
             read_write_fingeprints.splice(0..0, read_leaves); // extend from back
         }
 
         // ------------- init_final ------------- //
-        let bytecode_size_worker = preprocessing.v_init_final[0].len();
+        let bytecode_size_worker =
+            preprocessing.v_init_final[0].full_len() / (num_workers >> 1).max(1);
         let v_address: &CompactPolynomial<u64, F> =
             (&preprocessing.v_init_final[0]).try_into().unwrap();
         let v_bitflags: &CompactPolynomial<u64, F> =
@@ -141,7 +141,7 @@ where
 
         let mut init_final_fingeprints = Vec::with_capacity(num_ops_worker);
 
-        if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
+        if !io_ctx.network().is_distributed() || worker_idx >= num_workers >> 1 {
             let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
             init_final_fingeprints.par_extend(
                 init_leaves
@@ -151,13 +151,25 @@ where
             )
         }
 
-        if io_ctx.network().is_distributed() && worker_idx < num_workers / 2 {
+        if !io_ctx.network().is_distributed() || worker_idx < num_workers >> 1 {
             init_final_fingeprints.splice(0..0, init_leaves); // extend from back
         }
 
         // TODO: fallback to public grand product
         let init_final_fingeprints =
             rep3::arithmetic::promote_to_trivial_shares(init_final_fingeprints, io_ctx.party_id());
+
+        tracing::info!(
+            "read_write_fingeprints: {:?} batch_size_worker {}",
+            read_write_fingeprints.len(),
+            batch_size_worker
+        );
+
+        tracing::info!(
+            "init_final_fingeprints: {:?} batch_size_worker {}",
+            init_final_fingeprints.len(),
+            batch_size_worker
+        );
 
         Ok((
             (read_write_fingeprints, batch_size_worker, 2),

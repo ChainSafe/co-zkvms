@@ -172,7 +172,6 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
         let num_workers = 1usize << log_num_workers;
 
         let m_worker = m / num_workers;
-        let m_worker_nv = m_worker.log_2();
         let trace_worker_range =
             (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, trace.len());
 

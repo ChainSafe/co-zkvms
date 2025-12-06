@@ -5,7 +5,6 @@ use crate::field::JoltField;
 use crate::jolt::vm::instruction_lookups::witness::InstructionLookupsPreprocessingExt;
 use crate::jolt::{instruction::Rep3JoltInstructionSet, vm::witness::Rep3JoltPolynomials};
 use crate::{
-    jolt::vm::instruction_lookups::witness,
     lasso::memory_checking::{self, worker::MemoryCheckingProverRep3Worker},
     poly::{
         commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,

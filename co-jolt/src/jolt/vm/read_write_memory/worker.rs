@@ -34,7 +34,6 @@ use jolt_core::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     utils::math::Math,
 };
-use tokio::io;
 
 use super::witness::Rep3ReadWriteMemoryPolynomials;
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
@@ -232,12 +231,12 @@ where
             .try_into()
             .unwrap();
         let a_ram: &CompactPolynomial<u32, F> = (&polynomials.a_ram).try_into().unwrap();
-        let v_read_rs1 = &polynomials.v_read_rs1;
-        let v_read_rs2 = &polynomials.v_read_rs2;
-        let v_read_rd = &polynomials.v_read_rd;
-        let v_read_ram = &polynomials.v_read_ram;
-        let v_write_rd = &polynomials.v_write_rd;
-        let v_write_ram = &polynomials.v_write_ram;
+        let v_read_rs1 = &polynomials.v_read_rs1.as_shared();
+        let v_read_rs2 = &polynomials.v_read_rs2.as_shared();
+        let v_read_rd = &polynomials.v_read_rd.as_shared();
+        let v_read_ram = &polynomials.v_read_ram.as_shared();
+        let v_write_rd = &polynomials.v_write_rd.as_shared();
+        let v_write_ram = &polynomials.v_write_ram.as_shared();
         let t_read_rs1: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs1).try_into().unwrap();
         let t_read_rs2: &CompactPolynomial<u32, F> = (&polynomials.t_read_rs2).try_into().unwrap();
         let t_read_rd: &CompactPolynomial<u32, F> = (&polynomials.t_read_rd).try_into().unwrap();
@@ -287,10 +286,7 @@ where
                         match reg_offset + i {
                             RS1 => {
                                 *read_fingerprint = rep3::arithmetic::add_public(
-                                    rep3::arithmetic::mul_public(
-                                        v_read_rs1.as_shared().get_coeff(j),
-                                        gamma,
-                                    ),
+                                    rep3::arithmetic::mul_public(v_read_rs1[j], gamma),
                                     t_read_rs1[j].field_mul(gamma_squared) + F::from_u8(a_rs1[j])
                                         - *tau,
                                     party_id,
@@ -298,10 +294,7 @@ where
                             }
                             RS2 => {
                                 *read_fingerprint = rep3::arithmetic::add_public(
-                                    rep3::arithmetic::mul_public(
-                                        v_read_rs2.as_shared().get_coeff(j),
-                                        gamma,
-                                    ),
+                                    rep3::arithmetic::mul_public(v_read_rs2[j], gamma),
                                     t_read_rs2[j].field_mul(gamma_squared) + F::from_u8(a_rs2[j])
                                         - *tau,
                                     party_id,
@@ -309,10 +302,7 @@ where
                             }
                             RD => {
                                 *read_fingerprint = rep3::arithmetic::add_public(
-                                    rep3::arithmetic::mul_public(
-                                        v_read_rd.as_shared().get_coeff(j),
-                                        gamma,
-                                    ),
+                                    rep3::arithmetic::mul_public(v_read_rd[j], gamma),
                                     t_read_rd[j].field_mul(gamma_squared) + F::from_u8(a_rd[j])
                                         - *tau,
                                     party_id,
@@ -320,10 +310,7 @@ where
                             }
                             RAM => {
                                 *read_fingerprint = rep3::arithmetic::add_public(
-                                    rep3::arithmetic::mul_public(
-                                        v_read_ram.as_shared().get_coeff(j),
-                                        gamma,
-                                    ),
+                                    rep3::arithmetic::mul_public(v_read_ram[j], gamma),
                                     t_read_ram[j].field_mul(gamma_squared) + F::from_u32(a_ram[j])
                                         - *tau,
                                     party_id,
@@ -341,40 +328,28 @@ where
                     .for_each(|(j, write_fingerprint)| match reg_offset + i {
                         RS1 => {
                             *write_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(
-                                    v_read_rs1.as_shared().get_coeff(j),
-                                    gamma,
-                                ),
+                                rep3::arithmetic::mul_public(v_read_rs1[j], gamma),
                                 (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs1[j]) - *tau,
                                 party_id,
                             );
                         }
                         RS2 => {
                             *write_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(
-                                    v_read_rs2.as_shared().get_coeff(j),
-                                    gamma,
-                                ),
+                                rep3::arithmetic::mul_public(v_read_rs2[j], gamma),
                                 (j as u64).field_mul(gamma_squared) + F::from_u8(a_rs2[j]) - *tau,
                                 party_id,
                             );
                         }
                         RD => {
                             *write_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(
-                                    v_write_rd.as_shared().get_coeff(j),
-                                    gamma,
-                                ),
+                                rep3::arithmetic::mul_public(v_write_rd[j], gamma),
                                 (j as u64).field_mul(gamma_squared) + F::from_u8(a_rd[j]) - *tau,
                                 party_id,
                             );
                         }
                         RAM => {
                             *write_fingerprint = rep3::arithmetic::add_public(
-                                rep3::arithmetic::mul_public(
-                                    v_write_ram.as_shared().get_coeff(j),
-                                    gamma,
-                                ),
+                                rep3::arithmetic::mul_public(v_write_ram[j], gamma),
                                 (j as u64).field_mul(gamma_squared) + F::from_u32(a_ram[j]) - *tau,
                                 party_id,
                             );
@@ -397,7 +372,7 @@ where
 
             init_final_fingeprints.par_extend((0..memory_size).into_par_iter().map(|i| {
                 rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_init.get_coeff(i), gamma),
+                    rep3::arithmetic::mul_public(v_init[i], gamma),
                     F::from_u32((offset + i) as u32) - *tau,
                     party_id,
                 )
@@ -405,11 +380,11 @@ where
         }
 
         if !io_ctx.network().is_distributed() || worker_idx >= num_workers / 2 {
-            let v_final = &polynomials.v_final;
+            let v_final = &polynomials.v_final.as_shared();
             let t_final: &CompactPolynomial<u32, F> = (&polynomials.t_final).try_into().unwrap();
             init_final_fingeprints.par_extend((0..memory_size).into_par_iter().map(|i| {
                 rep3::arithmetic::add_public(
-                    rep3::arithmetic::mul_public(v_final.as_shared().get_coeff(i), gamma),
+                    rep3::arithmetic::mul_public(v_final[i], gamma),
                     t_final[i].field_mul(gamma_squared) + F::from_u32((offset + i) as u32) - *tau,
                     party_id,
                 )

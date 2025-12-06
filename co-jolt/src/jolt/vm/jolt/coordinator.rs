@@ -146,36 +146,19 @@ where
         //     .for_each(|value| value.append_to_transcript(&mut transcript));
 
         jolt_commitments
-            .instruction_lookups
+            .bytecode
             .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        jolt_commitments
-            .instruction_lookups
-            .init_final_values()
-            .iter()
+            .into_iter()
+            .chain(jolt_commitments.read_write_memory.read_write_values())
+            .chain(jolt_commitments.instruction_lookups.read_write_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         jolt_commitments
             .bytecode
-            .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        jolt_commitments
-            .bytecode
             .init_final_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-
-        jolt_commitments
-            .read_write_memory
-            .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        jolt_commitments
-            .read_write_memory
-            .init_final_values()
-            .iter()
+            .into_iter()
+            .chain(jolt_commitments.read_write_memory.init_final_values())
+            .chain(jolt_commitments.instruction_lookups.init_final_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         network.sync_with_parties()?;

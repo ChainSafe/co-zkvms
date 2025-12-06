@@ -34,10 +34,12 @@ where
     ProofTranscript: Transcript,
 {
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-    fn construct(num_layers: usize) -> Self;
+    fn construct(num_layers: usize, batch_size: usize) -> Self;
 
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
+
+    fn is_worker_symmetric(&self) -> bool;
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
@@ -69,6 +71,7 @@ where
             proof_layers.push(layer.coordinate_prove_layer(
                 &mut claim,
                 &mut r_grand_product,
+                self.is_worker_symmetric(),
                 transcript,
                 network,
             )?);
@@ -98,6 +101,8 @@ where
 
     fn batch_size_minus_delta(&self) -> usize;
 
+    fn is_worker_symmetric(&self) -> bool;
+
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
 
@@ -121,8 +126,9 @@ where
     ) -> eyre::Result<Vec<F>> {
         let mut r = io_ctx.network().receive_request()?;
         let mut eq_chunk_size = self.batch_size_minus_delta();
-        for (i, layer) in self.layers().into_iter().enumerate() {
-            layer.prove_layer(&mut r, eq_chunk_size, io_ctx)?;
+        let worker_symmetric = self.is_worker_symmetric();
+        for layer in self.layers() {
+            layer.prove_layer(&mut r, eq_chunk_size, worker_symmetric, io_ctx)?;
             eq_chunk_size *= 2;
         }
 
@@ -142,6 +148,7 @@ where
         &self,
         claim: &mut F,
         r_grand_product: &mut Vec<F>,
+        worker_symmetric: bool,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
@@ -151,6 +158,7 @@ where
             claim,
             r_grand_product,
             num_rounds,
+            worker_symmetric,
             transcript,
             network,
         )?;
@@ -193,6 +201,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         &mut self,
         r_grand_product: &mut Vec<F>,
         eq_chunk_size: usize,
+        worker_symmetric: bool,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let mut eq_poly = DistributedSplitEqPolynomial::new(
@@ -202,7 +211,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
             eq_chunk_size,
         );
 
-        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
+        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, worker_symmetric, io_ctx)?;
 
         drop_in_background_thread(eq_poly);
 
@@ -222,6 +231,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
 pub struct Rep3BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<Rep3DenseInterleavedPolynomial<F>>,
     batch_size_minus_delta: usize,
+    is_worker_symmetric: bool,
 }
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
@@ -265,11 +275,16 @@ where
         Ok(Self {
             layers,
             batch_size_minus_delta,
+            is_worker_symmetric: batch_size_full.is_power_of_two(),
         })
     }
 
     fn batch_size_minus_delta(&self) -> usize {
         self.batch_size_minus_delta
+    }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
     }
 
     fn num_layers(&self) -> usize {
@@ -306,15 +321,20 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    fn construct(num_layers: usize) -> Self {
+    fn construct(num_layers: usize, batch_size: usize) -> Self {
         Self {
             layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers],
             batch_size_minus_delta: 0,
+            is_worker_symmetric: batch_size.is_power_of_two(),
         }
     }
 
     fn num_layers(&self) -> usize {
         self.layers.len()
+    }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
     }
 
     fn layers(

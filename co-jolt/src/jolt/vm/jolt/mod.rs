@@ -536,36 +536,19 @@ where
         //     .for_each(|value| value.append_to_transcript(&mut transcript));
 
         commitments
-            .instruction_lookups
+            .bytecode
             .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        commitments
-            .instruction_lookups
-            .init_final_values()
-            .iter()
+            .into_iter()
+            .chain(commitments.read_write_memory.read_write_values())
+            .chain(commitments.instruction_lookups.read_write_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         commitments
             .bytecode
-            .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        commitments
-            .bytecode
             .init_final_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-
-        commitments
-            .read_write_memory
-            .read_write_values()
-            .iter()
-            .for_each(|value| value.append_to_transcript(&mut transcript));
-        commitments
-            .read_write_memory
-            .init_final_values()
-            .iter()
+            .into_iter()
+            .chain(commitments.read_write_memory.init_final_values())
+            .chain(commitments.instruction_lookups.init_final_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         Self::verify_bytecode(

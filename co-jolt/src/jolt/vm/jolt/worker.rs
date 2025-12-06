@@ -41,6 +41,7 @@ use jolt_core::{
         subtable::JoltSubtableSet,
         vm::{JoltProverPreprocessing, JoltVerifierPreprocessing},
     },
+    lasso::memory_checking::StructuredPolynomialData,
     r1cs::key::UniformSpartanKey,
 };
 
@@ -173,7 +174,7 @@ where
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
-        r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
+        // r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
 
         assert_eq!(
             polynomials.instruction_lookups.dim[0].len(),
@@ -229,24 +230,34 @@ where
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
+        tracing::info!(
+            "bytecode: {:?}",
+            polynomials
+                .bytecode
+                .read_write_values()
+                .iter()
+                .map(|p| (p.full_len(), p.shard_range()))
+                .collect::<Vec<_>>()
+        );
+
         polynomials.commit::<C, PCS, ProofTranscript, _>(&preprocessing, &mut self.io_ctx)?;
 
         self.io_ctx.sync_with_coordinator()?;
 
         let mut opening_accumulator = Rep3OpeningAccumulatorWorker::<F>::new();
 
-        // let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
-        // let _guard = span.enter();
-        // Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
-        //     &preprocessing.shared.generators,
-        //     &preprocessing.shared.bytecode,
-        //     &polynomials.bytecode,
-        //     &polynomials,
-        //     &mut opening_accumulator,
-        //     &mut self.io_ctx,
-        // )?;
-        // drop(_guard);
-        // drop(span);
+        let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
+        let _guard = span.enter();
+        Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
+            &preprocessing.generators,
+            &preprocessing.bytecode,
+            &polynomials.bytecode,
+            &polynomials,
+            &mut opening_accumulator,
+            &mut self.io_ctx,
+        )?;
+        drop(_guard);
+        drop(span);
 
         // self.io_ctx.sync_with_parties()?;
 
@@ -263,14 +274,14 @@ where
 
         // self.io_ctx.sync_with_parties()?;
 
-        Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
-            &preprocessing.generators,
-            &preprocessing.read_write_memory,
-            polynomials,
-            &mut self.program_io,
-            &mut opening_accumulator,
-            &mut self.io_ctx,
-        )?;
+        // Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
+        //     &preprocessing.generators,
+        //     &preprocessing.read_write_memory,
+        //     polynomials,
+        //     &mut self.program_io,
+        //     &mut opening_accumulator,
+        //     &mut self.io_ctx,
+        // )?;
 
         // self.io_ctx.sync_with_parties()?;
 

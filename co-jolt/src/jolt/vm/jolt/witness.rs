@@ -91,28 +91,28 @@ where
             io_ctx,
         )?;
 
-        let worker_idx = io_ctx.worker_idx();
-        let m_worker = ops.len().next_power_of_two() / io_ctx.num_workers();
-        let trace_worker_range =
-            (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, ops.len());
+        // let worker_idx = io_ctx.worker_idx();
+        // let m_worker = ops.len().next_power_of_two() / io_ctx.num_workers();
+        // let trace_worker_range =
+        //     (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, ops.len());
 
         let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
             &preprocessing.r1cs,
-            &mut ops[trace_worker_range.clone()],
+            ops,
             program_io,
             io_ctx,
         )?;
 
         let mut read_write_memory = Rep3ReadWriteMemoryPolynomials::generate_witness_rep3(
             &preprocessing.read_write_memory,
-            &mut ops[trace_worker_range.clone()],
+            ops,
             program_io,
             io_ctx,
         )?;
 
         let bytecode = Rep3BytecodePolynomials::generate_witness_rep3(
             &preprocessing.bytecode,
-            &mut ops[trace_worker_range.clone()],
+            ops,
             program_io,
             io_ctx,
         )?;
@@ -304,19 +304,9 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                     next.read_write_memory.init_final_values()
                 )
                 .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
-                izip!(
-                    [
-                        &mut acc.bytecode.t_final,
-                        &mut acc.read_write_memory.v_final,
-                        &mut acc.read_write_memory.t_final
-                    ],
-                    [
-                        &next.bytecode.t_final,
-                        &next.read_write_memory.v_final,
-                        &next.read_write_memory.t_final
-                    ]
-                )
-                .for_each(|(acc, comm)| *acc = PCS::concat_commitments(acc, comm));
+
+                acc.bytecode.t_final =
+                    PCS::concat_commitments(&acc.bytecode.t_final, &next.bytecode.t_final);
                 acc
             })
             .unwrap();

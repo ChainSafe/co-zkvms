@@ -395,8 +395,6 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             "misaligned Eq slice within row"
                         );
 
-                        let E1_from = col_from / 2;
-                        let E1_to = col_to / 2;
                         let poly_from = eq_first - eq_poly.global_start;
                         debug_assert!(
                             poly_from < self.batched_layer_len,
@@ -894,6 +892,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
         &mut self,
         r_grand_product: &mut Vec<F>,
         eq_chunk_size: usize,
+        worker_symmetric: bool,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let mut eq_poly = DistributedSplitEqPolynomial::new(
@@ -903,7 +902,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedGrandProductLayerWorke
             eq_chunk_size,
         );
 
-        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, io_ctx)?;
+        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, worker_symmetric, io_ctx)?;
 
         drop_in_background_thread(eq_poly);
 
@@ -927,6 +926,7 @@ where
         &self,
         previous_claim: &mut F,
         r_grand_product: &mut Vec<F>,
+        worker_symmetric: bool,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
@@ -936,6 +936,7 @@ where
             previous_claim,
             r_grand_product,
             num_rounds,
+            worker_symmetric,
             transcript,
             network,
         )?;
@@ -961,6 +962,7 @@ pub struct Rep3ToggledBatchedGrandProduct<F: JoltField> {
     batch_size_minus_delta: usize,
     toggle_layer: Rep3BatchedGrandProductToggleLayer<F>,
     sparse_layers: Vec<Rep3SparseInterleavedPolynomial<F>>,
+    is_worker_symmetric: bool,
     // quark_poly: Option<Vec<F>>,
 }
 
@@ -1004,6 +1006,7 @@ where
             batch_size_minus_delta,
             toggle_layer,
             sparse_layers,
+            is_worker_symmetric: batch_size_full.is_power_of_two(),
         })
     }
 
@@ -1037,6 +1040,10 @@ where
     fn batch_size_minus_delta(&self) -> usize {
         self.batch_size_minus_delta
     }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
+    }
 }
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
@@ -1046,17 +1053,22 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    fn construct(num_layers: usize) -> Self {
+    fn construct(num_layers: usize, batch_size: usize) -> Self {
         let sparse_layers = num_layers - 1;
         Self {
             batch_size_minus_delta: 0,
             toggle_layer: Rep3BatchedGrandProductToggleLayer::default(),
             sparse_layers: vec![Rep3SparseInterleavedPolynomial::default(); sparse_layers],
+            is_worker_symmetric: batch_size.is_power_of_two(),
         }
     }
 
     fn num_layers(&self) -> usize {
         self.sparse_layers.len() + 1
+    }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
     }
 
     fn layers(

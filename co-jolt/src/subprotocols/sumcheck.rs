@@ -46,13 +46,14 @@ where
         claim: &F,
         r_grand_product: &[F],
         num_rounds: usize,
+        worker_symmetric: bool,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
         let mut previous_claim = *claim;
 
         let worker_num_rounds = if network.is_distributed() {
-            num_rounds - network.log_num_workers() - 2
+            num_rounds - network.log_num_workers() - (!worker_symmetric as usize) * 2
         } else {
             num_rounds
         };
@@ -139,13 +140,17 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
     fn prove_sumcheck(
         &mut self,
         eq_poly: &mut DistributedSplitEqPolynomial<F>,
+        worker_symmetric: bool,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let mut num_rounds = eq_poly.get_num_vars();
 
-        if io_ctx.log_num_workers() > 0 {
+        if io_ctx.network().is_distributed() && !worker_symmetric {
             num_rounds -= 2;
-        };
+            tracing::info!("non symmetric: {} worker num_rounds", num_rounds);
+        } else {
+            tracing::info!("symmetric: {} worker num_rounds", num_rounds);
+        }
 
         // let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
@@ -171,7 +176,7 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         let final_evals = self.final_evals(eq_poly.len(), party_id);
         io_ctx.network().send_response(final_evals)?;
 
-        if io_ctx.log_num_workers() > 0 {
+        if io_ctx.network().is_distributed() {
             // Coordinator runs remaining sumcheck rounds
             r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
         }

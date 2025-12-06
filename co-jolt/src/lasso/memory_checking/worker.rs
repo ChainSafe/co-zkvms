@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use eyre::Context;
 use jolt_core::{
     jolt::vm::JoltStuff,
-    lasso::memory_checking::{ExogenousOpenings, Initializable, StructuredPolynomialData},
+    lasso::memory_checking::{ExogenousOpenings, StructuredPolynomialData},
     poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
     utils::{math::Math, transcript::Transcript},
 };

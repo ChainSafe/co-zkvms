@@ -22,6 +22,24 @@ worker = 0
 dns_name = "localhost:10002"
 cert_path = "data/cert0_2.der"
 
+[[parties]]
+id = 0
+worker = 1
+dns_name = "localhost:11000"
+cert_path = "data/cert1_0.der"
+
+[[parties]]
+id = 1
+worker = 1
+dns_name = "localhost:11001"
+cert_path = "data/cert1_1.der"
+
+[[parties]]
+id = 2
+worker = 1
+dns_name = "localhost:11002"
+cert_path = "data/cert1_2.der"
+
 [coordinator]
 dns_name = "localhost:20000"
 cert_path = "data/cert_coordinator.der"
