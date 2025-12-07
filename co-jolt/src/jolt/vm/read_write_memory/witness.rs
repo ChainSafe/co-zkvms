@@ -90,7 +90,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
         v_init[v_inputs_range.clone()]
             .par_iter_mut()
-            .zip_eq(&program_io.v_io.as_shared().coeffs_ref()[v_inputs_range])
+            .zip_eq(&program_io.v_io.as_shared().coeffs[v_inputs_range]) // TODO: worker range
             .for_each(|(v_init, word)| {
                 *v_init = *word;
             });
@@ -553,7 +553,12 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         )] = termination;
 
         Ok(Self {
-            v_io: Rep3MultilinearPolynomial::from(v_io),
+            v_io: Rep3MultilinearPolynomial::new_shard_shared(
+                v_io,
+                memory_size,
+                io_ctx.log_num_workers(),
+                io_ctx.worker_idx(),
+            ),
             memory_layout,
             memory_size,
             input_words_len,

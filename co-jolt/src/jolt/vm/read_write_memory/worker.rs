@@ -128,13 +128,18 @@ where
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
+        let worker_idx = io_ctx.worker_idx();
         let memory_size = polynomials.v_final.full_len();
         let memory_size_worker = polynomials.v_final.len();
-        debug_assert!(memory_size_worker == memory_size / io_ctx.num_workers());
+        assert!(memory_size_worker == memory_size / io_ctx.num_workers());
         let num_rounds = memory_size_worker.log_2();
 
-        let r_eq: Vec<F> = io_ctx.network().receive_request()?;
-        let eq = MultilinearPolynomial::from(EqPolynomial::evals(&r_eq));
+        let r_eq: Vec<F> = io_ctx.network().receive_request::<Vec<F>>()?;
+        let eq = MultilinearPolynomial::from(EqPolynomial::evals_worker(
+            &r_eq,
+            io_ctx.log_num_workers(),
+            worker_idx,
+        ));
 
         let input_start_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
@@ -143,8 +148,9 @@ where
         let ram_start_index =
             memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
 
-        let offset = (memory_size_worker * io_ctx.worker_idx()) as u64;
-        let io_witness_range: Vec<u8> = (offset..memory_size as u64)
+        let offset = memory_size_worker * worker_idx;
+        let cutoff = memory_size_worker * (worker_idx + 1);
+        let io_witness_range: Vec<u8> = (offset as u64..cutoff as u64)
             .map(|i| {
                 if i >= input_start_index && i < ram_start_index {
                     1
@@ -178,9 +184,12 @@ where
             io_ctx,
         )?;
 
-        let v_final = std::mem::take(&mut sumcheck_polys[2]);
+        // distributed_prove_arbitrary_worker computes sumcheck evals and poly binding "LowToHigh", different from Jolt where it's "HighToLow"
+        // accordingly prover and verifier must reverse `r_sumcheck`
+        // TODO: consider skipping first rounds since they produce zero round evals
+        let r_sumcheck = r_sumcheck.into_iter().rev().collect::<Vec<_>>();
 
-        // `append` below sends sumcheck_openings/remaining evals; In distributed mode, coordinator would use them run remaining rounds
+        let v_final = std::mem::take(&mut sumcheck_polys[2]);
 
         opening_accumulator.append(
             &[&v_final],
@@ -225,7 +234,7 @@ where
         let gamma_squared = gamma.square();
         let gamma = *gamma;
 
-        let num_ops = polynomials.a_ram.len();
+        let num_ops = polynomials.a_ram.full_len();
         let memory_size = polynomials.v_final.full_len();
 
         let a_rd: &CompactPolynomial<u8, F> = (&jolt_polynomials.bytecode.v_read_write[2])
@@ -269,27 +278,21 @@ where
 
         // ------------- read_write ------------- //
 
+        let num_ops_worker = num_ops; // TODO: different when num_workers <= rw_batch_size_full
         let mut read_write_leaves: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); rw_batch_size_worker * num_ops];
+            vec![Rep3PrimeFieldShare::zero_share(); rw_batch_size_worker * num_ops_worker];
 
-        let reg_offset = MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx; // 2 => [0, 2] 4 => [0, 1, 2, 3] 8 => [0, 0, 1, 1, 2, 2, 3, 3]
-
-        [1, 2, 4, 8].into_iter().for_each(|num_workers| {
-            println!(
-                "split for n_workers={}: {:?}",
-                num_workers,
-                (0..num_workers)
-                    .map(|worker_idx| MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx)
-                    .collect::<Vec<_>>()
-            )
-        });
+        let reg_offset = MEMORY_OPS_PER_INSTRUCTION * worker_idx / num_workers; // 2 => [0, 2] 4 => [0, 1, 2, 3] 8 => [0, 0, 1, 1, 2, 2, 3, 3]
 
         for (i, chunk) in read_write_leaves.chunks_mut(chunk_size).enumerate() {
             if num_workers <= rw_batch_size_full || worker_idx % 2 == 0 {
-                chunk[..num_ops]
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(j, read_fingerprint)| {
+                tracing::info!(
+                    "worker_idx {} read_leaves chunk {} ",
+                    worker_idx,
+                    reg_offset + i
+                );
+                chunk[..num_ops_worker].par_iter_mut().enumerate().for_each(
+                    |(j, read_fingerprint)| {
                         match reg_offset + i {
                             RS1 => {
                                 *read_fingerprint = rep3::arithmetic::add_public(
@@ -325,14 +328,19 @@ where
                             }
                             _ => unreachable!(),
                         };
-                    });
+                    },
+                );
             }
 
             if num_workers <= rw_batch_size_full || worker_idx % 2 != 0 {
-                chunk[num_ops..]
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(j, write_fingerprint)| match reg_offset + i {
+                tracing::info!(
+                    "worker_idx {} write_leaves chunk {} ",
+                    worker_idx,
+                    reg_offset + i
+                );
+
+                chunk[num_ops_worker..].par_iter_mut().enumerate().for_each(
+                    |(j, write_fingerprint)| match reg_offset + i {
                         RS1 => {
                             *write_fingerprint = rep3::arithmetic::add_public(
                                 rep3::arithmetic::mul_public(v_read_rs1[j], gamma),
@@ -362,7 +370,8 @@ where
                             );
                         }
                         _ => unreachable!(),
-                    });
+                    },
+                );
             }
         }
 
@@ -397,6 +406,19 @@ where
                 )
             }));
         }
+
+        tracing::info!(
+            "read_write_leaves {} rw_batch_size_worker {} rw_batch_size_full {}",
+            read_write_leaves.len(),
+            rw_batch_size_worker,
+            rw_batch_size_full
+        );
+
+        tracing::info!(
+            "init_final_fingeprints {} init_final_batch_size_worker {}",
+            init_final_fingeprints.len(),
+            init_final_batch_size_worker
+        );
 
         Ok((
             (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),

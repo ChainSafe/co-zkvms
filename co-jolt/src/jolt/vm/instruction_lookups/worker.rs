@@ -93,11 +93,11 @@ where
         let num_rounds = r_eq.len() - io_ctx.log_num_workers();
 
         let worker_idx = io_ctx.worker_idx();
-        let eq_chunk_size = 1usize << num_rounds;
-        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq)
-            .drain(worker_idx * eq_chunk_size..(worker_idx + 1) * eq_chunk_size)
-            .collect();
-        let eq_poly = MultilinearPolynomial::from(eq_evals);
+        let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals_worker(
+            &r_eq,
+            io_ctx.log_num_workers(),
+            worker_idx,
+        ));
 
         let r_primary_sumchecks = Self::prove_primary_sumcheck(
             preprocessing,

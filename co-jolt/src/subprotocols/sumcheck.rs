@@ -256,7 +256,12 @@ where
     Network: Rep3NetworkCoordinator,
     Func: Fn(&[F]) -> F + std::marker::Sync,
 {
-    let (mut proof, mut r) = coordinate_prove_arbitrary(claim, num_rounds, transcript, network)?;
+    let (mut proof, mut r) = coordinate_prove_arbitrary(
+        claim,
+        num_rounds - network.log_num_workers(),
+        transcript,
+        network,
+    )?;
 
     if network.is_distributed() {
         let mut remaining_polys: Vec<_> = network
@@ -285,6 +290,8 @@ where
             degree,
             transcript,
         );
+
+        network.broadcast_request(r_remaining.clone())?;
 
         proof.compressed_polys.extend(compressed_polys);
         r.extend(r_remaining);
@@ -331,7 +338,7 @@ where
                 let evals: Vec<_> = polys
                     .iter()
                     .map(|poly| {
-                        poly.sumcheck_evals(poly_term_i, combined_degree, BindingOrder::HighToLow)
+                        poly.sumcheck_evals(poly_term_i, combined_degree, BindingOrder::LowToHigh)
                     })
                     .collect();
                 for j in 0..combined_degree {
@@ -358,7 +365,7 @@ where
         // bound all tables to the verifier's challenge
         polys
             .par_iter_mut()
-            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
     }
 
     let final_evals: Vec<_> = polys
@@ -367,6 +374,10 @@ where
         .collect();
 
     io_ctx.network().send_response(final_evals)?;
+
+    if io_ctx.network().is_distributed() {
+        r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
+    }
 
     Ok(r)
 }

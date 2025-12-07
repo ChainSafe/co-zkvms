@@ -189,7 +189,7 @@ where
         if io_ctx.party_id() == PartyID::ID0 {
             let meta = JoltWitnessMeta {
                 padded_trace_length,
-                read_write_memory_size: polynomials.read_write_memory.v_final.len(),
+                read_write_memory_size: polynomials.read_write_memory.v_final.full_len(),
                 memory_layout,
             };
 
@@ -273,6 +273,8 @@ where
         )?;
 
         // self.io_ctx.sync_with_parties()?;
+
+        println!("PROVING Rep3ReadWriteMemoryProver");
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
             &preprocessing.generators,

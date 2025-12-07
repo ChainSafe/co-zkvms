@@ -15,9 +15,7 @@ use mpc_core::protocols::{
 };
 use rayon::prelude::*;
 
-use crate::{
-    field::JoltField, jolt::vm::Jolt, poly::opening_proof::Rep3OpeningAccumulatorCoordinator,
-};
+use crate::{field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator};
 use crate::{
     poly::commitment::Rep3CommitmentScheme,
     subprotocols::grand_product::Rep3BatchedGrandProduct,
