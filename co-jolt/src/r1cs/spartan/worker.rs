@@ -162,7 +162,7 @@ where
             poly_evals[0].mul(&poly_evals[1]).into_additive(party_id)
         };
 
-        let (inner_sumcheck_r, _claims_inner) = sumcheck::distributed_prove_arbitrary_worker(
+        let inner_sumcheck_r = sumcheck::distributed_prove_arbitrary_worker(
             num_rounds_inner_sumcheck,
             &mut polys,
             comb_func,
@@ -221,14 +221,13 @@ where
 
         io_ctx.network().send_response(shift_sumcheck_claim)?;
 
-        let (shift_sumcheck_r, _shift_sumcheck_claims) =
-            sumcheck::distributed_prove_arbitrary_worker(
-                num_rounds_shift_sumcheck,
-                &mut shift_sumcheck_polys,
-                comb_func,
-                2,
-                io_ctx,
-            )?;
+        let shift_sumcheck_r = sumcheck::distributed_prove_arbitrary_worker(
+            num_rounds_shift_sumcheck,
+            &mut shift_sumcheck_polys,
+            comb_func,
+            2,
+            io_ctx,
+        )?;
 
         drop(_guard);
         drop(span);

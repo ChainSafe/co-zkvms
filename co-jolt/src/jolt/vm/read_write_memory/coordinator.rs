@@ -9,9 +9,11 @@ use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryProof;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
+use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
 use jolt_core::lasso::memory_checking::{
-    ExogenousOpenings, Initializable, StructuredPolynomialData,
+    ExogenousOpenings, Initializable, MultisetHashes, StructuredPolynomialData,
 };
+use jolt_core::subprotocols::grand_product::BatchedGrandProductProof;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive;
@@ -68,10 +70,27 @@ where
         let output_proof =
             coordinate_prove_outputs(memory_size, opening_accumulator, transcript, network)?;
 
-        network.send_requests_to_workers(vec![Some(transcript.state()), None, None])?;
+        // network.send_requests_to_workers(vec![Some(transcript.state()), None, None])?;
 
-        let (timestamp_validity_proof, transcript_state): (_, ProofTranscript::State) =
-            network.receive_response(PartyID::ID0, 0)?;
+        // let (timestamp_validity_proof, transcript_state): (_, ProofTranscript::State) =
+        //     network.receive_response(PartyID::ID0, 0)?;
+        // tracing::info!("coordinator timestamp done");
+
+        let timestamp_validity_proof = TimestampValidityProof {
+            multiset_hashes: MultisetHashes {
+                read_hashes: vec![],
+                write_hashes: vec![],
+                init_hashes: vec![],
+                final_hashes: vec![],
+            },
+            openings: Default::default(),
+            exogenous_openings: [F::zero(); 4],
+            batched_grand_product: BatchedGrandProductProof {
+                gkr_layers: vec![],
+                quark_proof: None,
+            },
+        };
+
         // transcript.update_state(transcript_state);
 
         Ok(ReadWriteMemoryProof {
@@ -82,6 +101,7 @@ where
     }
 }
 
+#[tracing::instrument(skip_all, name = "prove_outputs", level = "info")]
 fn coordinate_prove_outputs<F, PCS, ProofTranscript, Network>(
     memory_size: usize,
     opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
@@ -112,12 +132,17 @@ where
         network,
     )?;
 
-    opening_accumulator.append_with_claims(num_rounds, &sumcheck_openings, transcript, network)?;
+    opening_accumulator.append_with_claims(
+        num_rounds,
+        &[sumcheck_openings[2]],
+        transcript,
+        network,
+    )?;
 
     Ok(OutputSumcheckProof {
         num_rounds,
         sumcheck_proof,
-        opening: sumcheck_openings[0],
+        opening: sumcheck_openings[2],
         _pcs: PhantomData,
     })
 }

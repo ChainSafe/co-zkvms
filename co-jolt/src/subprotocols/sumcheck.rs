@@ -303,7 +303,7 @@ pub fn distributed_prove_arbitrary_worker<F, Poly, Func, Network>(
     comb_func: Func,
     combined_degree: usize,
     io_ctx: &mut IoContextPool<Network>,
-) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)>
+) -> eyre::Result<Vec<F>>
 where
     F: JoltField,
     Poly: PolynomialBinding<F, Rep3Value<F>>
@@ -361,9 +361,12 @@ where
             .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
     }
 
-    let final_evals = polys
+    let final_evals: Vec<_> = polys
         .iter()
         .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.party_id()))
         .collect();
-    Ok((r, final_evals))
+
+    io_ctx.network().send_response(final_evals)?;
+
+    Ok(r)
 }

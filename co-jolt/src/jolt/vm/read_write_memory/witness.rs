@@ -274,6 +274,18 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         let [v_init, v_final] =
             map_to_polys_shared([v_init, v_final], memory_size, log_num_workers, worker_idx);
 
+        tracing::info!(
+            "wintess gen v_init len {} full_len {} memory_size {}",
+            v_init.len(),
+            v_init.full_len(),
+            memory_size
+        );
+        tracing::info!(
+            "wintess gen v_final len {} full_len {}",
+            v_final.len(),
+            v_final.full_len()
+        );
+
         Ok(Self {
             a_ram,
             v_read_rd,

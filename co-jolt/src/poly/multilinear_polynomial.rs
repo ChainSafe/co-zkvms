@@ -251,6 +251,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .map(|poly| poly.full_len())
             .max()
             .unwrap();
+        tracing::trace!("Max length: {}", max_length);
+
         let num_chunks = rayon::current_num_threads()
             .next_power_of_two()
             .min(max_length);

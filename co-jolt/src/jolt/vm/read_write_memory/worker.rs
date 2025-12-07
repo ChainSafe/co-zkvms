@@ -72,6 +72,8 @@ where
             io_ctx,
         )?;
 
+        tracing::info!("prove_memory_checking done");
+
         Self::prove_outputs(
             &mut polynomials.read_write_memory,
             program_io,
@@ -79,46 +81,47 @@ where
             io_ctx,
         )?;
 
-        let state: Option<ProofTranscript::State> = io_ctx.network().receive_request()?;
+        // let state: Option<ProofTranscript::State> = io_ctx.network().receive_request()?;
 
-        if io_ctx.worker_idx() == 0 {
-            if let Some(state) = state {
-                let mut transcript = ProofTranscript::from_state(state);
-                let mut opening_accumulator_public =
-                    ProverOpeningAccumulator::<F, ProofTranscript>::new();
+        // if io_ctx.worker_idx() == 0 {
+        //     if let Some(state) = state {
+        //         let mut transcript = ProofTranscript::from_state(state);
+        //         let mut opening_accumulator_public =
+        //             ProverOpeningAccumulator::<F, ProofTranscript>::new();
 
-                let timestamp_range_check_polynomials =
-                    timestamp_range_check::get_timestamp_range_check_polynomials::<
-                        F,
-                        PCS,
-                        ProofTranscript,
-                    >(&mut polynomials.read_write_memory);
-                let jolt_polynomials =
-                    polynomials.take_exogenous_polynomials_for_timestamp_range_check();
+        //         let timestamp_range_check_polynomials =
+        //             timestamp_range_check::get_timestamp_range_check_polynomials::<
+        //                 F,
+        //                 PCS,
+        //                 ProofTranscript,
+        //             >(&mut polynomials.read_write_memory);
+        //         let jolt_polynomials =
+        //             polynomials.take_exogenous_polynomials_for_timestamp_range_check();
 
-                let timestamp_validity_proof =
-                    TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
-                        pcs_setup,
-                        &timestamp_range_check_polynomials,
-                        &jolt_polynomials,
-                        &mut opening_accumulator_public,
-                        &mut transcript,
-                    );
+        //         let timestamp_validity_proof =
+        //             TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
+        //                 pcs_setup,
+        //                 &timestamp_range_check_polynomials,
+        //                 &jolt_polynomials,
+        //                 &mut opening_accumulator_public,
+        //                 &mut transcript,
+        //             );
 
-                // opening_accumulator
-                //     .append_public(&opening_accumulator_public.openings[0], io_ctx.main())?;
-                io_ctx
-                    .network()
-                    .send_response((timestamp_validity_proof, transcript.state()))?;
-            } else {
-                // opening_accumulator.receive_public_opening(io_ctx.main())?;
-            }
-        }
+        //         // opening_accumulator
+        //         //     .append_public(&opening_accumulator_public.openings[0], io_ctx.main())?;
+        //         io_ctx
+        //             .network()
+        //             .send_response((timestamp_validity_proof, transcript.state()))?;
+        //     } else {
+        //         // opening_accumulator.receive_public_opening(io_ctx.main())?;
+        //     }
+        // }
+        // tracing::info!("worker timestamp done");
 
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove_outputs", level = "trace")]
+    #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove_outputs", level = "info")]
     fn prove_outputs(
         polynomials: &mut Rep3ReadWriteMemoryPolynomials<F>,
         program_io: &mut Rep3ProgramIO<F>,
@@ -167,7 +170,7 @@ where
                 .into_additive(party_id)
         };
 
-        let (r_sumcheck, sumcheck_openings) = sumcheck::distributed_prove_arbitrary_worker(
+        let r_sumcheck = sumcheck::distributed_prove_arbitrary_worker(
             num_rounds,
             &mut sumcheck_polys,
             output_check_fn,
@@ -175,13 +178,14 @@ where
             io_ctx,
         )?;
 
+        let v_final = std::mem::take(&mut sumcheck_polys[2]);
+
         // `append` below sends sumcheck_openings/remaining evals; In distributed mode, coordinator would use them run remaining rounds
 
-        opening_accumulator.append_send_claims(
-            &[&polynomials.v_final],
+        opening_accumulator.append(
+            &[&v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
-            &[sumcheck_openings[2]],
             io_ctx.main(),
         )?;
 
@@ -255,7 +259,7 @@ where
         let chunk_size = if num_workers <= MEMORY_OPS_PER_INSTRUCTION {
             2 * num_ops
         } else {
-            num_ops * 8 / num_workers
+            num_ops * 2 * MEMORY_OPS_PER_INSTRUCTION / num_workers
         };
 
         assert!(
@@ -270,7 +274,7 @@ where
 
         let reg_offset = MEMORY_OPS_PER_INSTRUCTION / num_workers * worker_idx; // 2 => [0, 2] 4 => [0, 1, 2, 3] 8 => [0, 0, 1, 1, 2, 2, 3, 3]
 
-        (0..8).for_each(|num_workers| {
+        [1, 2, 4, 8].into_iter().for_each(|num_workers| {
             println!(
                 "split for n_workers={}: {:?}",
                 num_workers,
