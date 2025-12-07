@@ -59,8 +59,10 @@ where
         let read_write_evals: Vec<F> =
             additive::combine_additive_vec(network.receive_responses_from_subnets()?.remove(0));
 
+        tracing::info!("read_write_evals: {:?}", read_write_evals);
+
         opening_accumulator.append_with_claims(
-            init_final_chunk_size.log_2(),
+            read_write_chunk_size.log_2(),
             &read_write_evals,
             transcript,
             network,
@@ -81,6 +83,8 @@ where
 
         let init_final_evals: Vec<F> =
             additive::combine_additive_vec(network.receive_responses_from_subnets()?.remove(0));
+
+        tracing::info!("init_final_evals: {:?}", init_final_evals);
 
         opening_accumulator.append_with_claims(
             init_final_chunk_size.log_2(),

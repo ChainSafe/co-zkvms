@@ -142,6 +142,7 @@ impl<const C: usize, F: JoltField, T: CanonicalSerialize + CanonicalDeserialize 
 
         let mut init = Self::initialize(preprocessing);
         init.read_cts.truncate(read_memories_worker);
+        init.E_polys.truncate(read_memories_worker);
         init.final_cts.truncate(final_memories_worker);
         init
     }

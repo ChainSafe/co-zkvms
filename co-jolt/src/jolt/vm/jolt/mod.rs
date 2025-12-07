@@ -149,7 +149,7 @@ pub struct JoltProof<
 {
     pub trace_length: usize,
     pub bytecode: BytecodeProof<F, PCS, ProofTranscript>,
-    // pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
+    pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
     // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
@@ -560,6 +560,8 @@ where
             &mut transcript,
         )?;
 
+        tracing::info!("bytecode valid");
+
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             &preprocessing.generators,
@@ -571,16 +573,18 @@ where
         .map_err(|e| eyre::eyre!(e))
         .context("failed to verify instruction lookups")?;
 
-        // Self::verify_memory(
-        //     &mut preprocessing.read_write_memory,
-        //     &preprocessing.generators,
-        //     &preprocessing.memory_layout,
-        //     proof.read_write_memory,
-        //     &commitments,
-        //     program_io,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )?;
+        tracing::info!("instructions valid");
+
+        Self::verify_memory(
+            &mut preprocessing.read_write_memory,
+            &preprocessing.generators,
+            &preprocessing.memory_layout,
+            proof.read_write_memory,
+            &commitments,
+            program_io,
+            &mut opening_accumulator,
+            &mut transcript,
+        )?;
 
         // Self::verify_r1cs(
         //     r1cs_proof,

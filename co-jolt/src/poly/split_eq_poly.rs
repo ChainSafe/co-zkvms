@@ -109,8 +109,6 @@ impl<F: JoltField> DistributedSplitEqPolynomial<F> {
         // Worker’s logical Eq slice length in points.
         let len = global_end - global_start;
 
-        tracing::info!("eq_pairs: {} len {}", eq_pairs, len);
-
         Self {
             num_vars: w.len() - log_workers,
             E1: base.E1,

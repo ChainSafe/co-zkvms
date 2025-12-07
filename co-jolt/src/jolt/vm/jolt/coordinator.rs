@@ -184,14 +184,14 @@ where
             &mut transcript,
         )?;
 
-        // let memory_proof = ReadWriteMemoryProof::prove_rep3(
-        //     meta.padded_trace_length,
-        //     meta.read_write_memory_size,
-        //     &preprocessing.read_write_memory,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        //     network,
-        // )?;
+        let memory_proof = ReadWriteMemoryProof::prove_rep3(
+            meta.padded_trace_length,
+            meta.read_write_memory_size,
+            &preprocessing.read_write_memory,
+            &mut opening_accumulator,
+            &mut transcript,
+            network,
+        )?;
 
         // let r1cs_proof =
         //     UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
@@ -202,7 +202,7 @@ where
         let jolt_proof = JoltProof {
             bytecode: bytecode_proof,
             trace_length,
-            // read_write_memory: memory_proof,
+            read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
             // r1cs: r1cs_proof,
             opening_proof,

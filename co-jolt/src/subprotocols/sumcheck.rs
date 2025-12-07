@@ -147,9 +147,6 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
 
         if io_ctx.network().is_distributed() && !worker_symmetric {
             num_rounds -= 2;
-            tracing::info!("non symmetric: {} worker num_rounds", num_rounds);
-        } else {
-            tracing::info!("symmetric: {} worker num_rounds", num_rounds);
         }
 
         // let mut previous_claim = *claim;

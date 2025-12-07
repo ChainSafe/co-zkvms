@@ -311,6 +311,11 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
             })
             .unwrap();
 
+        tracing::info!(
+            "instructions final_cts comms: {:?}",
+            commitments.instruction_lookups.final_cts.len()
+        );
+
         Ok(commitments)
     }
 

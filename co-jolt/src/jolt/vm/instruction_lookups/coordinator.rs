@@ -444,20 +444,14 @@ where
                 poly_num_vars: num_ops.log_2(),
                 claim: batched_claim,
             });
+
+            tracing::info!("RW combined_claim: {:?}", batched_claim);
         }
 
         //------------ init-final ------------//
 
-        let init_final_evals: Vec<F> =
+        openings.final_cts =
             opening_accumulator.append_batched(memory_size.log_2(), transcript, network)?;
-
-        openings
-            .init_final_values_mut()
-            .into_par_iter()
-            .zip(init_final_evals.par_iter())
-            .for_each(|(opening, eval)| {
-                *opening = *eval;
-            });
 
         Ok((openings, exogenous_openings))
     }

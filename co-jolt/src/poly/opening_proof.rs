@@ -268,6 +268,8 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .zip(claims.iter())
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
+        tracing::info!("append claim: {:?}", claim);
+
         network.broadcast_request((rho, claim))?;
 
         self.openings.push(Rep3CoordinatorOpening {
@@ -306,6 +308,8 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
+        tracing::info!("IF combined_claim: {:?}", claim);
+
         let mut worker_offset_rho_power = vec![F::one()];
         let mut offset = batch_lens[0];
         for len in &batch_lens[1..] {
@@ -340,6 +344,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
         let rho: F = transcript.challenge_scalar();
+        tracing::info!("rho: {:?}", rho);
         network.broadcast_request(rho)?;
         let _span = tracing::trace_span!("rho_powers").entered();
         let mut rho_powers = vec![F::one()];
@@ -356,8 +361,9 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .unwrap();
 
         let mut combined_claim: F = rho_powers
-            .par_iter()
-            .zip(self.openings.par_iter())
+            // .par_iter()
+            .iter()
+            .zip(self.openings.iter())
             .map(|(coeff, opening)| {
                 let scaled_claim = if opening.poly_num_vars != max_num_vars {
                     F::from_u64_unchecked(1 << (max_num_vars - opening.poly_num_vars))
@@ -365,9 +371,17 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
                 } else {
                     opening.claim
                 };
+                tracing::info!(
+                    "claim {} scaled_claim: {:?} coeff {} poly_num_vars {}",
+                    opening.claim,
+                    scaled_claim,
+                    opening.poly_num_vars,
+                    coeff
+                );
                 scaled_claim * coeff
             })
             .sum();
+        tracing::info!("combined_claim: {:?}", combined_claim);
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 

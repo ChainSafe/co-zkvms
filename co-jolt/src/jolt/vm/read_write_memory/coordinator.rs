@@ -68,11 +68,11 @@ where
         let output_proof =
             coordinate_prove_outputs(memory_size, opening_accumulator, transcript, network)?;
 
-        network.send_requests(vec![Some(transcript.state()), None, None])?;
+        network.send_requests_to_workers(vec![Some(transcript.state()), None, None])?;
 
-        let (timestamp_validity_proof, transcript_state) =
+        let (timestamp_validity_proof, transcript_state): (_, ProofTranscript::State) =
             network.receive_response(PartyID::ID0, 0)?;
-        transcript.update_state(transcript_state);
+        // transcript.update_state(transcript_state);
 
         Ok(ReadWriteMemoryProof {
             memory_checking_proof,
