@@ -154,7 +154,8 @@ where
         .entered();
 
         JoltTraceStep::pad(&mut trace);
-        let padded_trace_length = trace.len() / io_ctx.num_workers();
+        let trace_len = trace.len();
+        let trace_len_worker = trace_len / io_ctx.num_workers();
 
         let memory_layout = program_io.memory_layout;
 
@@ -169,16 +170,16 @@ where
         )?;
 
         let r1cs_builder = Constraints::construct_constraints(
-            padded_trace_length,
+            trace_len_worker,
             program_io.memory_layout.input_start,
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
 
-        // r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
+        r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
 
         assert_eq!(
             polynomials.instruction_lookups.dim[0].len(),
-            padded_trace_length
+            trace_len_worker
         );
         // assert_eq!(
         //     polynomials.read_write_memory.a_ram.len(),
@@ -188,7 +189,7 @@ where
 
         if io_ctx.party_id() == PartyID::ID0 {
             let meta = JoltWitnessMeta {
-                padded_trace_length,
+                padded_trace_length: trace_len,
                 read_write_memory_size: polynomials.read_write_memory.v_final.full_len(),
                 memory_layout,
             };
@@ -201,7 +202,7 @@ where
             polynomials,
             program_io,
             preprocessing,
-            padded_trace_length,
+            padded_trace_length: trace_len_worker,
             r1cs_builder,
             spartan_key,
             _instruction_lookups: Rep3InstructionLookupsProver::new(),
@@ -287,13 +288,13 @@ where
 
         // self.io_ctx.sync_with_parties()?;
 
-        // Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
-        //     &self.r1cs_builder,
-        //     &self.spartan_key,
-        //     polynomials,
-        //     &mut opening_accumulator,
-        //     &mut self.io_ctx,
-        // )?;
+        Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
+            &self.r1cs_builder,
+            &self.spartan_key,
+            polynomials,
+            &mut opening_accumulator,
+            &mut self.io_ctx,
+        )?;
 
         // self.io_ctx.sync_with_parties()?;
 

@@ -15,7 +15,7 @@ use crate::r1cs::ops::LinearCombinationExt;
 use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
 use crate::utils::types::{Rep3Value, SharedOrPublicParIter};
 use mpc_core::protocols::rep3::PartyID;
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 
 #[derive(Clone, Debug)]
 pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {
@@ -266,6 +266,10 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .sum_for(party_id);
         drop(_span_enter);
 
+        io_ctx.network.send_response(vec![
+            AdditiveShare::zero(),
+            quadratic_eval_at_infty.as_additive(),
+        ])?;
         let r_i = process_eq_sumcheck_round_worker(
             (AdditiveShare::zero(), quadratic_eval_at_infty.as_additive()),
             eq_poly,
@@ -505,6 +509,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             evals
         };
 
+        io_ctx
+            .network
+            .send_response(vec![quadratic_evals.0, quadratic_evals.1])?;
         let r_i = process_eq_sumcheck_round_worker(quadratic_evals, eq_poly, r, claim, io_ctx)?;
 
         let output_sizes: Vec<_> = chunks

@@ -50,7 +50,7 @@ where
     )> {
         let metas = network.receive_response_from_workers::<JoltWitnessMeta>(PartyID::ID0)?;
         let meta = JoltWitnessMeta {
-            padded_trace_length: metas.iter().map(|m| m.padded_trace_length).sum(),
+            padded_trace_length: metas[0].padded_trace_length,
             read_write_memory_size: metas[0].read_write_memory_size,
             memory_layout: metas[0].memory_layout.clone(),
         };
@@ -151,7 +151,13 @@ where
             .into_iter()
             .chain(jolt_commitments.read_write_memory.read_write_values())
             .chain(jolt_commitments.instruction_lookups.read_write_values())
+            .chain(jolt_commitments.r1cs.read_write_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        tracing::info!(
+            "read_write comms check: {}",
+            transcript.challenge_scalar::<F>()
+        );
 
         jolt_commitments
             .bytecode
@@ -159,7 +165,13 @@ where
             .into_iter()
             .chain(jolt_commitments.read_write_memory.init_final_values())
             .chain(jolt_commitments.instruction_lookups.init_final_values())
+            .chain(jolt_commitments.r1cs.init_final_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        tracing::info!(
+            "init_final comms check: {}",
+            transcript.challenge_scalar::<F>()
+        );
 
         network.sync_with_parties()?;
 
@@ -193,9 +205,13 @@ where
             network,
         )?;
 
-        // let r1cs_proof =
-        //     UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
-        //         .expect("r1cs proof failed");
+        let r1cs_proof = UniformSpartanProof::prove_rep3::<PCS>(
+            &spartan_key,
+            &mut opening_accumulator,
+            &mut transcript,
+            network,
+        )
+        .expect("r1cs proof failed");
 
         let opening_proof = opening_accumulator.reduce_and_prove(&mut transcript, network)?;
 
@@ -204,7 +220,7 @@ where
             trace_length,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
-            // r1cs: r1cs_proof,
+            r1cs: r1cs_proof,
             opening_proof,
             _marker: PhantomData,
         };

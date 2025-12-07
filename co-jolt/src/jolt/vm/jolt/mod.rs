@@ -152,7 +152,7 @@ pub struct JoltProof<
     pub read_write_memory: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
     pub instruction_lookups:
         InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables, ProofTranscript>,
-    // pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
+    pub r1cs: UniformSpartanProof<C, I, F, ProofTranscript>,
     pub opening_proof: ReducedOpeningProof<F, PCS, ProofTranscript>,
     // pub opening_accumulator: ProverOpeningAccumulator<F, ProofTranscript>,
     _marker: PhantomData<I>,
@@ -520,11 +520,11 @@ where
         );
         // transcript.append_scalar(&spartan_key.vk_digest);
 
-        // let r1cs_proof = R1CSProof {
-        //     key: spartan_key,
-        //     proof: proof.r1cs,
-        //     _marker: PhantomData,
-        // };
+        let r1cs_proof = R1CSProof {
+            key: spartan_key,
+            proof: proof.r1cs,
+            _marker: PhantomData,
+        };
 
         // commitments
         //     .read_write_values()
@@ -541,7 +541,10 @@ where
             .into_iter()
             .chain(commitments.read_write_memory.read_write_values())
             .chain(commitments.instruction_lookups.read_write_values())
+            .chain(commitments.r1cs.read_write_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        let _ = transcript.challenge_scalar::<F>();
 
         commitments
             .bytecode
@@ -549,7 +552,10 @@ where
             .into_iter()
             .chain(commitments.read_write_memory.init_final_values())
             .chain(commitments.instruction_lookups.init_final_values())
+            .chain(commitments.r1cs.init_final_values())
             .for_each(|value| value.append_to_transcript(&mut transcript));
+
+        let _ = transcript.challenge_scalar::<F>();
 
         Self::verify_bytecode(
             &preprocessing.bytecode,
@@ -586,14 +592,14 @@ where
             &mut transcript,
         )?;
 
-        // Self::verify_r1cs(
-        //     r1cs_proof,
-        //     &commitments,
-        //     &mut opening_accumulator,
-        //     &mut transcript,
-        // )
-        // .map_err(|e| eyre::eyre!(e))
-        // .context("failed to verify r1cs")?;
+        Self::verify_r1cs(
+            r1cs_proof,
+            &commitments,
+            &mut opening_accumulator,
+            &mut transcript,
+        )
+        .map_err(|e| eyre::eyre!(e))
+        .context("failed to verify r1cs")?;
 
         // Batch-verify all openings
         opening_accumulator

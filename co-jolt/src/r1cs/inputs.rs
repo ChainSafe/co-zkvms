@@ -57,16 +57,20 @@ where
         Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
+        let worker_idx = io_ctx.worker_idx();
+        let log_num_workers = io_ctx.log_num_workers();
+        let num_workers = io_ctx.num_workers();
         let m = trace.len();
+        let m_worker = m / num_workers;
 
         let mut chunks_x =
-            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m_worker];
         let mut chunks_y =
-            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m];
-        let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m];
+            vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m_worker];
+        let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m_worker];
 
         let id = io_ctx.party_id();
-        trace
+        trace[m_worker * worker_idx..m_worker * (worker_idx + 1)]
             .into_par_iter()
             .zip(chunks_x.par_chunks_mut(C))
             .zip(chunks_y.par_chunks_mut(C))
@@ -90,11 +94,11 @@ where
         let _guard = tracing::trace_span!("cast_chunks_x").entered();
         let chunks_x = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
             chunks_x.fulfill_batched(io_ctx, |res, _: ()| res)?,
-            m,
+            m_worker,
             C,
         )
         .into_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|v| Rep3MultilinearPolynomial::new_shard_shared(v, m, log_num_workers, worker_idx))
         .collect();
         drop(_guard);
 
@@ -102,17 +106,19 @@ where
 
         let chunks_y = transpose_par_from_flat::<Rep3PrimeFieldShare<F>>(
             chunks_y.fulfill_batched(io_ctx, |res, _: ()| res)?,
-            m,
+            m_worker,
             C,
         )
         .into_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|v| Rep3MultilinearPolynomial::new_shard_shared(v, m, log_num_workers, worker_idx))
         .collect();
         drop(_guard);
 
         let circuit_flags = transpose(circuit_flags)
             .into_iter()
-            .map(Rep3MultilinearPolynomial::from)
+            .map(|v| {
+                Rep3MultilinearPolynomial::new_shard_public_u8(v, m, log_num_workers, worker_idx)
+            })
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();

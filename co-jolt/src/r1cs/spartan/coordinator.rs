@@ -1,3 +1,4 @@
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::r1cs::spartan::UniformSpartanProof;
 use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
@@ -33,6 +34,7 @@ where
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
+        let log_num_workers = network.log_num_workers();
         let num_rounds_x = key.num_rows_bits();
 
         /* Sumcheck 1: Outer sumcheck */
@@ -41,22 +43,30 @@ where
 
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
-            .collect::<Vec<F>>();
+            .collect::<Vec<F>>(); // TODO transcript.challenge_scalars
+        let mut eq_poly = GruenSplitEqPolynomial::new(&tau);
+
         network.broadcast_request(tau)?;
 
         let mut outer_sumcheck_r = Vec::new();
         let mut claim = F::zero();
         let mut polys = Vec::new();
 
-        for _round in 0..num_rounds_x {
+        for _round in 0..num_rounds_x - log_num_workers {
             coordinate_eq_sumcheck_round(
                 &mut polys,
                 &mut outer_sumcheck_r,
                 &mut claim,
+                &mut eq_poly,
                 transcript,
                 network,
             )?
         }
+
+        // if network.is_distributed() {
+        //     let outer_sumcheck_claims =
+        //         additive::combine_additive_vec(network.receive_responses()?);
+        // }
 
         let outer_sumcheck_proof = SumcheckInstanceProof::new(polys);
         let outer_sumcheck_claims = additive::combine_additive_vec(network.receive_responses()?);

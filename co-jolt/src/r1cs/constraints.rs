@@ -43,18 +43,14 @@ pub trait R1CSConstraints<const C: usize, F: JoltField> {
         level = "trace"
     )]
     fn construct_constraints(
-        padded_trace_length: usize,
+        trace_len_worker: usize,
         memory_start: u64,
     ) -> CombinedUniformBuilder<C, F, Self::Inputs> {
         let mut uniform_builder = R1CSBuilder::<C, F, Self::Inputs>::new();
         Self::uniform_constraints(&mut uniform_builder, memory_start);
         let cross_step_constraints = Self::cross_step_constraints();
 
-        CombinedUniformBuilder::construct(
-            uniform_builder,
-            padded_trace_length,
-            cross_step_constraints,
-        )
+        CombinedUniformBuilder::construct(uniform_builder, trace_len_worker, cross_step_constraints)
     }
     /// Constructs Jolt's uniform constraints.
     /// Uniform constraints are constraints that hold for each step of

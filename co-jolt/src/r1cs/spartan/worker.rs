@@ -74,12 +74,14 @@ where
         tracing::info!("flattened_polys: {:?}", flattened_polys.len());
 
         let num_rounds_x = key.num_rows_bits();
+        println!("num_rounds_x: {}", num_rounds_x);
 
         /* Sumcheck 1: Outer sumcheck */
         let span = span!(Level::INFO, "outer_sumcheck");
         let _guard = span.enter();
         let tau = io_ctx.network().receive_request::<Vec<F>>()?;
-        let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
+        let mut eq_tau =
+            GruenSplitEqPolynomial::new_worker(&tau, io_ctx.log_num_workers(), io_ctx.worker_idx());
 
         let mut az_bz_cz_poly =
             constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys, party_id);
@@ -278,7 +280,6 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
     let mut r: Vec<F> = Vec::new();
     let mut claim = AdditiveShare::<F>::zero();
 
-    // TODO: parallelize into subnets
     for round in 0..num_rounds {
         if round == 0 {
             az_bz_cz_poly.first_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx.main())?;
