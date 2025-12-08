@@ -1,8 +1,10 @@
+use itertools::Itertools;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use std::marker::PhantomData;
+use tokio::io;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
@@ -66,57 +68,73 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
+        let worker_idx = io_ctx.worker_idx();
+        let log_num_workers = io_ctx.log_num_workers();
         let flattened_polys: Vec<&Rep3MultilinearPolynomial<F>> = I::flatten::<C>()
             .iter()
             .map(|var| var.get_ref(polynomials))
             .collect();
 
-        tracing::info!("flattened_polys: {:?}", flattened_polys.len());
-
         let num_rounds_x = key.num_rows_bits();
-        println!("num_rounds_x: {}", num_rounds_x);
 
-        /* Sumcheck 1: Outer sumcheck */
-        let span = span!(Level::INFO, "outer_sumcheck");
-        let _guard = span.enter();
+        // ---------- Sumcheck 1: Outer sumcheck ---------- //
+        let _span = tracing::info_span!("outer_sumcheck").entered();
         let tau = io_ctx.network().receive_request::<Vec<F>>()?;
-        let mut eq_tau =
-            GruenSplitEqPolynomial::new_worker(&tau, io_ctx.log_num_workers(), io_ctx.worker_idx());
+        let mut eq_tau = GruenSplitEqPolynomial::new_worker(&tau, log_num_workers, worker_idx);
 
         let mut az_bz_cz_poly =
-            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys, party_id);
+            constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys, io_ctx);
 
         let (outer_sumcheck_r, _outer_sumcheck_claims) =
             prove_spartan_cubic_sumcheck(num_rounds_x, &mut eq_tau, &mut az_bz_cz_poly, io_ctx)?;
+
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 
         drop_in_background_thread((az_bz_cz_poly, eq_tau));
-        drop(_guard);
-        drop(span);
+        drop(_span);
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
 
-        /* Sumcheck 2: Inner sumcheck
-            RLC of claims Az, Bz, Cz
-            where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
-                                + A_shift(..) * z_shift(..)
-            and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
-            - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
-            - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
-        */
+        // ---------- Sumcheck 2: Inner sumcheck ---------- //
+        // RLC of claims Az, Bz, Cz
+        // where claim_Az = \sum_{y_var} A(rx, y_var || rx_step) * z(y_var || rx_step)
+        //                     + A_shift(..) * z_shift(..)
+        // and shift denotes the values at the next time step "rx_step+1" for cross-step constraints
+        // - A_shift(rx, y_var || rx_step) = \sum_t A(rx, y_var || t) * eq_plus_one(rx_step, t)
+        // - z_shift(y_var || rx_step) = \sum z(y_var || rx_step) * eq_plus_one(rx_step, t)
 
-        let span = span!(Level::INFO, "inner_sumcheck");
-        let _guard = span.enter();
+        let _span = tracing::info_span!("inner_sumcheck").entered();
         let num_steps = key.num_steps;
         let num_steps_bits = num_steps.ilog2() as usize;
         let num_vars_uniform = key.num_vars_uniform_padded().next_power_of_two();
 
         let inner_sumcheck_RLC = io_ctx.network().receive_request::<F>()?;
 
-        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
+        let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits + log_num_workers);
 
-        let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(rx_step, None);
+        tracing::info!(
+            "num_steps_bits: {} outer_sumcheck_r {} rx_step {} rx_constr {} num_vars_uniform {}",
+            num_steps_bits,
+            outer_sumcheck_r.len(),
+            rx_step.len(),
+            rx_constr.len(),
+            num_vars_uniform,
+        );
+
+        let (rx_step_worker, _) = rx_step.split_at(num_steps_bits);
+
+        let (eq_rx_step, eq_rx_step_worker, eq_plus_one_rx_step_worker) = {
+            let chunk_size = 1 << (rx_step.len() - log_num_workers);
+            let (eq_rx_step, mut eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(&rx_step, None);
+            let eq_rx_step_worker =
+                eq_rx_step[worker_idx * chunk_size..(worker_idx + 1) * chunk_size].to_vec();
+            let eq_plus_one_rx_step_worker = eq_plus_one_rx_step
+                .drain(worker_idx * chunk_size..(worker_idx + 1) * chunk_size)
+                .collect_vec();
+            drop_in_background_thread(eq_plus_one_rx_step);
+            (eq_rx_step, eq_rx_step_worker, eq_plus_one_rx_step_worker)
+        };
 
         /* Compute the two polynomials provided as input to the second sumcheck:
            - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
@@ -124,30 +142,30 @@ where
         */
 
         let poly_ABC = MixedPolynomial::from_public_evals(
-            key.evaluate_matrix_mle_partial(rx_constr, rx_step, inner_sumcheck_RLC),
+            key.evaluate_matrix_mle_partial(rx_constr, rx_step_worker, inner_sumcheck_RLC),
             party_id,
         );
+        tracing::info!("poly_ABC: {:?}", poly_ABC.coeffs.len());
 
         // Binding z and z_shift polynomials at point rx_step
-        let binding_span = span!(Level::INFO, "binding_z_and_shift_z");
-        let binding_guard = binding_span.enter();
 
         let mut bind_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
         let mut bind_shift_z = vec![Rep3Value::zero_public(); num_vars_uniform * 2];
 
+        let _binding_span = tracing::trace_span!("binding_z_and_shift_z").entered();
         flattened_polys
             .par_iter()
             .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
             .for_each(|(poly, (eval, eval_shifted))| {
-                *eval = poly.dot_product_with_public(&eq_rx_step);
-                *eval_shifted = poly.dot_product_with_public(&eq_plus_one_rx_step);
+                *eval = poly.dot_product_with_public(&eq_rx_step_worker);
+                *eval_shifted = poly.dot_product_with_public(&eq_plus_one_rx_step_worker);
             });
+        drop(_binding_span);
 
-        bind_z[num_vars_uniform] = F::one().into();
-
-        drop(binding_guard);
-        drop(binding_span);
-
+        if worker_idx == 0 {
+            // only worker 0 contributes one to preserve sumcheck linearity
+            bind_z[num_vars_uniform] = F::one().into();
+        }
         let poly_z = MixedPolynomial::new(
             bind_z.into_iter().chain(bind_shift_z.into_iter()).collect(),
             party_id,
@@ -164,39 +182,40 @@ where
             poly_evals[0].mul(&poly_evals[1]).into_additive(party_id)
         };
 
-        let inner_sumcheck_r = sumcheck::distributed_prove_arbitrary_worker(
+        let (inner_sumcheck_r, _) = sumcheck::prove_arbitrary_worker(
             num_rounds_inner_sumcheck,
             &mut polys,
             comb_func,
             2,
             io_ctx,
         )?;
-        drop(_guard);
-        drop(span);
+        drop(_span);
         drop_in_background_thread(polys);
 
-        /*  Sumcheck 3: Shift sumcheck
-            sumcheck claim is = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
-        */
+        // ---------- Sumcheck 3: Shift sumcheck ---------- //
+        // sumcheck claim = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
 
         let span = span!(Level::INFO, "shift_sumcheck");
         let _guard = span.enter();
         let ry_var = inner_sumcheck_r[1..].to_vec();
+        tracing::info!("ry_var: {:?}", ry_var);
         let eq_ry_var = EqPolynomial::evals(&ry_var);
-        let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
+        tracing::info!("eq_ry_var: {:?}", eq_ry_var.len());
+        // let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
         let mut bind_z_ry_var: Vec<Rep3Value<F>> = Vec::with_capacity(num_steps);
 
         let bind_span = span!(Level::INFO, "bind_z_ry_var");
         let bind_guard = bind_span.enter();
         let num_steps_unpadded = constraint_builder.uniform_repeat();
+        tracing::info!("num_steps_unpadded: {}", num_steps_unpadded);
         (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
             .map(|t| {
                 flattened_polys
                     .iter()
                     .enumerate()
-                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var_r2[i]))
+                    .map(|(i, poly)| poly.scale_coeff(t, eq_ry_var[i], eq_ry_var[i]))
                     .sum_for(party_id)
             })
             .collect_into_vec(&mut bind_z_ry_var);
@@ -204,12 +223,14 @@ where
         drop(bind_span);
 
         let num_rounds_shift_sumcheck = num_steps_bits;
-        assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step.len());
+        assert_eq!(bind_z_ry_var.len(), eq_plus_one_rx_step_worker.len());
 
         let mut shift_sumcheck_polys = vec![
             MixedPolynomial::new(bind_z_ry_var, party_id),
-            MixedPolynomial::from_public_evals(eq_plus_one_rx_step, party_id),
+            MixedPolynomial::from_public_evals(eq_plus_one_rx_step_worker, party_id),
         ];
+
+        tracing::info!("num_rounds_shift_sumcheck: {:?}", num_rounds_shift_sumcheck);
 
         let shift_sumcheck_claim = tracing::trace_span!("shift_sumcheck_claim").in_scope(|| {
             (0..1 << num_rounds_shift_sumcheck)
@@ -237,12 +258,12 @@ where
         drop_in_background_thread(shift_sumcheck_polys);
 
         // Inner sumcheck evaluations: evaluate z on rx_step
-        let (claimed_witness_evals, chis) =
-            Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, rx_step);
+        let claimed_witness_evals =
+            Rep3MultilinearPolynomial::batch_evaluate_at_chi(&flattened_polys, &eq_rx_step_worker);
 
         opening_accumulator.append_send_claims(
             &flattened_polys,
-            DensePolynomial::new(chis),
+            DensePolynomial::new(eq_rx_step_worker),
             rx_step.to_vec(),
             &claimed_witness_evals
                 .iter()
@@ -252,12 +273,15 @@ where
         )?;
 
         // Shift sumcheck evaluations: evaluate z on ry_var
-        let (shift_sumcheck_witness_evals, chis2) =
-            Rep3MultilinearPolynomial::batch_evaluate(&flattened_polys, &shift_sumcheck_r);
+        let shift_sumcheck_r_chi = EqPolynomial::evals(&shift_sumcheck_r);
+        let shift_sumcheck_witness_evals = Rep3MultilinearPolynomial::batch_evaluate_at_chi(
+            &flattened_polys,
+            &shift_sumcheck_r_chi[num_steps * worker_idx..num_steps * (worker_idx + 1)],
+        );
 
         opening_accumulator.append_send_claims(
             &flattened_polys,
-            DensePolynomial::new(chis2),
+            DensePolynomial::new(shift_sumcheck_r_chi), // TODO eq(shift_sumcheck_r)
             shift_sumcheck_r.to_vec(),
             &shift_sumcheck_witness_evals
                 .iter()
@@ -278,19 +302,22 @@ fn prove_spartan_cubic_sumcheck<F: JoltField, Network: Rep3NetworkWorker>(
     io_ctx: &mut IoContextPool<Network>,
 ) -> eyre::Result<(Vec<F>, [AdditiveShare<F>; 3])> {
     let mut r: Vec<F> = Vec::new();
-    let mut claim = AdditiveShare::<F>::zero();
 
     for round in 0..num_rounds {
         if round == 0 {
-            az_bz_cz_poly.first_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx.main())?;
+            az_bz_cz_poly.first_sumcheck_round(eq_poly, &mut r, io_ctx)?;
         } else {
-            az_bz_cz_poly.subsequent_sumcheck_round(eq_poly, &mut r, &mut claim, io_ctx.main())?;
+            az_bz_cz_poly.subsequent_sumcheck_round(eq_poly, &mut r, io_ctx)?;
         }
     }
 
     let final_evals = az_bz_cz_poly.final_sumcheck_evals(io_ctx.party_id());
 
     io_ctx.network().send_response(final_evals.to_vec())?;
+
+    if io_ctx.network().is_distributed() {
+        r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
+    }
 
     Ok((r, final_evals))
 }

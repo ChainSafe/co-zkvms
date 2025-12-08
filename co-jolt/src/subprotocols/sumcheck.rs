@@ -215,6 +215,12 @@ where
         } else {
             additive::combine_additive_vec(network.receive_responses()?)
         };
+        if std::env::var("SUMCHECK_LOG")
+            .map(|s| s.parse::<bool>().unwrap_or(false))
+            .unwrap_or(false)
+        {
+            tracing::info!("round_evals: {:?}", round_evals);
+        }
         round_evals.insert(1, *claim - round_evals[0]);
 
         let round_poly = UniPoly::<F>::from_evals(&round_evals);
@@ -224,6 +230,13 @@ where
         compressed_poly.append_to_transcript(transcript);
         // derive the verifier's challenge for the next round
         let r_j = transcript.challenge_scalar();
+        if std::env::var("SUMCHECK_LOG")
+            .map(|s| s.parse::<bool>().unwrap_or(false))
+            .unwrap_or(false)
+        {
+            tracing::info!("r_j: {:?}", r_j);
+        }
+
         r.push(r_j);
 
         *claim = round_poly.evaluate(&r_j);
@@ -380,4 +393,76 @@ where
     }
 
     Ok(r)
+}
+
+#[tracing::instrument(skip_all, name = "sumcheck::prove_arbitrary_worker")]
+pub fn prove_arbitrary_worker<F, Poly, Func, Network>(
+    num_rounds: usize,
+    polys: &mut Vec<Poly>,
+    comb_func: Func,
+    combined_degree: usize,
+    io_ctx: &mut IoContextPool<Network>,
+) -> eyre::Result<(Vec<F>, Vec<AdditiveShare<F>>)>
+where
+    F: JoltField,
+    Poly: PolynomialBinding<F, Rep3Value<F>>
+        + PolynomialEvaluation<F, Rep3Value<F>>
+        + Polynomial<F>
+        + Send
+        + Sync,
+    Func: Fn(&[Rep3Value<F>]) -> AdditiveShare<F> + std::marker::Sync,
+    Network: Rep3NetworkWorker,
+{
+    let mut r: Vec<F> = Vec::new();
+
+    for _round in 0..num_rounds {
+        // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
+        // for points {0, ..., |g(x)|}
+        let mut round_evals = vec![AdditiveShare::<F>::zero(); combined_degree];
+
+        let mle_half = polys[0].len() / 2;
+
+        let accum: Vec<Vec<AdditiveShare<F>>> = (0..mle_half)
+            .into_par_iter()
+            .map(|poly_term_i| {
+                let mut accum = vec![AdditiveShare::<F>::zero(); combined_degree];
+                // TODO Optimize
+                let evals: Vec<_> = polys
+                    .iter()
+                    .map(|poly| {
+                        poly.sumcheck_evals(poly_term_i, combined_degree, BindingOrder::HighToLow)
+                    })
+                    .collect();
+                for j in 0..combined_degree {
+                    let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
+                    accum[j] += comb_func(&evals_j);
+                }
+
+                accum
+            })
+            .collect();
+
+        round_evals
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(poly_i, eval_point)| {
+                *eval_point = accum.par_iter().take(mle_half).map(|mle| mle[poly_i]).sum();
+            });
+
+        io_ctx.network().send_response(round_evals)?;
+
+        let r_j = io_ctx.network().receive_request()?;
+        r.push(r_j);
+
+        polys
+            .par_iter_mut()
+            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+    }
+
+    let final_evals: Vec<_> = polys
+        .iter()
+        .map(|poly| poly.final_sumcheck_claim().into_additive(io_ctx.party_id()))
+        .collect();
+
+    Ok((r, final_evals))
 }

@@ -1,13 +1,19 @@
 use std::env;
 
-use ark_ff::AdditiveGroup;
+use ark_ff::{AdditiveGroup, Field};
 use itertools::{izip, Itertools};
 use jolt_core::{
     field::OptimizedMul,
+    host,
+    jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing},
     poly::{
+        compact_polynomial::CompactPolynomial,
         dense_interleaved_poly::DenseInterleavedPolynomial,
-        eq_poly,
-        multilinear_polynomial::MultilinearPolynomial,
+        dense_mlpoly::DensePolynomial,
+        eq_poly::{self, EqPlusOnePolynomial, EqPolynomial},
+        multilinear_polynomial::{
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+        },
         sparse_interleaved_poly::SparseCoefficient,
         spartan_interleaved_poly::SpartanInterleavedPolynomial,
         split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial},
@@ -16,7 +22,7 @@ use jolt_core::{
     r1cs::{
         builder::CombinedUniformBuilder,
         constraints::{JoltRV32IMConstraints, R1CSConstraints as _},
-        inputs::JoltR1CSInputs,
+        inputs::{ConstraintInput, JoltR1CSInputs},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::transcript::{AppendToTranscript, KeccakTranscript, Transcript},
@@ -24,7 +30,13 @@ use jolt_core::{
 use rayon::prelude::*;
 use snarks_core::math::Math;
 
-use crate::{field::JoltField, poly::split_eq_poly::DistributedSplitEqPolynomial};
+use crate::{
+    field::JoltField,
+    poly::{commitment::mock::MockCommitScheme, split_eq_poly::DistributedSplitEqPolynomial},
+    r1cs::spartan::worker,
+};
+
+const C: usize = 4;
 
 pub fn simulate_sumcheck_distributed_spartan<F: JoltField, ProofTranscript: Transcript>(
     claim: &F,
@@ -106,6 +118,7 @@ pub fn simulate_sumcheck_distributed_spartan<F: JoltField, ProofTranscript: Tran
             } else {
                 subsequent_sumcheck_round_bind(poly, r_i);
             }
+            println!("----------------");
         });
         eq_polys.par_iter_mut().for_each(|poly| poly.bind(r_i));
         compressed_polys.push(compressed_poly);
@@ -146,13 +159,13 @@ pub fn first_sumcheck_round<F: JoltField>(
             for sparse_block in shard_coeffs.chunk_by(|x, y| x.index / 6 == y.index / 6) {
                 let block_index = sparse_block[0].index / 6;
                 let x_in = block_index & x_in_bitmask;
-                println!(
-                    "x_in: {} x_out: {} E_in_len: {} E_out_len: {}",
-                    x_in,
-                    block_index >> num_x_in_bits,
-                    eq_poly.E_in_current_len(),
-                    eq_poly.E_out_current_len()
-                );
+                // println!(
+                //     "x_in: {} x_out: {} E_in_len: {} E_out_len: {}",
+                //     x_in,
+                //     block_index >> num_x_in_bits,
+                //     eq_poly.E_in_current_len(),
+                //     eq_poly.E_out_current_len()
+                // );
 
                 let x_out = block_index >> num_x_in_bits;
                 let E_in_evals = eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out];
@@ -185,7 +198,7 @@ pub fn first_sumcheck_round<F: JoltField>(
                 let az_infty = az1 - az0;
                 let bz_infty = bz1 - bz0;
 
-                println!("nonzero {} {:?}", E_in_evals, [az1, az0, bz1, bz0]);
+                // println!("nonzero {} {:?}", E_in_evals, [az1, az0, bz1, bz0]);
 
                 if az_infty != 0 && bz_infty != 0 {
                     shard_eval_point_infty += E_in_evals.mul_i128(bz_infty * az_infty);
@@ -259,6 +272,7 @@ pub fn first_sumcheck_round_bind<F: JoltField>(poly: &mut SpartanInterleavedPoly
                     }
                 }
                 if az_coeff != (None, None) {
+                    // println!("output_index{} az_coeff: {:?}", output_index, az_coeff);
                     let (low, high) = (az_coeff.0.unwrap_or(0), az_coeff.1.unwrap_or(0));
                     output_slice_for_shard[output_index] = (
                         3 * block_index,
@@ -285,7 +299,10 @@ pub fn first_sumcheck_round_bind<F: JoltField>(poly: &mut SpartanInterleavedPoly
                         .into();
                     output_index += 1;
                 }
+                // println!("-----");
             }
+
+            // println!("----------");
             debug_assert_eq!(output_index, output_slice_for_shard.len())
         });
 
@@ -538,15 +555,17 @@ fn test_distributed_spartan_simulation() {
             (0..78)
                 .map(|i| {
                     MultilinearPolynomial::from(
-                        (P_w * w..P_w * (w + 1))
-                            .map(|e| (e + i) as i64)
-                            .collect_vec(),
-                        // vec![i as i64; P_w],
+                        // (P_w * w..P_w * (w + 1))
+                        //     .map(|e| (e + i) as i64)
+                        //     .collect_vec(),
+                        vec![2i64; P_w],
                     )
                 })
                 .collect_vec()
         })
         .collect_vec();
+
+    println!("flattened_polys: {:?}", flattened_polys[0].len());
 
     let num_rounds_x = 20;
     let mut transcript = KeccakTranscript::new(&[]);
@@ -554,7 +573,7 @@ fn test_distributed_spartan_simulation() {
     println!("tau: {:?}", tau);
     let mut eq_tau = GruenSplitEqPolynomial::new(&tau);
     let mut eq_polys = (0..W)
-        .map(|w| GruenSplitEqPolynomial::new_worker(&tau, 1, w))
+        .map(|w| GruenSplitEqPolynomial::new_worker(&tau, 2, w))
         .collect_vec();
 
     for eq in &eq_polys {
@@ -573,6 +592,18 @@ fn test_distributed_spartan_simulation() {
         .enumerate()
         .map(|(i, fp)| constraint_builder[i].compute_spartan_Az_Bz_Cz(&fp.iter().collect_vec()))
         .collect_vec();
+
+    az_bz_cz_poly.iter().for_each(|p| {
+        println!(
+            "az_bz_cz_poly: {:?}",
+            p.unbound_coeffs_shards.last().unwrap()
+                [p.unbound_coeffs_shards.last().unwrap().len() - 6..]
+                .iter()
+                .map(|e| (e.index, e.value))
+                .collect_vec()
+        );
+    });
+
     let mut claim = F::ZERO;
     let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
         simulate_sumcheck_distributed_spartan(
@@ -609,17 +640,47 @@ fn test_local_spartan_simulation() {
         .parse()
         .unwrap();
 
-    let constraint_builder: CombinedUniformBuilder<4, F, JoltR1CSInputs> =
+    // let mut program = host::Program::new("fibonacci-guest");
+    // program.build(host::DEFAULT_TARGET_DIR);
+
+    // let inputs = postcard::to_stdvec(&1u32).unwrap();
+
+    // let (bytecode, memory_init) = program.decode();
+    // let (program_io, trace) = program.trace(&inputs);
+
+    // let preprocessing: JoltProverPreprocessing<
+    //     4,
+    //     F,
+    //     MockCommitScheme<F, KeccakTranscript>,
+    //     KeccakTranscript,
+    // > = RV32IJoltVM::prover_preprocess(
+    //     bytecode.clone(),
+    //     program_io.memory_layout.clone(),
+    //     memory_init,
+    //     1 << 9,
+    //     1 << 9,
+    //     1 << 9,
+    // );
+
+    // let jolt_polys = RV32IJoltVM::generate_witness(program_io, trace, preprocessing);
+
+    let constraint_builder: CombinedUniformBuilder<C, F, JoltR1CSInputs> =
         JoltRV32IMConstraints::construct_constraints(P, (P / 2) as u64);
 
     let flattened_polys = (0..78)
         .map(|i| {
             MultilinearPolynomial::from({
-                (0..P).map(|e| (e + i) as i64).collect_vec()
-                // vec![i as i64; P]
+                // (0..P).map(|e| (e + i) as i64).collect_vec()
+                vec![2i64; P]
             })
         })
         .collect_vec();
+    // let flattened_polys: Vec<&MultilinearPolynomial<F>> = JoltR1CSInputs::flatten::<C>()
+    //     .iter()
+    //     .map(|var| var.get_ref(&jolt_polys))
+    //     .collect();
+
+    // println!("flattened_polys: {:?}", flattened_polys.len());
 
     let num_rounds_x = 20;
     let mut transcript = KeccakTranscript::new(&[]);
@@ -634,6 +695,31 @@ fn test_local_spartan_simulation() {
 
     let mut az_bz_cz_poly =
         constraint_builder.compute_spartan_Az_Bz_Cz(&flattened_polys.iter().collect_vec());
+
+    println!(
+        "az_bz_cz_poly1: {:?}",
+        az_bz_cz_poly.unbound_coeffs_shards.last().unwrap()[az_bz_cz_poly
+            .unbound_coeffs_shards
+            .last()
+            .unwrap()
+            .len()
+            / 2
+            - 6
+            ..az_bz_cz_poly.unbound_coeffs_shards.last().unwrap().len() / 2]
+            .iter()
+            .map(|e| (e.index, e.value))
+            .collect_vec()
+    );
+
+    println!(
+        "az_bz_cz_poly2: {:?}",
+        az_bz_cz_poly.unbound_coeffs_shards.last().unwrap()
+            [az_bz_cz_poly.unbound_coeffs_shards.last().unwrap().len() - 6..]
+            .iter()
+            .map(|e| (e.index, e.value))
+            .collect_vec(),
+    );
+
     let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
         SumcheckInstanceProof::prove_spartan_cubic(
             num_rounds_x,
@@ -647,4 +733,287 @@ fn test_local_spartan_simulation() {
     outer_sumcheck_proof
         .verify(F::ZERO, num_rounds_x, 3, &mut transcript)
         .unwrap();
+}
+
+#[test]
+fn test_local_inner_sumcheck_simulation() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();
+
+    type F = ark_bn254::Fr;
+
+    let P: usize = env::var("P")
+        .unwrap_or_else(|_| "16".to_string())
+        .parse()
+        .unwrap();
+    let flattened_polys = (0..12)
+        .map(|i| {
+            MultilinearPolynomial::from({
+                (0..P).map(|e| (e + i) as u64).collect_vec()
+                // vec![2i64; P]
+            })
+        })
+        .collect_vec();
+
+    let mut transcript = KeccakTranscript::new(&[]);
+    let rx_step = transcript.challenge_vector(P.log_2());
+
+    let (eq_rx_step, eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(&rx_step, None);
+
+    let mut bind_z = vec![F::ZERO; 16 * 2];
+    let mut bind_shift_z = vec![F::ZERO; 16 * 2];
+
+    flattened_polys
+        .par_iter()
+        .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
+        .for_each(|(poly, (eval, eval_shifted))| {
+            *eval = poly.dot_product(&eq_rx_step);
+            *eval_shifted = poly.dot_product(&eq_plus_one_rx_step);
+        });
+    bind_z[16] = F::ONE;
+    let poly_z = DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect());
+
+    // let eq_rx_step = EqPolynomial::evals(&rx_step);
+
+    // let mut bind_z = vec![F::ZERO; 8];
+    // flattened_polys
+    //     .par_iter()
+    //     .zip(bind_z.par_iter_mut())
+    //     .for_each(|(poly, eval)| {
+    //         *eval = poly.dot_product(&eq_rx_step);
+    //     });
+    // let poly_z = DensePolynomial::new(bind_z);
+
+    let num_rounds_inner_sumcheck = poly_z.len().log_2();
+
+    let mut polys = vec![MultilinearPolynomial::LargeScalars(poly_z)];
+
+    let comb_func = |poly_evals: &[F]| -> F {
+        // assert_eq!(poly_evals.len(), 2);
+        poly_evals[0]
+    };
+
+    let claim_inner_joint = transcript.challenge_scalar();
+
+    let (inner_sumcheck_proof, r, claims_inner) = SumcheckInstanceProof::prove_arbitrary(
+        &claim_inner_joint,
+        num_rounds_inner_sumcheck,
+        &mut polys,
+        comb_func,
+        1,
+        &mut transcript,
+    );
+
+    let mut transcript = KeccakTranscript::new(&[]);
+
+    let _ = transcript.challenge_vector::<F>(P.log_2());
+    let _ = transcript.challenge_scalar::<F>();
+
+    inner_sumcheck_proof
+        .verify(F::ZERO, num_rounds_inner_sumcheck, 1, &mut transcript)
+        .unwrap();
+}
+
+#[test]
+fn test_distributed_inner_sumcheck_simulation() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_global()
+        .unwrap();
+
+    type F = ark_bn254::Fr;
+
+    let P: usize = env::var("P")
+        .unwrap_or_else(|_| "16".to_string())
+        .parse()
+        .unwrap();
+
+    let W: usize = env::var("NUM_WORKERS")
+        .unwrap_or_else(|_| "2".to_string())
+        .parse()
+        .unwrap();
+    let W_log2 = W.log_2();
+    let P_w = P / W;
+
+    let flattened_polys = (0..W)
+        .map(|w| {
+            (0..12)
+                .map(|i| {
+                    MultilinearPolynomial::from(
+                        (P_w * w..P_w * (w + 1))
+                            .map(|e| (e + i) as u64)
+                            .collect_vec(),
+                        // vec![2i64; P_w],
+                    )
+                })
+                .collect_vec()
+        })
+        .collect_vec();
+
+    let mut transcript = KeccakTranscript::new(&[]);
+    let rx_step = transcript.challenge_vector::<F>(P.log_2());
+
+    let poly_z = flattened_polys
+        .iter()
+        .enumerate()
+        .map(|(w, flattened_polys_worker)| {
+            let (eq_rx_step, eq_plus_one_rx_step) =
+                EqPlusOnePolynomial::evals_worker(&rx_step, None, 1, w);
+
+            let mut bind_z = vec![F::ZERO; 16 * 2];
+            let mut bind_shift_z = vec![F::ZERO; 16 * 2];
+
+            flattened_polys_worker
+                .par_iter()
+                .zip(bind_z.par_iter_mut().zip(bind_shift_z.par_iter_mut()))
+                .for_each(|(poly, (eval, eval_shift))| {
+                    *eval = poly.dot_product(&eq_rx_step);
+                    *eval_shift = poly.dot_product(&eq_plus_one_rx_step);
+                });
+
+            if w == 0 {
+                bind_z[16] = F::ONE;
+            }
+
+            DensePolynomial::new(bind_z.into_iter().chain(bind_shift_z.into_iter()).collect())
+        })
+        .collect_vec();
+
+    let num_rounds_inner_sumcheck = poly_z[0].len().log_2();
+
+    let mut polys = poly_z
+        .iter()
+        .map(|poly| vec![MultilinearPolynomial::LargeScalars(poly.clone())])
+        .collect_vec();
+
+    let comb_func = |poly_evals: &[F]| -> F {
+        // assert_eq!(poly_evals.len(), 2);
+        poly_evals[0]
+    };
+
+    let claim_inner_joint = transcript.challenge_scalar();
+
+    let (inner_sumcheck_proof, r, claims_inner) = simulate_sumcheck_distributed_high_to_low(
+        &claim_inner_joint,
+        &mut polys,
+        num_rounds_inner_sumcheck,
+        1,
+        comb_func,
+        &mut transcript,
+    );
+
+    let mut transcript = KeccakTranscript::new(&[]);
+
+    let _ = transcript.challenge_vector::<F>(P.log_2());
+    let _ = transcript.challenge_scalar::<F>();
+
+    inner_sumcheck_proof
+        .verify(F::ZERO, num_rounds_inner_sumcheck, 1, &mut transcript)
+        .unwrap();
+}
+
+pub fn simulate_sumcheck_distributed_high_to_low<F: JoltField, Func, ProofTranscript: Transcript>(
+    claim: &F,
+    workers_polys: &mut [Vec<MultilinearPolynomial<F>>],
+    num_rounds: usize,
+    combined_degree: usize,
+    comb_func: Func,
+    transcript: &mut ProofTranscript,
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>)
+where
+    Func: Fn(&[F]) -> F + std::marker::Sync,
+{
+    let mut previous_claim = *claim;
+    let mut r: Vec<F> = Vec::new();
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    for _round in 0..num_rounds {
+        let mle_half = workers_polys[0][0].len() / 2;
+
+        let mut eval_points = workers_polys
+            .par_iter()
+            .enumerate()
+            .map(|(_worker, polys)| {
+                let mut eval_points = vec![F::zero(); combined_degree];
+
+                let accum: Vec<Vec<F>> = (0..mle_half)
+                    .into_par_iter()
+                    .map(|poly_term_i| {
+                        let mut accum = vec![F::zero(); combined_degree];
+
+                        // TODO(moodlezoup): Optimize
+                        let evals: Vec<_> = polys
+                            .iter()
+                            .map(|poly| {
+                                poly.sumcheck_evals(
+                                    poly_term_i,
+                                    combined_degree,
+                                    BindingOrder::HighToLow,
+                                )
+                            })
+                            .collect();
+
+                        for j in 0..combined_degree {
+                            let evals_j: Vec<_> = evals.iter().map(|x| x[j]).collect();
+                            accum[j] += comb_func(&evals_j);
+                        }
+
+                        accum
+                    })
+                    .collect();
+
+                // println!("accum: {:?}", accum);
+
+                eval_points
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(poly_i, eval_point)| {
+                        *eval_point += accum
+                            .par_iter()
+                            .take(mle_half)
+                            .map(|mle| mle[poly_i])
+                            .sum::<F>();
+                    });
+                // println!("------");
+                eval_points
+            })
+            .reduce(
+                || vec![F::zero(); combined_degree],
+                |mut eval_points, eval_points_next| {
+                    izip!(eval_points.iter_mut(), eval_points_next).for_each(|(a, b)| *a += b);
+                    eval_points
+                },
+            );
+
+        println!("-------");
+        println!("eval points: {:?}", eval_points);
+        println!("--------------");
+
+        eval_points.insert(1, previous_claim - eval_points[0]);
+        let univariate_poly = UniPoly::from_evals(&eval_points);
+        let compressed_poly = univariate_poly.compress();
+        // append the prover's message to the transcript
+        compressed_poly.append_to_transcript(transcript);
+        let r_j = transcript.challenge_scalar();
+        println!("r_j: {:?}", r_j);
+        r.push(r_j);
+
+        for polys in workers_polys.iter_mut() {
+            // bound all tables to the verifier's challenge
+            (*polys)
+                .par_iter_mut()
+                .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+        }
+        previous_claim = univariate_poly.evaluate(&r_j);
+        compressed_polys.push(compressed_poly);
+    }
+
+    let final_evals = workers_polys[0]
+        .iter()
+        .map(|poly| poly.final_sumcheck_claim())
+        .collect();
+
+    (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
 }

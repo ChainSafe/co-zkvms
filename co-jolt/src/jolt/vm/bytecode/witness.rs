@@ -135,6 +135,8 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
 
         assert!(num_workers < 4, "unimplemented");
 
+        // TODO: for worker < num_workers - 1 v_read_write[0] and a_read_write polys must have extra trace row for cross-step constraints
+
         let log_num_workers = io_ctx.log_num_workers();
         // TODO: when num_worker >= 4, shard ranges will be incorrect if we pass half_net_log_num_workers/half_net_worker_idx
         let v_read_write = [

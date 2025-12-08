@@ -10,7 +10,7 @@ use jolt_core::r1cs::{
     ops::{Term, Variable, LC},
 };
 use mpc_core::protocols::rep3::{
-    network::{IoContextPool, Rep3NetworkWorker},
+    network::{IoContext, IoContextPool, Rep3NetworkWorker},
     PartyID, Rep3PrimeFieldShare,
 };
 
@@ -504,17 +504,17 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz(
+    pub fn compute_spartan_Az_Bz_Cz<Network: Rep3NetworkWorker>(
         &self,
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>], // N variables of (S steps)
-        party_id: PartyID,
+        io_ctx: &IoContextPool<Network>,
     ) -> Rep3SpartanInterleavedPolynomial<F> {
         Rep3SpartanInterleavedPolynomial::new(
             &self.uniform_builder.constraints,
             &self.offset_equality_constraints,
             flattened_polynomials,
             self.padded_rows_per_step(),
-            party_id,
+            io_ctx,
         )
     }
 }

@@ -326,6 +326,10 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         }
     }
 
+    pub fn shard_local_range(&self) -> Range<usize> {
+        self.chunk_range.0..self.chunk_range.1
+    }
+
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()
     }

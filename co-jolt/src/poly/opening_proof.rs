@@ -2,7 +2,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, Itertools};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 pub use jolt_core::poly::opening_proof::*;
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -244,8 +244,55 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<Vec<F>> {
-        assert!(!network.is_distributed());
-        let claims = additive::combine_additive_vec(network.receive_responses()?);
+        let claims = if network.is_distributed() {
+            network
+                .receive_responses_from_subnets()?
+                .into_iter()
+                .map(additive::combine_additive_vec)
+                .reduce(|prev, next| izip!(prev, next).map(|(a, b)| a + b).collect())
+                .unwrap()
+        } else {
+            additive::combine_additive_vec(network.receive_responses()?)
+        };
+        self.append_with_claims(poly_num_vars, &claims, transcript, network)?;
+        Ok(claims)
+    }
+
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_partial")]
+    pub fn append_partial<ProofTranscript: Transcript, Network: Rep3NetworkCoordinator>(
+        &mut self,
+        poly_num_vars: usize,
+        opening_point: &[F],
+        transcript: &mut ProofTranscript,
+        network: &mut Network,
+    ) -> eyre::Result<Vec<F>> {
+        let claims = if network.is_distributed() {
+            let polys = network
+                .receive_responses_from_subnets()?
+                .into_iter()
+                .map(|shares| {
+                    additive::combine_additive_vec::<F>(shares)
+                        .into_iter()
+                        .map(|e| vec![e])
+                        .collect_vec()
+                })
+                .reduce(|mut acc, next| {
+                    izip!(&mut acc, next).for_each(|(coeffs, c)| coeffs.push(c[0]));
+                    acc
+                })
+                .unwrap()
+                .into_iter()
+                .map(MultilinearPolynomial::from)
+                .collect_vec();
+            let (_, r_merge) =
+                opening_point.split_at(opening_point.len() - network.log_num_workers());
+            let (claims, _) =
+                MultilinearPolynomial::batch_evaluate(&polys.iter().collect_vec(), r_merge);
+            claims
+        } else {
+            additive::combine_additive_vec(network.receive_responses()?)
+        };
+        tracing::info!("claims: {:?}", claims);
         self.append_with_claims(poly_num_vars, &claims, transcript, network)?;
         Ok(claims)
     }
@@ -308,7 +355,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
-        tracing::info!("IF combined_claim: {:?}", claim);
+        // tracing::info!("IF combined_claim: {:?}", claim);
 
         let mut worker_offset_rho_power = vec![F::one()];
         let mut offset = batch_lens[0];

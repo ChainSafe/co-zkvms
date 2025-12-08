@@ -231,7 +231,6 @@ where
 
     let read_write_evals: Vec<F> =
         opening_accumulator.append(read_write_chunk_size.log_2(), transcript, network)?;
-    tracing::info!("read_write_evals: {:?}", read_write_evals);
 
     let read_write_openings: Vec<_> = openings
         .read_write_values_grand_product_mut()
@@ -248,8 +247,6 @@ where
 
     let init_final_evals: Vec<F> =
         opening_accumulator.append(init_final_chunk_size.log_2(), transcript, network)?;
-
-    tracing::info!("init_final_evals: {:?}", init_final_evals);
 
     openings
         .init_final_values_mut()

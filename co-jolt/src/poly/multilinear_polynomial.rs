@@ -390,6 +390,25 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::batch_evaluate_at_chi")]
+    pub fn batch_evaluate_at_chi(polys: &[&Self], chi: &[F]) -> Vec<Rep3Value<F>> {
+        let evals: Vec<_> = polys
+            .into_par_iter()
+            .map(|&poly| match poly {
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::LargeScalars(poly)) => {
+                    Rep3Value::Public(poly.evaluate_at_chi_low_optimized(&chi))
+                }
+                Rep3MultilinearPolynomial::Public(poly) => {
+                    Rep3Value::Public(poly.dot_product(&chi))
+                }
+                Rep3MultilinearPolynomial::Shared(poly) => {
+                    Rep3Value::Additive(poly.evaluate_at_chi_optimized(&chi))
+                }
+            })
+            .collect();
+        evals
+    }
+
     pub fn batch_evaluate_full(
         polys: &[&Rep3MultilinearPolynomial<F>],
         r: &[F],

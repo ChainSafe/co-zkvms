@@ -44,48 +44,24 @@ pub fn coordinate_eq_sumcheck_round<
             .try_into()
             .unwrap()
     };
-    tracing::info!("quadratic_evals: {:?}", quadratic_evals);
-    let cubic_poly_check = {
-        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
 
-        UniPoly::from_linear_times_quadratic_with_hint(
-            // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
-            [
-                eq_poly.current_scalar - scalar_times_w_i,
-                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
-            ],
-            quadratic_evals[0],
-            quadratic_evals[1],
-            *claim,
-        )
-    };
-    let cubic_coeffs = if network.is_distributed() {
-        let subnet_responces = network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
-        let degree = subnet_responces[0][0].len();
+    let round_poly = UniPoly::from_linear_times_quadratic_with_hint(
+        // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
+        [
+            eq_poly.current_scalar - scalar_times_w_i,
+            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+        ],
+        quadratic_evals[0],
+        quadratic_evals[1],
+        *claim,
+    );
 
-        subnet_responces
-            .into_iter()
-            .map(|shares| additive::combine_additive_vec(shares))
-            .fold(vec![F::zero(); degree], |mut acc, coeff| {
-                acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
-                    *acc += coeff;
-                });
-                acc
-            })
-    } else {
-        additive::combine_additive_vec(network.receive_responses()?)
-    };
-    let round_poly = UniPoly::<F>::from_coeff(cubic_coeffs);
-    // assert_eq!(cubic_poly_check, round_poly);
-    // round_evals.insert(1, *claim - round_evals[0]);
-
-    // let round_poly = UniPoly::<F>::from_evals(&round_evals);
     let compressed_poly = round_poly.compress();
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
     let r_i: F = transcript.challenge_scalar();
-    tracing::info!("r_i: {:?}", r_i);
     r.push(r_i);
     polys.push(compressed_poly);
 
@@ -94,9 +70,10 @@ pub fn coordinate_eq_sumcheck_round<
     eq_poly.bind(r_i);
 
     // Send next claim and challenge to workers
-    network.broadcast_request((*claim, r_i))
+    network.broadcast_request(r_i)
 }
 
+// TODO: maybe there's some linearity to exploit and avoid needing coordinator to compute the cubic polynomial
 #[inline]
 #[tracing::instrument(skip_all, name = "process_eq_sumcheck_round_worker", level = "trace")]
 pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker>(
