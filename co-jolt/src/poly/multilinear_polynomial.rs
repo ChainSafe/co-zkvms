@@ -387,6 +387,21 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
+    pub fn batch_evaluate_worker(
+        polys: &[&Self],
+        r: &[F],
+        log_num_workers: usize,
+        worker_idx: usize,
+    ) -> (Vec<Rep3Value<F>>, Vec<F>) {
+        let eq = EqPolynomial::evals(r);
+        let evals = Rep3MultilinearPolynomial::batch_evaluate_at_chi(
+            polys,
+            &eq[EqPolynomial::evals_range_worker(r, log_num_workers, worker_idx)],
+        );
+
+        (evals, eq)
+    }
+
     #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::batch_evaluate_at_chi")]
     pub fn batch_evaluate_at_chi(polys: &[&Self], chi: &[F]) -> Vec<Rep3Value<F>> {
         let evals: Vec<_> = polys

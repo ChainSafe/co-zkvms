@@ -260,10 +260,7 @@ where
             &flattened_polys,
             DensePolynomial::new(eq_rx_step),
             rx_step.to_vec(),
-            &claimed_witness_evals
-                .iter()
-                .map(|x| x.into_additive(party_id))
-                .collect::<Vec<_>>(),
+            &claimed_witness_evals,
             io_ctx.main(),
         )?;
 
@@ -278,10 +275,7 @@ where
             &flattened_polys,
             DensePolynomial::new(shift_sumcheck_r_chi),
             shift_sumcheck_r.to_vec(),
-            &shift_sumcheck_witness_evals
-                .iter()
-                .map(|x| x.into_additive(party_id))
-                .collect::<Vec<_>>(),
+            &shift_sumcheck_witness_evals,
             io_ctx.main(),
         )?;
 

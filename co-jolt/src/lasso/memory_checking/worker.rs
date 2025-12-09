@@ -230,7 +230,8 @@ where
     Polynomials: StructuredPolynomialData<Rep3MultilinearPolynomial<F>> + ?Sized,
     ExoOpenings: ExogenousOpenings<F> + Sync,
 {
-    let party_id = io_ctx.party_id();
+    let log_num_workers = io_ctx.network().log_num_workers();
+    let worker_idx = io_ctx.worker_idx();
 
     let read_write_polys: Vec<&_> = polynomials
         .read_write_values_grand_product()
@@ -238,32 +239,35 @@ where
         .chain(ExoOpenings::exogenous_data(jolt_polynomials))
         .collect::<Vec<_>>();
 
-    let (read_write_evals, eq_read_write) =
-        Rep3MultilinearPolynomial::batch_evaluate(&read_write_polys, &r_read_write);
+    let (read_write_evals, eq_read_write) = Rep3MultilinearPolynomial::batch_evaluate_worker(
+        &read_write_polys,
+        &r_read_write,
+        log_num_workers,
+        worker_idx,
+    );
 
     opening_accumulator.append_send_claims(
         &read_write_polys,
         DensePolynomial::new(eq_read_write),
         r_read_write.to_vec(),
-        &read_write_evals
-            .iter()
-            .map(|x| x.into_additive(party_id))
-            .collect::<Vec<_>>(),
+        &read_write_evals,
         io_ctx.main(),
     )?;
 
     let init_final_polys = polynomials.init_final_values();
-    let (init_final_evals, eq_init_final) =
-        Rep3MultilinearPolynomial::batch_evaluate(&init_final_polys, &r_init_final);
+
+    let (init_final_evals, eq_init_final) = Rep3MultilinearPolynomial::batch_evaluate_worker(
+        &init_final_polys,
+        &r_init_final,
+        log_num_workers,
+        worker_idx,
+    );
 
     opening_accumulator.append_send_claims(
         &polynomials.init_final_values(),
         DensePolynomial::new(eq_init_final),
         r_init_final.to_vec(),
-        &init_final_evals
-            .iter()
-            .map(|x| x.into_additive(party_id))
-            .collect::<Vec<_>>(),
+        &init_final_evals,
         io_ctx.main(),
     )?;
 

@@ -16,6 +16,7 @@ use mpc_core::protocols::{
     rep3::network::{IoContext, Rep3NetworkCoordinator, Rep3NetworkWorker},
 };
 
+use crate::utils::types::Rep3Value;
 use crate::{
     field::JoltField,
     poly::{commitment::Rep3CommitmentScheme, Rep3MultilinearPolynomial},
@@ -121,10 +122,16 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         polynomials: &[&Rep3MultilinearPolynomial<F>],
         eq_poly: DensePolynomial<F>,
         opening_point: Vec<F>,
-        claims: &[AdditiveShare<F>],
+        claims: &[Rep3Value<F>],
         io_ctx: &mut IoContext<Network>,
     ) -> eyre::Result<()> {
-        io_ctx.network.send_response(claims.to_vec())?;
+        let party_id = io_ctx.id;
+        io_ctx.network.send_response(
+            claims
+                .par_iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
         self.append(polynomials, eq_poly, opening_point, io_ctx)
     }
 
