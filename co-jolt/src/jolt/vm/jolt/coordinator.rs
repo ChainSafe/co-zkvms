@@ -113,45 +113,10 @@ where
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.read_cts);
-        // tracing::info!("read_cts check: {}", transcript.challenge_scalar::<F>());
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.final_cts);
-        // tracing::info!("final_cts check: {}", transcript.challenge_scalar::<F>());
-
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.dim);
-        // tracing::info!("dim check: {}", transcript.challenge_scalar::<F>());
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.instruction_flags);
-        // tracing::info!(
-        //     "instruction_flags check: {}",
-        //     transcript.challenge_scalar::<F>()
-        // );
-
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.lookup_outputs);
-        // tracing::info!(
-        //     "lookup_outputs check: {}",
-        //     transcript.challenge_scalar::<F>()
-        // );
-
-        // transcript.append_serializable(&jolt_commitments.instruction_lookups.E_polys);
-        // tracing::info!("E_polys check: {}", transcript.challenge_scalar::<F>());
-
         // transcript.append_scalar(&spartan_key.vk_digest);
-        // jolt_commitments
-        //     .read_write_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-        // jolt_commitments
-        //     .init_final_values()
-        //     .iter()
-        //     .for_each(|value| value.append_to_transcript(&mut transcript));
-
         jolt_commitments
-            .bytecode
             .read_write_values()
-            .into_iter()
-            .chain(jolt_commitments.read_write_memory.read_write_values())
-            .chain(jolt_commitments.instruction_lookups.read_write_values())
-            .chain(jolt_commitments.r1cs.read_write_values())
+            .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         tracing::info!(
@@ -160,12 +125,8 @@ where
         );
 
         jolt_commitments
-            .bytecode
             .init_final_values()
-            .into_iter()
-            .chain(jolt_commitments.read_write_memory.init_final_values())
-            .chain(jolt_commitments.instruction_lookups.init_final_values())
-            .chain(jolt_commitments.r1cs.init_final_values())
+            .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
         tracing::info!(

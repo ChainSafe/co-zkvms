@@ -123,8 +123,8 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         (DensePolynomial::new(a), DensePolynomial::new(b))
     }
 
-    pub fn into_distributed_commit_form(&self, len: usize) -> DensePolynomial<F> {
-        let mut coeffs = vec![F::ZERO; len];
+    pub fn into_distributed_commit_form(&self) -> DensePolynomial<F> {
+        let mut coeffs = vec![F::ZERO; self.full_len];
         coeffs.splice(
             self.global_chunk_range
                 .map(|(start, end)| start..end)
@@ -145,25 +145,6 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
                 .collect(),
         )
     }
-
-    // #[inline]
-    // pub fn copy_share_a_shard_for_worker(
-    //     &self,
-    //     shard_nv: usize,
-    //     worker_idx: usize,
-    // ) -> DensePolynomial<F> {
-    //     assert!(!self.is_bound());
-
-    //     assert!(shard_nv <= self.get_num_vars());
-    //     let range = if self.get_num_vars() == shard_nv {
-    //         0..(1 << shard_nv)
-    //     } else {
-    //         let chunk_size = 1usize << shard_nv;
-    //         worker_idx * chunk_size..(worker_idx + 1) * chunk_size
-    //     };
-
-    //     DensePolynomial::new(self.coeffs[range].par_iter().map(|share| share.a).collect())
-    // }
 
     #[inline]
     pub fn sumcheck_evals(

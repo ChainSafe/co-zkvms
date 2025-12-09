@@ -137,16 +137,14 @@ where
             (eq_rx_step, eq_rx_step_worker, eq_plus_one_rx_step_worker)
         };
 
-        /* Compute the two polynomials provided as input to the second sumcheck:
-           - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
-           - poly_z: z(y_var || rx_step), z_shift(..)
-        */
+        // Compute the two polynomials provided as input to the second sumcheck:
+        //    - poly_ABC: A(r_x, y_var || rx_step), A_shift(..) at all variables y_var
+        //    - poly_z: z(y_var || rx_step), z_shift(..)
 
         let poly_ABC = MixedPolynomial::from_public_evals(
             key.evaluate_matrix_mle_partial(rx_constr, rx_step_worker, inner_sumcheck_RLC),
             party_id,
         );
-        tracing::info!("poly_ABC: {:?}", poly_ABC.coeffs.len());
 
         // Binding z and z_shift polynomials at point rx_step
 
@@ -192,7 +190,6 @@ where
         )?;
         drop(_span);
         drop_in_background_thread(polys);
-        tracing::info!("inner_sumcheck_r: {:?}", inner_sumcheck_r);
 
         // ---------- Sumcheck 3: Shift sumcheck ---------- //
         // sumcheck claim = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)
@@ -279,7 +276,7 @@ where
 
         opening_accumulator.append_send_claims(
             &flattened_polys,
-            DensePolynomial::new(shift_sumcheck_r_chi), // TODO eq(shift_sumcheck_r)
+            DensePolynomial::new(shift_sumcheck_r_chi),
             shift_sumcheck_r.to_vec(),
             &shift_sumcheck_witness_evals
                 .iter()

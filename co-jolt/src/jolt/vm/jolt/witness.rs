@@ -122,7 +122,8 @@ where
                 F,
                 PCS,
                 ProofTranscript,
-            >(&mut read_write_memory);
+                Network,
+            >(&mut read_write_memory, io_ctx);
 
         Ok(Self {
             instruction_lookups,

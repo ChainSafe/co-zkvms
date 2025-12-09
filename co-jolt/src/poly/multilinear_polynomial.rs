@@ -65,9 +65,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         log_num_workers: usize,
         worker_idx: usize,
     ) -> Self {
-        let shard_nv = full_len.log_2() - log_num_workers;
         Self::public(MultilinearPolynomial::U8Scalars(
-            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+            CompactPolynomial::new_shard(coeffs, full_len, log_num_workers, worker_idx),
         ))
     }
 
@@ -77,9 +76,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         log_num_workers: usize,
         worker_idx: usize,
     ) -> Self {
-        let shard_nv = full_len.log_2() - log_num_workers;
         Self::public(MultilinearPolynomial::U32Scalars(
-            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+            CompactPolynomial::new_shard(coeffs, full_len, log_num_workers, worker_idx),
         ))
     }
 
@@ -89,9 +87,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         log_num_workers: usize,
         worker_idx: usize,
     ) -> Self {
-        let shard_nv = full_len.log_2() - log_num_workers;
         Self::public(MultilinearPolynomial::U64Scalars(
-            CompactPolynomial::shard_from_coeffs(coeffs, shard_nv, worker_idx),
+            CompactPolynomial::new_shard(coeffs, full_len, log_num_workers, worker_idx),
         ))
     }
 
@@ -203,11 +200,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => match poly {
                 MultilinearPolynomial::LargeScalars(_) => (0, poly.full_len()),
-                MultilinearPolynomial::U8Scalars(p) => p.chunk_range(),
-                MultilinearPolynomial::U16Scalars(p) => p.chunk_range(),
-                MultilinearPolynomial::U32Scalars(p) => p.chunk_range(),
-                MultilinearPolynomial::U64Scalars(p) => p.chunk_range(),
-                MultilinearPolynomial::I64Scalars(p) => p.chunk_range(),
+                MultilinearPolynomial::U8Scalars(p) => p.chunk_global_range(),
+                MultilinearPolynomial::U16Scalars(p) => p.chunk_global_range(),
+                MultilinearPolynomial::U32Scalars(p) => p.chunk_global_range(),
+                MultilinearPolynomial::U64Scalars(p) => p.chunk_global_range(),
+                MultilinearPolynomial::I64Scalars(p) => p.chunk_global_range(),
             },
             Rep3MultilinearPolynomial::Shared(poly) => {
                 poly.global_chunk_range.unwrap_or((0, poly.full_len()))
