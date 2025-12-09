@@ -241,13 +241,14 @@ where
 
         io_ctx.network().send_response(shift_sumcheck_claim)?;
 
-        let shift_sumcheck_r = sumcheck::distributed_prove_arbitrary_worker(
+        let mut shift_sumcheck_r = sumcheck::distributed_prove_arbitrary_worker(
             num_rounds_shift_sumcheck,
             &mut shift_sumcheck_polys,
             comb_func,
             2,
             io_ctx,
         )?;
+        shift_sumcheck_r.reverse();
 
         drop(_guard);
         drop(span);

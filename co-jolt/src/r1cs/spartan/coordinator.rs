@@ -153,7 +153,7 @@ where
         let _guard = span.enter();
         let num_steps_bits = key.num_steps.log_2();
 
-        let mut shift_sumcheck_claim = if network.is_distributed() {
+        let shift_sumcheck_claim = if network.is_distributed() {
             network
                 .receive_responses_from_subnets::<AdditiveShare<F>>()?
                 .into_iter()
@@ -170,8 +170,9 @@ where
             poly_evals[0] * poly_evals[1]
         };
 
+        let mut claim = shift_sumcheck_claim;
         let (shift_sumcheck_proof, _, _) = sumcheck::coordinate_distributed_prove_arbitrary(
-            &mut shift_sumcheck_claim,
+            &mut claim,
             num_steps_bits,
             2,
             2,
