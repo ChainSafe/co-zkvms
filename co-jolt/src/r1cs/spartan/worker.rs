@@ -127,6 +127,7 @@ where
         let (eq_rx_step, eq_rx_step_worker, eq_plus_one_rx_step_worker) = {
             let chunk_size = 1 << (rx_step.len() - log_num_workers);
             let (eq_rx_step, mut eq_plus_one_rx_step) = EqPlusOnePolynomial::evals(&rx_step, None);
+
             let eq_rx_step_worker =
                 eq_rx_step[worker_idx * chunk_size..(worker_idx + 1) * chunk_size].to_vec();
             let eq_plus_one_rx_step_worker = eq_plus_one_rx_step
@@ -191,6 +192,7 @@ where
         )?;
         drop(_span);
         drop_in_background_thread(polys);
+        tracing::info!("inner_sumcheck_r: {:?}", inner_sumcheck_r);
 
         // ---------- Sumcheck 3: Shift sumcheck ---------- //
         // sumcheck claim = z_shift(ry_var || rx_step) = \sum_t z(ry_var || t) * eq_plus_one(rx_step, t)

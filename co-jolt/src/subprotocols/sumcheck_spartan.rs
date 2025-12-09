@@ -44,6 +44,7 @@ pub fn coordinate_eq_sumcheck_round<
             .try_into()
             .unwrap()
     };
+    tracing::info!("quadratic evals: {:?}", quadratic_evals);
     let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
 
     let round_poly = UniPoly::from_linear_times_quadratic_with_hint(
@@ -62,6 +63,7 @@ pub fn coordinate_eq_sumcheck_round<
 
     // Derive challenge
     let r_i: F = transcript.challenge_scalar();
+    tracing::info!("r_i: {:?}", r_i);
     r.push(r_i);
     polys.push(compressed_poly);
 

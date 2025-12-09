@@ -136,11 +136,6 @@ where
 
         let num_rounds_inner_sumcheck = (key.uniform_r1cs.num_vars.next_power_of_two() * 4).log_2();
 
-        let comb_func = |poly_evals: &[F]| -> F {
-            assert_eq!(poly_evals.len(), 2);
-            poly_evals[0] * poly_evals[1]
-        };
-
         let (inner_sumcheck_proof, _inner_sumcheck_r) = sumcheck::coordinate_prove_arbitrary(
             &mut claim_inner_joint,
             num_rounds_inner_sumcheck,
@@ -169,6 +164,11 @@ where
         };
 
         tracing::info!("shift_sumcheck_claim: {}", shift_sumcheck_claim);
+
+        let comb_func = |poly_evals: &[F]| -> F {
+            assert_eq!(poly_evals.len(), 2);
+            poly_evals[0] * poly_evals[1]
+        };
 
         let (shift_sumcheck_proof, _, _) = sumcheck::coordinate_distributed_prove_arbitrary(
             &mut shift_sumcheck_claim,

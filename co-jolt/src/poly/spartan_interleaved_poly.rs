@@ -408,7 +408,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .collect();
 
         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
-            let span = tracing::trace_span!("quadratic_evals_in_current_len_1");
+            let span = tracing::trace_span!("quadratic_evals_eq_flat");
             let _span_enter = span.enter();
             let evals = chunks
                 .par_iter()
@@ -447,7 +447,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             drop(_span_enter);
             evals
         } else {
-            let span = tracing::trace_span!("quadratic_evals_in_current_len_gt_1");
+            let span = tracing::trace_span!("quadratic_evals_eq_gruen");
             let _span_enter = span.enter();
             let num_x_in_bits = eq_poly.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
@@ -494,7 +494,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                             * E_in_eval;
                         inner_sums.1 +=
                             az_eval_infty.mul(&bz_eval_infty).into_additive(party_id) * E_in_eval;
-                        inner_sums.1 = additive::add_public(inner_sums.1, E_in_eval, party_id);
                     }
                     eval_point_0 += inner_sums.0 * eq_poly.E_out_current()[prev_x_out];
                     eval_point_infty += inner_sums.1 * eq_poly.E_out_current()[prev_x_out];
