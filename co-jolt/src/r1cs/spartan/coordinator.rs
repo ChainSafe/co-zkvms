@@ -39,6 +39,8 @@ where
         let log_num_workers = network.log_num_workers();
         let num_rounds_x = key.num_rows_bits();
 
+        tracing::info!("num_rounds_x: {}", num_rounds_x);
+
         /* Sumcheck 1: Outer sumcheck */
         let span = tracing::info_span!("outer_sumcheck");
         let _guard = span.enter();
@@ -46,6 +48,8 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>(); // TODO transcript.challenge_scalars
+        tracing::info!("tau: {:?}", tau[0]);
+
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau);
 
         network.broadcast_request(tau)?;
@@ -96,6 +100,8 @@ where
         };
 
         tracing::info!("outer_sumcheck_claims: {:?}", outer_sumcheck_claims);
+        tracing::info!("outer_sumcheck_r: {:?}", outer_sumcheck_r);
+
         let outer_sumcheck_proof = SumcheckInstanceProof::new(polys);
         transcript.append_scalars(&outer_sumcheck_claims);
 
@@ -150,7 +156,7 @@ where
         */
         let span = tracing::info_span!("shift_sumcheck");
         let _guard = span.enter();
-        let num_rounds_shift_sumcheck = key.num_steps.log_2();
+        let num_steps_bits = key.num_steps.log_2();
 
         let mut shift_sumcheck_claim = if network.is_distributed() {
             network
@@ -164,12 +170,9 @@ where
 
         tracing::info!("shift_sumcheck_claim: {}", shift_sumcheck_claim);
 
-        unsafe {
-            std::env::set_var("SUMCHECK_LOG", "true");
-        }
         let (shift_sumcheck_proof, _, _) = sumcheck::coordinate_distributed_prove_arbitrary(
             &mut shift_sumcheck_claim,
-            num_rounds_shift_sumcheck,
+            num_steps_bits,
             2,
             2,
             comb_func,
@@ -179,18 +182,11 @@ where
         drop(_guard);
         drop(span);
 
-        unsafe {
-            std::env::remove_var("SUMCHECK_LOG");
-        }
-        // let num_steps = key.num_steps;
-        // let num_steps_bits = num_steps.ilog2() as usize;
-        // let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits);
-
         let claimed_witness_evals =
-            opening_accumulator.append(num_rounds_x, transcript, network)?;
+            opening_accumulator.append(num_steps_bits, transcript, network)?;
 
         let shift_sumcheck_witness_evals =
-            opening_accumulator.append(num_rounds_shift_sumcheck, transcript, network)?;
+            opening_accumulator.append(num_steps_bits, transcript, network)?;
 
         let outer_sumcheck_claims = (
             outer_sumcheck_claims[0],

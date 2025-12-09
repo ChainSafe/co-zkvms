@@ -198,9 +198,7 @@ where
         let span = span!(Level::INFO, "shift_sumcheck");
         let _guard = span.enter();
         let ry_var = inner_sumcheck_r[1..].to_vec();
-        tracing::info!("ry_var: {:?}", ry_var);
         let eq_ry_var = EqPolynomial::evals(&ry_var);
-        tracing::info!("eq_ry_var: {:?}", eq_ry_var.len());
         // let eq_ry_var_r2 = EqPolynomial::evals(&ry_var);
 
         let mut bind_z_ry_var: Vec<Rep3Value<F>> = Vec::with_capacity(num_steps);
@@ -208,7 +206,6 @@ where
         let bind_span = span!(Level::INFO, "bind_z_ry_var");
         let bind_guard = bind_span.enter();
         let num_steps_unpadded = constraint_builder.uniform_repeat();
-        tracing::info!("num_steps_unpadded: {}", num_steps_unpadded);
         (0..num_steps_unpadded) // unpadded number of steps is sufficient
             .into_par_iter()
             .map(|t| {
@@ -229,8 +226,6 @@ where
             MixedPolynomial::new(bind_z_ry_var, party_id),
             MixedPolynomial::from_public_evals(eq_plus_one_rx_step_worker, party_id),
         ];
-
-        tracing::info!("num_rounds_shift_sumcheck: {:?}", num_rounds_shift_sumcheck);
 
         let shift_sumcheck_claim = tracing::trace_span!("shift_sumcheck_claim").in_scope(|| {
             (0..1 << num_rounds_shift_sumcheck)
@@ -263,7 +258,7 @@ where
 
         opening_accumulator.append_send_claims(
             &flattened_polys,
-            DensePolynomial::new(eq_rx_step_worker),
+            DensePolynomial::new(eq_rx_step),
             rx_step.to_vec(),
             &claimed_witness_evals
                 .iter()

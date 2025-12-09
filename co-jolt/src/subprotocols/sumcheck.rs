@@ -215,12 +215,7 @@ where
         } else {
             additive::combine_additive_vec(network.receive_responses()?)
         };
-        if std::env::var("SUMCHECK_LOG")
-            .map(|s| s.parse::<bool>().unwrap_or(false))
-            .unwrap_or(false)
-        {
-            tracing::info!("round_evals: {:?}", round_evals);
-        }
+
         round_evals.insert(1, *claim - round_evals[0]);
 
         let round_poly = UniPoly::<F>::from_evals(&round_evals);
@@ -230,12 +225,6 @@ where
         compressed_poly.append_to_transcript(transcript);
         // derive the verifier's challenge for the next round
         let r_j = transcript.challenge_scalar();
-        if std::env::var("SUMCHECK_LOG")
-            .map(|s| s.parse::<bool>().unwrap_or(false))
-            .unwrap_or(false)
-        {
-            tracing::info!("r_j: {:?}", r_j);
-        }
 
         r.push(r_j);
 
