@@ -64,7 +64,6 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
         Self::prove_memory_checking(
-            pcs_setup,
             preprocessing,
             &polynomials.read_write_memory,
             polynomials,

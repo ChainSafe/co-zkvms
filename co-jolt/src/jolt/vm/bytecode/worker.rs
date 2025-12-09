@@ -9,10 +9,13 @@ use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
+use jolt_core::jolt::vm::JoltStuff;
 use jolt_core::lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData};
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
@@ -35,8 +38,7 @@ where
     Network: Rep3NetworkWorker,
 {
     type ReadWriteGrandProduct = Rep3BatchedDenseGrandProduct<F>;
-    // TODO: InitFinalGrandProduct can be computed publically
-    type InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct = BatchedDenseGrandProduct<F>;
 
     type Rep3Polynomials = Rep3BytecodePolynomials<F>;
     type Openings = BytecodeOpenings<F>;
@@ -54,7 +56,7 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
         (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
-        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
+        (Vec<F>, usize, usize),
     )> {
         let worker_idx = io_ctx.worker_idx();
         let num_workers = io_ctx.num_workers();
@@ -155,10 +157,6 @@ where
         if !io_ctx.network().is_distributed() || worker_idx < num_workers >> 1 {
             init_final_fingeprints.splice(0..0, init_leaves); // extend from back
         }
-
-        // TODO: fallback to public grand product
-        let init_final_fingeprints =
-            rep3::arithmetic::promote_to_trivial_shares(init_final_fingeprints, io_ctx.party_id());
 
         tracing::info!(
             "read_write_fingeprints: {:?} batch_size_worker {}",

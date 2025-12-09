@@ -1,3 +1,4 @@
+use eyre::Context;
 use jolt_core::{
     poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
@@ -9,7 +10,10 @@ use jolt_core::{
     },
     utils::thread::drop_in_background_thread,
 };
-use mpc_core::protocols::rep3::{network::IoContextPool, Rep3PrimeFieldShare};
+use mpc_core::protocols::{
+    additive,
+    rep3::{network::IoContextPool, Rep3PrimeFieldShare},
+};
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
@@ -47,6 +51,15 @@ where
     fn layers(
         &'_ self,
     ) -> impl Iterator<Item = &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>;
+
+    fn receive_hashes(network: &mut Network) -> eyre::Result<Vec<F>> {
+        Ok(network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
+            .context("while receiving hashes")?
+            .into_iter()
+            .flat_map(additive::combine_additive_vec)
+            .collect())
+    }
 
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
@@ -97,7 +110,10 @@ where
     type Leaves;
 
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self>;
+    fn construct(
+        leaves: Self::Leaves,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<(Self, usize)>;
 
     fn batch_size_minus_delta(&self) -> usize;
 
@@ -107,7 +123,7 @@ where
     fn num_layers(&self) -> usize;
 
     /// The claimed outputs of the grand products.
-    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>>;
+    fn claimed_outputs(&self) -> Option<Vec<AdditiveShare<F>>>;
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
@@ -120,8 +136,6 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product_worker(
         &mut self,
-        _opening_accumulator: Option<&mut Rep3OpeningAccumulatorWorker<F>>,
-        _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
         let mut r = io_ctx.network().receive_request()?;
@@ -249,7 +263,10 @@ where
         name = "Rep3BatchedDenseGrandProduct::construct",
         level = "trace"
     )]
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
+    fn construct(
+        leaves: Self::Leaves,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<(Self, usize)> {
         let (leaves, batch_size, batch_size_full) = leaves;
         assert!(leaves.len() % batch_size == 0);
         assert!((leaves.len() / batch_size).is_power_of_two());
@@ -272,11 +289,14 @@ where
             layers.push(new_layer);
         }
 
-        Ok(Self {
-            layers,
-            batch_size_minus_delta,
-            is_worker_symmetric: batch_size_full.is_power_of_two(),
-        })
+        Ok((
+            Self {
+                layers,
+                batch_size_minus_delta,
+                is_worker_symmetric: batch_size_full.is_power_of_two(),
+            },
+            batch_size_full,
+        ))
     }
 
     fn batch_size_minus_delta(&self) -> usize {
@@ -296,12 +316,14 @@ where
         name = "Rep3BatchedDenseGrandProduct::claimed_outputs",
         level = "trace"
     )]
-    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>> {
+    fn claimed_outputs(&self) -> Option<Vec<AdditiveShare<F>>> {
         let last_layer = &self.layers[self.layers.len() - 1];
-        last_layer
-            .par_chunks(2)
-            .map(|chunk| chunk[0] * chunk[1])
-            .collect()
+        Some(
+            last_layer
+                .par_chunks(2)
+                .map(|chunk| chunk[0] * chunk[1])
+                .collect(),
+        )
     }
 
     fn layers(

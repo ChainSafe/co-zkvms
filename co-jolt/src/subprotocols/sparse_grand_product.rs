@@ -978,7 +978,10 @@ where
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>, usize); // (flags, fingerprints)
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
+    fn construct(
+        leaves: Self::Leaves,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<(Self, usize)> {
         let (flags, fingerprints, batch_size_full) = leaves;
         let batch_size = fingerprints.len();
         let tree_depth = fingerprints[0].len().log_2();
@@ -1002,26 +1005,31 @@ where
             sparse_layers.push(previous_layer.layer_output(io_ctx)?);
         }
 
-        Ok(Self {
-            batch_size_minus_delta,
-            toggle_layer,
-            sparse_layers,
-            is_worker_symmetric: batch_size_full.is_power_of_two(),
-        })
+        Ok((
+            Self {
+                batch_size_minus_delta,
+                toggle_layer,
+                sparse_layers,
+                is_worker_symmetric: batch_size_full.is_power_of_two(),
+            },
+            batch_size_full,
+        ))
     }
 
     fn num_layers(&self) -> usize {
         self.sparse_layers.len() + 1
     }
 
-    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>> {
+    fn claimed_outputs(&self) -> Option<Vec<AdditiveShare<F>>> {
         // If there's a quark poly, then that's the claimed output
         let last_layer = self.sparse_layers.last().unwrap();
         let (left, right) = last_layer.uninterleave();
-        left.iter()
-            .zip(right.iter())
-            .map(|(l, r)| *l * *r)
-            .collect()
+        Some(
+            left.iter()
+                .zip(right.iter())
+                .map(|(l, r)| *l * *r)
+                .collect(),
+        )
     }
 
     fn layers(

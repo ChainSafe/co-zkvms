@@ -250,7 +250,6 @@ where
         let span = tracing::span!(tracing::Level::INFO, "Rep3BytecodeProver::prove");
         let _guard = span.enter();
         Rep3BytecodeProver::<F, PCS, ProofTranscript, Network>::prove_memory_checking(
-            &preprocessing.generators,
             &preprocessing.bytecode,
             &polynomials.bytecode,
             &polynomials,

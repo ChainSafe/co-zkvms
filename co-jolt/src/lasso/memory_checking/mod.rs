@@ -97,22 +97,8 @@ where
         network.broadcast_request((gamma, tau))?;
         transcript.append_message(Self::protocol_name());
 
-        let (read_write_hashes, init_final_hashes): (Vec<_>, Vec<_>) = network
-            .receive_responses_from_subnets::<(Vec<AdditiveShare<F>>, Vec<AdditiveShare<F>>)>()
-            .context("while receiving hashes")?
-            .into_iter()
-            .map(|worker_hashes| {
-                let (rw_shares, if_shares) = worker_hashes.into_iter().unzip();
-
-                (
-                    additive::combine_additive_vec(rw_shares),
-                    additive::combine_additive_vec(if_shares),
-                )
-            })
-            .unzip();
-
-        let read_write_hashes = read_write_hashes.concat();
-        let init_final_hashes = init_final_hashes.concat();
+        let read_write_hashes = Self::Rep3ReadWriteGrandProduct::receive_hashes(network)?;
+        let init_final_hashes = Self::Rep3InitFinalGrandProduct::receive_hashes(network)?;
 
         let read_write_batch_size = read_write_hashes.len();
         let init_final_batch_size = init_final_hashes.len();
@@ -142,10 +128,7 @@ where
             transcript,
             network,
         )?;
-
-        if network.is_distributed() {
-            network.broadcast_request((read_write_batch_size, init_final_batch_size))?;
-        }
+        tracing::info!("init_final_grand_product - done");
 
         Ok((
             read_write_grand_product,

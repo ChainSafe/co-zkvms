@@ -140,7 +140,6 @@ where
                 .collect();
 
         <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
-            pcs_setup,
             preprocessing,
             &polynomials.instruction_lookups,
             &polynomials,

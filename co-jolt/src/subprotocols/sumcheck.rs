@@ -110,8 +110,12 @@ where
 
         let mut layer = DenseInterleavedPolynomial::new(evals);
 
-        let (proof_, r_, final_claims) =
-            layer.prove_sumcheck(&previous_claim, &mut eq_poly, transcript);
+        let (proof_, r_, final_claims) = <DenseInterleavedPolynomial<F> as BatchedCubicSumcheck<
+            F,
+            ProofTranscript,
+        >>::prove_sumcheck(
+            &mut layer, &previous_claim, &mut eq_poly, transcript
+        );
 
         network.broadcast_request(r_.clone())?;
         proof.compressed_polys.extend(proof_.compressed_polys);
@@ -153,9 +157,9 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
         let mut r: Vec<F> = Vec::new();
         let party_id = io_ctx.party_id();
         for _round in 0..num_rounds {
-            let cubic_poly = self.compute_cubic(eq_poly, party_id);
+            let round_evals = self.compute_cubic(eq_poly, party_id);
             // append the prover's message to the transcript
-            io_ctx.network().send_response(cubic_poly.to_vec())?;
+            io_ctx.network().send_response(round_evals.to_vec())?;
             let r_j = io_ctx.network().receive_request()?;
 
             r.push(r_j);
@@ -196,7 +200,6 @@ where
     let mut r: Vec<F> = Vec::new();
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-    let mut tmp_e = vec![];
     for _round in 0..num_rounds {
         let mut round_evals = if network.is_distributed() {
             let subnet_responces =
@@ -229,9 +232,7 @@ where
         r.push(r_j);
 
         *claim = round_poly.evaluate(&r_j);
-        tmp_e.push(*claim);
-
-        network.broadcast_request((r_j, *claim))?;
+        network.broadcast_request(r_j)?;
 
         cubic_polys.push(compressed_poly);
     }
