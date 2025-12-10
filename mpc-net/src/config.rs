@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fmt::Formatter,
-    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     num::ParseIntError,
     path::PathBuf,
     str::FromStr,
@@ -170,8 +170,6 @@ impl TryFrom<NetworkCoordinatorConfig> for NetworkParty {
 pub struct NetworkConfigFile {
     /// The list of parties in the network.
     pub parties: Vec<NetworkWorkerConfig>,
-    /// Additional links (used for cross-worker communication)
-    pub exogenous_links: Option<Vec<NetworkWorkerConfig>>,
     /// The coordinator of the network.
     #[serde(default)]
     pub coordinator: Option<NetworkCoordinatorConfig>,
@@ -199,8 +197,6 @@ pub struct NetworkConfig {
     pub parties: Vec<NetworkParty>,
     /// The coordinator of the network.
     pub coordinator: Option<NetworkParty>,
-    /// Additional links (used for cross-worker communication)
-    pub exogenous_links: Option<Vec<NetworkParty>>,
     /// The worker id of the party.
     pub worker: usize,
     /// Our own id in the network.
@@ -223,13 +219,11 @@ impl NetworkConfig {
         bind_addr: SocketAddr,
         key: PrivateKeyDer<'static>,
         parties: Vec<NetworkParty>,
-        exogenous_links: Option<Vec<NetworkParty>>,
         timeout: Option<Duration>,
     ) -> Self {
         Self {
             parties,
             coordinator: None,
-            exogenous_links,
             is_coordinator: false,
             my_id: id,
             worker,
@@ -277,20 +271,11 @@ impl TryFrom<NetworkConfigFile> for NetworkConfig {
             .into_iter()
             .map(NetworkParty::try_from)
             .collect::<Result<Vec<_>, _>>()?;
-        let exogenous_links = value
-            .exogenous_links
-            .map(|links| {
-                links
-                    .into_iter()
-                    .map(NetworkParty::try_from)
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .transpose()?;
+
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(std::fs::read(value.key_path)?))
             .clone_key();
         Ok(NetworkConfig {
             parties,
-            exogenous_links,
             is_coordinator: value.is_coordinator,
             coordinator: value.coordinator.map(NetworkParty::try_from).transpose()?,
             my_id: value.my_id,
@@ -307,7 +292,6 @@ impl Clone for NetworkConfig {
         Self {
             parties: self.parties.clone(),
             coordinator: self.coordinator.clone(),
-            exogenous_links: self.exogenous_links.clone(),
             is_coordinator: self.is_coordinator,
             my_id: self.my_id,
             worker: self.worker,
@@ -345,7 +329,6 @@ impl NetworkConfig {
 
     pub fn generate_worker_configs(
         num_workers: usize,
-        cyclic_links: bool,
     ) -> (
         BTreeMap<PartyWorkerID, NetworkConfigFile>,
         NetworkConfigFile,
@@ -404,7 +387,6 @@ impl NetworkConfig {
                     key_path: format!("data/key{}_0.der", worker).into(),
                     parties: parties.clone(),
                     coordinator: Some(coordinator.clone()),
-                    exogenous_links: None,
                     is_coordinator: false,
                     timeout_secs: None,
                 },
@@ -421,7 +403,6 @@ impl NetworkConfig {
                     key_path: format!("data/key{}_1.der", worker).into(),
                     parties: parties.clone(),
                     coordinator: Some(coordinator.clone()),
-                    exogenous_links: None,
                     is_coordinator: false,
                     timeout_secs: None,
                 },
@@ -438,55 +419,10 @@ impl NetworkConfig {
                     key_path: format!("data/key{}_2.der", worker).into(),
                     parties: parties.clone(),
                     coordinator: Some(coordinator.clone()),
-                    exogenous_links: None,
                     is_coordinator: false,
                     timeout_secs: None,
                 },
             );
-        }
-
-        if cyclic_links {
-            for worker in 0..num_workers {
-                let next_worker = (worker + 1) % num_workers;
-                let prev_worker = (worker - 1) % num_workers;
-
-                if next_worker == worker || prev_worker == worker {
-                    continue;
-                }
-
-                println!(
-                    "worker {worker} prev: {} next: {}",
-                    next_worker, prev_worker
-                );
-
-                for party_id in 0..3 {
-                    let links = if prev_worker != next_worker {
-                        vec![
-                            workers
-                                .get(&PartyWorkerID::new(party_id, prev_worker))
-                                .unwrap()
-                                .parties[party_id]
-                                .clone(),
-                            workers
-                                .get(&PartyWorkerID::new(party_id, next_worker))
-                                .unwrap()
-                                .parties[party_id]
-                                .clone(),
-                        ]
-                    } else {
-                        vec![workers
-                            .get(&PartyWorkerID::new(party_id, prev_worker))
-                            .unwrap()
-                            .parties[party_id]
-                            .clone()]
-                    };
-
-                    workers
-                        .get_mut(&PartyWorkerID::new(party_id, worker))
-                        .unwrap()
-                        .exogenous_links = Some(links);
-                }
-            }
         }
 
         let coordinator_config = NetworkConfigFile {
@@ -504,7 +440,6 @@ impl NetworkConfig {
                         .clone()
                 })
                 .collect(),
-            exogenous_links: None,
             coordinator: Some(coordinator),
             timeout_secs: None,
         };

@@ -187,7 +187,6 @@ impl Program {
         tracer::decode(&elf_contents)
     }
 
-    // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build(DEFAULT_TARGET_DIR);

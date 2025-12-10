@@ -92,10 +92,3 @@ pub trait MpcStarNetWorker: Sized + Clone {
     fn fork_with_coordinator(&mut self) -> Result<Self>;
     fn get_worker_subnets(&self, num_workers: usize) -> Result<Vec<Self>>;
 }
-
-pub trait MpcRingNetWorkerExt: Sized + Clone {
-    fn send_next_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
-    fn send_prev_link<T: Serialize + DeserializeOwned>(&mut self, data: T) -> Result<()>;
-    fn resv_prev_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
-    fn resv_next_link<T: Serialize + DeserializeOwned>(&mut self) -> Result<T>;
-}

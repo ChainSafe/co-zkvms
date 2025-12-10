@@ -7,7 +7,7 @@ use ark_ff::{One, PrimeField};
 use itertools;
 use itertools::{Itertools as _, izip};
 use num_bigint::BigUint;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::Rng;
 
 use crate::{
     IoResult,
@@ -502,7 +502,6 @@ pub fn combine_binary_element<F: PrimeField>(
 
 #[cfg(test)]
 mod tests {
-    use crate::protocols::rep3;
     use ark_ff::UniformRand;
     use ark_std::test_rng;
 

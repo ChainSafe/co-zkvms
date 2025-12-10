@@ -8,11 +8,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
-use mpc_net::channel::ChannelHandle;
-use std::collections::BTreeMap;
-use std::ops::Range;
-use std::sync::{Arc, OnceLock, mpsc};
-use std::{iter, thread};
+use std::iter;
+use std::sync::{Arc, OnceLock};
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -467,8 +464,6 @@ impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 }
-
-use mpc_net::topology::MpcRingNetWorkerExt;
 
 pub struct IoContextPool<Network: Rep3NetworkWorker> {
     pub worker_id: usize,

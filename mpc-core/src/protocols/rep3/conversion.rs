@@ -5,14 +5,13 @@
 use crate::{IoResult, protocols::rep3::arithmetic::BinaryShare};
 
 use super::{
-    PartyID, Rep3BigUintShare, Rep3PointShare, Rep3PrimeFieldShare, arithmetic, detail,
+    PartyID, Rep3BigUintShare, Rep3PrimeFieldShare, arithmetic, detail,
     network::{IoContext, Rep3Network},
     yao::{
         self, GCUtils, circuits::GarbledCircuits, evaluator::Rep3Evaluator, garbler::Rep3Garbler,
         streaming_evaluator::StreamingRep3Evaluator, streaming_garbler::StreamingRep3Garbler,
     },
 };
-use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use fancy_garbling::{BinaryBundle, WireMod2};
 use itertools::{Itertools as _, izip};

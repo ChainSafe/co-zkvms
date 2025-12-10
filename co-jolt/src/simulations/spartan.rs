@@ -943,7 +943,6 @@ where
                     .map(|poly_term_i| {
                         let mut accum = vec![F::zero(); combined_degree];
 
-                        // TODO(moodlezoup): Optimize
                         let evals: Vec<_> = polys
                             .iter()
                             .map(|poly| {

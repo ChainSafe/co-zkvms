@@ -19,12 +19,10 @@ use crate::{
     },
     utils::transcript::{Transcript, TranscriptExt},
 };
-use jolt_tracer::ELFInstruction;
 use mpc_core::protocols::rep3::{
     network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
 };
-use mpc_net::topology::MpcRingNetWorkerExt;
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
@@ -37,10 +35,7 @@ use crate::jolt::{
     },
 };
 use jolt_core::{
-    jolt::{
-        subtable::JoltSubtableSet,
-        vm::{JoltProverPreprocessing, JoltVerifierPreprocessing},
-    },
+    jolt::{subtable::JoltSubtableSet, vm::JoltVerifierPreprocessing},
     lasso::memory_checking::StructuredPolynomialData,
     r1cs::key::UniformSpartanKey,
 };
@@ -92,7 +87,7 @@ where
     Constraints: R1CSConstraints<C, F>,
     PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     ProofTranscript: Transcript,
-    Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
+    Network: Rep3NetworkWorker,
 {
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn worker_preprocess(

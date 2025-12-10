@@ -22,12 +22,6 @@ worker = 1
 dns_name = "localhost:11002"
 cert_path = "data/cert1_2.der"
 
-[[exogenous_links]]
-id = 1
-worker = 0
-dns_name = "localhost:10001"
-cert_path = "data/cert0_1.der"
-
 [coordinator]
 dns_name = "localhost:20000"
 cert_path = "data/cert_coordinator.der"

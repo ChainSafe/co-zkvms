@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use crate::field::JoltField;
 use crate::jolt::vm::bytecode::witness::Rep3BytecodePolynomials;
 use crate::jolt::vm::read_write_memory::witness::{Rep3ProgramIO, Rep3ReadWriteMemoryPolynomials};
@@ -24,7 +22,6 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
-use mpc_net::topology::MpcRingNetWorkerExt;
 use snarks_core::field::FieldExt;
 
 use crate::jolt::instruction::Rep3JoltInstructionSet;
@@ -52,7 +49,7 @@ pub trait Rep3Polynomials<F: JoltField, Preprocessing>: Sized {
     ) -> eyre::Result<Self>
     where
         Instructions: Rep3JoltInstructionSet,
-        Network: Rep3NetworkWorker + MpcRingNetWorkerExt;
+        Network: Rep3NetworkWorker;
 
     #[cfg(feature = "debug")]
     fn combine_polynomials(
@@ -82,7 +79,7 @@ where
         PCS: CommitmentScheme<ProofTranscript, Field = F>,
         ProofTranscript: Transcript,
         Instructions: Rep3JoltInstructionSet,
-        Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
+        Network: Rep3NetworkWorker,
     {
         let instruction_lookups = Rep3InstructionLookupPolynomials::generate_witness_rep3(
             &preprocessing.instruction_lookups,
@@ -90,11 +87,6 @@ where
             program_io,
             io_ctx,
         )?;
-
-        // let worker_idx = io_ctx.worker_idx();
-        // let m_worker = ops.len().next_power_of_two() / io_ctx.num_workers();
-        // let trace_worker_range =
-        //     (worker_idx * m_worker)..min((worker_idx + 1) * m_worker, ops.len());
 
         let r1cs = Rep3R1CSPolynomials::generate_witness_rep3(
             &preprocessing.r1cs,

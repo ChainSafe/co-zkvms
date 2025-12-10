@@ -161,7 +161,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         let a = condition;
         let b = left - right;
         let c = LC::zero();
-        let constraint = Constraint { a, b, c }; // TODO(sragss): Can do better on middle term.
+        let constraint = Constraint { a, b, c };
         self.constraints.push(constraint);
     }
 

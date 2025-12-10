@@ -38,7 +38,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for MOVSIGNInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
-        // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         let val = vals[0];
         let repeat = WORD_SIZE / 16;

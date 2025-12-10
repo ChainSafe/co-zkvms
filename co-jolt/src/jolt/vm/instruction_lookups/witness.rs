@@ -3,7 +3,7 @@ use std::{cmp::min, marker::PhantomData, u32};
 use crate::{
     field::JoltField,
     jolt::vm::{read_write_memory::witness::Rep3ProgramIO, witness::WorkerInitializable},
-    poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial},
+    poly::Rep3MultilinearPolynomial,
     utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -23,7 +23,6 @@ use mpc_core::protocols::{
     rep3_ring::{self, ring::ring_impl::RingElement, Rep3RingShare},
 };
 
-use mpc_net::topology::MpcRingNetWorkerExt;
 use rayon::prelude::*;
 
 use crate::jolt::{
@@ -164,7 +163,7 @@ impl<F: JoltField, const C: usize> Rep3Polynomials<F, InstructionLookupsPreproce
     ) -> eyre::Result<Rep3InstructionLookupPolynomials<F>>
     where
         Instructions: Rep3JoltInstructionSet,
-        Network: Rep3NetworkWorker + MpcRingNetWorkerExt,
+        Network: Rep3NetworkWorker,
     {
         let m = trace.len().next_power_of_two();
         let M = preprocessing.materialized_subtables[0].len();

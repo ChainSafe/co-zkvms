@@ -25,17 +25,12 @@ struct CliArgs {
     /// The number of workers to generate configs for
     #[clap(short, long)]
     num_workers: usize,
-
-    /// Whether to generate cyclic links between workers
-    #[clap(short, long, default_value_t = true)]
-    cyclic_links: bool,
 }
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    let (workers, coordinator) =
-        NetworkConfig::generate_worker_configs(args.num_workers, args.cyclic_links);
+    let (workers, coordinator) = NetworkConfig::generate_worker_configs(args.num_workers);
 
     for (id, config) in workers {
         let toml = toml::to_string_pretty(&config).context("serializing config")?;
