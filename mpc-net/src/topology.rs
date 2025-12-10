@@ -28,6 +28,11 @@ pub trait MpcStarNetCoordinator: Sized {
         &mut self,
         data: Vec<T>,
     ) -> Result<()>;
+    fn send_request_to_workers<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        party_id: PartyID,
+        data: T,
+    ) -> Result<()>;
 
     fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
@@ -47,9 +52,11 @@ pub trait MpcStarNetCoordinator: Sized {
     ) -> Result<()>;
 
     fn log_num_workers(&self) -> usize;
+    fn active_num_workers(&self) -> usize;
+
     fn total_bandwidth_used(&self) -> (u64, u64);
     fn is_distributed(&self) -> bool {
-        self.log_num_workers() > 0
+        self.active_num_workers() > 1
     }
 
     /// Print the connection stats of the network
@@ -57,8 +64,8 @@ pub trait MpcStarNetCoordinator: Sized {
     fn reset_stats(&mut self);
 
     fn fork(&mut self) -> Result<Self>;
-    fn set_worker_subnets(&mut self, num_workers: usize);
-    fn reset_worker_subnets(&mut self);
+    fn set_num_workers(&mut self, num_workers: usize);
+    fn reset_num_workers(&mut self);
 }
 
 pub trait MpcStarNetWorker: Sized + Clone {
@@ -69,6 +76,8 @@ pub trait MpcStarNetWorker: Sized + Clone {
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
     fn log_num_workers(&self) -> usize;
+    fn set_log_num_workers(&mut self, log_num_workers: usize);
+    fn reset_log_num_workers(&mut self);
     fn is_distributed(&self) -> bool {
         self.log_num_workers() > 0
     }

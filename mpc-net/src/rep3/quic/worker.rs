@@ -60,6 +60,7 @@ pub struct Rep3QuicMpcNetWorker {
     pub exo_chan_prev: Option<ChannelHandle<Bytes, BytesMut>>,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
     pub log_num_workers_per_party: usize,
+    pub current_log_num_workers: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
     pub config: NetworkConfig,
 
@@ -195,6 +196,7 @@ impl Rep3QuicMpcNetWorker {
             exo_chan_prev,
             chan_coordinator,
             log_num_workers_per_party,
+            current_log_num_workers: log_num_workers_per_party,
             config,
             alloc,
             fork_id,
@@ -331,7 +333,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
     }
 
     fn log_num_workers(&self) -> usize {
-        self.log_num_workers_per_party
+        self.current_log_num_workers
     }
 
     fn io_stats_total(&self) -> (u64, u64) {
@@ -499,6 +501,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             exo_chan_prev,
             chan_coordinator: None,
             log_num_workers_per_party: self.log_num_workers_per_party,
+            current_log_num_workers: self.current_log_num_workers,
             config,
             alloc: self.alloc.clone(),
             fork_id,
@@ -528,6 +531,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             exo_chan_prev: self.exo_chan_prev.clone(),
             chan_coordinator,
             log_num_workers_per_party: self.log_num_workers_per_party,
+            current_log_num_workers: self.current_log_num_workers,
             config: self.config.clone(),
             fork_id: self.alloc.alloc(),
             seq: Arc::new(AtomicU64::new(0)),
@@ -546,6 +550,14 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
 
     fn worker_idx(&self) -> usize {
         self.id.1
+    }
+
+    fn set_log_num_workers(&mut self, log_num_workers: usize) {
+        self.current_log_num_workers = log_num_workers;
+    }
+
+    fn reset_log_num_workers(&mut self) {
+        self.current_log_num_workers = self.log_num_workers_per_party;
     }
 }
 

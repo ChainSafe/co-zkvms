@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::field::JoltField;
+use crate::jolt::vm::timestamp_range_check::coordinator::TimestampValidityProver;
 use crate::lasso::memory_checking::{self, Rep3MemoryCheckingProver};
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
@@ -70,28 +71,13 @@ where
         let output_proof =
             coordinate_prove_outputs(memory_size, opening_accumulator, transcript, network)?;
 
-        // network.send_requests_to_workers(vec![Some(transcript.state()), None, None])?;
-
-        // let (timestamp_validity_proof, transcript_state): (_, ProofTranscript::State) =
-        //     network.receive_response(PartyID::ID0, 0)?;
-        // tracing::info!("coordinator timestamp done");
-
-        let timestamp_validity_proof = TimestampValidityProof {
-            multiset_hashes: MultisetHashes {
-                read_hashes: vec![],
-                write_hashes: vec![],
-                init_hashes: vec![],
-                final_hashes: vec![],
-            },
-            openings: Default::default(),
-            exogenous_openings: [F::zero(); 4],
-            batched_grand_product: BatchedGrandProductProof {
-                gkr_layers: vec![],
-                quark_proof: None,
-            },
-        };
-
-        // transcript.update_state(transcript_state);
+        let timestamp_validity_proof = TimestampValidityProof::prove_distributed(
+            num_ops,
+            memory_size,
+            opening_accumulator,
+            transcript,
+            network,
+        )?;
 
         Ok(ReadWriteMemoryProof {
             memory_checking_proof,

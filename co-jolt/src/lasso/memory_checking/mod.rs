@@ -9,10 +9,7 @@ use jolt_core::{
         BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
     },
 };
-use mpc_core::protocols::{
-    additive::{self, AdditiveShare},
-    rep3::network::Rep3NetworkCoordinator,
-};
+use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use rayon::prelude::*;
 
 use crate::{field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator};

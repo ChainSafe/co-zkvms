@@ -247,9 +247,13 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         &mut self,
         data: Vec<T>,
     ) -> Result<()> {
+        let active_workers = self.active_num_workers();
         self.channels_par()
             .map(|(gid, channel)| {
                 let id = PartyWorkerID::from_global_worker_id(*gid);
+                if id.worker_idx() >= active_workers {
+                    return Ok(());
+                }
                 let size = data[id.worker_idx()].uncompressed_size();
                 let mut ser_data = Vec::with_capacity(size);
                 data[id.worker_idx()]
@@ -288,11 +292,22 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         party_id: PartyID,
     ) -> Result<Vec<T>> {
         let mut responses = Vec::new();
-        for worker_id in 0..(1 << self.log_num_workers()) {
+        for worker_id in 0..self.current_num_workers {
             let response = self.receive_response::<T>(party_id, worker_id)?;
             responses.push(response);
         }
         Ok(responses)
+    }
+
+    fn send_request_to_workers<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        party_id: PartyID,
+        data: T,
+    ) -> Result<()> {
+        for worker_id in 0..self.current_num_workers {
+            self.send_request::<T>(party_id, worker_id, data.clone())?;
+        }
+        Ok(())
     }
 
     fn log_num_workers(&self) -> usize {
@@ -378,13 +393,19 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         })
     }
 
-    fn set_worker_subnets(&mut self, num_workers: usize) {
+    fn active_num_workers(&self) -> usize {
+        self.current_num_workers
+    }
+
+    fn set_num_workers(&mut self, num_workers: usize) {
         assert_ne!(num_workers, 0);
-        assert!(num_workers <= (1 << self.log_num_workers_per_party));
+        assert!(
+            num_workers <= (1 << self.log_num_workers_per_party) && num_workers.is_power_of_two()
+        );
         self.current_num_workers = num_workers;
     }
 
-    fn reset_worker_subnets(&mut self) {
+    fn reset_num_workers(&mut self) {
         self.current_num_workers = 1 << self.log_num_workers_per_party;
     }
 }

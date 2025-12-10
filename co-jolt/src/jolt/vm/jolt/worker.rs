@@ -277,7 +277,6 @@ where
         println!("PROVING Rep3ReadWriteMemoryProver");
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
-            &preprocessing.generators,
             &preprocessing.read_write_memory,
             polynomials,
             &mut self.program_io,

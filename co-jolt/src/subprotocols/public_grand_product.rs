@@ -42,6 +42,7 @@ use mpc_core::protocols::{
 };
 
 use rayon::prelude::*;
+use snarks_core::math::Math;
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
     Rep3BatchedGrandProductWorker<F, PCS, ProofTranscript, Network> for BatchedDenseGrandProduct<F>
@@ -62,6 +63,14 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(Self, usize)> {
         let (leaves, batch_size, full_batch_size) = leaves;
+
+        tracing::info!(
+            "construct leaves: {}, batch_size: {}, full_batch_size: {}",
+            leaves.len(),
+            batch_size,
+            full_batch_size
+        );
+
         if io_ctx.party_idx() != 0 {
             return Ok((
                 Self {
@@ -129,6 +138,11 @@ where
         let mut r = io_ctx.network().receive_request()?;
         let mut eq_chunk_size = self.batch_size;
 
+        println!(
+            "public prove_grand_product num_layers: {}",
+            self.layers.len()
+        );
+
         for layer in self.layers.iter_mut().rev() {
             layer.prove_layer(&mut r, eq_chunk_size, true, io_ctx)?;
             eq_chunk_size *= 2;
@@ -183,6 +197,10 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
+        tracing::info!(
+            "cooridinate_prove_grand_product num_layers: {}",
+            self.layers.len()
+        );
         let mut proof_layers = Vec::with_capacity(self.layers.len());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
@@ -191,9 +209,7 @@ where
         let output_mle = DensePolynomial::new_padded(claimed_outputs);
         let mut r_grand_product: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
         let mut claim = output_mle.evaluate(&r_grand_product);
-        for w in 0..(1 << network.log_num_workers()) {
-            network.send_request(PartyID::ID0, w, r_grand_product.clone())?;
-        }
+        network.send_request_to_workers(PartyID::ID0, r_grand_product.clone())?;
 
         for layer in self.layers.iter().rev() {
             proof_layers.push(layer.coordinate_prove_layer(
@@ -236,12 +252,15 @@ where
         network: &mut Network,
     ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, (F, F))> {
         let mut previous_claim = *claim;
-        let log_num_workers = network.log_num_workers();
-        let num_workers = 1 << log_num_workers;
+        let log_num_workers = network.active_num_workers().log_2();
 
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        tracing::info!(
+            "public sumcheck num_rounds: {}",
+            num_rounds - log_num_workers
+        );
         for _round in 0..num_rounds - log_num_workers {
             let mut round_evals = if network.is_distributed() {
                 let subnet_responces =
@@ -274,9 +293,7 @@ where
 
             previous_claim = round_poly.evaluate(&r_j);
 
-            for w in 0..num_workers {
-                network.send_request(PartyID::ID0, w, r_j)?;
-            }
+            network.send_request_to_workers(PartyID::ID0, r_j)?;
             cubic_polys.push(compressed_poly);
         }
 
@@ -330,9 +347,7 @@ where
             &mut layer, &previous_claim, &mut eq_poly, transcript
         );
 
-        for w in 0..(1 << network.log_num_workers()) {
-            network.send_request(PartyID::ID0, w, r_.clone())?;
-        }
+        network.send_request_to_workers(PartyID::ID0, r_.clone())?;
         proof.compressed_polys.extend(proof_.compressed_polys);
         r.extend(r_);
 
@@ -385,9 +400,7 @@ where
 
         *claim = left_claim + r_layer * (right_claim - left_claim);
 
-        for w in 0..(1 << network.log_num_workers()) {
-            network.send_request(PartyID::ID0, w, r_layer)?;
-        }
+        network.send_request_to_workers(PartyID::ID0, r_layer)?;
         r_grand_product.push(r_layer);
 
         Ok(BatchedGrandProductLayerProof {

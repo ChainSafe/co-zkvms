@@ -226,6 +226,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         );
 
         let r_sumcheck = self.prove_sumcheck(&mut eq_poly, worker_symmetric, io_ctx)?;
+        println!("prove sumcheck");
 
         drop_in_background_thread(eq_poly);
 
@@ -237,6 +238,7 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         // produce a random challenge to condense two claims into a single claim
         let r_layer = io_ctx.network().receive_request()?;
         r_grand_product.push(r_layer);
+        println!("r_layer");
 
         Ok(())
     }

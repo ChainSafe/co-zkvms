@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::timestamp_range_check;
+use crate::jolt::vm::timestamp_range_check::worker::TimestampValidityDistributredWorker;
 use crate::lasso::memory_checking;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
@@ -56,7 +57,6 @@ where
 {
     #[tracing::instrument(skip_all, name = "Rep3ReadWriteMemory::prove")]
     pub fn prove(
-        pcs_setup: &PCS::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &mut Rep3JoltPolynomials<F>,
         program_io: &mut Rep3ProgramIO<F>,
@@ -80,42 +80,12 @@ where
             io_ctx,
         )?;
 
-        // let state: Option<ProofTranscript::State> = io_ctx.network().receive_request()?;
-
-        // if io_ctx.worker_idx() == 0 {
-        //     if let Some(state) = state {
-        //         let mut transcript = ProofTranscript::from_state(state);
-        //         let mut opening_accumulator_public =
-        //             ProverOpeningAccumulator::<F, ProofTranscript>::new();
-
-        //         let timestamp_range_check_polynomials =
-        //             timestamp_range_check::get_timestamp_range_check_polynomials::<
-        //                 F,
-        //                 PCS,
-        //                 ProofTranscript,
-        //             >(&mut polynomials.read_write_memory);
-        //         let jolt_polynomials =
-        //             polynomials.take_exogenous_polynomials_for_timestamp_range_check();
-
-        //         let timestamp_validity_proof =
-        //             TimestampValidityProof::<F, PCS, ProofTranscript>::prove(
-        //                 pcs_setup,
-        //                 &timestamp_range_check_polynomials,
-        //                 &jolt_polynomials,
-        //                 &mut opening_accumulator_public,
-        //                 &mut transcript,
-        //             );
-
-        //         // opening_accumulator
-        //         //     .append_public(&opening_accumulator_public.openings[0], io_ctx.main())?;
-        //         io_ctx
-        //             .network()
-        //             .send_response((timestamp_validity_proof, transcript.state()))?;
-        //     } else {
-        //         // opening_accumulator.receive_public_opening(io_ctx.main())?;
-        //     }
-        // }
-        // tracing::info!("worker timestamp done");
+        TimestampValidityProof::<F, PCS, ProofTranscript>::prove_distributed_worker(
+            &polynomials.timestamp_range_check,
+            polynomials,
+            opening_accumulator,
+            io_ctx,
+        )?;
 
         Ok(())
     }
