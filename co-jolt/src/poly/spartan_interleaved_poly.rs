@@ -7,12 +7,11 @@ use jolt_core::{
     utils::math::Math,
 };
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::field::JoltField;
 use crate::r1cs::ops::LinearCombinationExt;
-use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
 use crate::utils::types::{Rep3Value, SharedOrPublicParIter};
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
@@ -36,13 +35,16 @@ pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {
 
 impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
     /// Computes the matrix-vector products Az, Bz, and Cz as a single interleaved sparse vector
-    pub fn new(
+    pub fn new<Network: Rep3NetworkWorker>(
         uniform_constraints: &[Constraint],
         cross_step_constraints: &[OffsetEqConstraint],
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>], // N variables of (S steps)
         padded_num_constraints: usize,
-        party_id: PartyID,
+        io_ctx: &IoContextPool<Network>,
     ) -> Self {
+        let party_id = io_ctx.party_id();
+        let worker_idx = io_ctx.worker_idx();
+        let num_workers = io_ctx.num_workers();
         let num_steps = flattened_polynomials[0].len();
 
         let num_chunks = std::cmp::min(
@@ -111,7 +113,10 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 }
 
                 // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-                let next_step_index = if step_index + 1 < num_steps {
+                let next_step_index = if step_index + 1 < num_steps
+                    || num_workers > 1 && worker_idx < num_workers - 1
+                // If we are not the last worker, we need to compute the next step
+                {
                     Some(step_index + 1)
                 } else {
                     None
@@ -189,10 +194,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         r: &mut Vec<F>,
-        claim: &mut AdditiveShare<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
         assert!(!self.is_bound());
 
         let num_x_in_bits = eq_poly.E_in_current_len().log_2();
@@ -266,13 +270,13 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .sum_for(party_id);
         drop(_span_enter);
 
-        let r_i = process_eq_sumcheck_round_worker(
-            (AdditiveShare::zero(), quadratic_eval_at_infty.as_additive()),
-            eq_poly,
-            r,
-            claim,
-            io_ctx,
-        )?;
+        io_ctx.network().send_response(vec![
+            AdditiveShare::zero(),
+            quadratic_eval_at_infty.as_additive(),
+        ])?;
+        let r_i = io_ctx.network().receive_request()?;
+        r.push(r_i);
+        eq_poly.bind(r_i);
 
         // Compute the number of non-zero bound coefficients that will be produced
         // per chunk.
@@ -383,10 +387,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         r: &mut Vec<F>,
-        claim: &mut AdditiveShare<F>,
-        io_ctx: &mut IoContext<Network>,
+        io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let party_id = io_ctx.id;
+        let party_id = io_ctx.party_id();
         assert!(self.is_bound());
 
         // In order to parallelize, we do a first pass over the coefficients to
@@ -404,7 +407,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             .collect();
 
         let quadratic_evals = if eq_poly.E_in_current_len() == 1 {
-            let span = tracing::trace_span!("quadratic_evals_in_current_len_1");
+            let span = tracing::trace_span!("quadratic_evals_eq_flat");
             let _span_enter = span.enter();
             let evals = chunks
                 .par_iter()
@@ -443,7 +446,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             drop(_span_enter);
             evals
         } else {
-            let span = tracing::trace_span!("quadratic_evals_in_current_len_gt_1");
+            let span = tracing::trace_span!("quadratic_evals_eq_gruen");
             let _span_enter = span.enter();
             let num_x_in_bits = eq_poly.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
@@ -491,7 +494,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                         inner_sums.1 +=
                             az_eval_infty.mul(&bz_eval_infty).into_additive(party_id) * E_in_eval;
                     }
-
                     eval_point_0 += inner_sums.0 * eq_poly.E_out_current()[prev_x_out];
                     eval_point_infty += inner_sums.1 * eq_poly.E_out_current()[prev_x_out];
 
@@ -501,11 +503,17 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                     || (AdditiveShare::zero(), AdditiveShare::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
                 );
+
             drop(_span_enter);
             evals
         };
 
-        let r_i = process_eq_sumcheck_round_worker(quadratic_evals, eq_poly, r, claim, io_ctx)?;
+        io_ctx
+            .network()
+            .send_response(vec![quadratic_evals.0, quadratic_evals.1])?;
+        let r_i = io_ctx.network().receive_request()?;
+        r.push(r_i);
+        eq_poly.bind(r_i);
 
         let output_sizes: Vec<_> = chunks
             .par_iter()
@@ -672,7 +680,7 @@ pub fn eval_offset_lc_rep3_mixed<F: JoltField>(
     } else if let Some(next_step) = next_step_m {
         offset
             .1
-            .evaluate_row_rep3_mixed(flattened_polynomials, next_step, party_id)
+            .evaluate_row_rep3_mixed_cross_worker(flattened_polynomials, next_step, party_id)
     } else {
         Rep3Value::Public(F::from_i128(offset.1.constant_term_field()))
     }

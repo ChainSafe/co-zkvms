@@ -20,7 +20,7 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 use rayon::prelude::*;
 
 use crate::{
-    channel::ChannelHandle, config::NetworkConfig, mpc_star::MpcStarNetCoordinator,
+    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetCoordinator,
     MpcNetworkHandlerWrapperMut, Result,
 };
 
@@ -100,10 +100,22 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 
         responses_bytes
             .iter()
-            .map(|data| {
+            .enumerate()
+            .map(|(i, data)| {
                 T::deserialize_uncompressed_unchecked(&data[..])
                     .map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "while deserializing response {}: {} - {}",
+                                i,
+                                data[..].len(),
+                                e
+                            ),
+                        )
                     })
                     .context("while deserializing response")
             })
@@ -231,6 +243,32 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()> {
+        let active_workers = self.active_num_workers();
+        self.channels_par()
+            .map(|(gid, channel)| {
+                let id = PartyWorkerID::from_global_worker_id(*gid);
+                if id.worker_idx() >= active_workers {
+                    return Ok(());
+                }
+                let size = data[id.worker_idx()].uncompressed_size();
+                let mut ser_data = Vec::with_capacity(size);
+                data[id.worker_idx()]
+                    .serialize_uncompressed(&mut ser_data)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })
+                    .context("while serializing data")?;
+                std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
+                Ok(())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(())
+    }
+
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,
@@ -249,7 +287,30 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .context("while deserializing response")
     }
 
-    fn log_num_workers_per_party(&self) -> usize {
+    fn receive_response_from_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+    ) -> Result<Vec<T>> {
+        let mut responses = Vec::new();
+        for worker_id in 0..self.current_num_workers {
+            let response = self.receive_response::<T>(party_id, worker_id)?;
+            responses.push(response);
+        }
+        Ok(responses)
+    }
+
+    fn send_request_to_workers<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        party_id: PartyID,
+        data: T,
+    ) -> Result<()> {
+        for worker_id in 0..self.current_num_workers {
+            self.send_request::<T>(party_id, worker_id, data.clone())?;
+        }
+        Ok(())
+    }
+
+    fn log_num_workers(&self) -> usize {
         self.log_num_workers_per_party
     }
 
@@ -332,14 +393,20 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         })
     }
 
-    fn extend_with_worker_subnets(&mut self, new_num_workers: usize) -> eyre::Result<()> {
-        self.current_num_workers = new_num_workers;
-        Ok(())
+    fn active_num_workers(&self) -> usize {
+        self.current_num_workers
     }
 
-    fn trim_subnets(&mut self, num_workers: usize) -> Result<()> {
+    fn set_num_workers(&mut self, num_workers: usize) {
+        assert_ne!(num_workers, 0);
+        assert!(
+            num_workers <= (1 << self.log_num_workers_per_party) && num_workers.is_power_of_two()
+        );
         self.current_num_workers = num_workers;
-        Ok(())
+    }
+
+    fn reset_num_workers(&mut self) {
+        self.current_num_workers = 1 << self.log_num_workers_per_party;
     }
 }
 

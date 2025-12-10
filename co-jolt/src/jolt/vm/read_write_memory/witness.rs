@@ -1,7 +1,7 @@
 use crate::field::JoltField;
-use crate::jolt::instruction::JoltInstructionSet;
+use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::trace::mem_op::MemoryOp;
-use crate::jolt::vm::witness::Rep3Polynomials;
+use crate::jolt::vm::witness::{Rep3Polynomials, WorkerInitializable};
 use crate::jolt::vm::JoltTraceStep;
 use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
 use crate::utils::transpose;
@@ -10,6 +10,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::izip;
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_common::rv_trace::MemoryLayout;
+#[cfg(feature = "debug")]
+use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryPolynomials;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, remap_address, ReadWriteMemoryPreprocessing,
     ReadWriteMemoryStuff,
@@ -55,11 +57,10 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         preprocessing: &ReadWriteMemoryPreprocessing,
         trace: &mut [JoltTraceStep<Instructions>],
         program_io: &Rep3ProgramIO<F>,
-        _: usize,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Self>
     where
-        Instructions: crate::jolt::instruction::Rep3JoltInstructionSet,
+        Instructions: Rep3JoltInstructionSet,
         Network: Rep3NetworkWorker,
     {
         let m = trace.len();
@@ -88,7 +89,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
         let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
         v_init[v_inputs_range.clone()]
             .par_iter_mut()
-            .zip_eq(&program_io.v_io.as_shared().coeffs_ref()[v_inputs_range])
+            .zip_eq(&program_io.v_io.as_shared().coeffs[v_inputs_range]) // TODO: worker range
             .for_each(|(v_init, word)| {
                 *v_init = *word;
             });
@@ -237,22 +238,52 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             }
         }
 
-        let [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram, t_final] =
-            map_to_polys_public([
-                a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram, t_final,
-            ]);
+        let log_num_workers = io_ctx.log_num_workers();
+        let worker_idx = io_ctx.worker_idx();
 
-        let [v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram, v_final, v_init] =
-            map_to_polys_shared([
-                v_read_rd,
-                v_read_rs1,
-                v_read_rs2,
-                v_read_ram,
-                v_write_rd,
-                v_write_ram,
-                v_final,
-                v_init,
-            ]);
+        let [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram] = map_to_polys_public(
+            [a_ram, t_read_rd, t_read_rs1, t_read_rs2, t_read_ram],
+            m,
+            log_num_workers,
+            worker_idx,
+        );
+
+        let t_final = Rep3MultilinearPolynomial::new_shard_public_u32(
+            t_final,
+            memory_size,
+            log_num_workers,
+            worker_idx,
+        );
+
+        let [v_read_rd, v_read_rs1, v_read_rs2, v_read_ram, v_write_rd, v_write_ram] =
+            map_to_polys_shared(
+                [
+                    v_read_rd,
+                    v_read_rs1,
+                    v_read_rs2,
+                    v_read_ram,
+                    v_write_rd,
+                    v_write_ram,
+                ],
+                m,
+                log_num_workers,
+                worker_idx,
+            );
+
+        let [v_init, v_final] =
+            map_to_polys_shared([v_init, v_final], memory_size, log_num_workers, worker_idx);
+
+        tracing::info!(
+            "wintess gen v_init len {} full_len {} memory_size {}",
+            v_init.len(),
+            v_init.full_len(),
+            memory_size
+        );
+        tracing::info!(
+            "wintess gen v_final len {} full_len {}",
+            v_final.len(),
+            v_final.full_len()
+        );
 
         Ok(Self {
             a_ram,
@@ -355,9 +386,19 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
 
 fn map_to_polys_public<F: JoltField, const N: usize>(
     vals: [Vec<u32>; N],
+    full_len: usize,
+    log_num_workers: usize,
+    worker_idx: usize,
 ) -> [Rep3MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|coeffs| {
+            Rep3MultilinearPolynomial::new_shard_public_u32(
+                coeffs,
+                full_len,
+                log_num_workers,
+                worker_idx,
+            )
+        })
         .collect::<Vec<Rep3MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()
@@ -365,9 +406,19 @@ fn map_to_polys_public<F: JoltField, const N: usize>(
 
 fn map_to_polys_shared<F: JoltField, const N: usize>(
     vals: [Vec<Rep3PrimeFieldShare<F>>; N],
+    full_len: usize,
+    log_num_workers: usize,
+    worker_idx: usize,
 ) -> [Rep3MultilinearPolynomial<F>; N] {
     vals.into_par_iter()
-        .map(Rep3MultilinearPolynomial::from)
+        .map(|coeffs| {
+            Rep3MultilinearPolynomial::new_shard_shared(
+                coeffs,
+                full_len,
+                log_num_workers,
+                worker_idx,
+            )
+        })
         .collect::<Vec<Rep3MultilinearPolynomial<F>>>()
         .try_into()
         .unwrap()
@@ -501,7 +552,12 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         )] = termination;
 
         Ok(Self {
-            v_io: Rep3MultilinearPolynomial::from(v_io),
+            v_io: Rep3MultilinearPolynomial::new_shard_shared(
+                v_io,
+                memory_size,
+                io_ctx.log_num_workers(),
+                io_ctx.worker_idx(),
+            ),
             memory_layout,
             memory_size,
             input_words_len,
@@ -567,5 +623,18 @@ impl<F: JoltField> Rep3ProgramIO<F> {
                 input_words_len: program_io.inputs.len() / 4,
             })
             .collect()
+    }
+}
+
+impl<T: CanonicalSerialize + CanonicalDeserialize + Default>
+    WorkerInitializable<T, ReadWriteMemoryPreprocessing> for ReadWriteMemoryStuff<T>
+{
+    type VerifierPreprocessing = ReadWriteMemoryPreprocessing;
+
+    fn worker_initialize(preprocessing: &ReadWriteMemoryPreprocessing) -> Self {
+        <Self as jolt_core::lasso::memory_checking::Initializable<
+            T,
+            ReadWriteMemoryPreprocessing,
+        >>::initialize(preprocessing)
     }
 }

@@ -1,8 +1,6 @@
-use std::slice::Chunks;
-
 use crate::field::JoltField;
+use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::{
-    poly::unipoly::unipoly_from_additive_evals,
     subprotocols::{
         grand_product::{Rep3BatchedGrandProductLayer, Rep3BatchedGrandProductLayerWorker},
         sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker, Rep3Bindable},
@@ -10,6 +8,8 @@ use crate::{
     utils::transcript::Transcript,
 };
 use eyre::Context;
+use std::slice::Chunks;
+
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{
@@ -19,8 +19,6 @@ use mpc_core::protocols::{
     },
 };
 use rayon::{prelude::*, slice::Chunks as RayonChunks};
-
-use jolt_core::poly::{split_eq_poly::SplitEqPolynomial, unipoly::UniPoly};
 
 /// Represents a single layer of a grand product circuit.
 ///
@@ -208,16 +206,19 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     )]
     fn compute_cubic(
         &self,
-        eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: AdditiveShare<F>,
+        eq_poly: &DistributedSplitEqPolynomial<F>,
+        // previous_round_claim: AdditiveShare<F>,
         _: PartyID,
-    ) -> UniPoly<AdditiveShare<F>> {
-        // We use the Dao-Thaler optimization for the EQ polynomial, so there are two cases we
-        // must handle. For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+    ) -> [AdditiveShare<F>; 3] {
+        // We use the Dao–Thaler optimization for the EQ polynomial, so there are two cases:
+        //   1) E1_len == 1: fully bound inner dimension → standard linear-time sumcheck.
+        //   2) E1_len > 1:  factored Eq = E2(i_A,i_B) * E1(i_C) → nested summation.
+        // For details, refer to Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
         let cubic_evals = if eq_poly.E1_len == 1 {
-            // If `eq_poly.E1` has been fully bound, we compute the cubic polynomial as we
-            // would without the Dao-Thaler optimization, using the standard linear-time
-            // sumcheck algorithm.
+            // ---------------- linear-time mode: no Dao–Thaler factorization left ----------------
+            //
+            // At this point, E2 already contains the full Eq evaluations over the remaining
+            // variables, aligned 1:1 with the points that `poly` represents.
             self.par_chunks(4)
                 .zip(eq_poly.E2.par_chunks(2))
                 .map(|(layer_chunk, eq_chunk)| {
@@ -228,6 +229,8 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let eval_point_3 = eval_point_2 + m_eq;
                         (eval_point_0, eval_point_2, eval_point_3)
                     };
+
+                    // Interleaved [L0, R0, L1, R1] chunk for this point.
                     let left = (
                         *layer_chunk
                             .first()
@@ -245,6 +248,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                             .unwrap_or(&Rep3PrimeFieldShare::zero_share()),
                     );
 
+                    // Evaluate left(r) and right(r) at j = 2, 3 using affine interpolation.
                     let m_left = left.1 - left.0;
                     let m_right = right.1 - right.0;
 
@@ -254,40 +258,31 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let right_eval_2 = right.1 + m_right;
                     let right_eval_3 = right_eval_2 + m_right;
 
-                    (
+                    [
                         left.0 * right.0 * eq_evals.0,
                         left_eval_2 * right_eval_2 * eq_evals.1,
                         left_eval_3 * right_eval_3 * eq_evals.2,
-                    )
+                    ]
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 )
         } else {
-            // If `eq_poly.E1` has NOT been fully bound, we compute the cubic polynomial
-            // using the nested summation approach described in Section 2.2 of https://eprint.iacr.org/2024/1210.pdf
+            // ---------------- Dao–Thaler mode: Eq(i_A,i_C,i_B) = E2(i_A,i_B) * E1(i_C) ----------------
             //
-            // Note, however, that we reverse the inner/outer summation compared to the
-            // description in the paper. I.e. instead of:
+            // Here we treat:
+            //   - E1: inner dimension over C (columns),
+            //   - E2: outer dimension over A|B (rows).
             //
-            // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * (\sum_x2 E2[x2] * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            //
-            // we do:
-            //
-            // \sum_x2 E2[x2] * (\sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            //
-            // because it has better memory locality.
+            // For each row (fixed i_A,i_B), we:
+            //   1. combine the relevant E1 entries with P-chunks along the C direction,
+            //   2. multiply the resulting inner sum by the corresponding E2(row) value.
+            let E1_len = eq_poly.E1_len;
 
-            // We start by computing the E1 evals:
-            // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
+            // Precompute Dao–Thaler E1 evaluations at the three needed points j ∈ {0,2,3}
+            // for each C-position (i_C). E1_evals[c] = (E1(c, j=0), E1(c, j=2), E1(c, j=3)).
+            let E1_evals: Vec<_> = eq_poly.E1[..E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
                     let eval_point_0 = E1_chunk[0];
@@ -298,19 +293,78 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 })
                 .collect();
 
-            let chunk_size = (self.len.next_power_of_two() / eq_poly.E2_len).max(1);
-            eq_poly.E2[..eq_poly.E2_len]
+            // The poly currently represents `poly.len() / 2` Eq points (each point
+            // corresponds to 2 coefficients in an interleaved L/R representation).
+            //
+            // This worker is logically responsible for `worker_len` Eq points starting
+            // at `global_start`, but we must not read beyond what `poly` actually has.
+            let eq_slice_end = eq_poly.global_start + core::cmp::min(eq_poly.len, self.len() / 2);
+
+            // Upper bound (exclusive) on E2 indices this worker can actually use:
+            //
+            //   - A row with global index r covers global Eq indices [r * E1_len, (r+1)*E1_len),
+            //   - we only care about rows that intersect [global_start, slice_end),
+            //   - convert that intersection into a local row-offset range for this worker.
+            let E2_local_bound = eq_slice_end
+                .div_ceil(E1_len) // first row index strictly after slice_end
+                .saturating_sub(eq_poly.row_start)
+                .min(eq_poly.E2_len);
+
+            // Dao–Thaler outer loop: iterate over each relevant row of E2 and perform
+            // the inner sum over the C dimension, restricted to this worker’s slice.
+            eq_poly.E2[..E2_local_bound]
                 .par_iter()
-                .zip(self.par_chunks(chunk_size))
-                .map(|(E2_eval, P_x2)| {
-                    // The for-loop below corresponds to the inner sum:
-                    // \sum_x1 ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2))
-                    let mut inner_sum = (
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
-                        AdditiveShare::<F>::zero(),
+                .enumerate()
+                .map(|(E2_i, E2_eval)| {
+                    // Global row index in the full Eq table.
+                    let r = eq_poly.row_start + E2_i;
+
+                    // Global Eq index range covered by this row: [row_first, row_last).
+                    let row_first = r * E1_len;
+                    let row_last = row_first + E1_len;
+
+                    // Intersection with the worker’s assigned slice [global_start, worker_end),
+                    // expressed in global Eq indices.
+                    let eq_first = eq_poly.global_start.max(row_first);
+                    let eq_last = (eq_poly.global_start + eq_poly.len).min(row_last);
+
+                    // We expect this row to intersect the slice if it is within E2_local_bound.
+                    debug_assert!(eq_last > eq_first);
+
+                    // Column offsets inside the row (in Eq points).
+                    let col_from = eq_first - row_first;
+                    let col_to = eq_last - row_first;
+
+                    // Each Dao–Thaler E1 entry spans 2 Eq points; enforce alignment.
+                    debug_assert!(
+                        col_from % 2 == 0 && col_to % 2 == 0,
+                        "misaligned Eq slice within row"
                     );
-                    for (E1_evals, P_chunk) in E1_evals.iter().zip(P_x2.chunks(4)) {
+
+                    // Range of C-indices (pairs) in this row that belong to this worker.
+                    let E1_from = col_from / 2;
+                    let E1_to = col_to / 2;
+
+                    // Local Eq point index inside this worker’s slice:
+                    //
+                    //   local_point_idx = eq_first - global_start
+                    //
+                    // Each point corresponds to 2 coefficients in the interleaved polynomial.
+                    let poly_from = (eq_first - eq_poly.global_start) * 2;
+                    assert!(poly_from < self.len(), "coeff_start out of bounds");
+
+                    let mut inner_sum = [AdditiveShare::<F>::zero(); 3];
+
+                    // Inner Dao–Thaler sum along C:
+                    //
+                    //   sum_{c in [pair_from,pair_to)} E1_evals[c] * P_chunk(c)
+                    //
+                    // where P_chunk(c) is the 4-coefficient interleaved block for that
+                    // position in the grand product GKR wiring.
+                    for (E1_evals, P_chunk) in E1_evals[E1_from..E1_to]
+                        .iter()
+                        .zip(self.coeffs[poly_from..self.len()].chunks(4))
+                    {
                         let left = (
                             *P_chunk
                                 .first()
@@ -330,44 +384,28 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                         let right_eval_2 = right.1 + m_right;
                         let right_eval_3 = right_eval_2 + m_right;
 
-                        inner_sum.0 += left.0 * right.0 * E1_evals.0;
-                        inner_sum.1 += left_eval_2 * right_eval_2 * E1_evals.1;
-                        inner_sum.2 += left_eval_3 * right_eval_3 * E1_evals.2;
+                        inner_sum[0] += left.0 * right.0 * E1_evals.0;
+                        inner_sum[1] += left_eval_2 * right_eval_2 * E1_evals.1;
+                        inner_sum[2] += left_eval_3 * right_eval_3 * E1_evals.2;
                     }
 
                     // Multiply the inner sum by E2[x2]
-                    (
-                        inner_sum.0 * *E2_eval,
-                        inner_sum.1 * *E2_eval,
-                        inner_sum.2 * *E2_eval,
-                    )
+                    inner_sum.map(|x| x * *E2_eval)
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 )
         };
 
-        let cubic_evals = [
-            cubic_evals.0,
-            previous_round_claim - cubic_evals.0,
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
-        unipoly_from_additive_evals(&cubic_evals)
+        cubic_evals
     }
 
-    fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
-        assert_eq!(self.len(), 2);
-        let left_claim = self.coeffs[0];
-        let right_claim = self.coeffs[1];
-        (left_claim, right_claim)
+    fn final_evals(&self, _: usize, _: PartyID) -> Vec<AdditiveShare<F>> {
+        self.coeffs[..self.len()]
+            .par_iter()
+            .map(|c| c.into_additive())
+            .collect()
     }
 }
 

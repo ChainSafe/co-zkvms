@@ -1,6 +1,6 @@
 use super::dense_interleaved_poly::Rep3DenseInterleavedPolynomial;
 use crate::field::JoltField;
-use crate::poly::unipoly::unipoly_from_additive_evals;
+use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
 use crate::poly::Rep3DensePolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedGrandProductLayerWorker;
 use crate::subprotocols::sumcheck::{Rep3BatchedCubicSumcheckWorker, Rep3Bindable};
@@ -10,10 +10,8 @@ use crate::subprotocols::{
 use crate::utils::future::{FutureExt, FutureRep3};
 
 use eyre::Context;
-use jolt_core::poly::{
-    sparse_interleaved_poly::SparseCoefficient, split_eq_poly::SplitEqPolynomial, unipoly::UniPoly,
-};
-use jolt_core::utils::{math::Math, transcript::Transcript};
+use jolt_core::poly::sparse_interleaved_poly::SparseCoefficient;
+use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
@@ -47,6 +45,13 @@ impl<F: JoltField> Rep3SparseInterleavedPolynomial<F> {
         assert!((dense_len / batch_size).is_power_of_two());
         let one: Rep3PrimeFieldShare<F> =
             rep3::arithmetic::promote_to_trivial_share(party_id, F::one());
+
+        let mut coalesced = vec![one; dense_len];
+        coeffs
+            .iter()
+            .flatten()
+            .for_each(|sparse_coeff| coalesced[sparse_coeff.index] = sparse_coeff.value);
+
         if (dense_len / batch_size) <= 2 {
             // Coalesce
             let mut coalesced = vec![one; dense_len];
@@ -407,17 +412,15 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
     )]
     fn compute_cubic(
         &self,
-        eq_poly: &SplitEqPolynomial<F>,
-        previous_round_claim: AdditiveShare<F>,
+        eq_poly: &DistributedSplitEqPolynomial<F>,
+        // previous_round_claim: AdditiveShare<F>,
         party_id: PartyID,
-    ) -> UniPoly<AdditiveShare<F>> {
+    ) -> [AdditiveShare<F>; 3] {
         if let Some(coalesced) = &self.coalesced {
             let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::coalesced");
             let _enter = span.enter();
             return Rep3BatchedCubicSumcheckWorker::<F, Network>::compute_cubic(
-                coalesced,
-                eq_poly,
-                previous_round_claim,
+                coalesced, eq_poly, // previous_round_claim,
                 party_id,
             );
         }
@@ -433,7 +436,7 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
             // would without the Dao-Thaler optimization, using the standard linear-time
             // sumcheck algorithm with optimizations for sparsity.
 
-            let eq_evals: Vec<(F, F, F)> = eq_poly
+            let eq_evals: Vec<[F; 3]> = eq_poly
                 .E2
                 .par_chunks(2)
                 .take(self.dense_len / 4)
@@ -442,24 +445,24 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                     let m_eq = eq_chunk[1] - eq_chunk[0];
                     let eval_point_2 = eq_chunk[1] + m_eq;
                     let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    [eval_point_0, eval_point_2, eval_point_3]
                 })
                 .collect();
             // This is what \sum_{x} eq(r, x) * left(x) * right(x) would be if
             // `left` and `right` were both all ones.
-            let eq_eval_sums: (F, F, F) = eq_evals
+            let eq_eval_sums: [F; 3] = eq_evals
                 .par_iter()
                 .fold(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 )
                 .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
             // Now we compute the deltas, correcting `eq_eval_sums` for the
             // elements of `left` and `right` that aren't ones.
-            let deltas: (AdditiveShare<F>, AdditiveShare<F>, AdditiveShare<F>) = self
+            let deltas: [AdditiveShare<F>; 3] = self
                 .coeffs
                 .par_iter()
                 .flat_map(|segment| {
@@ -486,72 +489,71 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
 
                             let eq_evals = eq_evals[block_index];
                             let e0 = additive::sub_shared_by_public(
-                                left.0 * right.0 * eq_evals.0,
-                                eq_evals.0,
+                                left.0 * right.0 * eq_evals[0],
+                                eq_evals[0],
                                 party_id,
                             );
                             let e1 = additive::sub_shared_by_public(
-                                left_eval_2 * right_eval_2 * eq_evals.1,
-                                eq_evals.1,
+                                left_eval_2 * right_eval_2 * eq_evals[1],
+                                eq_evals[1],
                                 party_id,
                             );
                             let e2 = additive::sub_shared_by_public(
-                                left_eval_3 * right_eval_3 * eq_evals.2,
-                                eq_evals.2,
+                                left_eval_3 * right_eval_3 * eq_evals[2],
+                                eq_evals[2],
                                 party_id,
                             );
 
-                            (e0, e1, e2)
+                            [e0, e1, e2]
                         })
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
 
-            (
-                additive::add_public(deltas.0, eq_eval_sums.0, party_id),
-                additive::add_public(deltas.1, eq_eval_sums.1, party_id),
-                additive::add_public(deltas.2, eq_eval_sums.2, party_id),
-            )
+            [
+                additive::add_public(deltas[0], eq_eval_sums[0], party_id),
+                additive::add_public(deltas[1], eq_eval_sums[1], party_id),
+                additive::add_public(deltas[2], eq_eval_sums[2], party_id),
+            ]
         } else {
             let span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1");
             let _enter = span.enter();
             // This is a more complicated version of the `else` case in
             // `DenseInterleavedPolynomial::compute_cubic`. Read that one first.
+            let E1_len = eq_poly.E1_len;
 
             // We start by computing the E1 evals:
             // (1 - j) * E1[0, x1] + j * E1[1, x1]
-            let E1_evals: Vec<_> = eq_poly.E1[..eq_poly.E1_len]
+            let E1_evals: Vec<_> = eq_poly.E1[..E1_len]
                 .par_chunks(2)
                 .map(|E1_chunk| {
                     let eval_point_0 = E1_chunk[0];
                     let m_eq = E1_chunk[1] - E1_chunk[0];
                     let eval_point_2 = E1_chunk[1] + m_eq;
                     let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    [eval_point_0, eval_point_2, eval_point_3]
                 })
                 .collect();
-            // Now compute \sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1])
-            let E1_eval_sums: (F, F, F) = E1_evals
-                .par_iter()
-                .fold(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                )
-                .reduce(
-                    || (F::zero(), F::zero(), F::zero()),
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                );
 
-            let num_x1_bits = eq_poly.E1_len.log_2() - 1;
-            let x1_bitmask = (1 << num_x1_bits) - 1;
+            // Prefix sums over E1_evals.
+            // prefix[j][i] = sum_{k < i} E1_evals[k][j]
+            let mut prefix_sums = vec![[F::zero(); 3]; E1_len + 1];
+
+            for (i, e) in E1_evals.iter().enumerate() {
+                prefix_sums[i + 1][0] = prefix_sums[i][0] + e[0];
+                prefix_sums[i + 1][1] = prefix_sums[i][1] + e[1];
+                prefix_sums[i + 1][2] = prefix_sums[i][2] + e[2];
+            }
+
+            let eq_slice_start = eq_poly.global_start;
+            let eq_slice_end = eq_slice_start + core::cmp::min(eq_poly.len, self.dense_len / 2);
+
+            let E2_local_bound = eq_slice_end
+                .div_ceil(E1_len)
+                .saturating_sub(eq_poly.row_start)
+                .min(eq_poly.E2_len);
 
             // Iterate over the non-one coefficients and compute the deltas (relative to
             // what the cubic would be if all the coefficients were ones).
@@ -561,20 +563,63 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                 .flat_map(|segment| {
                     segment
                         .par_chunk_by(|a, b| {
-                            // Group by x2
-                            let a_x2 = (a.index / 4) >> num_x1_bits;
-                            let b_x2 = (b.index / 4) >> num_x1_bits;
-                            a_x2 == b_x2
+                            // Group by *global* row index (after accounting for global_start
+                            // and the fact that each 4-coeff block corresponds to 2 Eq points).
+                            let a_block = a.index / 4;
+                            let b_block = b.index / 4;
+                            let a_eq = eq_slice_start + 2 * a_block;
+                            let b_eq = eq_slice_start + 2 * b_block;
+                            let a_row = a_eq / E1_len;
+                            let b_row = b_eq / E1_len;
+
+                            a_row == b_row
                         })
                         .map(|chunk| {
-                            let mut inner_sum = (
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
-                                AdditiveShare::<F>::zero(),
+                            let mut inner_sum = [AdditiveShare::<F>::zero(); 3];
+
+                            // Global row index for this chunk.
+                            // let E2_i = (chunk[0].index / 4) >> num_x1_bits;
+                            let first_block = chunk[0].index / 4;
+                            let eq0 = eq_slice_start + 2 * first_block;
+                            let r = eq0 / E1_len; // global row index
+
+                            // Map to local E2 index.
+                            debug_assert!(r >= eq_poly.row_start);
+                            let x2 = r - eq_poly.row_start;
+                            debug_assert!(x2 <= E2_local_bound);
+
+                            let row_global = eq_poly.row_start + x2;
+                            let row_first = row_global * E1_len;
+                            let row_last = row_first + E1_len;
+
+                            let eq_first = eq_slice_start.max(row_first);
+                            let eq_last = (eq_slice_start + eq_poly.len).min(row_last);
+                            debug_assert!(eq_last > eq_first);
+
+                            let col_from = eq_first - row_first;
+                            let col_to = eq_last - row_first;
+                            debug_assert!(
+                                col_from % 2 == 0 && col_to % 2 == 0,
+                                "misaligned Eq slice within row"
                             );
 
                             for sparse_block in chunk.chunk_by(|x, y| x.index / 4 == y.index / 4) {
                                 let block_index = sparse_block[0].index / 4;
+                                let eq_global = eq_slice_start + 2 * block_index;
+                                debug_assert!(
+                                    eq_global >= eq_first && eq_global < eq_last,
+                                    "block out of bounds"
+                                );
+
+                                // Column inside the row.
+                                let col = eq_global - row_first;
+                                debug_assert!(col < E1_len);
+                                debug_assert!(col % 2 == 0, "block not aligned to E1 pair");
+
+                                // Pair index for this (i_C) inside the row.
+                                let x1 = (col / 2) as usize;
+                                debug_assert!(x1 < E1_evals.len());
+
                                 let mut block = [one_share; 4];
                                 for coeff in sparse_block {
                                     block[coeff.index % 4] = coeff.value;
@@ -592,132 +637,107 @@ impl<F: JoltField, Network: Rep3NetworkWorker> Rep3BatchedCubicSumcheckWorker<F,
                                 let right_eval_2 = right.1 + m_right;
                                 let right_eval_3 = right_eval_2 + m_right;
 
-                                let x1 = block_index & x1_bitmask;
                                 let delta = (
                                     additive::sub_shared_by_public(
                                         left.0 * right.0,
                                         F::one(),
                                         party_id,
-                                    ) * E1_evals[x1].0,
+                                    ) * E1_evals[x1][0],
                                     additive::sub_shared_by_public(
                                         left_eval_2 * right_eval_2,
                                         F::one(),
                                         party_id,
-                                    ) * E1_evals[x1].1,
+                                    ) * E1_evals[x1][1],
                                     additive::sub_shared_by_public(
                                         left_eval_3 * right_eval_3,
                                         F::one(),
                                         party_id,
-                                    ) * E1_evals[x1].2,
+                                    ) * E1_evals[x1][2],
                                 );
-                                inner_sum.0 += delta.0;
-                                inner_sum.1 += delta.1;
-                                inner_sum.2 += delta.2;
+                                inner_sum[0] += delta.0;
+                                inner_sum[1] += delta.1;
+                                inner_sum[2] += delta.2;
                             }
 
-                            let x2 = (chunk[0].index / 4) >> num_x1_bits;
-
-                            (
-                                inner_sum.0 * eq_poly.E2[x2],
-                                inner_sum.1 * eq_poly.E2[x2],
-                                inner_sum.2 * eq_poly.E2[x2],
-                            )
+                            inner_sum.map(|x| x * eq_poly.E2[x2])
                         })
                 })
                 .reduce(
-                    || {
-                        (
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                            AdditiveShare::<F>::zero(),
-                        )
-                    },
-                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                    || [AdditiveShare::<F>::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
                 );
 
             // The cubic evals assuming all the coefficients are ones is affected by the
             // `dense_len`, since we implicitly 0-pad the `dense_len` to a power of 2.
             //
-            // As a refresher, the cubic evals we're computing are:
-            //
-            // \sum_{x2} E2[x2] * (\sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1]) * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
-            let evals_assuming_all_ones = if self.dense_len.is_power_of_two() {
-                // If `dense_len` is a power of 2, there is no 0-padding.
-                //
-                // So we have:
-                // \sum_{x2} (E2[x2] * (\sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1]) * 1))
-                //   = \sum_{x2} (E2[x2] * \sum_{x1} E1_evals[x1])
-                //   = (\sum_{x2} E2[x2]) * (\sum_{x1} E1_evals[x1])
-                //   = 1 * E1_eval_sums
-                E1_eval_sums
-            } else {
-                let chunk_size = self.dense_len.next_power_of_two() / eq_poly.E2_len;
-                let num_all_one_chunks = self.dense_len / chunk_size;
-                let E2_sum: F = eq_poly.E2[..num_all_one_chunks].iter().sum();
-                if self.dense_len % chunk_size == 0 {
-                    // If `dense_len` isn't a power of 2 but evenly divides `chunk_size`,
-                    // that means that for the last values of x2, we have:
-                    //   (1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)) = 0
-                    // due to the 0-padding.
-                    //
-                    // This makes the entire inner sum 0 for those values of x2.
-                    // So we can simply sum over E2 for the _other_ values of x2, and
-                    // multiply by `E1_eval_sums`.
-                    (
-                        E2_sum * E1_eval_sums.0,
-                        E2_sum * E1_eval_sums.1,
-                        E2_sum * E1_eval_sums.2,
-                    )
-                } else {
-                    let _span = tracing::trace_span!("sparse_interleaved_poly::compute_cubic::E1_len_not_1_dense_len_not_power_of_two");
-                    // If `dense_len` isn't a power of 2 and doesn't divide `chunk_size`,
-                    // the last nonzero "chunk" will have (self.dense_len % chunk_size) ones,
-                    // followed by (chunk_size - self.dense_len % chunk_size) zeros,
-                    // e.g. 1 1 1 1 1 1 1 1 0 0 0 0
-                    //
-                    // This handles this last chunk:
-                    let last_chunk_evals = E1_evals[..(self.dense_len % chunk_size) / 4]
-                        .par_iter()
-                        .fold(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        )
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
-                        );
-                    (
-                        E2_sum * E1_eval_sums.0
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.0,
-                        E2_sum * E1_eval_sums.1
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.1,
-                        E2_sum * E1_eval_sums.2
-                            + eq_poly.E2[num_all_one_chunks] * last_chunk_evals.2,
-                    )
-                }
-            };
+            // \sum_{x2} E2[x2] * (\sum_{x1} ((1 - j) * E1[0, x1] + j * E1[1, x1]) *
+            // * \prod_k ((1 - j) * P_k(0 || x1 || x2) + j * P_k(1 || x1 || x2)))
+            let evals_assuming_all_ones: [F; 3] = eq_poly.E2[..E2_local_bound]
+                .par_iter()
+                .enumerate()
+                .map(|(E2_i, E2_eval)| {
+                    let row_global = eq_poly.row_start + E2_i;
+                    let row_first = row_global * E1_len;
+                    let row_last = row_first + E1_len;
 
-            (
-                additive::add_public(deltas.0, evals_assuming_all_ones.0, party_id),
-                additive::add_public(deltas.1, evals_assuming_all_ones.1, party_id),
-                additive::add_public(deltas.2, evals_assuming_all_ones.2, party_id),
-            )
+                    // Intersection with this worker’s slice [slice_start, slice_end).
+                    let eq_first = eq_slice_start.max(row_first);
+                    let eq_last = eq_slice_end.min(row_last);
+                    assert!(eq_first < eq_last);
+
+                    // Column offsets inside the row (in Eq points).
+                    let col_from = eq_first - row_first;
+                    let col_to = eq_last - row_first;
+
+                    // Each Dao–Thaler E1 entry spans 2 Eq points; enforce alignment.
+                    debug_assert!(
+                        col_from % 2 == 0 && col_to % 2 == 0,
+                        "misaligned Eq slice within row"
+                    );
+
+                    // Local offset in the dense polynomial (each Eq point → 2 coeffs).
+                    let poly_from = (eq_first - eq_poly.global_start) * 2;
+                    debug_assert!(poly_from < self.dense_len);
+                    let poly_bound = (self.dense_len - poly_from) / 4;
+
+                    // Range of C-indices (pairs) in this row that belong to this worker.
+                    let E1_from = col_from / 2;
+                    let E1_to = (col_to / 2).min(poly_bound);
+                    debug_assert!(E1_from < E1_to);
+
+                    let s0 = prefix_sums[E1_to][0] - prefix_sums[E1_from][0];
+                    let s1 = prefix_sums[E1_to][1] - prefix_sums[E1_from][1];
+                    let s2 = prefix_sums[E1_to][2] - prefix_sums[E1_from][2];
+
+                    [*E2_eval * s0, *E2_eval * s1, *E2_eval * s2]
+                })
+                .reduce(
+                    || [F::zero(); 3],
+                    |sum, evals| [sum[0] + evals[0], sum[1] + evals[1], sum[2] + evals[2]],
+                );
+
+            [
+                additive::add_public(deltas[0], evals_assuming_all_ones[0], party_id),
+                additive::add_public(deltas[1], evals_assuming_all_ones[1], party_id),
+                additive::add_public(deltas[2], evals_assuming_all_ones[2], party_id),
+            ]
         };
 
-        let cubic_evals = [
-            cubic_evals.0,
-            (previous_round_claim - cubic_evals.0),
-            cubic_evals.1,
-            cubic_evals.2,
-        ];
-
-        unipoly_from_additive_evals(&cubic_evals)
+        cubic_evals
     }
 
-    fn final_claims(&self, _: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
-        assert_eq!(self.dense_len, 2);
-        let dense = self.to_dense();
-        (dense[0], dense[1])
+    fn final_evals(&self, _: usize, _: PartyID) -> Vec<AdditiveShare<F>> {
+        // assert_eq!(self.dense_len, 2);
+        if self.dense_len == 2 {
+            let dense = self.to_dense();
+            vec![dense[0].into_additive(), dense[1].into_additive()]
+        } else {
+            let dense = self.coalesced.as_ref().unwrap();
+            dense.coeffs[..dense.len()]
+                .into_iter()
+                .map(|coeff| coeff.into_additive())
+                .collect()
+        }
     }
 }
 

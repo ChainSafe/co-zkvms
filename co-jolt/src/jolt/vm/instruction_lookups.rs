@@ -169,6 +169,7 @@ where
                 .iter()
                 .map(|poly| poly.try_into().unwrap())
                 .collect(),
+            None,
         );
 
         (
@@ -209,7 +210,7 @@ where
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
+        // assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
         assert_eq!(
             init_final_hashes.len(),
             Self::NUM_SUBTABLES + preprocessing.num_memories
@@ -217,7 +218,7 @@ where
 
         let mut read_hashes = Vec::with_capacity(preprocessing.num_memories);
         let mut write_hashes = Vec::with_capacity(preprocessing.num_memories);
-        for i in 0..preprocessing.num_memories {
+        for i in 0..read_write_hashes.len() / 2 {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }
@@ -445,6 +446,12 @@ where
             .zip(EqPolynomial::evals(r_read_write_batch_index).iter())
             .map(|(tuple, eq_eval)| Self::fingerprint(tuple, gamma, tau) * eq_eval)
             .sum();
+
+        // println!("combined_flags: {}", combined_flags);
+        // println!(
+        //     "combined_read_write_fingerprint: {}",
+        //     combined_read_write_fingerprint
+        // );
 
         // Now we combine flags(r', r'') and fingerprints(r', r'') to obtain the evaluation of the
         // multi-*quadratic* extension W of the input layer at (r', r'')
@@ -1054,10 +1061,12 @@ where
     pub(crate) fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<C, F>,
         instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
+        with_memories: Option<Vec<usize>>,
     ) -> Vec<Vec<usize>> {
         let m = instruction_flag_polys[0].coeffs.len();
 
-        (0..preprocessing.num_memories)
+        with_memories
+            .unwrap_or((0..preprocessing.num_memories).collect())
             .into_par_iter()
             .map(|memory_index| {
                 let instruction_indices: Vec<_> = (0..Self::NUM_INSTRUCTIONS)

@@ -20,14 +20,44 @@ pub fn coordinate_eq_sumcheck_round<
     polys: &mut Vec<CompressedUniPoly<F>>,
     r: &mut Vec<F>,
     claim: &mut F,
+    eq_poly: &mut GruenSplitEqPolynomial<F>,
     transcript: &mut ProofTranscript,
     network: &mut Network,
 ) -> eyre::Result<()> {
-    let cubic_poly =
-        UniPoly::from_coeff(additive::combine_additive_vec(network.receive_responses()?));
+    let quadratic_evals: [F; 2] = if network.is_distributed() {
+        let subnet_responces = network.receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()?;
+        let degree = subnet_responces[0][0].len();
 
-    // Compress and add to transcript
-    let compressed_poly = cubic_poly.compress();
+        subnet_responces
+            .into_iter()
+            .map(|shares| additive::combine_additive_vec(shares))
+            .fold(vec![F::zero(); degree], |mut acc, coeff| {
+                acc.iter_mut().zip(coeff.iter()).for_each(|(acc, coeff)| {
+                    *acc += coeff;
+                });
+                acc
+            })
+            .try_into()
+            .unwrap()
+    } else {
+        additive::combine_additive_vec(network.receive_responses()?)
+            .try_into()
+            .unwrap()
+    };
+    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+
+    let round_poly = UniPoly::from_linear_times_quadratic_with_hint(
+        // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
+        [
+            eq_poly.current_scalar - scalar_times_w_i,
+            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
+        ],
+        quadratic_evals[0],
+        quadratic_evals[1],
+        *claim,
+    );
+
+    let compressed_poly = round_poly.compress();
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
@@ -36,12 +66,14 @@ pub fn coordinate_eq_sumcheck_round<
     polys.push(compressed_poly);
 
     // Evaluate for next round's claim
-    *claim = cubic_poly.evaluate(&r_i);
+    *claim = round_poly.evaluate(&r_i);
+    eq_poly.bind(r_i);
 
     // Send next claim and challenge to workers
-    network.broadcast_request((*claim, r_i))
+    network.broadcast_request(r_i)
 }
 
+// TODO: maybe there's some linearity to exploit and avoid needing coordinator to compute the cubic polynomial
 #[inline]
 #[tracing::instrument(skip_all, name = "process_eq_sumcheck_round_worker", level = "trace")]
 pub fn process_eq_sumcheck_round_worker<F: JoltField, Network: Rep3NetworkWorker>(

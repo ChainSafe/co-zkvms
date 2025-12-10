@@ -7,7 +7,7 @@ use jolt_core::{
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::{additive::AdditiveShare, rep3};
 use rand::{Rng, SeedableRng};
-use std::ops::Index;
+use std::ops::{Index, Range};
 use std::sync::Arc;
 
 use crate::field::JoltField;
@@ -23,11 +23,13 @@ use rayon::prelude::*;
 pub struct Rep3DensePolynomial<F: JoltField> {
     // pub party_id: usize,
     num_vars: usize,
-    coeffs: Arc<Vec<Rep3PrimeFieldShare<F>>>,
+    pub(crate) coeffs: Arc<Vec<Rep3PrimeFieldShare<F>>>,
     bound_coeffs: Vec<Rep3PrimeFieldShare<F>>,
     binding_scratch_space: Option<Vec<Rep3PrimeFieldShare<F>>>,
     len: usize,
     chunk_range: (usize, usize),
+    pub(super) global_chunk_range: Option<(usize, usize)>,
+    full_len: usize,
 }
 
 impl<F: JoltField> Rep3DensePolynomial<F> {
@@ -37,21 +39,42 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars,
             len: coeffs.len(),
+            full_len: coeffs.len(),
             chunk_range: (0, coeffs.len()),
             coeffs: Arc::new(coeffs),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 
-    pub fn from_bound_coeffs(bound_coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
+    pub(super) fn new_shard(
+        coeffs: Vec<Rep3PrimeFieldShare<F>>,
+        full_len: usize,
+        log_num_workers: usize,
+        worker_idx: usize,
+    ) -> Self {
+        let shard_nv = full_len.log_2() - log_num_workers;
+        let num_vars = coeffs.len().log_2();
+        let chunk_size = 1 << shard_nv;
+
+        let chunk_range = if shard_nv == num_vars {
+            (0, coeffs.len())
+        } else {
+            (worker_idx * chunk_size, (worker_idx + 1) * chunk_size)
+        };
+
+        let global_chunk_range = Some((worker_idx * chunk_size, (worker_idx + 1) * chunk_size));
+
         Rep3DensePolynomial {
-            num_vars: bound_coeffs.len().log_2(),
-            len: bound_coeffs.len(),
-            chunk_range: (0, bound_coeffs.len()),
-            bound_coeffs: bound_coeffs.clone(),
-            coeffs: Arc::new(bound_coeffs),
+            num_vars: shard_nv,
+            len: chunk_size,
+            chunk_range,
+            coeffs: Arc::new(coeffs),
+            bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range,
+            full_len,
         }
     }
 
@@ -65,10 +88,12 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         Rep3DensePolynomial {
             num_vars,
             len: 1 << num_vars,
+            full_len: 1 << num_vars,
             chunk_range: (0, poly_coeffs.len()),
             coeffs: Arc::new(poly_coeffs),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
     }
 
@@ -96,6 +121,19 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .map(|share| (share.a, share.b))
             .unzip();
         (DensePolynomial::new(a), DensePolynomial::new(b))
+    }
+
+    pub fn into_distributed_commit_form(&self) -> DensePolynomial<F> {
+        let mut coeffs = vec![F::ZERO; self.full_len];
+        coeffs.splice(
+            self.global_chunk_range
+                .map(|(start, end)| start..end)
+                .unwrap_or(self.chunk_range.0..self.chunk_range.1),
+            self.coeffs[self.chunk_range.0..self.chunk_range.1]
+                .iter()
+                .map(|share| share.a),
+        );
+        DensePolynomial::new(coeffs)
     }
 
     #[inline]
@@ -177,6 +215,19 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
             .sum()
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "Rep3DensePolynomial::evaluate_at_chi",
+        level = "trace"
+    )]
+    pub fn evaluate_at_chi_optimized_full(&self, chis: &[F]) -> AdditiveShare<F> {
+        self.coeffs
+            .par_iter()
+            .zip_eq(chis.par_iter())
+            .map(|(&eval, &chi)| eval.into_additive().mul_public_01_optimized(chi))
+            .sum()
+    }
+
     #[tracing::instrument(skip_all, name = "Rep3DensePolynomial::batch_evaluate")]
     pub fn batch_evaluate(polys: &[&Self], r: &[F]) -> (Vec<AdditiveShare<F>>, Vec<F>) {
         let eq = EqPolynomial::evals(r);
@@ -238,8 +289,34 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         self.len
     }
 
+    pub fn full_len(&self) -> usize {
+        self.full_len
+    }
+
+    pub fn as_full_poly(mut self) -> Self {
+        self.chunk_range = (0, self.full_len);
+        self.global_chunk_range = Some((0, self.full_len));
+        self
+    }
+
+    pub fn shard_global_range(&self) -> Range<usize> {
+        if let Some((start, end)) = self.global_chunk_range {
+            start..end
+        } else {
+            0..self.len
+        }
+    }
+
+    pub fn shard_local_range(&self) -> Range<usize> {
+        self.chunk_range.0..self.chunk_range.1
+    }
+
     pub fn is_bound(&self) -> bool {
         !self.bound_coeffs.is_empty()
+    }
+
+    pub fn get_coeff(&self, index: usize) -> Rep3PrimeFieldShare<F> {
+        self.coeffs[self.chunk_range.0 + index]
     }
 
     pub fn get_bound_coeff(&self, index: usize) -> Rep3PrimeFieldShare<F> {
@@ -258,15 +335,47 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         &self.coeffs[self.chunk_range.0..self.chunk_range.1]
     }
 
+    pub fn bound_coeffs(&self) -> &[Rep3PrimeFieldShare<F>] {
+        if self.is_bound() {
+            &self.bound_coeffs
+        } else {
+            &self.coeffs[self.chunk_range.0..self.chunk_range.1]
+        }
+    }
+
     pub fn zero() -> Self {
         Rep3DensePolynomial {
             num_vars: 0,
             len: 1,
+            full_len: 1,
             chunk_range: (0, 1),
             coeffs: Arc::new(vec![Rep3PrimeFieldShare::zero()]),
             bound_coeffs: vec![],
             binding_scratch_space: None,
+            global_chunk_range: None,
         }
+    }
+
+    pub fn poly_shard_for_worker(
+        poly: &Rep3DensePolynomial<F>,
+        shard_nv: usize,
+        worker_idx: usize,
+    ) -> Rep3MultilinearPolynomial<F> {
+        assert!(shard_nv <= poly.get_num_vars());
+        if poly.get_num_vars() == shard_nv {
+            return poly.clone().into();
+        }
+
+        assert!(!poly.is_bound());
+        let chunk_size = 1 << shard_nv;
+
+        let mut poly = poly.clone();
+        let offset = worker_idx * chunk_size;
+        poly.chunk_range = (offset, offset + chunk_size);
+        poly.len = chunk_size;
+        poly.num_vars = chunk_size.log_2();
+
+        Rep3MultilinearPolynomial::shared(poly)
     }
 
     pub fn split_poly(
@@ -466,67 +575,67 @@ impl<F: JoltField> Index<usize> for Rep3DensePolynomial<F> {
     type Output = Rep3PrimeFieldShare<F>;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.coeffs[self.chunk_range.0 + index]
+        &self.coeffs[index]
     }
 }
 
-// Implement Index for Range<usize> to support [1..3]
-impl<F: JoltField> Index<std::ops::Range<usize>> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for Range<usize> to support [1..3]
+// impl<F: JoltField> Index<std::ops::Range<usize>> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, index: std::ops::Range<usize>) -> &Self::Output {
-        assert!(index.end <= self.chunk_range.1);
-        &self.coeffs[self.chunk_range.0 + index.start..self.chunk_range.0 + index.end]
-    }
-}
+//     fn index(&self, index: std::ops::Range<usize>) -> &Self::Output {
+//         assert!(index.end <= self.chunk_range.1);
+//         &self.coeffs[self.chunk_range.0 + index.start..self.chunk_range.0 + index.end]
+//     }
+// }
 
-// Implement Index for RangeFrom<usize> to support [1..]
-impl<F: JoltField> Index<std::ops::RangeFrom<usize>> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for RangeFrom<usize> to support [1..]
+// impl<F: JoltField> Index<std::ops::RangeFrom<usize>> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, index: std::ops::RangeFrom<usize>) -> &Self::Output {
-        &self.coeffs[self.chunk_range.0 + index.start..self.chunk_range.1]
-    }
-}
+//     fn index(&self, index: std::ops::RangeFrom<usize>) -> &Self::Output {
+//         &self.coeffs[self.chunk_range.0 + index.start..self.chunk_range.1]
+//     }
+// }
 
-// Implement Index for RangeTo<usize> to support [..3]
-impl<F: JoltField> Index<std::ops::RangeTo<usize>> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for RangeTo<usize> to support [..3]
+// impl<F: JoltField> Index<std::ops::RangeTo<usize>> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, index: std::ops::RangeTo<usize>) -> &Self::Output {
-        assert!(index.end <= self.chunk_range.1);
-        &self.coeffs[self.chunk_range.0..self.chunk_range.0 + index.end]
-    }
-}
+//     fn index(&self, index: std::ops::RangeTo<usize>) -> &Self::Output {
+//         assert!(index.end <= self.chunk_range.1);
+//         &self.coeffs[self.chunk_range.0..self.chunk_range.0 + index.end]
+//     }
+// }
 
-// Implement Index for RangeFull to support [..]
-impl<F: JoltField> Index<std::ops::RangeFull> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for RangeFull to support [..]
+// impl<F: JoltField> Index<std::ops::RangeFull> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
-        &self.coeffs[self.chunk_range.0..self.chunk_range.1]
-    }
-}
+//     fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
+//         &self.coeffs[self.chunk_range.0..self.chunk_range.1]
+//     }
+// }
 
-// Implement Index for RangeInclusive<usize> to support [1..=3]
-impl<F: JoltField> Index<std::ops::RangeInclusive<usize>> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for RangeInclusive<usize> to support [1..=3]
+// impl<F: JoltField> Index<std::ops::RangeInclusive<usize>> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, index: std::ops::RangeInclusive<usize>) -> &Self::Output {
-        assert!(*index.end() <= self.chunk_range.1);
-        &self.coeffs[self.chunk_range.0 + *index.start()..=self.chunk_range.0 + *index.end()]
-    }
-}
+//     fn index(&self, index: std::ops::RangeInclusive<usize>) -> &Self::Output {
+//         assert!(*index.end() <= self.chunk_range.1);
+//         &self.coeffs[self.chunk_range.0 + *index.start()..=self.chunk_range.0 + *index.end()]
+//     }
+// }
 
-// Implement Index for RangeToInclusive<usize> to support [..=3]
-impl<F: JoltField> Index<std::ops::RangeToInclusive<usize>> for Rep3DensePolynomial<F> {
-    type Output = [Rep3PrimeFieldShare<F>];
+// // Implement Index for RangeToInclusive<usize> to support [..=3]
+// impl<F: JoltField> Index<std::ops::RangeToInclusive<usize>> for Rep3DensePolynomial<F> {
+//     type Output = [Rep3PrimeFieldShare<F>];
 
-    fn index(&self, index: std::ops::RangeToInclusive<usize>) -> &Self::Output {
-        assert!(index.end <= self.chunk_range.1);
-        &self.coeffs[self.chunk_range.0..self.chunk_range.0 + index.end]
-    }
-}
+//     fn index(&self, index: std::ops::RangeToInclusive<usize>) -> &Self::Output {
+//         assert!(index.end <= self.chunk_range.1);
+//         &self.coeffs[self.chunk_range.0..self.chunk_range.0 + index.end]
+//     }
+// }
 
 pub fn combine_poly_shares_rep3<F: JoltField>(
     poly_shares: Vec<Rep3DensePolynomial<F>>,

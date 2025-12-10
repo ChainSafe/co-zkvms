@@ -1201,14 +1201,14 @@ dependencies = [
  "bincode",
  "clap",
  "color-eyre",
- "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "common 0.2.0",
  "enum_dispatch",
  "eyre",
  "icicle-bn254",
  "icicle-core",
  "icicle-runtime",
  "itertools 0.12.1",
- "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "jolt-core 0.1.0",
  "mpc-core",
  "mpc-net",
  "num-bigint 0.4.6",
@@ -1228,7 +1228,7 @@ dependencies = [
  "strum_macros 0.26.4",
  "tokio",
  "toml 0.9.5",
- "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "tracer 0.2.0",
  "tracing",
  "tracing-chrome",
  "tracing-forest",
@@ -1348,7 +1348,6 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "ark-serialize 0.5.0",
  "serde",
@@ -3008,7 +3007,6 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3022,7 +3020,7 @@ dependencies = [
  "bincode",
  "bytemuck",
  "clap",
- "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "common 0.2.0",
  "dirs",
  "enum_dispatch",
  "eyre",
@@ -3056,7 +3054,7 @@ dependencies = [
  "target-lexicon",
  "thiserror 1.0.69",
  "tokio",
- "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "tracer 0.2.0",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber 0.3.19",
@@ -3123,11 +3121,11 @@ source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc8
 dependencies = [
  "ark-bn254",
  "ark-ec",
- "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
- "jolt-core 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "common 0.2.0",
+ "jolt-core 0.1.0",
  "jolt-sdk-macros 0.1.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
  "postcard",
- "tracer 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "tracer 0.2.0",
 ]
 
 [[package]]
@@ -3149,7 +3147,7 @@ name = "jolt-sdk-macros"
 version = "0.1.0"
 source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
- "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "common 0.2.0",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -6175,10 +6173,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 [[package]]
 name = "tracer"
 version = "0.2.0"
-source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "clap",
- "common 0.2.0 (git+https://github.com/nulltea/jolt.git?branch=co-jolt)",
+ "common 0.2.0",
  "fnv",
  "object",
  "tracing",

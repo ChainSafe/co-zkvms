@@ -98,7 +98,7 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
+            Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let commitment =
                         <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
@@ -111,6 +111,17 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
                 poly: poly.clone().into(),
             }),
         }
+    }
+
+    fn distributed_commit_rep3(
+        poly: &Rep3MultilinearPolynomial<F>,
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> MaybeShared<Self::Commitment>
+    where
+        F: JoltField,
+    {
+        Self::commit_rep3(poly, setup, commit_to_public)
     }
 
     fn batch_commit_rep3<U>(
@@ -134,6 +145,10 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
             .collect::<Vec<_>>();
 
         commitments
+    }
+
+    fn concat_commitments(_a: &Self::Commitment, _b: &Self::Commitment) -> Self::Commitment {
+        todo!()
     }
 }
 

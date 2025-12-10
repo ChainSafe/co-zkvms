@@ -5,7 +5,7 @@ use crate::{
         read_write_memory::coordinator::Rep3ReadWriteMemoryCoordinator, witness::JoltWitnessMeta,
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
-    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator},
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorCoordinator},
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     utils::transcript::TranscriptExt,
 };
@@ -45,7 +45,12 @@ where
         UniformSpartanKey<C, <Self::Constraints as R1CSConstraints<C, F>>::Inputs, F>,
         JoltWitnessMeta,
     )> {
-        let meta = network.receive_response::<JoltWitnessMeta>(PartyID::ID0, 0)?;
+        let metas = network.receive_response_from_workers::<JoltWitnessMeta>(PartyID::ID0)?;
+        let meta = JoltWitnessMeta {
+            padded_trace_length: metas[0].padded_trace_length,
+            read_write_memory_size: metas[0].read_write_memory_size,
+            memory_layout: metas[0].memory_layout.clone(),
+        };
         let r1cs_builder = Self::Constraints::construct_constraints(
             meta.padded_trace_length.next_power_of_two(),
             meta.memory_layout.input_start,
@@ -95,6 +100,7 @@ where
         // F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
+        let mut opening_accumulator = Rep3OpeningAccumulatorCoordinator::new();
         // Self::fiat_shamir_preamble(
         //     &mut transcript,
         //     &program_io,
@@ -105,11 +111,11 @@ where
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
         transcript.append_scalar(&spartan_key.vk_digest);
-
         jolt_commitments
             .read_write_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
+
         jolt_commitments
             .init_final_values()
             .iter()
@@ -123,6 +129,7 @@ where
             &preprocessing.bytecode,
             meta.padded_trace_length,
             preprocessing.bytecode.v_init_final[0].len(),
+            &mut opening_accumulator,
             &mut transcript,
             network,
         )?;
@@ -133,6 +140,7 @@ where
             trace_length,
             &preprocessing.instruction_lookups,
             network,
+            &mut opening_accumulator,
             &mut transcript,
         )?;
 
@@ -140,16 +148,20 @@ where
             meta.padded_trace_length,
             meta.read_write_memory_size,
             &preprocessing.read_write_memory,
+            &mut opening_accumulator,
             &mut transcript,
             network,
         )?;
 
-        let r1cs_proof =
-            UniformSpartanProof::prove_rep3::<PCS>(&spartan_key, &mut transcript, network)
-                .expect("r1cs proof failed");
+        let r1cs_proof = UniformSpartanProof::prove_rep3::<PCS>(
+            &spartan_key,
+            &mut opening_accumulator,
+            &mut transcript,
+            network,
+        )
+        .expect("r1cs proof failed");
 
-        let opening_proof =
-            Rep3ProverOpeningAccumulator::<F>::reduce_and_prove(&mut transcript, network)?;
+        let opening_proof = opening_accumulator.reduce_and_prove(&mut transcript, network)?;
 
         let jolt_proof = JoltProof {
             bytecode: bytecode_proof,

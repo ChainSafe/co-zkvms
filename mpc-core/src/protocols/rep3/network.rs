@@ -8,14 +8,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
-use mpc_net::channel::ChannelHandle;
-use std::collections::BTreeMap;
-use std::ops::Range;
-use std::sync::{Arc, OnceLock, mpsc};
-use std::{iter, thread};
+use std::iter;
+use std::sync::{Arc, OnceLock};
 
 use itertools::Itertools;
-use mpc_net::mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker};
+use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
@@ -478,8 +475,8 @@ pub struct IoContextPool<Network: Rep3NetworkWorker> {
 impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     pub fn init(network: Network, num_forks: u32) -> eyre::Result<Self> {
         let worker_id = network.worker_idx();
-        let num_workers = 1 << network.log_num_workers_per_party();
-        let mut main = IoContext::init(network)?;
+        let num_workers = 1 << network.log_num_workers();
+        let main = IoContext::init(network)?;
 
         let forks = iter::repeat_with(|| main.fork())
             .take(num_forks as usize)
@@ -505,12 +502,12 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         self.main.fork().context("while forking io context")
     }
 
-    pub fn log_num_workers_per_party(&self) -> usize {
-        self.main.network.log_num_workers_per_party()
+    pub fn log_num_workers(&self) -> usize {
+        self.main.network.log_num_workers()
     }
 
     pub fn num_workers(&self) -> usize {
-        1 << self.log_num_workers_per_party()
+        1 << self.log_num_workers()
     }
 
     pub fn party_id(&self) -> PartyID {

@@ -1,9 +1,6 @@
 #[cfg(feature = "debug")]
 mod debug;
 
-#[cfg(feature = "debug")]
-use debug::*;
-
 use ark_std::test_rng;
 use clap::Parser;
 use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
@@ -19,23 +16,22 @@ use co_jolt::{
             Jolt, JoltTraceStep,
         },
     },
-    poly::commitment::mock::MockCommitScheme,
     utils::transcript::KeccakTranscript,
 };
 use color_eyre::{
     eyre::{eyre, Context},
     Result,
 };
-use itertools::Itertools;
-use jolt_core::jolt::vm::JoltProverPreprocessing;
+use itertools::{izip, Itertools};
+use jolt_core::jolt::vm::JoltVerifierPreprocessing;
 
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
-    mpc_star::MpcStarNetWorker,
+    topology::MpcStarNetWorker,
 };
 use mpc_net::{
-    mpc_star::MpcStarNetCoordinator,
     rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator},
+    topology::MpcStarNetCoordinator,
 };
 
 use std::path::{Path, PathBuf};
@@ -59,15 +55,6 @@ pub struct Args {
     /// The config file path
     #[clap(short, long, value_name = "FILE")]
     pub config_file: PathBuf,
-
-    #[arg(
-        short,
-        long,
-        value_name = "SOLVE_WITNESS",
-        env = "SOLVE_WITNESS",
-        default_value = "false"
-    )]
-    pub solve_witness: bool,
 
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
     pub debug: bool,
@@ -116,7 +103,7 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -143,7 +130,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) -> Result<()> {
+pub fn run_party(args: Args, config: NetworkConfig, program: host::Program) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
 
     let my_id = config.my_id;
@@ -176,11 +163,10 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     // let program_io: Rep3ProgramIOInput = network.receive_request()?;
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
-    tracing::info!("trace len: {}", trace.len());
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    let preprocessing = RV32IJoltVM::prover_preprocess(
+    let preprocessing = RV32IJoltVM::verifier_preprocess(
         bytecode,
         program_io.memory_layout,
         memory_init,
@@ -226,17 +212,11 @@ pub fn run_coordinator(
     }
 
     let num_inputs = trace.len();
-    if args.solve_witness {
-        tracing::info!("Witness solving enabled");
-        unimplemented!();
-    } else {
-        tracing::warn!("Witness solving disabled");
-    }
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    let preprocessing: JoltProverPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
-        RV32IJoltVM::prover_preprocess(
+    let preprocessing: JoltVerifierPreprocessing<C, F, CommitmentScheme, KeccakTranscript> =
+        RV32IJoltVM::verifier_preprocess(
             bytecode,
             program_io.memory_layout,
             memory_init,
@@ -264,22 +244,18 @@ pub fn run_coordinator(
     let (program_io_shares, trace_shares) =
         program.generate_trace_shares::<F, _>(&inputs, &mut rng);
 
-    let mut network = Rep3QuicNetCoordinator::new(
-        config.extend_with_workers(args.num_workers_per_party),
-        args.num_workers_per_party.log_2(),
-    )
-    .unwrap();
-    network.trim_subnets(1).unwrap();
-    network.send_requests_blocking(
-        program_io_shares
-            .into_iter()
-            .zip(trace_shares)
-            .map(|s| bincode::serialize(&s))
-            .collect::<bincode::Result<Vec<_>>>()
-            .context("while serializing trace shares")?,
-    )?;
+    let mut network =
+        Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
+    // network.trim_subnets(1).unwrap();
+    let worker_shares = izip!(program_io_shares, trace_shares)
+        .map(|s| bincode::serialize(&s))
+        .cycle()
+        .take(3 * args.num_workers_per_party)
+        .collect::<bincode::Result<Vec<_>>>()
+        .context("while serializing trace shares")?;
+    network.send_requests_blocking(worker_shares)?;
 
-    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing.shared, &mut network)?;
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
 
     network.log_connection_stats(Some("IO witness: "));
     network.reset_stats();
@@ -288,12 +264,14 @@ pub fn run_coordinator(
         meta,
         // &program_io,
         &spartan_key,
-        &preprocessing.shared,
+        &preprocessing,
         &mut network,
     )?;
 
-    RV32IJoltVM::verify(preprocessing.shared, proof, commitments, program_io)
+    RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
         .context("while verifying Lasso (rep3) proof")?;
+
+    tracing::info!("VERIFIED!");
 
     network.log_connection_stats(None);
 

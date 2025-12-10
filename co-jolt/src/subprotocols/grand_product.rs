@@ -1,11 +1,12 @@
+use eyre::Context;
+use jolt_core::{
+    poly::commitment::commitment_scheme::CommitmentScheme,
+    subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
+    utils::thread::drop_in_background_thread,
+};
 use jolt_core::{
     poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
-};
-use jolt_core::{
-    poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
-    subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
-    utils::thread::drop_in_background_thread,
 };
 use mpc_core::protocols::{
     additive,
@@ -13,20 +14,14 @@ use mpc_core::protocols::{
 };
 use mpc_core::protocols::{
     additive::AdditiveShare,
-    rep3::{
-        self,
-        network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
-    },
+    rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
 };
 
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use crate::{field::JoltField, poly::split_eq_poly::DistributedSplitEqPolynomial};
 use crate::{
-    poly::{
-        dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
-        opening_proof::Rep3ProverOpeningAccumulator,
-    },
+    poly::dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
     subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
 };
 
@@ -38,10 +33,12 @@ where
     ProofTranscript: Transcript,
 {
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-    fn construct(num_layers: usize) -> Self;
+    fn construct(num_layers: usize, batch_size: usize) -> Self;
 
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
+
+    fn is_worker_symmetric(&self) -> bool;
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
@@ -50,34 +47,50 @@ where
         &'_ self,
     ) -> impl Iterator<Item = &'_ dyn Rep3BatchedGrandProductLayer<F, ProofTranscript, Network>>;
 
+    fn receive_hashes(network: &mut Network) -> eyre::Result<Vec<F>> {
+        Ok(network
+            .receive_responses_from_subnets::<Vec<AdditiveShare<F>>>()
+            .context("while receiving hashes")?
+            .into_iter()
+            .flat_map(additive::combine_additive_vec)
+            .collect())
+    }
+
     /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn cooridinate_prove_grand_product(
         &self,
+        claimed_outputs: Vec<F>,
         transcript: &mut ProofTranscript,
         network: &mut Network,
-    ) -> eyre::Result<BatchedGrandProductProof<PCS, ProofTranscript>> {
+    ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
         // a single claim.
-        let outputs = additive::combine_additive_vec::<F>(network.receive_responses()?);
-        transcript.append_scalars(&outputs);
-        let output_mle = DensePolynomial::new_padded(outputs);
-        let mut r: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
-        let mut claim = output_mle.evaluate(&r);
-
-        network.broadcast_request((r.clone(), claim))?;
+        transcript.append_scalars(&claimed_outputs);
+        let output_mle = DensePolynomial::new_padded(claimed_outputs);
+        let mut r_grand_product: Vec<F> = transcript.challenge_vector(output_mle.get_num_vars());
+        let mut claim = output_mle.evaluate(&r_grand_product);
+        network.broadcast_request(r_grand_product.clone())?;
 
         for layer in self.layers() {
-            proof_layers
-                .push(layer.coordinate_prove_layer(&mut claim, &mut r, transcript, network)?);
+            proof_layers.push(layer.coordinate_prove_layer(
+                &mut claim,
+                &mut r_grand_product,
+                self.is_worker_symmetric(),
+                transcript,
+                network,
+            )?);
         }
 
-        Ok(BatchedGrandProductProof {
-            gkr_layers: proof_layers,
-            quark_proof: None,
-        })
+        Ok((
+            BatchedGrandProductProof {
+                gkr_layers: proof_layers,
+                quark_proof: None,
+            },
+            r_grand_product,
+        ))
     }
 }
 
@@ -91,13 +104,20 @@ where
     type Leaves;
 
     /// Constructs the grand product circuit(s) from `leaves` with the default configuration
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self>;
+    fn construct(
+        leaves: Self::Leaves,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<(Self, usize)>;
+
+    fn batch_size_minus_delta(&self) -> usize;
+
+    fn is_worker_symmetric(&self) -> bool;
 
     /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
 
     /// The claimed outputs of the grand products.
-    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>>;
+    fn claimed_outputs(&self) -> Option<Vec<AdditiveShare<F>>>;
 
     /// Returns an iterator over the layers of this batched grand product circuit.
     /// Each layer is mutable so that its polynomials can be bound over the course
@@ -110,20 +130,14 @@ where
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product_worker(
         &mut self,
-        _opening_accumulator: Option<&mut Rep3ProverOpeningAccumulator<F>>,
-        _setup: Option<&PCS::Setup>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<Vec<F>> {
-        let mut proof_layers = Vec::with_capacity(self.num_layers());
-
-        // Evaluate the MLE of the output layer at a random point to reduce the outputs to
-        // a single claim.
-        let outputs = self.claimed_outputs();
-        io_ctx.network().send_response(outputs)?;
-        let (mut r, claim): (Vec<F>, F) = io_ctx.network().receive_request()?;
-        let mut claim = additive::promote_to_trivial_share(claim, io_ctx.network().get_id());
+        let mut r = io_ctx.network().receive_request()?;
+        let mut eq_chunk_size = self.batch_size_minus_delta();
+        let worker_symmetric = self.is_worker_symmetric();
         for layer in self.layers() {
-            proof_layers.push(layer.prove_layer(&mut claim, &mut r, io_ctx));
+            layer.prove_layer(&mut r, eq_chunk_size, worker_symmetric, io_ctx)?;
+            eq_chunk_size *= 2;
         }
 
         Ok(r)
@@ -142,13 +156,20 @@ where
         &self,
         claim: &mut F,
         r_grand_product: &mut Vec<F>,
+        worker_symmetric: bool,
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<BatchedGrandProductLayerProof<F, ProofTranscript>> {
-        let num_rounds = network.receive_response::<usize>(rep3::PartyID::ID0, 0)?;
+        let num_rounds = r_grand_product.len();
 
-        let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
-            self.coordinate_prove_sumcheck(num_rounds, transcript, network)?;
+        let (sumcheck_proof, r_sumcheck, sumcheck_claims) = self.coordinate_prove_sumcheck(
+            claim,
+            r_grand_product,
+            num_rounds,
+            worker_symmetric,
+            transcript,
+            network,
+        )?;
 
         let (left_claim, right_claim) = sumcheck_claims;
         transcript.append_scalar(&left_claim);
@@ -161,9 +182,10 @@ where
 
         // produce a random challenge to condense two claims into a single claim
         let r_layer: F = transcript.challenge_scalar();
-        network.broadcast_request(r_layer)?;
 
         *claim = left_claim + r_layer * (right_claim - left_claim);
+
+        network.broadcast_request(r_layer)?;
         r_grand_product.push(r_layer);
 
         Ok(BatchedGrandProductLayerProof {
@@ -185,21 +207,21 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
     )]
     fn prove_layer(
         &mut self,
-        claim: &mut AdditiveShare<F>,
         r_grand_product: &mut Vec<F>,
+        eq_chunk_size: usize,
+        worker_symmetric: bool,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<()> {
-        let mut eq_poly = SplitEqPolynomial::new(r_grand_product);
+        let mut eq_poly = DistributedSplitEqPolynomial::new(
+            &r_grand_product,
+            io_ctx.log_num_workers(),
+            io_ctx.worker_idx(),
+            eq_chunk_size,
+        );
 
-        if io_ctx.party_id() == rep3::PartyID::ID0 {
-            io_ctx.network().send_response(eq_poly.get_num_vars())?;
-        }
-
-        let (r_sumcheck, sumcheck_claims) = self.prove_sumcheck(claim, &mut eq_poly, io_ctx)?;
+        let r_sumcheck = self.prove_sumcheck(&mut eq_poly, worker_symmetric, io_ctx)?;
 
         drop_in_background_thread(eq_poly);
-
-        let (left_claim, right_claim) = sumcheck_claims;
 
         r_sumcheck
             .into_par_iter()
@@ -208,9 +230,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
 
         // produce a random challenge to condense two claims into a single claim
         let r_layer = io_ctx.network().receive_request()?;
-        *claim = rep3::arithmetic::add_mul_public(left_claim, right_claim - left_claim, r_layer)
-            .into_additive();
-
         r_grand_product.push(r_layer);
 
         Ok(())
@@ -219,6 +238,8 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
 
 pub struct Rep3BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<Rep3DenseInterleavedPolynomial<F>>,
+    batch_size_minus_delta: usize,
+    is_worker_symmetric: bool,
 }
 
 impl<F: JoltField, PCS, ProofTranscript, Network>
@@ -229,17 +250,28 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkWorker,
 {
-    type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize);
+    type Leaves = (Vec<Rep3PrimeFieldShare<F>>, usize, usize);
 
     #[tracing::instrument(
         skip_all,
         name = "Rep3BatchedDenseGrandProduct::construct",
         level = "trace"
     )]
-    fn construct(leaves: Self::Leaves, io_ctx: &mut IoContextPool<Network>) -> eyre::Result<Self> {
-        let (leaves, batch_size) = leaves;
+    fn construct(
+        leaves: Self::Leaves,
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<(Self, usize)> {
+        let (leaves, batch_size, batch_size_full) = leaves;
         assert!(leaves.len() % batch_size == 0);
         assert!((leaves.len() / batch_size).is_power_of_two());
+
+        // Number of chunks allocated to each worker except the last one, need to calculate equal poly chunk offset
+        let batch_size_minus_delta =
+            if io_ctx.log_num_workers() > 0 && io_ctx.worker_idx() == io_ctx.num_workers() - 1 {
+                (batch_size_full - batch_size) / (io_ctx.num_workers() - 1)
+            } else {
+                batch_size
+            };
 
         let num_layers = (leaves.len() / batch_size).log_2();
         let mut layers: Vec<Rep3DenseInterleavedPolynomial<F>> = Vec::with_capacity(num_layers);
@@ -251,7 +283,22 @@ where
             layers.push(new_layer);
         }
 
-        Ok(Self { layers })
+        Ok((
+            Self {
+                layers,
+                batch_size_minus_delta,
+                is_worker_symmetric: batch_size_full.is_power_of_two(),
+            },
+            batch_size_full,
+        ))
+    }
+
+    fn batch_size_minus_delta(&self) -> usize {
+        self.batch_size_minus_delta
+    }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
     }
 
     fn num_layers(&self) -> usize {
@@ -263,12 +310,14 @@ where
         name = "Rep3BatchedDenseGrandProduct::claimed_outputs",
         level = "trace"
     )]
-    fn claimed_outputs(&self) -> Vec<AdditiveShare<F>> {
+    fn claimed_outputs(&self) -> Option<Vec<AdditiveShare<F>>> {
         let last_layer = &self.layers[self.layers.len() - 1];
-        last_layer
-            .par_chunks(2)
-            .map(|chunk| chunk[0] * chunk[1])
-            .collect()
+        Some(
+            last_layer
+                .par_chunks(2)
+                .map(|chunk| chunk[0] * chunk[1])
+                .collect(),
+        )
     }
 
     fn layers(
@@ -288,14 +337,20 @@ where
     ProofTranscript: Transcript,
     Network: Rep3NetworkCoordinator,
 {
-    fn construct(num_layers: usize) -> Self {
+    fn construct(num_layers: usize, batch_size: usize) -> Self {
         Self {
             layers: vec![Rep3DenseInterleavedPolynomial::default(); num_layers],
+            batch_size_minus_delta: 0,
+            is_worker_symmetric: batch_size.is_power_of_two(),
         }
     }
 
     fn num_layers(&self) -> usize {
         self.layers.len()
+    }
+
+    fn is_worker_symmetric(&self) -> bool {
+        self.is_worker_symmetric
     }
 
     fn layers(

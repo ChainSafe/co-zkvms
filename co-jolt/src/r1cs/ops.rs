@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::Rep3MultilinearPolynomial;
@@ -8,6 +9,14 @@ pub use jolt_core::r1cs::ops::*;
 
 pub trait LinearCombinationExt<F: JoltField> {
     fn evaluate_row_rep3_mixed(
+        &self,
+        flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
+        row: usize,
+        party_id: PartyID,
+    ) -> Rep3Value<F>;
+
+    // Special case of `evaluate_row_rep3_mixed` when next step of cross-step constraint is on the boundry between workers
+    fn evaluate_row_rep3_mixed_cross_worker(
         &self,
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
         row: usize,
@@ -29,6 +38,40 @@ impl<F: JoltField> LinearCombinationExt<F> for LC {
                     flattened_polynomials[var_index]
                         .get_coeff(row)
                         .mul_public(F::from_i64(term.1))
+                }
+                Variable::Constant => F::from_i64(term.1).into(),
+            })
+            .sum_for(party_id)
+    }
+
+    fn evaluate_row_rep3_mixed_cross_worker(
+        &self,
+        flattened_polynomials: &[&Rep3MultilinearPolynomial<F>],
+        row: usize,
+        party_id: PartyID,
+    ) -> Rep3Value<F> {
+        self.terms()
+            .iter()
+            .map(|term| match term.0 {
+                Variable::Input(var_index) | Variable::Auxiliary(var_index) => {
+                    let coeff: Rep3Value<F> = match flattened_polynomials[var_index] {
+                        Rep3MultilinearPolynomial::Public(poly) => match poly {
+                            MultilinearPolynomial::U8Scalars(poly) => {
+                                F::from_u8(poly.coeffs[poly.chunk_range().0..][row]).into()
+                            }
+                            MultilinearPolynomial::U32Scalars(poly) => {
+                                F::from_u32(poly.coeffs[poly.chunk_range().0..][row]).into()
+                            }
+                            MultilinearPolynomial::U64Scalars(poly) => {
+                                F::from(poly.coeffs[poly.chunk_range().0..][row]).into()
+                            }
+                            _ => unreachable!("only for r1cs::circuit_flags/bytecode::v_read_write[addr]/bytecode::a_read_write"),
+                        },
+                        Rep3MultilinearPolynomial::Shared(poly) => {
+                            poly.coeffs[poly.shard_local_range().start..][row].into()
+                        }
+                    };
+                    coeff.mul_public(F::from_i64(term.1))
                 }
                 Variable::Constant => F::from_i64(term.1).into(),
             })

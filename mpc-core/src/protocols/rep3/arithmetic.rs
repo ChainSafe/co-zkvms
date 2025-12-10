@@ -3,7 +3,6 @@
 //! This module contains operations with arithmetic shares
 
 use core::panic;
-use mpc_types::protocols::additive::AdditivePrimeFieldShare;
 use num_traits::cast::ToPrimitive;
 
 use ark_ff::PrimeField;
@@ -17,10 +16,7 @@ use crate::protocols::rep3::rngs::Rep3Rand;
 use crate::protocols::rep3::{PartyID, detail, network::Rep3Network};
 use rayon::prelude::*;
 
-use super::{
-    Rep3BigUintShare, Rep3PrimeFieldShare, binary, conversion, network::IoContext,
-    rngs::Rep3CorrelatedRng,
-};
+use super::{Rep3BigUintShare, Rep3PrimeFieldShare, binary, conversion, network::IoContext};
 
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;

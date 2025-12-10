@@ -1,0 +1,27 @@
+my_id = 2
+is_coordinator = false
+worker = 1
+bind_addr = "0.0.0.0:11002"
+key_path = "data/key1_2.der"
+
+[[parties]]
+id = 0
+worker = 1
+dns_name = "localhost:11000"
+cert_path = "data/cert1_0.der"
+
+[[parties]]
+id = 1
+worker = 1
+dns_name = "localhost:11001"
+cert_path = "data/cert1_1.der"
+
+[[parties]]
+id = 2
+worker = 1
+dns_name = "localhost:11002"
+cert_path = "data/cert1_2.der"
+
+[coordinator]
+dns_name = "localhost:20000"
+cert_path = "data/cert_coordinator.der"

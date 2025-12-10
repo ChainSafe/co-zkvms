@@ -25,6 +25,14 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = Kecca
     where
         F: JoltField;
 
+    fn distributed_commit_rep3(
+        poly: &Rep3MultilinearPolynomial<F>,
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> MaybeShared<Self::Commitment>
+    where
+        F: JoltField;
+
     fn batch_commit_rep3<U>(
         polys: &[U],
         setup: &Self::Setup,
@@ -49,4 +57,6 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript = Kecca
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<Self::Commitment>],
     ) -> Self::Commitment;
+
+    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment;
 }

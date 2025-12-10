@@ -1,5 +1,5 @@
 use crate::{
-    channel::{BytesChannel, Channel, PerOpChannelHandle},
+    channel::{BytesChannel, Channel},
     codecs::BincodeCodec,
     rep3::{PartyID, PartyWorkerID},
     MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
@@ -38,7 +38,7 @@ use tokio::{
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::{
-    channel::ChannelHandle, config::NetworkConfig, mpc_star::MpcStarNetWorker,
+    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetWorker,
     MpcNetworkHandlerWrapper, Result,
 };
 
@@ -53,12 +53,11 @@ pub static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 #[derive(Clone)]
 pub struct Rep3QuicMpcNetWorker {
     pub id: PartyWorkerID,
-    // pub chan_next: PerOpChannelHandle,
-    // pub chan_prev: PerOpChannelHandle,
     pub chan_next: ChannelHandle<Bytes, BytesMut>,
     pub chan_prev: ChannelHandle<Bytes, BytesMut>,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
     pub log_num_workers_per_party: usize,
+    pub current_log_num_workers: usize,
     pub net_handler: Arc<MpcNetworkHandlerWrapper>,
     pub config: NetworkConfig,
 
@@ -105,32 +104,6 @@ impl Rep3QuicMpcNetWorker {
                 }
             }
 
-            // let conn_next = connections
-            //     .get(&id.party_id().next_id().into())
-            //     .ok_or(eyre::eyre!("no next connection found"))?;
-
-            // let conn_prev = connections
-            //     .get(&id.party_id().prev_id().into())
-            //     .ok_or(eyre::eyre!("no prev connection found"))?;
-
-            // let chan_next = PerOpChannelHandle::new(
-            //     id,
-            //     conn_next.clone(),
-            //     codec_cfg(),
-            //     RUNTIME.handle().clone(),
-            //     fork_id,
-            //     512,
-            // );
-
-            // let chan_prev = PerOpChannelHandle::new(
-            //     id,
-            //     conn_prev.clone(),
-            //     codec_cfg(),
-            //     RUNTIME.handle().clone(),
-            //     0,
-            //     512,
-            // );
-
             let mut channels = net_handler.get_byte_channels().await?;
             let chan_next = channels
                 .remove(&id.party_id().next_id().into())
@@ -143,6 +116,7 @@ impl Rep3QuicMpcNetWorker {
             }
             let chan_next = ChannelHandle::manage(chan_next);
             let chan_prev = ChannelHandle::manage(chan_prev);
+
             eyre::Ok((net_handler, chan_next, chan_prev, chan_coordinator))
         })?;
         Ok(Self {
@@ -155,6 +129,7 @@ impl Rep3QuicMpcNetWorker {
             chan_prev,
             chan_coordinator,
             log_num_workers_per_party,
+            current_log_num_workers: log_num_workers_per_party,
             config,
             alloc,
             fork_id,
@@ -290,8 +265,8 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         Ok(ret)
     }
 
-    fn log_num_workers_per_party(&self) -> usize {
-        self.log_num_workers_per_party
+    fn log_num_workers(&self) -> usize {
+        self.current_log_num_workers
     }
 
     fn io_stats_total(&self) -> (u64, u64) {
@@ -367,32 +342,6 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                     }
                 }
 
-                // let conn_next = connections
-                //     .get(&id.party_id().next_id().into())
-                //     .ok_or(eyre::eyre!("no next connection found"))?;
-
-                // let conn_prev = connections
-                //     .get(&id.party_id().prev_id().into())
-                //     .ok_or(eyre::eyre!("no prev connection found"))?;
-
-                // let chan_next = PerOpChannelHandle::new(
-                //     id,
-                //     conn_next.clone(),
-                //     codec_cfg(),
-                //     RUNTIME.handle().clone(),
-                //     fork_id,
-                //     512,
-                // );
-
-                // let chan_prev = PerOpChannelHandle::new(
-                //     id,
-                //     conn_prev.clone(),
-                //     codec_cfg(),
-                //     RUNTIME.handle().clone(),
-                //     fork_id,
-                //     512,
-                // );
-
                 let mut channels = net_handler.get_byte_channels().await?;
                 let chan_next = channels
                     .remove(&id.party_id().next_id().into())
@@ -420,6 +369,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             chan_prev,
             chan_coordinator: None,
             log_num_workers_per_party: self.log_num_workers_per_party,
+            current_log_num_workers: self.current_log_num_workers,
             config,
             alloc: self.alloc.clone(),
             fork_id,
@@ -447,6 +397,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             chan_prev: self.chan_prev.clone(),
             chan_coordinator,
             log_num_workers_per_party: self.log_num_workers_per_party,
+            current_log_num_workers: self.current_log_num_workers,
             config: self.config.clone(),
             fork_id: self.alloc.alloc(),
             seq: Arc::new(AtomicU64::new(0)),
@@ -465,6 +416,14 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
 
     fn worker_idx(&self) -> usize {
         self.id.1
+    }
+
+    fn set_log_num_workers(&mut self, log_num_workers: usize) {
+        self.current_log_num_workers = log_num_workers;
+    }
+
+    fn reset_log_num_workers(&mut self) {
+        self.current_log_num_workers = self.log_num_workers_per_party;
     }
 }
 
@@ -532,6 +491,7 @@ impl MpcNetworkHandlerWorker {
                 .add(coordinator.cert.clone())
                 .with_context(|| format!("adding certificate for coordinator to root store"))?;
         }
+
         let crypto = quinn::rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
@@ -709,6 +669,7 @@ impl MpcNetworkHandlerWorker {
                 }
             }
         }
+
         endpoints.push(server_endpoint);
 
         Ok(MpcNetworkHandlerWorker {

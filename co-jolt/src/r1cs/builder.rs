@@ -161,7 +161,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> R1CSBuilder<C, F, I> {
         let a = condition;
         let b = left - right;
         let c = LC::zero();
-        let constraint = Constraint { a, b, c }; // TODO(sragss): Can do better on middle term.
+        let constraint = Constraint { a, b, c };
         self.constraints.push(constraint);
     }
 
@@ -404,6 +404,7 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         let flattened_vars = I::flatten::<C>();
+        let trace_len = jolt_polynomials.instruction_lookups.dim[0].full_len();
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter() {
             let coeffs: Vec<Rep3PrimeFieldShare<F>> = aux_compute
                 .compute_aux_poly_fut::<C, I>(
@@ -413,7 +414,12 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
                 )
                 .fulfill_batched(io_ctx.main(), |r, _| r)?;
             *flattened_vars[*aux_index].get_ref_mut(jolt_polynomials) =
-                Rep3MultilinearPolynomial::from(coeffs);
+                Rep3MultilinearPolynomial::new_shard_shared(
+                    coeffs,
+                    trace_len,
+                    io_ctx.log_num_workers(),
+                    io_ctx.worker_idx(),
+                ); // TODO: mixed polynomial?
         }
 
         Ok(())
@@ -504,17 +510,17 @@ impl<const C: usize, F: JoltField, I: ConstraintInput> CombinedUniformBuilder<C,
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn compute_spartan_Az_Bz_Cz(
+    pub fn compute_spartan_Az_Bz_Cz<Network: Rep3NetworkWorker>(
         &self,
         flattened_polynomials: &[&Rep3MultilinearPolynomial<F>], // N variables of (S steps)
-        party_id: PartyID,
+        io_ctx: &IoContextPool<Network>,
     ) -> Rep3SpartanInterleavedPolynomial<F> {
         Rep3SpartanInterleavedPolynomial::new(
             &self.uniform_builder.constraints,
             &self.offset_equality_constraints,
             flattened_polynomials,
             self.padded_rows_per_step(),
-            party_id,
+            io_ctx,
         )
     }
 }

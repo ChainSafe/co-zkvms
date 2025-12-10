@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_types::protocols::rep3::id::PartyID;
+use serde::{de::DeserializeOwned, Serialize};
 
 pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self)
@@ -15,11 +16,25 @@ pub trait MpcStarNetCoordinator: Sized {
         party_id: PartyID,
         worker_id: usize,
     ) -> Result<T>;
+    fn receive_response_from_workers<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        party_id: PartyID,
+    ) -> Result<Vec<T>>;
     fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: T,
     ) -> Result<()>;
     fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()>;
+    fn send_request_to_workers<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
+        &mut self,
+        party_id: PartyID,
+        data: T,
+    ) -> Result<()>;
+
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: Vec<T>,
     ) -> Result<()>;
@@ -36,16 +51,21 @@ pub trait MpcStarNetCoordinator: Sized {
         data: T,
     ) -> Result<()>;
 
-    fn log_num_workers_per_party(&self) -> usize;
+    fn log_num_workers(&self) -> usize;
+    fn active_num_workers(&self) -> usize;
+
     fn total_bandwidth_used(&self) -> (u64, u64);
+    fn is_distributed(&self) -> bool {
+        self.active_num_workers() > 1
+    }
 
     /// Print the connection stats of the network
     fn log_connection_stats(&self, label: Option<&str>);
     fn reset_stats(&mut self);
 
     fn fork(&mut self) -> Result<Self>;
-    fn extend_with_worker_subnets(&mut self, num_workers: usize) -> Result<()>;
-    fn trim_subnets(&mut self, num_workers: usize) -> Result<()>;
+    fn set_num_workers(&mut self, num_workers: usize);
+    fn reset_num_workers(&mut self);
 }
 
 pub trait MpcStarNetWorker: Sized + Clone {
@@ -55,8 +75,12 @@ pub trait MpcStarNetWorker: Sized + Clone {
     ) -> Result<()>;
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
-    fn log_num_workers_per_party(&self) -> usize;
-    // fn rank(&self) -> usize;
+    fn log_num_workers(&self) -> usize;
+    fn set_log_num_workers(&mut self, log_num_workers: usize);
+    fn reset_log_num_workers(&mut self);
+    fn is_distributed(&self) -> bool {
+        self.log_num_workers() > 0
+    }
 
     fn io_stats_total(&self) -> (u64, u64);
     fn io_stats_per_party(&self) -> BTreeMap<usize, (u64, u64)>;

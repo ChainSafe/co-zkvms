@@ -3,13 +3,16 @@ use color_eyre::eyre;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fmt::Formatter,
-    net::{SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     num::ParseIntError,
     path::PathBuf,
     str::FromStr,
     time::Duration,
 };
+
+use crate::rep3::PartyWorkerID;
 
 /// A network address wrapper.
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
@@ -268,6 +271,7 @@ impl TryFrom<NetworkConfigFile> for NetworkConfig {
             .into_iter()
             .map(NetworkParty::try_from)
             .collect::<Result<Vec<_>, _>>()?;
+
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(std::fs::read(value.key_path)?))
             .clone_key();
         Ok(NetworkConfig {
@@ -321,5 +325,125 @@ impl NetworkConfig {
             return Err(eyre::eyre!("duplicate party ids found"));
         }
         Ok(())
+    }
+
+    pub fn generate_worker_configs(
+        num_workers: usize,
+    ) -> (
+        BTreeMap<PartyWorkerID, NetworkConfigFile>,
+        NetworkConfigFile,
+    ) {
+        let mut parties = vec![
+            NetworkWorkerConfig {
+                id: 0,
+                worker: 0,
+                dns_name: "localhost:10000".parse().unwrap(),
+                cert_path: "data/cert0_0.der".into(),
+            },
+            NetworkWorkerConfig {
+                id: 1,
+                worker: 0,
+                dns_name: "localhost:10001".parse().unwrap(),
+                cert_path: "data/cert0_1.der".into(),
+            },
+            NetworkWorkerConfig {
+                id: 2,
+                worker: 0,
+                dns_name: "localhost:10002".parse().unwrap(),
+                cert_path: "data/cert0_2.der".into(),
+            },
+        ];
+        let coordinator = NetworkCoordinatorConfig {
+            dns_name: "localhost:20000".parse().unwrap(),
+            cert_path: "data/cert_coordinator.der".into(),
+        };
+        let mut workers = BTreeMap::new();
+
+        for worker in 0..num_workers {
+            let worker_port_offset = 1000 * worker as u16;
+
+            // TODO: refactor with inner loop in 0..=2
+            parties[0].worker = worker;
+            parties[0].dns_name.port += worker_port_offset;
+            parties[0].cert_path = format!("data/cert{}_0.der", worker).into();
+
+            parties[1].worker = worker;
+            parties[1].dns_name.port += worker_port_offset;
+            parties[1].cert_path = format!("data/cert{}_1.der", worker).into();
+
+            parties[2].worker = worker;
+            parties[2].dns_name.port += worker_port_offset;
+            parties[2].cert_path = format!("data/cert{}_2.der", worker).into();
+
+            workers.insert(
+                PartyWorkerID::new(0, worker),
+                NetworkConfigFile {
+                    my_id: 0,
+                    worker,
+                    bind_addr: SocketAddr::new(
+                        IpAddr::from_str("0.0.0.0").unwrap(),
+                        10000 + worker_port_offset,
+                    ),
+                    key_path: format!("data/key{}_0.der", worker).into(),
+                    parties: parties.clone(),
+                    coordinator: Some(coordinator.clone()),
+                    is_coordinator: false,
+                    timeout_secs: None,
+                },
+            );
+            workers.insert(
+                PartyWorkerID::new(1, worker),
+                NetworkConfigFile {
+                    my_id: 1,
+                    worker,
+                    bind_addr: SocketAddr::new(
+                        IpAddr::from_str("0.0.0.0").unwrap(),
+                        10001 + worker_port_offset,
+                    ),
+                    key_path: format!("data/key{}_1.der", worker).into(),
+                    parties: parties.clone(),
+                    coordinator: Some(coordinator.clone()),
+                    is_coordinator: false,
+                    timeout_secs: None,
+                },
+            );
+            workers.insert(
+                PartyWorkerID::new(2, worker),
+                NetworkConfigFile {
+                    my_id: 2,
+                    worker,
+                    bind_addr: SocketAddr::new(
+                        IpAddr::from_str("0.0.0.0").unwrap(),
+                        10002 + worker_port_offset,
+                    ),
+                    key_path: format!("data/key{}_2.der", worker).into(),
+                    parties: parties.clone(),
+                    coordinator: Some(coordinator.clone()),
+                    is_coordinator: false,
+                    timeout_secs: None,
+                },
+            );
+        }
+
+        let coordinator_config = NetworkConfigFile {
+            is_coordinator: true,
+            my_id: 0,
+            worker: 0,
+            bind_addr: SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 20000),
+            key_path: format!("data/key_coordinator.der").into(),
+            parties: (0..num_workers)
+                .flat_map(|i| {
+                    workers
+                        .get(&PartyWorkerID::new(0, i))
+                        .unwrap()
+                        .parties
+                        .clone()
+                })
+                .collect(),
+            coordinator: Some(coordinator),
+            timeout_secs: None,
+        };
+
+        (workers, coordinator_config)
     }
 }

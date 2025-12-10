@@ -10,7 +10,7 @@ use std::{
 };
 
 use itertools::{izip, Itertools};
-use jolt_tracer::{RVTraceRow, RV32IM};
+use jolt_tracer::RV32IM;
 use mpc_core::protocols::rep3_ring::{self};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
@@ -187,7 +187,6 @@ impl Program {
         tracer::decode(&elf_contents)
     }
 
-    // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build(DEFAULT_TARGET_DIR);

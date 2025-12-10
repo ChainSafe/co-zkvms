@@ -7,6 +7,7 @@ use ark_poly_commit::multilinear_pc::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::test_rng;
+use itertools::izip;
 use jolt_core::msm::{use_icicle, Icicle, VariableBaseMSM};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::{
@@ -19,7 +20,7 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
 use rand::RngCore;
-use std::{borrow::Borrow, marker::PhantomData};
+use std::{borrow::Borrow, marker::PhantomData, ops::Add};
 
 pub use jolt_core::poly::commitment::commitment_scheme;
 
@@ -110,12 +111,30 @@ where
     where
         Network: Rep3NetworkCoordinator,
     {
-        let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
-            network.receive_responses()?.try_into().unwrap();
+        let proofs = if network.is_distributed() {
+            network
+                .receive_responses_from_subnets::<Vec<E::G1Affine>>()?
+                .into_iter()
+                .map(|shares| {
+                    let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] = shares.try_into().unwrap();
+                    itertools::multizip((pf0, pf1, pf2))
+                        .map(|(a, b, c)| (a + b + c).into_affine())
+                        .collect::<Vec<_>>()
+                })
+                .reduce(|prev, next| {
+                    izip!(prev, next)
+                        .map(|(p, n)| (p + n).into_affine())
+                        .collect()
+                })
+                .unwrap()
+        } else {
+            let [pf0, pf1, pf2]: [Vec<E::G1Affine>; 3] =
+                network.receive_responses()?.try_into().unwrap();
 
-        let proofs = itertools::multizip((pf0, pf1, pf2))
-            .map(|(a, b, c)| (a + b + c).into_affine())
-            .collect::<Vec<_>>();
+            itertools::multizip((pf0, pf1, pf2))
+                .map(|(a, b, c)| (a + b + c).into_affine())
+                .collect::<Vec<_>>()
+        };
 
         Ok(Proof { proofs })
     }
@@ -131,7 +150,7 @@ where
         Network: Rep3NetworkWorker,
     {
         let opening_point_rev = opening_point.iter().copied().rev().collect::<Vec<_>>();
-        let (pf, _) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
+        let (pf, _claim) = open(&setup.ck(), &poly.copy_share_a(), &opening_point_rev);
         network.send_response(pf.proofs)
     }
 
@@ -141,18 +160,35 @@ where
         setup: &Self::Setup,
         commit_to_public: bool,
     ) -> MaybeShared<Self::Commitment> {
+        <PST13<E> as Rep3CommitmentScheme<E::ScalarField, ProofTranscript>>::distributed_commit_rep3(
+            poly,
+            setup,
+            commit_to_public,
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "PST13::distribute_commit_rep3", level = "trace")]
+    fn distributed_commit_rep3(
+        poly: &Rep3MultilinearPolynomial<E::ScalarField>,
+        setup: &Self::Setup,
+        commit_to_public: bool,
+    ) -> MaybeShared<Self::Commitment> {
+        // TODO: avoid `into_distributed_commit_form` by making commit respect shard ranges
         match poly {
-            Rep3MultilinearPolynomial::Public { poly, .. } => {
+            Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
-                    let commitment =
-                        <Self as CommitmentScheme<ProofTranscript>>::commit(poly, setup);
+                    let commitment = <Self as CommitmentScheme<ProofTranscript>>::commit(
+                        &poly.into_distributed_commit_form(),
+                        setup,
+                    );
                     MaybeShared::Public(Some(commitment))
                 } else {
                     MaybeShared::Public(None)
                 }
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
-                let poly_a = MultilinearPolynomial::LargeScalars(poly.copy_share_a());
+                let poly_a =
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form());
                 let commitment =
                     <Self as CommitmentScheme<ProofTranscript>>::commit(&poly_a, setup);
                 MaybeShared::Shared(commitment)
@@ -184,13 +220,15 @@ where
                 .count()
         );
 
-        let shared_polys_a = polys
+        let polys_offseted = polys
             .par_iter()
             .map(|poly| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { .. } => None,
-                Rep3MultilinearPolynomial::Shared(poly) => {
-                    Some(MultilinearPolynomial::LargeScalars(poly.copy_share_a()))
+                Rep3MultilinearPolynomial::Public(poly) => {
+                    Some(poly.into_distributed_commit_form())
                 }
+                Rep3MultilinearPolynomial::Shared(poly) => Some(
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form()),
+                ),
             })
             .collect::<Vec<_>>();
 
@@ -198,16 +236,12 @@ where
             .par_iter()
             .enumerate()
             .map(|(i, poly)| match poly.borrow() {
-                Rep3MultilinearPolynomial::Public { poly, .. } => {
-                    let commitment = if commit_to_public {
-                        MaybeShared::Public(Some(PST13Commitment::default()))
-                    } else {
-                        MaybeShared::Public(None)
-                    };
-                    (poly, commitment)
-                }
+                Rep3MultilinearPolynomial::Public(_) => (
+                    polys_offseted[i].as_ref().unwrap(),
+                    MaybeShared::Public(commit_to_public.then_some(PST13Commitment::default())),
+                ),
                 Rep3MultilinearPolynomial::Shared(_) => (
-                    shared_polys_a[i].as_ref().unwrap(),
+                    polys_offseted[i].as_ref().unwrap(),
                     MaybeShared::Shared(PST13Commitment::default()),
                 ),
             })
@@ -225,6 +259,13 @@ where
             });
 
         shared_commitments
+    }
+
+    fn concat_commitments(a: &Self::Commitment, b: &Self::Commitment) -> Self::Commitment {
+        PST13Commitment {
+            nv: a.nv,
+            g_product: (a.g_product + b.g_product).into_affine(),
+        }
     }
 }
 
@@ -399,11 +440,28 @@ pub struct PST13Commitment<E: Pairing> {
     pub(crate) g_product: E::G1Affine,
 }
 
+// impl<E: Pairing> std::fmt::Debug for PST13Commitment<E> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.write_str(&format!("{:?}", &self.g_product.xy()))
+//     }
+// }
+
 impl<E: Pairing> Default for PST13Commitment<E> {
     fn default() -> Self {
         Self {
             nv: 0,
             g_product: E::G1Affine::zero(),
+        }
+    }
+}
+
+impl<E: Pairing> Add for PST13Commitment<E> {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            nv: self.nv + other.nv,
+            g_product: (self.g_product + other.g_product).into_affine(),
         }
     }
 }
@@ -534,5 +592,35 @@ mod tests {
         let opening = agg_poly.evaluate(&r);
         let mut transcript = ProofTranscript::new(b"test");
         PST13::<E>::verify(&pf, &setup, &mut transcript, &r, &opening, &agg_commitment).unwrap();
+    }
+
+    #[test]
+    fn test_concat_commitments() {
+        let mut rng = test_rng();
+        let setup = PST13::<E>::setup(1 << 4, &mut rng);
+
+        let v1 = vec![F::from(1); 8];
+        let v2 = vec![F::from(2); 8];
+        let mut v1_ = vec![F::from(0); 16];
+        v1_.splice(0..8, v1.clone());
+        let mut v2_ = vec![F::from(0); 16];
+        v2_.splice(8..16, v2.clone());
+        let p1 = MultilinearPolynomial::<F>::from(v1_);
+        let p2 = MultilinearPolynomial::<F>::from(v2_);
+        let p = MultilinearPolynomial::<F>::from([v1, v2].concat());
+
+        let c1 = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p1, &setup);
+        let c2 = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p2, &setup);
+        let c = <PST13<E> as CommitmentScheme<ProofTranscript>>::commit(&p, &setup);
+
+        let c_check = PST13Commitment {
+            nv: c1.nv,
+            g_product: (c1.g_product + c2.g_product).into_affine(),
+        };
+
+        println!("c : {:?}", c);
+        println!("c_check : {:?}", c_check);
+
+        assert_eq!(c_check, c);
     }
 }

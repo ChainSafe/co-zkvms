@@ -1,21 +1,28 @@
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+
+use super::witness::Rep3InstructionLookupPolynomials;
+use crate::field::JoltField;
+use crate::jolt::vm::instruction_lookups::witness::InstructionLookupsPreprocessingExt;
+use crate::jolt::{instruction::Rep3JoltInstructionSet, vm::witness::Rep3JoltPolynomials};
 use crate::{
-    lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
+    lasso::memory_checking::{self, worker::MemoryCheckingProverRep3Worker},
     poly::{
-        commitment::Rep3CommitmentScheme, opening_proof::Rep3ProverOpeningAccumulator,
+        commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorWorker,
         Rep3MultilinearPolynomial, Rep3PolysConversion,
     },
     subprotocols::{
-        grand_product::{Rep3BatchedDenseGrandProduct, Rep3BatchedGrandProductWorker},
+        grand_product::Rep3BatchedDenseGrandProduct,
         sparse_grand_product::Rep3ToggledBatchedGrandProduct,
     },
-    utils::{transcript::Transcript, transpose_flatten, transpose_hashmap},
+    utils::{transcript::Transcript, transpose_flatten, transpose_hashmap, types::Rep3Value},
 };
 use color_eyre::eyre::Result;
 use eyre::Context;
 use itertools::{chain, Itertools};
+use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::{
     jolt::{subtable::JoltSubtableSet, vm::instruction_lookups::InstructionLookupStuff},
-    lasso::memory_checking::NoExogenousOpenings,
+    lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData},
     poly::{
         compact_polynomial::SmallScalar,
         dense_mlpoly::DensePolynomial,
@@ -24,7 +31,7 @@ use jolt_core::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
     },
-    utils::{math::Math, thread::drop_in_background_thread},
+    utils::thread::drop_in_background_thread,
 };
 use mpc_core::protocols::{
     additive,
@@ -38,27 +45,9 @@ use mpc_core::protocols::{
         PartyID,
     },
 };
-use std::{collections::HashMap, iter::once, marker::PhantomData, sync::Arc};
 use tracing::trace_span;
 
-use super::{witness::Rep3InstructionLookupPolynomials, InstructionLookupsPreprocessing};
-use crate::field::JoltField;
-use crate::jolt::{
-    instruction::Rep3JoltInstructionSet,
-    vm::{instruction_lookups::InstructionLookupsProof, witness::Rep3JoltPolynomials},
-};
-
-use rayon::{prelude::*, ThreadPoolBuilder};
-
-use once_cell::sync::Lazy;
-use rayon::ThreadPool;
-pub static CPU_ONLY_POOL: Lazy<ThreadPool> = Lazy::new(|| {
-    ThreadPoolBuilder::new()
-        // .num_threads(16) // tune
-        .thread_name(|i| format!("cpu-only-{}", i))
-        .build()
-        .unwrap()
-});
+use rayon::prelude::*;
 
 pub struct Rep3InstructionLookupsProver<
     const C: usize,
@@ -90,58 +79,66 @@ where
 
     #[tracing::instrument(skip_all, name = "Rep3InstructionLookups::prove")]
     pub fn prove<PCS, ProofTranscript>(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         polynomials: &mut Rep3JoltPolynomials<F>,
-        opening_accumulator: &mut Rep3ProverOpeningAccumulator<F>,
-        pcs_setup: &PCS::Setup,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<()>
     where
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
     {
-        let trace_length = polynomials.instruction_lookups.dim[0].len();
         let r_eq = io_ctx.network().receive_request::<Vec<F>>()?;
+        let num_rounds = r_eq.len() - io_ctx.log_num_workers();
 
-        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq);
-        let eq_poly = MultilinearPolynomial::from(eq_evals);
-        let num_rounds = trace_length.log_2();
+        let worker_idx = io_ctx.worker_idx();
+        let eq_poly = MultilinearPolynomial::from(EqPolynomial::evals_worker(
+            &r_eq,
+            io_ctx.log_num_workers(),
+            worker_idx,
+        ));
 
-        let (r_primary_sumchecks, flag_evals, E_evals, outputs_eval) =
-            Self::prove_primary_sumcheck(
-                preprocessing,
-                num_rounds,
-                eq_poly,
-                polynomials.instruction_lookups.instruction_flags.clone(),
-                polynomials.instruction_lookups.E_polys.clone(),
-                polynomials.instruction_lookups.lookup_outputs.clone(),
-                io_ctx,
-            )?;
+        let r_primary_sumchecks = Self::prove_primary_sumcheck(
+            preprocessing,
+            num_rounds,
+            eq_poly,
+            &mut polynomials.instruction_lookups.instruction_flags,
+            &mut polynomials.instruction_lookups.E_polys,
+            &mut polynomials.instruction_lookups.lookup_outputs,
+            io_ctx,
+        )?;
 
         let r_primary_sumcheck = r_primary_sumchecks.into_iter().rev().collect::<Vec<_>>();
 
-        let primary_sumcheck_polys = polynomials
-            .instruction_lookups
-            .E_polys
-            .iter()
-            .chain(polynomials.instruction_lookups.instruction_flags.iter())
-            .chain([&polynomials.instruction_lookups.lookup_outputs].into_iter())
-            .collect::<Vec<_>>();
-
-        let primary_sumcheck_openings: Vec<_> =
-            chain![E_evals, flag_evals, once(outputs_eval)].collect();
+        let primary_sumcheck_polys = chain![
+            &polynomials.instruction_lookups.E_polys,
+            &polynomials.instruction_lookups.instruction_flags,
+            [&polynomials.instruction_lookups.lookup_outputs]
+        ]
+        .collect::<Vec<_>>();
 
         let eq_primary_sumcheck = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         opening_accumulator.append(
             &primary_sumcheck_polys,
             eq_primary_sumcheck,
             r_primary_sumcheck,
-            &primary_sumcheck_openings,
             io_ctx.main(),
         )?;
 
+        // remove polynomials that worker won't use anymore
+        polynomials.instruction_lookups.E_polys =
+            std::mem::take(&mut polynomials.instruction_lookups.E_polys)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, p)| {
+                    preprocessing
+                        .read_memories_worker
+                        .contains(&i)
+                        .then_some(p.to_full_poly())
+                })
+                .collect();
+
         <Self as MemoryCheckingProverRep3Worker<F, PCS, ProofTranscript, Network>>::prove_memory_checking(
-            pcs_setup,
             preprocessing,
             &polynomials.instruction_lookups,
             &polynomials,
@@ -157,16 +154,6 @@ where
         drop_in_background_thread(std::mem::take(
             &mut polynomials.instruction_lookups.final_cts,
         ));
-        polynomials
-            .instruction_lookups
-            .instruction_flags
-            .par_iter_mut()
-            .for_each(|poly| match poly {
-                Rep3MultilinearPolynomial::Public { trivial_share, .. } => {
-                    drop_in_background_thread(trivial_share.take());
-                }
-                _ => unreachable!(),
-            });
 
         Ok(())
     }
@@ -174,25 +161,18 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         num_rounds: usize,
         eq_poly: MultilinearPolynomial<F>,
-        instruction_flags: Vec<Rep3MultilinearPolynomial<F>>,
-        E_polys: Vec<Rep3MultilinearPolynomial<F>>,
-        lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
+        instruction_flags: &mut [Rep3MultilinearPolynomial<F>],
+        E_polys: &mut [Rep3MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
-    ) -> eyre::Result<(
-        Vec<F>,
-        Vec<AdditiveShare<F>>,
-        Vec<AdditiveShare<F>>,
-        AdditiveShare<F>,
-    )> {
-        let log_num_workers = io_ctx.log_num_workers_per_party();
-
-        let (r_primary_sumchecks, _eq_evals, flag_evals, E_evals, outputs_eval) =
+    ) -> eyre::Result<Vec<F>> {
+        let (mut r_primary_sumchecks, eq_evals, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck_inner(
                 preprocessing,
-                num_rounds - log_num_workers,
+                num_rounds,
                 eq_poly,
                 E_polys,
                 instruction_flags,
@@ -200,39 +180,41 @@ where
                 io_ctx,
             )?;
 
-        let party_id = io_ctx.party_id();
-        let span = tracing::info_span!("prove_primary_sumcheck_remaining");
-        let _span_enter = span.enter();
-        if log_num_workers > 0 {
-            // Remaining sumcheck rounds
-            // Self::remaining_primary_sumcheck()
-            todo!()
-        } else {
-            let flag_evals = flag_evals
-                .into_par_iter()
-                .map(|eval| additive::promote_to_trivial_share(eval, party_id))
-                .collect();
-            let E_evals = E_evals
-                .into_par_iter()
-                .map(|eval| eval.into_additive())
-                .collect();
-            Ok((
-                r_primary_sumchecks,
+        let E_evals: Vec<_> = E_evals
+            .into_par_iter()
+            .map(|eval| eval.into_additive())
+            .collect();
+
+        if io_ctx.network().is_distributed() {
+            // Coordinator runs remaining sumcheck rounds
+            io_ctx.network().send_response((
+                eq_evals,
                 flag_evals,
                 E_evals,
                 outputs_eval.into_additive(),
-            ))
+            ))?;
+
+            let r_final: Vec<F> = io_ctx.network().receive_request()?;
+
+            r_primary_sumchecks.extend(r_final);
+            Ok(r_primary_sumchecks)
+        } else {
+            io_ctx
+                .network()
+                .send_response((flag_evals, E_evals, outputs_eval.into_additive()))?;
+
+            Ok(r_primary_sumchecks)
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner", fields(worker_id = io_ctx.network().worker_idx()))]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck_inner")]
     fn prove_primary_sumcheck_inner(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         num_rounds: usize,
         mut eq_poly: MultilinearPolynomial<F>,
-        mut E_polys: Vec<Rep3MultilinearPolynomial<F>>,
-        mut flag_polys: Vec<Rep3MultilinearPolynomial<F>>,
-        mut lookup_outputs_poly: Rep3MultilinearPolynomial<F>,
+        E_polys: &mut [Rep3MultilinearPolynomial<F>],
+        flag_polys: &mut [Rep3MultilinearPolynomial<F>],
+        lookup_outputs_poly: &mut Rep3MultilinearPolynomial<F>,
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(
         Vec<F>,
@@ -259,7 +241,7 @@ where
                     preprocessing,
                     &eq_poly,
                     &flag_polys,
-                    &mut E_polys,
+                    E_polys,
                     &lookup_outputs_poly,
                     io_ctx,
                 )?;
@@ -279,18 +261,16 @@ where
             // Bind all polys
             let _bind_span = trace_span!("bind polys");
             let _bind_enter = _bind_span.enter();
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            CPU_ONLY_POOL.spawn(move || {
-                flag_polys
-                    .par_iter_mut()
-                    .chain(E_polys.par_iter_mut())
-                    .chain(rayon::iter::once(&mut lookup_outputs_poly))
-                    .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
-                eq_poly.bind(r_j, BindingOrder::LowToHigh);
-                tx.send((flag_polys, E_polys, lookup_outputs_poly, eq_poly))
-                    .unwrap();
-            });
-            (flag_polys, E_polys, lookup_outputs_poly, eq_poly) = rx.blocking_recv().unwrap();
+
+            flag_polys
+                .par_iter_mut()
+                .chain(E_polys.par_iter_mut())
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+
+            rayon::join(
+                || lookup_outputs_poly.bind(r_j, BindingOrder::LowToHigh),
+                || eq_poly.bind(r_j, BindingOrder::LowToHigh),
+            );
 
             drop(_bind_enter);
         }
@@ -302,6 +282,10 @@ where
         // Polys are fully defined so we can just take the first (and only) evaluation
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
 
+        // println!("flag_evals {}", flag_polys[0].len());
+        // println!("E_evals {}", E_polys[0].len());
+        // println!("lookup_outputs_eval {}", lookup_outputs_poly.len());
+        // println!("eq_eval {}", eq_poly.len());
         let flag_evals = flag_polys
             .iter()
             .map(|poly| poly.final_sumcheck_claim().as_public())
@@ -316,151 +300,9 @@ where
         Ok((r, eq_eval, flag_evals, E_evals, outputs_eval))
     }
 
-    // fn remaining_primary_sumcheck() {
-    //     let E_polys_zero = E_polys
-    //         .iter()
-    //         .map(|poly| match poly {
-    //             Rep3MultilinearPolynomial::Public { .. } => {
-    //                 Rep3MultilinearPolynomial::public_zero(1 << log_num_workers)
-    //             }
-    //             Rep3MultilinearPolynomial::Shared(_) => {
-    //                 Rep3MultilinearPolynomial::from_shared_bound_coeffs(
-    //                     vec![Rep3PrimeFieldShare::zero_share(); 1 << log_num_workers],
-    //                 )
-    //             }
-    //         })
-    //         .collect();
-
-    //     let (eq_poly_chunks, flag_poly_chunks, E_poly_chunks, lookup_outputs_poly_chunks) =
-    //         tracing::info_span!("split_polys").in_scope(|| {
-    //             let eq_poly_chunks = split_public_poly(eq_poly, log_num_workers);
-    //             let flag_poly_chunks =
-    //                 Rep3MultilinearPolynomial::split_poly_vec(instruction_flags, log_num_workers);
-    //             let E_poly_chunks =
-    //                 Rep3MultilinearPolynomial::split_poly_vec(E_polys, log_num_workers);
-    //             let lookup_outputs_poly_chunks =
-    //                 Rep3MultilinearPolynomial::split_poly(lookup_outputs_poly, log_num_workers);
-    //             (
-    //                 eq_poly_chunks,
-    //                 flag_poly_chunks,
-    //                 E_poly_chunks,
-    //                 lookup_outputs_poly_chunks,
-    //             )
-    //         });
-
-    //     let worker_polys = itertools::multizip((
-    //         eq_poly_chunks,
-    //         flag_poly_chunks,
-    //         E_poly_chunks,
-    //         lookup_outputs_poly_chunks,
-    //     ))
-    //     .collect::<Vec<_>>();
-
-    //     let span = tracing::info_span!("prove_primary_sumcheck_distributed");
-    //     let _span_enter = span.enter();
-    //     let (mut r_primary_sumchecks, eq_poly, flag_polys, E_polys, outputs_poly): (
-    //         Vec<_>,
-    //         MultilinearPolynomial<F>,
-    //         Vec<_>,
-    //         Vec<_>,
-    //         Rep3MultilinearPolynomial<F>,
-    //     ) = worker_polys
-    //         .into_par_iter()
-    //         .zip(io_ctx.workers.par_iter_mut())
-    //         .collect::<Vec<_>>()
-    //         .into_par_iter()
-    //         .map(
-    //             |(
-    //                 (eq_poly_chunk, flag_poly_chunk, E_poly_chunk, lookup_outputs_poly_chunk),
-    //                 io_ctx,
-    //             )| {
-    //                 Self::prove_primary_sumcheck_inner(
-    //                     preprocessing,
-    //                     num_rounds - log_num_workers,
-    //                     eq_poly_chunk,
-    //                     E_poly_chunk,
-    //                     flag_poly_chunk,
-    //                     lookup_outputs_poly_chunk,
-    //                     io_ctx,
-    //                 )
-    //             },
-    //         )
-    //         .collect::<eyre::Result<Vec<_>>>()?
-    //         .into_iter()
-    //         .enumerate()
-    //         .fold(
-    //             (
-    //                 vec![],
-    //                 MultilinearPolynomial::from(vec![F::zero(); 1 << log_num_workers]),
-    //                 vec![
-    //                     Rep3MultilinearPolynomial::public_zero(1 << log_num_workers);
-    //                     num_flag_polys
-    //                 ],
-    //                 E_polys_zero,
-    //                 Rep3MultilinearPolynomial::from_shared_bound_coeffs(vec![
-    //                     Rep3PrimeFieldShare::zero_share();
-    //                     1 << log_num_workers
-    //                 ]),
-    //             ),
-    //             |(_, mut eq_poly, mut flag_polys, mut E_polys, mut outputs_poly),
-    //              (
-    //                 i,
-    //                 (r_primary_sumcheck, eq_eval, flag_evals_chunk, E_evals_chunk, outputs_eval),
-    //             )| {
-    //                 eq_poly.as_dense_poly_mut().Z[i] = eq_eval;
-    //                 flag_polys
-    //                     .par_iter_mut()
-    //                     .zip(flag_evals_chunk.into_par_iter())
-    //                     .for_each(|(flag_poly, flag_eval)| {
-    //                         flag_poly.as_public_mut().as_dense_poly_mut().Z[i] =
-    //                             flag_eval.as_public();
-    //                     });
-    //                 E_polys
-    //                     .par_iter_mut()
-    //                     .zip(E_evals_chunk.into_par_iter())
-    //                     .for_each(|(E_poly, E_eval)| {
-    //                         E_poly.set_bound_coeff(i, E_eval);
-    //                     });
-    //                 outputs_poly.set_bound_coeff(i, outputs_eval.into());
-    //                 (
-    //                     r_primary_sumcheck, // same for each worker
-    //                     eq_poly,
-    //                     flag_polys,
-    //                     E_polys,
-    //                     outputs_poly,
-    //                 )
-    //             },
-    //         );
-    //     drop(_span_enter);
-    //     drop(span);
-
-    //     let (r_primary_sumchecks_final, _, flag_evals, E_evals, outputs_eval) =
-    //         Self::prove_primary_sumcheck_inner(
-    //             preprocessing,
-    //             log_num_workers,
-    //             eq_poly,
-    //             E_polys,
-    //             flag_polys,
-    //             outputs_poly,
-    //             io_ctx,
-    //         )
-    //         .context("while proving remaining primary sumcheck rounds")?;
-    //     r_primary_sumchecks.extend(r_primary_sumchecks_final);
-    //     let flag_evals = flag_evals
-    //         .par_iter()
-    //         .map(|eval| eval.into_additive(io_ctx.id))
-    //         .collect();
-
-    //     let E_evals = E_evals
-    //         .par_iter()
-    //         .map(|e| e.into_additive(io_ctx.id))
-    //         .collect();
-    //     (flag_evals, E_evals, outputs_eval.into_additive())
-    // }
-
     #[tracing::instrument(skip_all, level = "trace")]
     fn primary_sumcheck_prover_message(
-        preprocessing: &Arc<InstructionLookupsPreprocessing<C, F>>,
+        preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         eq_poly: &MultilinearPolynomial<F>,
         flag_polys: &[Rep3MultilinearPolynomial<F>],
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
@@ -584,7 +426,7 @@ where
     #[tracing::instrument(skip_all, name = "precompute_evals", level = "trace")]
     fn precompute_evals(
         mle_half: usize,
-        preprocessing: &InstructionLookupsPreprocessing<C, F>,
+        preprocessing: &InstructionLookupsPreprocessingExt<C, F>,
         eq_poly: &MultilinearPolynomial<F>,
         flag_polys: &[Rep3MultilinearPolynomial<F>],
         subtable_polys: &[Rep3MultilinearPolynomial<F>],
@@ -689,6 +531,39 @@ where
             .unwrap()
             + 2 // eq and flag
     }
+
+    /// Converts instruction flag bitvectors into a sparse representation of the corresponding memory flags.
+    /// A memory flag polynomial can be computed by summing over the instructions that use that memory: if a
+    /// given execution step accesses the memory, it must be executing exactly one of those instructions.
+    pub(crate) fn memory_flag_indices(
+        preprocessing: &InstructionLookupsPreprocessingExt<C, F>,
+        instruction_flag_polys: Vec<&CompactPolynomial<u8, F>>,
+    ) -> Vec<Vec<usize>> {
+        let m = instruction_flag_polys[0].coeffs.len();
+
+        preprocessing
+            .read_memories_worker
+            .par_iter()
+            .map(|memory_index| {
+                let instruction_indices: Vec<_> = (0..InstructionSet::COUNT)
+                    .filter(|instruction_index| {
+                        preprocessing.instruction_to_memory_indices[*instruction_index]
+                            .contains(&memory_index)
+                    })
+                    .collect();
+                let mut memory_flag_indices = vec![];
+                for i in 0..m {
+                    for instruction_index in instruction_indices.iter() {
+                        if instruction_flag_polys[*instruction_index].coeffs[i] != 0 {
+                            memory_flag_indices.push(i);
+                            break;
+                        }
+                    }
+                }
+                memory_flag_indices
+            })
+            .collect()
+    }
 }
 
 impl<
@@ -711,14 +586,12 @@ where
     Network: Rep3NetworkWorker,
 {
     type Rep3Polynomials = Rep3InstructionLookupPolynomials<F>;
-    type Preprocessing = InstructionLookupsPreprocessing<C, F>;
+    type Preprocessing = InstructionLookupsPreprocessingExt<C, F>;
 
     type ReadWriteGrandProduct = Rep3ToggledBatchedGrandProduct<F>;
     type InitFinalGrandProduct = Rep3BatchedDenseGrandProduct<F>;
 
     type Openings = InstructionLookupStuff<F>;
-
-    // type Commitments;
 
     type ExogenousOpenings = NoExogenousOpenings;
 
@@ -731,35 +604,27 @@ where
         tau: &F,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<(
-        <Self::ReadWriteGrandProduct as Rep3BatchedGrandProductWorker<
-            F,
-            PCS,
-            ProofTranscript,
-            Network,
-        >>::Leaves,
-        <Self::InitFinalGrandProduct as Rep3BatchedGrandProductWorker<
-            F,
-            PCS,
-            ProofTranscript,
-            Network,
-        >>::Leaves,
+        (Vec<Vec<usize>>, Vec<Vec<Rep3PrimeFieldShare<F>>>, usize),
+        (Vec<Rep3PrimeFieldShare<F>>, usize, usize),
     )> {
         let gamma_squared = gamma.square();
-        let num_lookups = polynomials.dim[0].len();
+        let num_lookups = polynomials.read_cts[0].len();
         let party_id = io_ctx.party_id();
 
-        let read_write_leaves: Vec<_> = (0..preprocessing.num_memories)
-            .into_par_iter()
+        let offset = preprocessing.read_memories_worker[0];
+        let read_write_leaves = preprocessing
+            .read_memories_worker
+            .par_iter()
             .flat_map_iter(|memory_index| {
-                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                let dim_index = preprocessing.memory_to_dimension_index[*memory_index];
                 let dim = polynomials.dim[dim_index].as_shared();
-                let e_polys = &polynomials.E_polys[memory_index];
-                let read_cts = &polynomials.read_cts[memory_index];
+                let e_polys = &polynomials.E_polys[*memory_index - offset].as_shared();
+                let read_cts = &polynomials.read_cts[*memory_index - offset];
 
                 let read_fingerprints: Vec<_> = (0..num_lookups)
                     .map(|i| {
                         let a = dim[i];
-                        let v = e_polys.get_coeff(i);
+                        let v: Rep3Value<F> = e_polys[i].into();
                         let t = read_cts.get_coeff(i);
                         t.mul_public(gamma_squared)
                             .add(&v.mul_public(*gamma), party_id)
@@ -776,34 +641,32 @@ where
                     .collect();
                 [read_fingerprints, write_fingerprints]
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let init_final_leaves: Vec<_> = preprocessing
-            .materialized_subtables
+        let offset = preprocessing.init_final_subtables_worker[0].2[0];
+        let init_final_leaves = preprocessing
+            .init_final_subtables_worker
             .par_iter()
-            .enumerate()
-            .flat_map_iter(|(subtable_index, subtable)| {
-                let mut leaves =
-                    vec![
-                        Rep3PrimeFieldShare::zero_share();
-                        M * (preprocessing.subtable_to_memory_indices[subtable_index].len() + 1)
-                    ];
+            .flat_map_iter(|(subtable_index, has_init, memories)| {
+                let subtable = &preprocessing.materialized_subtables[*subtable_index];
+                let mut leaves = vec![Rep3PrimeFieldShare::zero_share(); M * (memories.len() + 1)];
+
                 // Init leaves
                 (0..M).for_each(|i| {
                     let a = &F::from_u16(i as u16);
                     let v: u32 = subtable[i];
-                    // let t = F::zero();
                     // Compute h(a,v,t) where t == 0
                     leaves[i] = rep3::arithmetic::promote_to_trivial_share(
                         party_id,
                         v.field_mul(*gamma) + *a - *tau,
                     );
                 });
+                let mut leaf_index = M;
 
                 // Final leaves
-                let mut leaf_index = M;
-                for memory_index in &preprocessing.subtable_to_memory_indices[subtable_index] {
-                    let final_cts = &polynomials.final_cts[*memory_index].as_shared();
+                for memory_index in memories {
+                    let final_cts = &polynomials.final_cts[memory_index - offset].as_shared();
+
                     (0..M).for_each(|i| {
                         leaves[leaf_index] =
                             leaves[i] + rep3::arithmetic::mul_public(final_cts[i], gamma_squared);
@@ -811,20 +674,16 @@ where
                     });
                 }
 
+                if !has_init {
+                    leaves = leaves.split_off(M);
+                }
+
                 leaves
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let memory_flags = InstructionLookupsProof::<
-            C,
-            M,
-            F,
-            PCS,
-            InstructionSet,
-            Subtables,
-            ProofTranscript,
-        >::memory_flag_indices(
-            preprocessing,
+        let memory_flags = Self::memory_flag_indices(
+            &preprocessing,
             polynomials
                 .instruction_flags
                 .try_into_public()
@@ -833,13 +692,110 @@ where
                 .collect(),
         );
 
+        // # init = # subtables; # final = # memories
+        let init_final_batch_size = if io_ctx.log_num_workers() != 0 {
+            preprocessing
+                .init_final_subtables_worker
+                .iter()
+                .map(|(_, init, m)| *init as usize + m.len())
+                .sum()
+        } else {
+            Subtables::COUNT + preprocessing.num_memories
+        };
+
         Ok((
-            (memory_flags, read_write_leaves),
+            (
+                memory_flags,
+                read_write_leaves,
+                preprocessing.num_memories * 2,
+            ),
             (
                 init_final_leaves,
-                // # init = # subtables; # final = # memories
+                init_final_batch_size,
                 Subtables::COUNT + preprocessing.num_memories,
             ),
         ))
+    }
+
+    fn compute_openings(
+        preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        polynomials: &Self::Rep3Polynomials,
+        _jolt_polynomials: &Rep3JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<()> {
+        if !io_ctx.network().is_distributed() {
+            return memory_checking::worker::compute_openings::<F, Self::ExogenousOpenings, _, _>(
+                opening_accumulator,
+                polynomials,
+                _jolt_polynomials,
+                r_read_write,
+                r_init_final,
+                io_ctx,
+            );
+        }
+
+        let party_id = io_ctx.party_id();
+
+        //------------ read-write ------------//
+        let read_write_polys = polynomials.read_write_values_grand_product();
+        let (read_write_evals, eq_read_write) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&read_write_polys, &r_read_write);
+
+        io_ctx.network().send_response(
+            read_write_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+        )?;
+
+        let (rho, rho_offsets, batched_claim): (F, Vec<usize>, F) =
+            io_ctx.network().receive_request()?;
+
+        let num_memories_worker = polynomials.read_cts.len();
+        let total_num_polys = 4 + preprocessing.num_memories * 2 + InstructionSet::COUNT;
+        let mut rho_powers = vec![F::one()];
+        for i in 1..total_num_polys {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
+        rho_powers = chain![
+            &rho_powers[..4],
+            &rho_powers[rho_offsets[0]..rho_offsets[0] + num_memories_worker],
+            &rho_powers[rho_offsets[1]..rho_offsets[1] + num_memories_worker],
+            &rho_powers[4 + preprocessing.num_memories * 2..],
+        ]
+        .copied()
+        .collect();
+
+        let batched_poly =
+            Rep3MultilinearPolynomial::linear_combination(&read_write_polys, &rho_powers, party_id);
+
+        opening_accumulator.append_opening(
+            batched_poly,
+            DensePolynomial::new(eq_read_write),
+            r_read_write.to_vec(),
+            additive::promote_to_trivial_share(batched_claim, io_ctx.party_id()),
+        );
+
+        //------------ init-final ------------//
+        let init_final_polys = polynomials.init_final_values();
+        let (init_final_evals, eq_init_final) =
+            Rep3MultilinearPolynomial::batch_evaluate_full(&init_final_polys, &r_init_final);
+
+        opening_accumulator.append_batched(
+            &polynomials.init_final_values(),
+            DensePolynomial::new(eq_init_final),
+            r_init_final.to_vec(),
+            &init_final_evals
+                .iter()
+                .map(|x| x.into_additive(party_id))
+                .collect::<Vec<_>>(),
+            io_ctx.main(),
+        )?;
+
+        Ok(())
     }
 }
