@@ -4,25 +4,21 @@ use ark_ff::{AdditiveGroup, Field};
 use itertools::{izip, Itertools};
 use jolt_core::{
     field::OptimizedMul,
-    host,
-    jolt::vm::{rv32i_vm::RV32IJoltVM, Jolt, JoltProverPreprocessing},
     poly::{
-        compact_polynomial::CompactPolynomial,
-        dense_interleaved_poly::DenseInterleavedPolynomial,
         dense_mlpoly::DensePolynomial,
-        eq_poly::{self, EqPlusOnePolynomial, EqPolynomial},
+        eq_poly::EqPlusOnePolynomial,
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         sparse_interleaved_poly::SparseCoefficient,
         spartan_interleaved_poly::SpartanInterleavedPolynomial,
-        split_eq_poly::{GruenSplitEqPolynomial, SplitEqPolynomial},
+        split_eq_poly::GruenSplitEqPolynomial,
         unipoly::{CompressedUniPoly, UniPoly},
     },
     r1cs::{
         builder::CombinedUniformBuilder,
         constraints::{JoltRV32IMConstraints, R1CSConstraints as _},
-        inputs::{ConstraintInput, JoltR1CSInputs},
+        inputs::JoltR1CSInputs,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::transcript::{AppendToTranscript, KeccakTranscript, Transcript},
@@ -30,11 +26,7 @@ use jolt_core::{
 use rayon::prelude::*;
 use snarks_core::math::Math;
 
-use crate::{
-    field::JoltField,
-    poly::{commitment::mock::MockCommitScheme, split_eq_poly::DistributedSplitEqPolynomial},
-    r1cs::spartan::worker,
-};
+use crate::field::JoltField;
 
 const C: usize = 4;
 
@@ -51,7 +43,6 @@ pub fn simulate_sumcheck_distributed_spartan<F: JoltField, ProofTranscript: Tran
     let mut r: Vec<F> = Vec::new();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-    let num_workers = workers_polys.len();
     let worker_rounds = eq_polys[0].get_num_vars() - 2;
 
     let remaining_rounds = num_rounds - worker_rounds;
@@ -61,7 +52,7 @@ pub fn simulate_sumcheck_distributed_spartan<F: JoltField, ProofTranscript: Tran
     );
 
     for round in 0..worker_rounds {
-        let mut eval_points = workers_polys
+        let eval_points = workers_polys
             .iter()
             .enumerate()
             .map(|(worker, poly)| {

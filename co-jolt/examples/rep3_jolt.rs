@@ -1,10 +1,6 @@
 #[cfg(feature = "debug")]
 mod debug;
 
-use co_jolt::jolt::vm::witness::Rep3Polynomials as _;
-#[cfg(feature = "debug")]
-use debug::*;
-
 use ark_std::test_rng;
 use clap::Parser;
 use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
