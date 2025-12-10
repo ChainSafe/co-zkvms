@@ -52,7 +52,7 @@ impl<F: JoltField> Rep3Polynomials<F, BytecodePreprocessing<F>> for Rep3Bytecode
         let num_workers = io_ctx.num_workers();
         let worker_idx = io_ctx.worker_idx();
 
-        let half_net_log_num_workers = (num_workers >> 1).max(1).log_2();
+        let _half_net_log_num_workers = (num_workers >> 1).max(1).log_2();
         let half_net_worker_idx = worker_idx % (num_workers >> 1).max(1);
 
         let num_ops = trace.len();

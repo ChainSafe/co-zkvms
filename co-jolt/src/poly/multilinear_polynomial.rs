@@ -18,7 +18,6 @@ use jolt_core::{
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
 use rayon::prelude::*;
-use snarks_core::math::Math;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rep3MultilinearPolynomial<F: JoltField> {
@@ -889,7 +888,6 @@ impl<F: JoltField> Valid for Rep3MultilinearPolynomial<F> {
 #[cfg(test)]
 mod test {
     use itertools::{izip, Itertools};
-    use snarks_core::math::Math;
 
     use super::*;
 

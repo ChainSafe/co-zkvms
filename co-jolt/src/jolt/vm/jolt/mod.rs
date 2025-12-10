@@ -53,10 +53,10 @@ use jolt_core::{
             instruction_lookups::InstructionLookupsPreprocessing,
             read_write_memory::{ReadWriteMemoryPolynomials, ReadWriteMemoryProof},
             timestamp_range_check::TimestampValidityProof,
-            JoltProverPreprocessing, JoltStuff, JoltVerifierPreprocessing,
+            JoltStuff, JoltVerifierPreprocessing,
         },
     },
-    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::memory_checking::MemoryCheckingVerifier,
     poly::multilinear_polynomial::MultilinearPolynomial,
     r1cs::{
         constraints::R1CSConstraints,

@@ -1,14 +1,12 @@
 use eyre::Context;
 use jolt_core::{
-    poly::dense_mlpoly::DensePolynomial,
-    utils::{math::Math, transcript::Transcript},
+    poly::commitment::commitment_scheme::CommitmentScheme,
+    subprotocols::grand_product::{BatchedGrandProductLayerProof, BatchedGrandProductProof},
+    utils::thread::drop_in_background_thread,
 };
 use jolt_core::{
-    poly::{commitment::commitment_scheme::CommitmentScheme, split_eq_poly::SplitEqPolynomial},
-    subprotocols::grand_product::{
-        BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
-    },
-    utils::thread::drop_in_background_thread,
+    poly::dense_mlpoly::DensePolynomial,
+    utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::{
     additive,
@@ -23,10 +21,7 @@ use rayon::prelude::*;
 
 use crate::{field::JoltField, poly::split_eq_poly::DistributedSplitEqPolynomial};
 use crate::{
-    poly::{
-        dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
-        opening_proof::Rep3OpeningAccumulatorWorker,
-    },
+    poly::dense_interleaved_poly::Rep3DenseInterleavedPolynomial,
     subprotocols::sumcheck::{Rep3BatchedCubicSumcheck, Rep3BatchedCubicSumcheckWorker},
 };
 

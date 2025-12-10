@@ -1,11 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::field::JoltField;
-use crate::jolt::vm::jolt::witness::Rep3JoltPolynomialsExt;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
-use crate::jolt::vm::timestamp_range_check;
 use crate::jolt::vm::timestamp_range_check::worker::TimestampValidityDistributredWorker;
-use crate::lasso::memory_checking;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
@@ -14,15 +11,12 @@ use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
 use crate::utils::types::Rep3Value;
-use itertools::Itertools;
 use jolt_core::jolt::vm::read_write_memory::{
     memory_address_to_witness_index, ReadWriteMemoryOpenings, ReadWriteMemoryPreprocessing,
     RegisterAddressOpenings,
 };
-use jolt_core::lasso::memory_checking::{ExogenousOpenings, StructuredPolynomialData};
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use jolt_core::poly::opening_proof::ProverOpeningAccumulator;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};

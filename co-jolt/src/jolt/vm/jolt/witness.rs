@@ -5,7 +5,7 @@ use crate::jolt::vm::timestamp_range_check;
 use crate::lasso::memory_checking::StructuredPolynomialData;
 use crate::poly::commitment::{commitment_scheme::CommitmentScheme, Rep3CommitmentScheme};
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::r1cs::inputs::{R1CSPreprocessing, Rep3R1CSPolynomials};
+use crate::r1cs::inputs::Rep3R1CSPolynomials;
 use crate::utils::types::MaybeShared;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, multizip, Itertools};

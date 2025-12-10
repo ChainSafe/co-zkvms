@@ -3,7 +3,7 @@ use eyre::Context;
 use jolt_core::{
     jolt::vm::JoltStuff,
     lasso::memory_checking::{ExogenousOpenings, StructuredPolynomialData},
-    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::PolynomialEvaluation},
+    poly::dense_mlpoly::DensePolynomial,
     utils::{math::Math, transcript::Transcript},
 };
 use mpc_core::protocols::additive::AdditiveShare;
@@ -105,7 +105,6 @@ where
         let r_read_write = read_write_circuit.prove_grand_product_worker(io_ctx)?;
 
         let r_init_final = init_final_circuit.prove_grand_product_worker(io_ctx)?;
-        tracing::info!("init_final_circuit - done");
 
         Ok((
             r_read_write,

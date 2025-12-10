@@ -10,11 +10,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{izip, Itertools};
 #[cfg(feature = "debug")]
 use jolt_core::jolt::vm::instruction_lookups::InstructionLookupPolynomials;
+use jolt_core::utils::math::Math;
 use jolt_core::{
     jolt::vm::instruction_lookups::InstructionLookupStuff, lasso::memory_checking::Initializable,
     poly::multilinear_polynomial::MultilinearPolynomial,
 };
-use jolt_core::{jolt::vm::JoltStuff, utils::math::Math};
 use mpc_core::protocols::{
     rep3::{
         network::{IoContext, IoContextPool, Rep3NetworkWorker},

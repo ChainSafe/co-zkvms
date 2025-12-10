@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::field::JoltField;
 use crate::jolt::vm::timestamp_range_check::coordinator::TimestampValidityProver;
-use crate::lasso::memory_checking::{self, Rep3MemoryCheckingProver};
+use crate::lasso::memory_checking::Rep3MemoryCheckingProver;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
@@ -11,17 +11,10 @@ use crate::utils::transcript::TranscriptExt;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryProof;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
 use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
-use jolt_core::lasso::memory_checking::{
-    ExogenousOpenings, Initializable, MultisetHashes, StructuredPolynomialData,
-};
-use jolt_core::subprotocols::grand_product::BatchedGrandProductProof;
+
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
-use mpc_core::protocols::additive;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_core::protocols::rep3::PartyID;
-
-use rayon::prelude::*;
 
 pub trait Rep3ReadWriteMemoryCoordinator<F, PCS, ProofTranscript, Network>:
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>

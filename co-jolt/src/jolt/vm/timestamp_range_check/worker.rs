@@ -1,40 +1,31 @@
+use crate::{
+    field::JoltField,
+    jolt::vm::witness::Rep3JoltPolynomials,
+    poly::{opening_proof::Rep3OpeningAccumulatorWorker, Rep3MultilinearPolynomial},
+    subprotocols::grand_product::Rep3BatchedGrandProductWorker,
+};
 use eyre::Context;
 use jolt_common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use jolt_core::{
     jolt::vm::timestamp_range_check::{
-        ReadTimestampOpenings, TimestampRangeCheckOpenings, TimestampRangeCheckStuff,
-        TimestampValidityProof,
+        ReadTimestampOpenings, TimestampRangeCheckStuff, TimestampValidityProof,
     },
-    lasso::memory_checking::{
-        ExogenousOpenings, MemoryCheckingProver, NoPreprocessing, StructuredPolynomialData,
-    },
+    lasso::memory_checking::{ExogenousOpenings, StructuredPolynomialData},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         compact_polynomial::{CompactPolynomial, SmallScalar},
         dense_mlpoly::DensePolynomial,
     },
-    subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProductProof},
-    utils::{
-        thread::drop_in_background_thread,
-        transcript::{KeccakTranscript, Transcript},
-    },
+    subprotocols::grand_product::BatchedDenseGrandProduct,
+    utils::{thread::drop_in_background_thread, transcript::Transcript},
 };
 use mpc_core::protocols::rep3::{
     network::{IoContextPool, Rep3NetworkWorker},
     PartyID,
 };
+use snarks_core::math::Math;
 
 use rayon::prelude::*;
-use snarks_core::math::Math;
-use tokio::io;
-
-use crate::{
-    field::JoltField,
-    jolt::vm::{witness::Rep3JoltPolynomials, Jolt},
-    lasso::memory_checking::worker::MemoryCheckingProverRep3Worker,
-    poly::{opening_proof::Rep3OpeningAccumulatorWorker, Rep3MultilinearPolynomial},
-    subprotocols::grand_product::{Rep3BatchedGrandProduct, Rep3BatchedGrandProductWorker},
-};
 
 pub trait TimestampValidityDistributredWorker<F: JoltField, PCS, Network: Rep3NetworkWorker> {
     fn prove_distributed_worker(
@@ -160,7 +151,7 @@ fn compute_leaves<F: JoltField, Network: Rep3NetworkWorker>(
     jolt_polynomials: &Rep3JoltPolynomials<F>,
     gamma: &F,
     tau: &F,
-    io_ctx: &IoContextPool<Network>,
+    _io_ctx: &IoContextPool<Network>,
 ) -> (Vec<F>, usize, usize) {
     let read_timestamps: [&CompactPolynomial<u32, F>; 4] = [
         (&jolt_polynomials.read_write_memory.t_read_rd)

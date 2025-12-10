@@ -6,16 +6,15 @@ use jolt_core::{
     r1cs::builder::{Constraint, OffsetEqConstraint},
     utils::math::Math,
 };
-use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::additive::AdditiveShare;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use super::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::field::JoltField;
 use crate::r1cs::ops::LinearCombinationExt;
-use crate::subprotocols::sumcheck_spartan::process_eq_sumcheck_round_worker;
 use crate::utils::types::{Rep3Value, SharedOrPublicParIter};
 use mpc_core::protocols::rep3::PartyID;
-use rayon::{prelude::*, vec};
+use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {

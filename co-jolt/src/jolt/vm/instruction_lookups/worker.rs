@@ -82,7 +82,6 @@ where
         preprocessing: &Arc<InstructionLookupsPreprocessingExt<C, F>>,
         polynomials: &mut Rep3JoltPolynomials<F>,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
-        pcs_setup: &PCS::Setup,
         io_ctx: &mut IoContextPool<Network>,
     ) -> Result<()>
     where
@@ -611,9 +610,6 @@ where
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.read_cts[0].len();
         let party_id = io_ctx.party_id();
-
-        let num_workers = io_ctx.num_workers();
-        let worker_idx = io_ctx.worker_idx();
 
         let offset = preprocessing.read_memories_worker[0];
         let read_write_leaves = preprocessing

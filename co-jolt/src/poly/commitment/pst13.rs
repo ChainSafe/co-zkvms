@@ -18,10 +18,7 @@ use jolt_core::{
         transcript::{AppendToTranscript, Transcript},
     },
 };
-use mpc_core::protocols::{
-    additive::{self, AdditiveShare},
-    rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker},
-};
+use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
 use rand::RngCore;
 use std::{borrow::Borrow, marker::PhantomData, ops::Add};
 

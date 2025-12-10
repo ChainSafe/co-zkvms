@@ -5,10 +5,7 @@ use crate::{
         read_write_memory::coordinator::Rep3ReadWriteMemoryCoordinator, witness::JoltWitnessMeta,
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
-    poly::{
-        commitment::Rep3CommitmentScheme,
-        opening_proof::{Rep3OpeningAccumulatorCoordinator, Rep3OpeningAccumulatorWorker},
-    },
+    poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorCoordinator},
     r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
     utils::transcript::TranscriptExt,
 };

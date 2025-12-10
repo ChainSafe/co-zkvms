@@ -36,7 +36,6 @@ use crate::jolt::{
 };
 use jolt_core::{
     jolt::{subtable::JoltSubtableSet, vm::JoltVerifierPreprocessing},
-    lasso::memory_checking::StructuredPolynomialData,
     r1cs::key::UniformSpartanKey,
 };
 
@@ -226,16 +225,6 @@ where
 
         F::initialize_lookup_tables(std::mem::take(&mut preprocessing.field));
 
-        tracing::info!(
-            "bytecode: {:?}",
-            polynomials
-                .bytecode
-                .read_write_values()
-                .iter()
-                .map(|p| (p.full_len(), p.shard_range()))
-                .collect::<Vec<_>>()
-        );
-
         polynomials.commit::<C, PCS, ProofTranscript, _>(&preprocessing, &mut self.io_ctx)?;
 
         self.io_ctx.sync_with_coordinator()?;
@@ -254,7 +243,7 @@ where
         drop(_guard);
         drop(span);
 
-        // self.io_ctx.sync_with_parties()?;
+        self.io_ctx.sync_with_parties()?;
 
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
             PCS,
@@ -263,13 +252,10 @@ where
             &preprocessing.instruction_lookups,
             polynomials,
             &mut opening_accumulator,
-            &preprocessing.generators,
             &mut self.io_ctx,
         )?;
 
-        // self.io_ctx.sync_with_parties()?;
-
-        println!("PROVING Rep3ReadWriteMemoryProver");
+        self.io_ctx.sync_with_parties()?;
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
             &preprocessing.read_write_memory,
@@ -279,7 +265,7 @@ where
             &mut self.io_ctx,
         )?;
 
-        // self.io_ctx.sync_with_parties()?;
+        self.io_ctx.sync_with_parties()?;
 
         Rep3UniformSpartanProver::<F, PCS, ProofTranscript, Constraints::Inputs, Network>::prove(
             &self.r1cs_builder,
@@ -289,7 +275,7 @@ where
             &mut self.io_ctx,
         )?;
 
-        // self.io_ctx.sync_with_parties()?;
+        self.io_ctx.sync_with_parties()?;
 
         // Batch-prove all openings
         opening_accumulator.reduce_and_prove::<PCS, ProofTranscript, _>(

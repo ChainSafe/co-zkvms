@@ -1,11 +1,8 @@
 use eyre::Context;
 use jolt_common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use jolt_core::{
-    jolt::vm::{
-        rv32i_vm::ProofTranscript,
-        timestamp_range_check::{
-            ReadTimestampOpenings, TimestampRangeCheckOpenings, TimestampValidityProof,
-        },
+    jolt::vm::timestamp_range_check::{
+        ReadTimestampOpenings, TimestampRangeCheckOpenings, TimestampValidityProof,
     },
     lasso::memory_checking::{
         ExogenousOpenings, MemoryCheckingProver, MultisetHashes, NoPreprocessing,
@@ -17,7 +14,6 @@ use jolt_core::{
 };
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
-use tokio::net;
 
 use crate::{
     field::JoltField, poly::opening_proof::Rep3OpeningAccumulatorCoordinator,

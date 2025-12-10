@@ -3,7 +3,6 @@
 
 use crate::field::JoltField;
 use crate::poly::split_eq_poly::DistributedSplitEqPolynomial;
-use crate::poly::unipoly::unipoly_from_additive_evals;
 use crate::utils::types::Rep3Value;
 use itertools::izip;
 use jolt_core::poly::dense_interleaved_poly::DenseInterleavedPolynomial;
@@ -12,12 +11,12 @@ use jolt_core::poly::multilinear_polynomial::{
 };
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::BatchedCubicSumcheck;
+use mpc_core::protocols::additive;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
-use mpc_core::protocols::{additive, rep3::Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
 use crate::poly::Polynomial;

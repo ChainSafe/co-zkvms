@@ -28,9 +28,7 @@ use jolt_core::{
         },
         sumcheck::{Bindable, SumcheckInstanceProof},
     },
-    utils::{
-        transcript::{AppendToTranscript, Transcript},
-    },
+    utils::transcript::{AppendToTranscript, Transcript},
 };
 use mpc_core::protocols::{
     additive::AdditiveShare,
@@ -129,11 +127,6 @@ where
         }
         let mut r = io_ctx.network().receive_request()?;
         let mut eq_chunk_size = self.batch_size;
-
-        println!(
-            "public prove_grand_product num_layers: {}",
-            self.layers.len()
-        );
 
         for layer in self.layers.iter_mut().rev() {
             layer.prove_layer(&mut r, eq_chunk_size, true, io_ctx)?;

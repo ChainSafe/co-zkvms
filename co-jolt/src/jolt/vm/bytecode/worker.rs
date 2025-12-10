@@ -1,28 +1,21 @@
 use std::marker::PhantomData;
 
+use super::witness::Rep3BytecodePolynomials;
 use crate::field::JoltField;
-use crate::lasso::memory_checking;
+use crate::jolt::vm::witness::Rep3JoltPolynomials;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
-use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::utils::types::Rep3Value;
 use jolt_core::jolt::vm::bytecode::{BytecodeOpenings, BytecodePreprocessing};
-use jolt_core::jolt::vm::JoltStuff;
-use jolt_core::lasso::memory_checking::{NoExogenousOpenings, StructuredPolynomialData};
+use jolt_core::lasso::memory_checking::NoExogenousOpenings;
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::subprotocols::grand_product::BatchedDenseGrandProduct;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
-use rayon::prelude::*;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
-use super::witness::Rep3BytecodePolynomials;
-use crate::jolt::vm::witness::Rep3JoltPolynomials;
+use rayon::prelude::*;
 
 pub struct Rep3BytecodeProver<F: JoltField, PCS, ProofTranscript, Network> {
     pub _marker: PhantomData<(F, PCS, ProofTranscript, Network)>,

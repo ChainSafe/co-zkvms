@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::jolt::vm::{instruction_lookups::witness, witness::WorkerInitializable};
+use crate::jolt::vm::witness::WorkerInitializable;
 use crate::poly::opening_proof::{Rep3CoordinatorOpening, Rep3OpeningAccumulatorCoordinator};
 use crate::{
     lasso::memory_checking::Rep3MemoryCheckingProver,

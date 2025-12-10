@@ -26,7 +26,6 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
-use snarks_core::math::Math;
 
 const RS1: usize = 0;
 const RS2: usize = 1;
