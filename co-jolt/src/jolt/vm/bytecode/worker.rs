@@ -158,18 +158,6 @@ where
             init_final_fingeprints.splice(0..0, init_leaves); // extend from back
         }
 
-        tracing::info!(
-            "read_write_fingeprints: {:?} batch_size_worker {}",
-            read_write_fingeprints.len(),
-            batch_size_worker
-        );
-
-        tracing::info!(
-            "init_final_fingeprints: {:?} batch_size_worker {}",
-            init_final_fingeprints.len(),
-            batch_size_worker
-        );
-
         Ok((
             (read_write_fingeprints, batch_size_worker, 2),
             (init_final_fingeprints, batch_size_worker, 2),

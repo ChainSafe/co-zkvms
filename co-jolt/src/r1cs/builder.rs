@@ -10,7 +10,7 @@ use jolt_core::r1cs::{
     ops::{Term, Variable, LC},
 };
 use mpc_core::protocols::rep3::{
-    network::{IoContext, IoContextPool, Rep3NetworkWorker},
+    network::{IoContextPool, Rep3NetworkWorker},
     PartyID, Rep3PrimeFieldShare,
 };
 

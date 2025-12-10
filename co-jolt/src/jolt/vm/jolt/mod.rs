@@ -15,12 +15,10 @@ use crate::{
     lasso::memory_checking::StructuredPolynomialData,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{
-            ProverOpeningAccumulator, ReducedOpeningProof, VerifierOpeningAccumulator,
-        },
+        opening_proof::{ReducedOpeningProof, VerifierOpeningAccumulator},
     },
     r1cs::inputs::R1CSPreprocessing,
-    utils::{errors::ProofVerifyError, thread::drop_in_background_thread, transcript::Transcript},
+    utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
@@ -30,7 +28,6 @@ use jolt_common::{
 };
 use jolt_tracer::{ELFInstruction, JoltDevice};
 use serde::{Deserialize, Serialize};
-use snarks_core::math::Math;
 use strum::EnumCount;
 
 use crate::field::JoltField;
@@ -324,7 +321,7 @@ where
             &r1cs_builder,
             padded_trace_length,
         );
-        // transcript.append_scalar(&spartan_key.vk_digest);
+        transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {
             key: spartan_key,
@@ -337,15 +334,10 @@ where
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        let _ = transcript.challenge_scalar::<F>();
-
         commitments
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
-
-
-        let _ = transcript.challenge_scalar::<F>();
 
         Self::verify_bytecode(
             &preprocessing.bytecode,
@@ -355,8 +347,6 @@ where
             &mut opening_accumulator,
             &mut transcript,
         )?;
-
-        tracing::info!("bytecode valid");
 
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
@@ -368,8 +358,6 @@ where
         )
         .map_err(|e| eyre::eyre!(e))
         .context("failed to verify instruction lookups")?;
-
-        tracing::info!("instructions valid");
 
         Self::verify_memory(
             &mut preprocessing.read_write_memory,

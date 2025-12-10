@@ -105,7 +105,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
 
         let batched_poly =
             Rep3MultilinearPolynomial::linear_combination(&polynomials, &rho_powers, io_ctx.id);
-        tracing::info!("batched_poly: {:?}", batched_poly.len());
 
         self.openings.push(Rep3ProverOpening::new(
             batched_poly,
@@ -322,7 +321,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .zip(claims.iter())
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
-        tracing::info!("append claim: {:?}", claim);
 
         network.broadcast_request((rho, claim))?;
 
@@ -362,8 +360,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
-        // tracing::info!("IF combined_claim: {:?}", claim);
-
         let mut worker_offset_rho_power = vec![F::one()];
         let mut offset = batch_lens[0];
         for len in &batch_lens[1..] {
@@ -398,7 +394,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
         PCS: Rep3CommitmentScheme<F, ProofTranscript>,
     {
         let rho: F = transcript.challenge_scalar();
-        tracing::info!("rho: {:?}", rho);
         network.broadcast_request(rho)?;
         let _span = tracing::trace_span!("rho_powers").entered();
         let mut rho_powers = vec![F::one()];
@@ -414,8 +409,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             .max()
             .unwrap();
 
-        tracing::info!("max_num_vars: {:?}", max_num_vars);
-
         let mut combined_claim: F = rho_powers
             .par_iter()
             .zip(self.openings.par_iter())
@@ -430,7 +423,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
                 scaled_claim * coeff
             })
             .sum();
-        tracing::info!("combined_claim: {:?}", combined_claim);
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
@@ -449,7 +441,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             } else {
                 additive::combine_additive_vec(network.receive_responses()?)
             };
-            tracing::info!("round_evals: {:?}", round_evals);
 
             round_evals.insert(1, combined_claim - round_evals[0]);
             let uni_poly = UniPoly::from_evals(&round_evals);
@@ -458,7 +449,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorCoordinator<F> {
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
             let r_j = transcript.challenge_scalar();
-            tracing::info!("opening r_j: {:?}", r_j);
             r.push(r_j);
             combined_claim = uni_poly.evaluate(&r_j);
 
@@ -511,7 +501,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
     {
         // Generate coefficients for random linear combination
         let rho: F = io_ctx.network().receive_request()?;
-        tracing::info!("rho: {:?}", rho);
         let mut rho_powers = vec![F::one()];
         for i in 1..self.openings.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
@@ -565,8 +554,6 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             .map(|opening| opening.polynomial.get_num_vars())
             .max()
             .unwrap();
-
-        tracing::info!("max_num_vars: {:?}", max_num_vars);
 
         let mut r: Vec<F> = Vec::new();
 

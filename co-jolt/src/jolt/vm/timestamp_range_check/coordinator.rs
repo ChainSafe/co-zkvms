@@ -70,7 +70,6 @@ where
         network.set_num_workers(1);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             Self::prove_grand_products_distributed(num_ops, memory_size, transcript, network)?;
-        tracing::info!("TimestampValidityProof prove_grand_products_distributed");
 
         // send `r_grand_product` to other workers
         network.reset_num_workers();
@@ -114,10 +113,6 @@ where
         MultisetHashes<F>,
         Vec<F>,
     )> {
-        tracing::info!(
-            "TimestampValidityProof number of workers: {}",
-            network.active_num_workers()
-        );
         let gamma: F = transcript.challenge_scalar();
         let tau: F = transcript.challenge_scalar();
 
@@ -131,7 +126,6 @@ where
             .context("while receiving hashes")?
             .concat();
 
-        tracing::info!("TimestampValidityProof received hashes: {}", hashes.len());
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
 

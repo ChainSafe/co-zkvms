@@ -156,8 +156,6 @@ where
                 additive::combine_additive_vec(network.receive_responses()?)
             };
 
-            // tracing::info!("Round evaluations: {:?}", round_evals);
-
             round_evals.insert(1, previous_claim - round_evals[0]);
             let round_poly = UniPoly::from_evals(&round_evals);
 
@@ -444,8 +442,6 @@ where
                 poly_num_vars: num_ops.log_2(),
                 claim: batched_claim,
             });
-
-            tracing::info!("RW combined_claim: {:?}", batched_claim);
         }
 
         //------------ init-final ------------//

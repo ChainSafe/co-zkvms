@@ -27,10 +27,8 @@ use color_eyre::{
     Result,
 };
 use itertools::{izip, Itertools};
-use jolt_core::jolt::vm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use jolt_core::jolt::vm::JoltVerifierPreprocessing;
 
-use mpc_core::protocols::rep3::network::{IoContext, IoContextPool};
-use mpc_net::rep3::PartyWorkerID;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     topology::MpcStarNetWorker,
@@ -145,7 +143,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) -> Result<()> {
+pub fn run_party(args: Args, config: NetworkConfig, program: host::Program) -> Result<()> {
     let (bytecode, memory_init) = program.decode();
 
     let my_id = config.my_id;
@@ -178,7 +176,6 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
     // let program_io: Rep3ProgramIOInput = network.receive_request()?;
     let (program_io, trace): (Rep3ProgramIOInput, Vec<JoltTraceStep<RV32I>>) =
         bincode::deserialize(&network.receive_request::<Vec<u8>>()?)?;
-    tracing::info!("trace len: {}", trace.len());
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
@@ -197,26 +194,6 @@ pub fn run_party(args: Args, config: NetworkConfig, mut program: host::Program) 
         preprocessing,
         network,
     )?;
-
-    // prover.io_ctx.network().send_response(prover.program_io)?;
-
-    // let mut io_ctx = IoContextPool::init(network, rayon::current_num_threads() as u32)?;
-
-    // println!(
-    //     "worker {} party {} got {}",
-    //     prover.io_ctx.network().worker_idx(),
-    //     prover.io_ctx.network().party_id() as usize,
-    //     prover.io_ctx.network().receive_request::<usize>()?
-    // );
-
-    // let gid = PartyWorkerID::new(
-    //     prover.io_ctx.party_idx(),
-    //     prover.io_ctx.network().worker_idx(),
-    // )
-    // .global_worker_id();
-    // prover.io_ctx.network().send_response(gid)?;
-
-    // prover.io_ctx.network().send_response(prover.polynomials)?;
 
     prover.prove()?;
 
@@ -300,46 +277,7 @@ pub fn run_coordinator(
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
 
     network.log_connection_stats(Some("IO witness: "));
-    // network.reset_stats();
-
-    // network.send_requests(vec![0usize, 1, 2, 3, 4, 5]).unwrap();
-    // println!("ids: {:?}", network.receive_responses::<usize>().unwrap());
-
-    // let worker_polys: Vec<_> = network.receive_responses().unwrap();
-
-    // let worker_polys = worker_polys
-    //     .into_iter()
-    //     .chunks(3)
-    //     .into_iter()
-    //     .map(|chunk| {
-    //         co_jolt::jolt::vm::witness::Rep3JoltPolynomials::combine_polynomials(
-    //             &preprocessing.shared,
-    //             chunk.collect(),
-    //         )
-    //     })
-    //     .collect::<Vec<_>>();
-
-    // JoltTraceStep::pad(&mut trace);
-    // let mut check = RV32IJoltVM::generate_witness(&preprocessing.shared, trace, &program_io);
-    // let r1cs_builder: jolt_core::r1cs::builder::CombinedUniformBuilder<
-    //     C,
-    //     F,
-    //     co_jolt::r1cs::inputs::JoltR1CSInputs,
-    // > = <co_jolt::r1cs::constraints::JoltRV32IMConstraints as jolt_core::r1cs::constraints::R1CSConstraints>::construct_constraints(
-    //     meta.padded_trace_length,
-    //     program_io.memory_layout.input_start,
-    // );
-    // r1cs_builder.compute_aux(&mut check);
-
-    // check_instruction_polys(
-    //     worker_polys
-    //         .iter()
-    //         .map(|p| &p.instruction_lookups)
-    //         .collect_vec(),
-    //     &check.instruction_lookups,
-    // );
-
-    // println!("CORRECT");
+    network.reset_stats();
 
     let (proof, commitments) = RV32IJoltVM::prove_rep3(
         meta,

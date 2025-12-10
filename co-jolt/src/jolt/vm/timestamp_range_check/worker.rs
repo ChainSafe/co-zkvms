@@ -74,7 +74,6 @@ impl<
             vec![]
         };
         io_ctx.network().reset_log_num_workers();
-        tracing::info!("TimestampValidityProof prove_grand_products_distributed");
 
         let r_grand_product: Vec<F> = io_ctx.network().receive_request()?;
 
@@ -142,8 +141,6 @@ impl<
         .unwrap();
 
         io_ctx.network().send_response(hashes)?;
-
-        println!("TimestampValidityProof send hashes");
 
         let r_grand_product = <BatchedDenseGrandProduct<F> as Rep3BatchedGrandProductWorker<
             F,

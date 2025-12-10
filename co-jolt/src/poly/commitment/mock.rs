@@ -150,29 +150,6 @@ impl<F: JoltField, ProofTranscript: Transcript> Rep3CommitmentScheme<F, ProofTra
     fn concat_commitments(_a: &Self::Commitment, _b: &Self::Commitment) -> Self::Commitment {
         todo!()
     }
-
-    fn distributed_prove_rep3<Network>(
-        _poly: &Rep3DensePolynomial<F>,
-        _setup: &Self::Setup,
-        _opening_point: &[F],
-        _network: &mut Network,
-    ) -> eyre::Result<()>
-    where
-        Network: Rep3NetworkWorker,
-    {
-        todo!()
-    }
-
-    fn merge_proofs_rep3<Network>(
-        _setup: &Self::Setup,
-        _opening_point: &[F],
-        _network: &mut Network,
-    ) -> eyre::Result<Self::Proof>
-    where
-        Network: Rep3NetworkCoordinator,
-    {
-        todo!()
-    }
 }
 
 impl<F, ProofTranscript> CommitmentScheme<ProofTranscript> for MockCommitScheme<F, ProofTranscript>

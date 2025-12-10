@@ -71,8 +71,6 @@ where
             io_ctx,
         )?;
 
-        tracing::info!("prove_memory_checking done");
-
         Self::prove_outputs(
             &mut polynomials.read_write_memory,
             program_io,
@@ -255,11 +253,6 @@ where
 
         for (i, chunk) in read_write_leaves.chunks_mut(chunk_size).enumerate() {
             if num_workers <= rw_batch_size_full || worker_idx % 2 == 0 {
-                tracing::info!(
-                    "worker_idx {} read_leaves chunk {} ",
-                    worker_idx,
-                    reg_offset + i
-                );
                 chunk[..num_ops_worker].par_iter_mut().enumerate().for_each(
                     |(j, read_fingerprint)| {
                         match reg_offset + i {
@@ -302,12 +295,6 @@ where
             }
 
             if num_workers <= rw_batch_size_full || worker_idx % 2 != 0 {
-                tracing::info!(
-                    "worker_idx {} write_leaves chunk {} ",
-                    worker_idx,
-                    reg_offset + i
-                );
-
                 chunk[num_ops_worker..].par_iter_mut().enumerate().for_each(
                     |(j, write_fingerprint)| match reg_offset + i {
                         RS1 => {
@@ -375,19 +362,6 @@ where
                 )
             }));
         }
-
-        tracing::info!(
-            "read_write_leaves {} rw_batch_size_worker {} rw_batch_size_full {}",
-            read_write_leaves.len(),
-            rw_batch_size_worker,
-            rw_batch_size_full
-        );
-
-        tracing::info!(
-            "init_final_fingeprints {} init_final_batch_size_worker {}",
-            init_final_fingeprints.len(),
-            init_final_batch_size_worker
-        );
 
         Ok((
             (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),

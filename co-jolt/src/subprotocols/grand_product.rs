@@ -79,7 +79,6 @@ where
         let mut claim = output_mle.evaluate(&r_grand_product);
         network.broadcast_request(r_grand_product.clone())?;
 
-        tracing::info!("num layers {}", self.num_layers());
         for layer in self.layers() {
             proof_layers.push(layer.coordinate_prove_layer(
                 &mut claim,
@@ -226,7 +225,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         );
 
         let r_sumcheck = self.prove_sumcheck(&mut eq_poly, worker_symmetric, io_ctx)?;
-        println!("prove sumcheck");
 
         drop_in_background_thread(eq_poly);
 
@@ -238,7 +236,6 @@ pub trait Rep3BatchedGrandProductLayerWorker<F: JoltField, Network: Rep3NetworkW
         // produce a random challenge to condense two claims into a single claim
         let r_layer = io_ctx.network().receive_request()?;
         r_grand_product.push(r_layer);
-        println!("r_layer");
 
         Ok(())
     }

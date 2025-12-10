@@ -1,26 +1,8 @@
 use itertools::Itertools;
-use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
-use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::IoContextPool;
-use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use std::marker::PhantomData;
-use tokio::io;
 use tracing::{span, Level};
 
 use crate::field::JoltField;
-use crate::r1cs::builder::CombinedUniformBuilder;
-use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
-use jolt_core::r1cs::key::UniformSpartanKey;
-use jolt_core::utils::math::Math;
-use jolt_core::utils::thread::drop_in_background_thread;
-
-use jolt_core::utils::transcript::Transcript;
-
-use jolt_core::poly::{
-    dense_mlpoly::DensePolynomial,
-    eq_poly::{EqPlusOnePolynomial, EqPolynomial},
-};
-
 use crate::jolt::vm::witness::Rep3JoltPolynomials;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::mixed_polynomial::MixedPolynomial;
@@ -28,10 +10,23 @@ use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::poly::Polynomial;
 use crate::poly::Rep3MultilinearPolynomial;
+use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::subprotocols::sumcheck;
 use crate::utils::types::Rep3Value;
 use crate::utils::types::SharedOrPublicIter;
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_core::poly::{
+    dense_mlpoly::DensePolynomial,
+    eq_poly::{EqPlusOnePolynomial, EqPolynomial},
+};
 use jolt_core::r1cs::inputs::ConstraintInput;
+use jolt_core::r1cs::key::UniformSpartanKey;
+use jolt_core::utils::math::Math;
+use jolt_core::utils::thread::drop_in_background_thread;
+use jolt_core::utils::transcript::Transcript;
+use mpc_core::protocols::additive::AdditiveShare;
+use mpc_core::protocols::rep3::network::IoContextPool;
+use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 
 use rayon::prelude::*;
 
@@ -112,15 +107,6 @@ where
         let inner_sumcheck_RLC = io_ctx.network().receive_request::<F>()?;
 
         let (rx_step, rx_constr) = outer_sumcheck_r.split_at(num_steps_bits + log_num_workers);
-
-        tracing::info!(
-            "num_steps_bits: {} outer_sumcheck_r {} rx_step {} rx_constr {} num_vars_uniform {}",
-            num_steps_bits,
-            outer_sumcheck_r.len(),
-            rx_step.len(),
-            rx_constr.len(),
-            num_vars_uniform,
-        );
 
         let (rx_step_worker, _) = rx_step.split_at(num_steps_bits);
 

@@ -39,8 +39,6 @@ where
         let log_num_workers = network.log_num_workers();
         let num_rounds_x = key.num_rows_bits();
 
-        tracing::info!("num_rounds_x: {}", num_rounds_x);
-
         /* Sumcheck 1: Outer sumcheck */
         let span = tracing::info_span!("outer_sumcheck");
         let _guard = span.enter();
@@ -48,7 +46,6 @@ where
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>(); // TODO transcript.challenge_scalars
-        tracing::info!("tau: {:?}", tau[0]);
 
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau);
 
@@ -99,9 +96,6 @@ where
                 .unwrap()
         };
 
-        tracing::info!("outer_sumcheck_claims: {:?}", outer_sumcheck_claims);
-        tracing::info!("outer_sumcheck_r: {:?}", outer_sumcheck_r);
-
         let outer_sumcheck_proof = SumcheckInstanceProof::new(polys);
         transcript.append_scalars(&outer_sumcheck_claims);
 
@@ -124,13 +118,10 @@ where
         let _guard = span.enter();
 
         let inner_sumcheck_RLC: F = transcript.challenge_scalar();
-        tracing::info!("inner_sumcheck_RLC: {}", inner_sumcheck_RLC);
 
         let mut claim_inner_joint = claim_Az
             + inner_sumcheck_RLC * claim_Bz
             + inner_sumcheck_RLC * inner_sumcheck_RLC * claim_Cz;
-
-        tracing::info!("claim_inner_joint: {}", claim_inner_joint);
 
         network.broadcast_request(inner_sumcheck_RLC)?;
 
@@ -162,8 +153,6 @@ where
         } else {
             additive::combine_additive_share(network.receive_responses()?)
         };
-
-        tracing::info!("shift_sumcheck_claim: {}", shift_sumcheck_claim);
 
         let comb_func = |poly_evals: &[F]| -> F {
             assert_eq!(poly_evals.len(), 2);

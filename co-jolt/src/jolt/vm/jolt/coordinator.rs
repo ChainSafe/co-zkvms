@@ -113,26 +113,16 @@ where
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
-        // transcript.append_scalar(&spartan_key.vk_digest);
+        transcript.append_scalar(&spartan_key.vk_digest);
         jolt_commitments
             .read_write_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
 
-        tracing::info!(
-            "read_write comms check: {}",
-            transcript.challenge_scalar::<F>()
-        );
-
         jolt_commitments
             .init_final_values()
             .iter()
             .for_each(|value| value.append_to_transcript(&mut transcript));
-
-        tracing::info!(
-            "init_final comms check: {}",
-            transcript.challenge_scalar::<F>()
-        );
 
         network.sync_with_parties()?;
 

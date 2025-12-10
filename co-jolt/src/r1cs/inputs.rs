@@ -69,10 +69,8 @@ where
             vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::<F>::zero_share()); C * m_worker];
         let mut circuit_flags = vec![vec![0u8; NUM_CIRCUIT_FLAGS]; m_worker];
 
-        let mut trace_range = m_worker * worker_idx..m_worker * (worker_idx + 1);
-        // if worker_idx < num_workers - 1 {
-        //     trace_range.end += 1;
-        // }
+        let trace_range = m_worker * worker_idx..m_worker * (worker_idx + 1);
+
         let id = io_ctx.party_id();
         trace[trace_range]
             .into_par_iter()

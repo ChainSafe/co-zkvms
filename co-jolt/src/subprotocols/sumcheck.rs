@@ -153,13 +153,6 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             num_rounds -= 2;
         }
 
-        println!(
-            "sumcheck num_rounds: {} log_workers: {} is_distributed: {}",
-            num_rounds,
-            io_ctx.log_num_workers(),
-            io_ctx.network().is_distributed()
-        );
-        // let mut previous_claim = *claim;
         let mut r: Vec<F> = Vec::new();
         let party_id = io_ctx.party_id();
         for _round in 0..num_rounds {
@@ -178,18 +171,14 @@ pub trait Rep3BatchedCubicSumcheckWorker<F: JoltField, Network: Rep3NetworkWorke
             // since we sent coeffs shares earlier, we can just receive the evaluation from coordinator
         }
 
-        println!("prove rounds");
-
         debug_assert_eq!(eq_poly.len(), 1);
 
         let final_evals = self.final_evals(eq_poly.len(), party_id);
         io_ctx.network().send_response(final_evals.clone())?;
-        println!("final_evals sent : {:?}", final_evals.len());
 
         if io_ctx.network().is_distributed() {
             // Coordinator runs remaining sumcheck rounds
             r.extend(io_ctx.network().receive_request::<Vec<F>>()?);
-            println!("receive_request rem rj");
         }
 
         Ok(r)

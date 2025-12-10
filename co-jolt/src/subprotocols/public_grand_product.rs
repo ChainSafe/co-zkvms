@@ -29,7 +29,6 @@ use jolt_core::{
         sumcheck::{Bindable, SumcheckInstanceProof},
     },
     utils::{
-        thread::drop_in_background_thread,
         transcript::{AppendToTranscript, Transcript},
     },
 };
@@ -63,13 +62,6 @@ where
         io_ctx: &mut IoContextPool<Network>,
     ) -> eyre::Result<(Self, usize)> {
         let (leaves, batch_size, full_batch_size) = leaves;
-
-        tracing::info!(
-            "construct leaves: {}, batch_size: {}, full_batch_size: {}",
-            leaves.len(),
-            batch_size,
-            full_batch_size
-        );
 
         if io_ctx.party_idx() != 0 {
             return Ok((
@@ -197,10 +189,6 @@ where
         transcript: &mut ProofTranscript,
         network: &mut Network,
     ) -> eyre::Result<(BatchedGrandProductProof<PCS, ProofTranscript>, Vec<F>)> {
-        tracing::info!(
-            "cooridinate_prove_grand_product num_layers: {}",
-            self.layers.len()
-        );
         let mut proof_layers = Vec::with_capacity(self.layers.len());
 
         // Evaluate the MLE of the output layer at a random point to reduce the outputs to
@@ -257,10 +245,6 @@ where
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        tracing::info!(
-            "public sumcheck num_rounds: {}",
-            num_rounds - log_num_workers
-        );
         for _round in 0..num_rounds - log_num_workers {
             let mut round_evals = if network.is_distributed() {
                 let subnet_responces =
