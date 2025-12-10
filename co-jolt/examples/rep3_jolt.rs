@@ -56,15 +56,6 @@ pub struct Args {
     #[clap(short, long, value_name = "FILE")]
     pub config_file: PathBuf,
 
-    #[arg(
-        short,
-        long,
-        value_name = "SOLVE_WITNESS",
-        env = "SOLVE_WITNESS",
-        default_value = "false"
-    )]
-    pub solve_witness: bool,
-
     #[clap(short, long, value_name = "DEBUG", env = "DEBUG")]
     pub debug: bool,
 
@@ -221,12 +212,6 @@ pub fn run_coordinator(
     }
 
     let num_inputs = trace.len();
-    if args.solve_witness {
-        tracing::info!("Witness solving enabled");
-        unimplemented!();
-    } else {
-        tracing::warn!("Witness solving disabled");
-    }
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
