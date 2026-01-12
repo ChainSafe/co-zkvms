@@ -267,6 +267,13 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
                         .try_into_public_mut()
                         .expect("party 0 must compute commitment to public t_final"),
                 );
+
+                commitments.read_write_memory.v_advice = PCS::combine_commitment_shares(&[
+                    &commitments_shares[0].read_write_memory.v_advice,
+                    &commitments_shares[1].read_write_memory.v_advice,
+                    &commitments_shares[2].read_write_memory.v_advice,
+                ]);
+
                 commitments
             })
             .reduce(|mut acc, next| {
@@ -300,6 +307,10 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
 
                 acc.bytecode.t_final =
                     PCS::concat_commitments(&acc.bytecode.t_final, &next.bytecode.t_final);
+                acc.read_write_memory.v_advice = PCS::concat_commitments(
+                    &acc.read_write_memory.v_advice,
+                    &next.read_write_memory.v_advice,
+                );
                 acc
             })
             .unwrap();
@@ -407,9 +418,17 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         drop(_guard);
         drop(span);
 
+        commitments.read_write_memory.v_advice = PCS::commit_rep3(
+            &self.read_write_memory.v_advice,
+            &preprocessing.generators,
+            false,
+        );
+
         io_ctx.sync_with_parties()?;
 
-        io_ctx.network().send_response(commitments)
+        io_ctx.network().send_response(commitments)?;
+
+        Ok(())
     }
 
     fn take_exogenous_polynomials_for_timestamp_range_check(&mut self) -> JoltPolynomials<F> {

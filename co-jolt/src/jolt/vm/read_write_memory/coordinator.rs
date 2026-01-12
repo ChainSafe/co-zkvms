@@ -15,6 +15,7 @@ use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::transcript::Transcript;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+use mpc_core::protocols::rep3::PartyID;
 
 pub trait Rep3ReadWriteMemoryCoordinator<F, PCS, ProofTranscript, Network>:
     Rep3MemoryCheckingProver<F, PCS, ProofTranscript, Network>
@@ -118,10 +119,14 @@ where
         network,
     )?;
 
+    let advice_nv = network.receive_response(PartyID::ID0, 0)?;
+    let advice_opening = opening_accumulator.append(advice_nv, transcript, network)?[0];
+
     Ok(OutputSumcheckProof {
         num_rounds,
         sumcheck_proof,
         opening: sumcheck_openings[2],
+        advice_opening,
         _pcs: PhantomData,
     })
 }

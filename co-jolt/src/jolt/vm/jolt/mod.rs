@@ -457,6 +457,7 @@ where
         preprocessing.program_io = Some(JoltDevice {
             inputs: program_io.inputs,
             outputs: program_io.outputs,
+            untrusted_advice: todo!(),
             panic: program_io.panic,
             memory_layout: memory_layout.clone(),
         });

@@ -3,7 +3,7 @@ use crate::jolt::instruction::{JoltInstructionSet, Rep3JoltInstructionSet};
 use crate::jolt::trace::mem_op::MemoryOp;
 use crate::jolt::vm::witness::{Rep3Polynomials, WorkerInitializable};
 use crate::jolt::vm::JoltTraceStep;
-use crate::poly::{generate_poly_shares_rep3, Rep3MultilinearPolynomial};
+use crate::poly::{generate_poly_shares_rep3, Rep3DensePolynomial, Rep3MultilinearPolynomial};
 use crate::utils::transpose;
 use crate::utils::types::Either;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -37,6 +37,7 @@ pub type Rep3ReadWriteMemoryPolynomials<F> = ReadWriteMemoryStuff<Rep3Multilinea
 #[derive(Debug, Clone, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Rep3ProgramIO<F: JoltField> {
     pub v_io: Rep3MultilinearPolynomial<F>,
+    pub v_advice: Rep3MultilinearPolynomial<F>,
     pub memory_layout: MemoryLayout,
     pub memory_size: usize,
     input_words_len: usize,
@@ -299,6 +300,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             t_read_rs2,
             t_read_ram,
             t_final,
+            v_advice: program_io.v_advice.clone(),
             v_init: Some(v_init),
             a_init_final: None,
             identity: None,
@@ -377,6 +379,7 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             t_read_rs2: share1.t_read_rs2.try_into().unwrap(),
             t_read_ram: share1.t_read_ram.try_into().unwrap(),
             t_final: share1.t_final.try_into().unwrap(),
+            v_advice: todo!(),
             v_init: Some(v_init),
             a_init_final: None,
             identity: None,
@@ -426,6 +429,7 @@ fn map_to_polys_shared<F: JoltField, const N: usize>(
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rep3ProgramIOInput {
+    pub untrusted_advice: Vec<Rep3RingShare<u8>>,
     pub inputs: Vec<Rep3RingShare<u8>>,
     pub outputs: Vec<Rep3RingShare<u8>>,
     pub panic: Rep3RingShare<Bit>, // 0 if not panicked, 1 if panicked
@@ -435,11 +439,19 @@ pub struct Rep3ProgramIOInput {
 impl Rep3ProgramIOInput {
     pub fn generate_secret_shares<R: rand::Rng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
         let JoltDevice {
+            untrusted_advice,
             inputs,
             outputs,
             panic,
             memory_layout,
         } = program_io;
+
+        let untrusted_advice = transpose(
+            untrusted_advice
+                .into_iter()
+                .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
+                .collect::<Vec<_>>(),
+        );
 
         let inputs = transpose(
             inputs
@@ -457,8 +469,9 @@ impl Rep3ProgramIOInput {
 
         let panic = rep3_ring::binary::generate_shares_rep3(panic.into(), rng);
 
-        izip!(inputs, outputs, panic)
-            .map(|(inputs, outputs, panic)| Self {
+        izip!(untrusted_advice, inputs, outputs, panic)
+            .map(|(untrusted_advice, inputs, outputs, panic)| Self {
+                untrusted_advice,
                 inputs,
                 outputs,
                 panic,
@@ -483,6 +496,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
         let Rep3ProgramIOInput {
+            untrusted_advice,
             inputs,
             outputs,
             panic,
@@ -499,27 +513,34 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             .unwrap();
 
         let memory_size = max_trace_address.next_power_of_two() as usize;
+        let advice_words_len = untrusted_advice.len().div_ceil(4);
         let input_words_len = inputs.len().div_ceil(4);
         let output_words_len = outputs.len().div_ceil(4);
 
-        // Convert input bytes into words and populate `v_io`
-        let input_words = inputs
-            .par_chunks(4)
-            .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
+        let (mut advice_words, mut input_words, mut output_words) = {
+            // Convert input bytes into words and populate `v_io`
+            let advice_words = untrusted_advice
+                .par_chunks(4)
+                .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
+            let input_words = inputs
+                .par_chunks(4)
+                .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
 
-        // Convert output bytes into words and populate `v_io`
-        let output_words = outputs
-            .par_chunks(4)
-            .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
+            // Convert output bytes into words and populate `v_io`
+            let output_words = outputs
+                .par_chunks(4)
+                .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
 
-        let (mut input_shares, mut output_shares) = {
-            let mut words =
-                io_ctx.par_chunks(input_words.chain(output_words), None, |words, io_ctx| {
-                    rep3_ring::casts::binary_ring_to_field_many(&words, io_ctx)
-                })?;
-            let output_words = words.split_off(input_words_len);
+            let mut words = io_ctx.par_chunks(
+                advice_words.chain(input_words).chain(output_words),
+                None,
+                |words, io_ctx| rep3_ring::casts::binary_ring_to_field_many(&words, io_ctx),
+            )?;
+            let advice_words = words.split_off(advice_words_len);
+            let input_words = words.split_off(input_words_len);
+            let output_words = words;
             assert_eq!(output_words.len(), output_words_len);
-            (words, output_words)
+            (advice_words, input_words, output_words)
         };
 
         let termination_bits = [panic, !panic];
@@ -531,6 +552,10 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         .unwrap();
 
         let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
+        let advise_index = memory_address_to_witness_index(
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+        );
         let input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -539,8 +564,9 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
-        v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_shares[..]);
-        v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_shares[..]);
+        v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
+        v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_words[..]);
+        v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_words[..]);
 
         v_io[memory_address_to_witness_index(
             program_io.memory_layout.panic,
@@ -551,78 +577,32 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             &program_io.memory_layout,
         )] = termination;
 
-        Ok(Self {
-            v_io: Rep3MultilinearPolynomial::new_shard_shared(
-                v_io,
-                memory_size,
+        let v_io = Rep3MultilinearPolynomial::new_shard_shared(
+            v_io,
+            memory_size,
+            io_ctx.log_num_workers(),
+            io_ctx.worker_idx(),
+        );
+
+        let v_advice = {
+            // TODO: let coeffs = v_io.as_shared().coeffs.clone();
+            let advise_len_padded = advice_words.len().next_power_of_two();
+            advice_words.resize(advise_len_padded, Rep3PrimeFieldShare::zero_share());
+            Rep3MultilinearPolynomial::new_shard_shared(
+                advice_words,
+                advise_len_padded,
                 io_ctx.log_num_workers(),
                 io_ctx.worker_idx(),
-            ),
+            )
+        };
+
+        Ok(Self {
+            v_io,
+            v_advice,
             memory_layout,
             memory_size,
             input_words_len,
         })
-    }
-
-    pub fn generate_secret_shares<R: rand::Rng>(
-        program_io: JoltDevice,
-        memory_size: usize,
-        rng: &mut R,
-    ) -> Vec<Self> {
-        let mut v_io: Vec<u32> = vec![0; memory_size];
-        let mut input_index = memory_address_to_witness_index(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        );
-        // Convert input bytes into words and populate `v_io`
-        for chunk in program_io.inputs.chunks(4) {
-            let mut word = [0u8; 4];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u32::from_le_bytes(word);
-            v_io[input_index] = word;
-            input_index += 1;
-        }
-        let mut output_index = memory_address_to_witness_index(
-            program_io.memory_layout.output_start,
-            &program_io.memory_layout,
-        );
-        // Convert output bytes into words and populate `v_io`
-        for chunk in program_io.outputs.chunks(4) {
-            let mut word = [0u8; 4];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u32::from_le_bytes(word);
-            v_io[output_index] = word;
-            output_index += 1;
-        }
-
-        // Copy panic bit
-        v_io[memory_address_to_witness_index(
-            program_io.memory_layout.panic,
-            &program_io.memory_layout,
-        )] = program_io.panic as u32;
-        if !program_io.panic {
-            // Set termination bit
-            v_io[memory_address_to_witness_index(
-                program_io.memory_layout.termination,
-                &program_io.memory_layout,
-            )] = 1;
-        }
-
-        let v_io = MultilinearPolynomial::<F>::from(v_io);
-        let mut v_io_shares = generate_poly_shares_rep3(&v_io, rng);
-
-        (0..3)
-            .map(|i| Self {
-                v_io: std::mem::take(&mut v_io_shares[i]),
-                memory_layout: program_io.memory_layout.clone(),
-                memory_size,
-                input_words_len: program_io.inputs.len() / 4,
-            })
-            .collect()
     }
 }
 

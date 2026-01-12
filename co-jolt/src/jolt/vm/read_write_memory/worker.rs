@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 use crate::field::JoltField;
 use crate::jolt::vm::read_write_memory::witness::Rep3ProgramIO;
 use crate::jolt::vm::timestamp_range_check::worker::TimestampValidityDistributredWorker;
+use crate::jolt::vm::JoltPolynomials;
+use crate::lasso::memory_checking;
 use crate::lasso::memory_checking::worker::MemoryCheckingProverRep3Worker;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
@@ -156,6 +158,20 @@ where
             &[&v_final],
             DensePolynomial::new(EqPolynomial::evals(&r_sumcheck)),
             r_sumcheck.to_vec(),
+            io_ctx.main(),
+        )?;
+
+        let advice_vars = ((program_io.memory_layout.max_untrusted_advice_size / 4)
+            .next_power_of_two() as usize)
+            .log_2();
+        if io_ctx.party_idx() == 0 && io_ctx.worker_idx() == 0 {
+            io_ctx.network().send_response(advice_vars)?;
+        }
+        let r_advice = &r_sumcheck[..advice_vars];
+        opening_accumulator.append(
+            &[&polynomials.v_advice],
+            DensePolynomial::new(EqPolynomial::evals(&r_advice)),
+            r_advice.to_vec(),
             io_ctx.main(),
         )?;
 
@@ -361,5 +377,44 @@ where
             (read_write_leaves, rw_batch_size_worker, rw_batch_size_full),
             (init_final_fingeprints, init_final_batch_size_worker, 2),
         ))
+    }
+
+    fn compute_openings(
+        preprocessing: &Self::Preprocessing,
+        opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        polynomials: &Self::Rep3Polynomials,
+        jolt_polynomials: &Rep3JoltPolynomials<F>,
+        r_read_write: &[F],
+        r_init_final: &[F],
+        io_ctx: &mut IoContextPool<Network>,
+    ) -> eyre::Result<()> {
+        memory_checking::worker::compute_openings::<F, Self::ExogenousOpenings, _, _>(
+            opening_accumulator,
+            polynomials,
+            jolt_polynomials,
+            r_read_write,
+            r_init_final,
+            io_ctx,
+        )?;
+
+        // let max_advice_size = preprocessing
+        //     .program_io
+        //     .as_ref()
+        //     .unwrap()
+        //     .memory_layout
+        //     .max_untrusted_advice_size;
+        // let bytecode_vars = preprocessing.bytecode_words.len().log_2();
+        // let advice_vars = ((max_advice_size / 4).next_power_of_two() as usize).log_2();
+        // let r_advice = &r_init_final
+        //     [r_init_final.len() - advice_vars - bytecode_vars..r_init_final.len() - bytecode_vars];
+
+        // opening_accumulator.append(
+        //     &[&polynomials.v_advice],
+        //     DensePolynomial::new(EqPolynomial::evals(&r_advice)),
+        //     r_advice.to_vec(),
+        //     io_ctx.main(),
+        // )?;
+
+        Ok(())
     }
 }
