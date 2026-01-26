@@ -3117,6 +3117,15 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
+dependencies = [
+ "jolt-sdk-macros 0.1.0",
+ "postcard",
+ "serde",
+]
+
+[[package]]
+name = "jolt-sdk"
+version = "0.1.0"
 source = "git+https://github.com/nulltea/jolt.git?branch=co-jolt#6c1ba0247a7edc815a75470134b1ceb3af60dc88"
 dependencies = [
  "ark-bn254",
@@ -3140,6 +3149,16 @@ dependencies = [
  "jolt-sdk-macros 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
  "postcard",
  "tracer 0.2.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "common 0.2.0",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5311,7 +5330,7 @@ dependencies = [
 name = "sha2-chain-guest"
 version = "0.1.0"
 dependencies = [
- "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "jolt-sdk 0.1.0",
  "sha2",
 ]
 

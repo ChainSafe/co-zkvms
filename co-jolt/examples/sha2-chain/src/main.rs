@@ -10,7 +10,7 @@ pub fn main() {
     let prove_sha2_chain = guest::build_prover_sha2_chain(program, prover_preprocessing);
     let verify_sha2_chain = guest::build_verifier_sha2_chain(verifier_preprocessing);
 
-    let input = [5u8; 32];
+    let input = [5u8; 32].into();
     let iters = 100;
     let native_output = guest::sha2_chain(input, iters);
     let now = Instant::now();

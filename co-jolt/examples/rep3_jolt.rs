@@ -116,7 +116,6 @@ fn main() -> Result<()> {
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
     let mut inputs = vec![];
-    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
