@@ -119,9 +119,11 @@ fn main() -> Result<()> {
     inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    let mut untrusted_advice = vec![];
+    untrusted_advice.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
 
     if config.is_coordinator {
-        run_coordinator(args, config, program, inputs)?;
+        run_coordinator(args, config, program, inputs, untrusted_advice)?;
     } else {
         run_party(args, config, program)?;
     }
@@ -165,25 +167,25 @@ pub fn run_party(args: Args, config: NetworkConfig, program: host::Program) -> R
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    let preprocessing = RV32IJoltVM::verifier_preprocess(
-        bytecode,
-        program_io.memory_layout,
-        memory_init,
-        max_bytecode_size,
-        trace.len().next_power_of_two(),
-        trace.len().next_power_of_two(),
-    );
+    // let preprocessing = RV32IJoltVM::verifier_preprocess(
+    //     bytecode,
+    //     program_io.memory_layout,
+    //     memory_init,
+    //     max_bytecode_size,
+    //     trace.len().next_power_of_two(),
+    //     trace.len().next_power_of_two(),
+    // );
 
-    let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
-        trace,
-        program_io,
-        preprocessing,
-        network,
-    )?;
+    // let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
+    //     trace,
+    //     program_io,
+    //     preprocessing,
+    //     network,
+    // )?;
 
-    prover.prove()?;
+    // prover.prove()?;
 
-    prover.io_ctx.log_connection_stats();
+    // prover.io_ctx.log_connection_stats();
     drop(tracing_guard);
     Ok(())
 }
@@ -194,6 +196,7 @@ pub fn run_coordinator(
     config: NetworkConfig,
     mut program: host::Program,
     inputs: Vec<u8>,
+    untrusted_advice: Vec<u8>,
 ) -> Result<()> {
     let file = format!(
         "trace_coordinator_sha2-chain-{}_{}CPU.json",
@@ -204,7 +207,9 @@ pub fn run_coordinator(
     let _tracing_guard = init_tracing(&file, &args.trace_dir);
 
     let (bytecode, memory_init) = program.decode();
-    let (program_io, trace) = program.trace(&inputs);
+    let (program_io, trace) = program.trace(&inputs, &untrusted_advice);
+
+    println!("untrusted advice: {:?}", program_io.untrusted_advice);
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -241,7 +246,7 @@ pub fn run_coordinator(
 
     let mut rng = test_rng();
     let (program_io_shares, trace_shares) =
-        program.generate_trace_shares::<F, _>(&inputs, &mut rng);
+        program.generate_trace_shares::<F, _>(&inputs, &untrusted_advice, &mut rng);
 
     let mut network =
         Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
@@ -254,25 +259,25 @@ pub fn run_coordinator(
         .context("while serializing trace shares")?;
     network.send_requests_blocking(worker_shares)?;
 
-    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
+    // let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
 
-    network.log_connection_stats(Some("IO witness: "));
-    network.reset_stats();
+    // network.log_connection_stats(Some("IO witness: "));
+    // network.reset_stats();
 
-    let (proof, commitments) = RV32IJoltVM::prove_rep3(
-        meta,
-        // &program_io,
-        &spartan_key,
-        &preprocessing,
-        &mut network,
-    )?;
+    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
+    //     meta,
+    //     // &program_io,
+    //     &spartan_key,
+    //     &preprocessing,
+    //     &mut network,
+    // )?;
 
-    RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
-        .context("while verifying Lasso (rep3) proof")?;
+    // RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
+    //     .context("while verifying Lasso (rep3) proof")?;
 
-    tracing::info!("VERIFIED!");
+    // tracing::info!("VERIFIED!");
 
-    network.log_connection_stats(None);
+    // network.log_connection_stats(None);
 
     Ok(())
 }

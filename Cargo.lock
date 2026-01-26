@@ -3118,9 +3118,14 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "common 0.2.0",
+ "jolt-core 0.1.0",
  "jolt-sdk-macros 0.1.0",
  "postcard",
  "serde",
+ "tracer 0.2.0",
 ]
 
 [[package]]
@@ -5322,7 +5327,7 @@ name = "sha2-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
- "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt.git?rev=42de0ca1f581dd212dda7ff44feee806556531d2)",
+ "jolt-sdk 0.1.0",
  "sha2-chain-guest",
 ]
 

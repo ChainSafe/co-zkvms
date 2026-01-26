@@ -201,7 +201,11 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
+    pub fn trace(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+    ) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>) {
         self.build(DEFAULT_TARGET_DIR);
 
         let elf = self.elf.as_ref().unwrap();
@@ -217,7 +221,8 @@ impl Program {
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
         };
-        let (raw_trace, io_device) = tracer::trace(elf_contents, inputs, &memory_config);
+        let (raw_trace, io_device) =
+            tracer::trace(elf_contents, inputs, untrusted_advice, &memory_config);
 
         let trace = raw_trace
             .into_par_iter()
@@ -277,9 +282,10 @@ impl Program {
     pub fn generate_trace_shares<F: JoltField, R: RngCore>(
         &mut self,
         inputs: &[u8],
+        untrusted_advice: &[u8],
         rng: &mut R,
     ) -> (Vec<Rep3ProgramIOInput>, Vec<Vec<JoltTraceStep<RV32I>>>) {
-        let (program_io, trace) = self.trace(inputs);
+        let (program_io, trace) = self.trace(inputs, untrusted_advice);
 
         let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
 
