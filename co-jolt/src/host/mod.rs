@@ -19,9 +19,8 @@ use rayon::prelude::*;
 use jolt_common::{
     self as common,
     constants::{
-        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-        DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-        MEMORY_OPS_PER_INSTRUCTION,
+        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+        DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, MEMORY_OPS_PER_INSTRUCTION,
     },
     rv_trace::JoltDevice,
 };
@@ -66,7 +65,6 @@ pub struct Program {
     stack_size: u64,
     max_input_size: u64,
     max_untrusted_advice_size: u64,
-    max_trusted_advice_size: u64,
     max_output_size: u64,
     std: bool,
     pub elf: Option<PathBuf>,
@@ -81,7 +79,6 @@ impl Program {
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
-            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
             elf: None,
@@ -110,10 +107,6 @@ impl Program {
 
     pub fn set_max_output_size(&mut self, size: u64) {
         self.max_output_size = size;
-    }
-
-    pub fn set_max_trusted_advice_size(&mut self, size: u64) {
-        self.max_trusted_advice_size = size;
     }
 
     pub fn set_max_untrusted_advice_size(&mut self, size: u64) {

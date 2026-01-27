@@ -3,7 +3,9 @@ mod debug;
 
 use ark_std::test_rng;
 use clap::Parser;
+use co_jolt::jolt::vm::coordinator::JoltRep3;
 use co_jolt::jolt::vm::read_write_memory::witness::Rep3ProgramIOInput;
+use co_jolt::jolt::vm::rv32i_vm::RV32IJoltRep3Prover;
 use co_jolt::poly::commitment::pst13::PST13;
 use co_jolt::utils::math::Math;
 use co_jolt::{
@@ -11,8 +13,7 @@ use co_jolt::{
     jolt::{
         instruction::JoltInstructionSet,
         vm::{
-            coordinator::JoltRep3,
-            rv32i_vm::{RV32IJoltRep3Prover, RV32IJoltVM, RV32I},
+            rv32i_vm::{RV32IJoltVM, RV32I},
             Jolt, JoltTraceStep,
         },
     },
@@ -103,7 +104,7 @@ fn main() -> Result<()> {
         .map_err(|_| eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
+        .num_threads(5)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -167,25 +168,25 @@ pub fn run_party(args: Args, config: NetworkConfig, program: host::Program) -> R
 
     let max_bytecode_size = bytecode.len().next_power_of_two();
 
-    // let preprocessing = RV32IJoltVM::verifier_preprocess(
-    //     bytecode,
-    //     program_io.memory_layout,
-    //     memory_init,
-    //     max_bytecode_size,
-    //     trace.len().next_power_of_two(),
-    //     trace.len().next_power_of_two(),
-    // );
+    let preprocessing = RV32IJoltVM::verifier_preprocess(
+        bytecode,
+        program_io.memory_layout,
+        memory_init,
+        max_bytecode_size,
+        trace.len().next_power_of_two(),
+        trace.len().next_power_of_two(),
+    );
 
-    // let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
-    //     trace,
-    //     program_io,
-    //     preprocessing,
-    //     network,
-    // )?;
+    let mut prover = RV32IJoltRep3Prover::<F, CommitmentScheme, KeccakTranscript, _>::init(
+        trace,
+        program_io,
+        preprocessing,
+        network,
+    )?;
 
-    // prover.prove()?;
+    prover.prove()?;
 
-    // prover.io_ctx.log_connection_stats();
+    prover.io_ctx.log_connection_stats();
     drop(tracing_guard);
     Ok(())
 }
@@ -259,25 +260,25 @@ pub fn run_coordinator(
         .context("while serializing trace shares")?;
     network.send_requests_blocking(worker_shares)?;
 
-    // let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
+    let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;
 
-    // network.log_connection_stats(Some("IO witness: "));
-    // network.reset_stats();
+    network.log_connection_stats(Some("IO witness: "));
+    network.reset_stats();
 
-    // let (proof, commitments) = RV32IJoltVM::prove_rep3(
-    //     meta,
-    //     // &program_io,
-    //     &spartan_key,
-    //     &preprocessing,
-    //     &mut network,
-    // )?;
+    let (proof, commitments) = RV32IJoltVM::prove_rep3(
+        meta,
+        // &program_io,
+        &spartan_key,
+        &preprocessing,
+        &mut network,
+    )?;
 
-    // RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
-    //     .context("while verifying Lasso (rep3) proof")?;
+    RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
+        .context("while verifying Lasso (rep3) proof")?;
 
-    // tracing::info!("VERIFIED!");
+    tracing::info!("VERIFIED!");
 
-    // network.log_connection_stats(None);
+    network.log_connection_stats(None);
 
     Ok(())
 }
@@ -318,7 +319,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         let _ = tracing::subscriber::set_global_default(
             subscriber
                 .with(chrome_layer)
-                .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
+                .with(ForestLayer::default().with_filter(LevelFilter::TRACE)),
         );
         tracing::info!("tracing_chrome writes to file: {}", file);
         Some(TracingGuard {

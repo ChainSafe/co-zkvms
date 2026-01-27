@@ -531,14 +531,13 @@ impl<F: JoltField> Rep3ProgramIO<F> {
                 .par_chunks(4)
                 .map(|word| Rep3RingShare::<u32>::from_le_bytes(word));
 
-            let mut words = io_ctx.par_chunks(
+            let mut advice_words = io_ctx.par_chunks(
                 advice_words.chain(input_words).chain(output_words),
                 None,
                 |words, io_ctx| rep3_ring::casts::binary_ring_to_field_many(&words, io_ctx),
             )?;
-            let advice_words = words.split_off(advice_words_len);
-            let input_words = words.split_off(input_words_len);
-            let output_words = words;
+            let mut input_words = advice_words.split_off(advice_words_len);
+            let output_words = input_words.split_off(input_words_len);
             assert_eq!(output_words.len(), output_words_len);
             (advice_words, input_words, output_words)
         };
