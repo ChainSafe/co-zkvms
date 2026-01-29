@@ -6,14 +6,14 @@ use crate::{
     },
     lasso::memory_checking::{Rep3MemoryCheckingProver, StructuredPolynomialData},
     poly::{commitment::Rep3CommitmentScheme, opening_proof::Rep3OpeningAccumulatorCoordinator},
-    r1cs::spartan::coordinator::Rep3UniformSpartanCoordinator,
+    r1cs::{constraints::R1CSConstraints, spartan::coordinator::Rep3UniformSpartanCoordinator},
     utils::transcript::TranscriptExt,
 };
 use jolt_core::{
     jolt::vm::{
         bytecode::BytecodeProof, read_write_memory::ReadWriteMemoryProof, JoltVerifierPreprocessing,
     },
-    r1cs::{constraints::R1CSConstraints, key::UniformSpartanKey, spartan::UniformSpartanProof},
+    r1cs::{key::UniformSpartanKey, spartan::UniformSpartanProof},
 };
 use mpc_core::protocols::rep3::{network::Rep3NetworkCoordinator, PartyID};
 use snarks_core::math::Math;
@@ -53,10 +53,15 @@ where
         };
         let r1cs_builder = Self::Constraints::construct_constraints(
             meta.padded_trace_length.next_power_of_two(),
-            meta.memory_layout.input_start,
+            meta.memory_layout.untrusted_advice_start,
         );
-        let spartan_key = UniformSpartanKey::from_builder(&r1cs_builder);
-
+        let spartan_key = UniformSpartanKey::from(&r1cs_builder);
+        tracing::info!(
+            "spartan_key num_steps {} num_rows {} num_constraints {}",
+            spartan_key.num_steps,
+            spartan_key.uniform_r1cs.num_rows,
+            spartan_key.offset_eq_r1cs.num_constraints()
+        );
         tracing::info!("padded_trace_length: {}", meta.padded_trace_length);
 
         Ok((spartan_key, meta))

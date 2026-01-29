@@ -212,18 +212,6 @@ pub fn run_coordinator(
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace(&inputs, &untrusted_advice);
 
-    println!("untrusted advice: {:?}", program_io.untrusted_advice);
-    println!("memory layout: {:?}", program_io.memory_layout);
-
-    {
-        let ram_start_index =
-            memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
-        assert!(
-            ram_start_index.is_power_of_two(),
-            "ram_start_index must be a power of two"
-        );
-    }
-
     if config.is_coordinator {
         print_used_instructions(&trace);
     }

@@ -17,7 +17,7 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{ReducedOpeningProof, VerifierOpeningAccumulator},
     },
-    r1cs::inputs::R1CSPreprocessing,
+    r1cs::{constraints::R1CSConstraints, inputs::R1CSPreprocessing},
     utils::{errors::ProofVerifyError, transcript::Transcript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -35,11 +35,6 @@ use crate::jolt::{
     instruction::JoltInstructionSet, vm::instruction_lookups::InstructionLookupsProof,
 };
 use crate::r1cs::inputs::R1CSPolynomialsExt;
-use jolt_core::{
-    jolt::subtable::JoltSubtableSet,
-    jolt::vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
-    utils::transcript::AppendToTranscript,
-};
 use jolt_core::{
     jolt::{
         instruction::{
@@ -59,10 +54,17 @@ use jolt_core::{
     lasso::memory_checking::MemoryCheckingVerifier,
     poly::multilinear_polynomial::MultilinearPolynomial,
     r1cs::{
-        constraints::R1CSConstraints,
         inputs::{ConstraintInput, R1CSPolynomials, R1CSProof},
         spartan::{self, UniformSpartanProof},
     },
+};
+use jolt_core::{
+    jolt::{
+        subtable::JoltSubtableSet,
+        vm::{bytecode::BytecodePreprocessing, read_write_memory::ReadWriteMemoryPreprocessing},
+    },
+    r1cs::key::UniformSpartanKey,
+    utils::transcript::AppendToTranscript,
 };
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -314,13 +316,10 @@ where
 
         // Regenerate the uniform Spartan key
         let padded_trace_length = proof.trace_length.next_power_of_two();
-        let memory_start = preprocessing.memory_layout.input_start;
+        let memory_start = preprocessing.memory_layout.untrusted_advice_start;
         let r1cs_builder =
             Self::Constraints::construct_constraints(padded_trace_length, memory_start);
-        let spartan_key = spartan::UniformSpartanProof::<C, _, F, ProofTranscript>::setup(
-            &r1cs_builder,
-            padded_trace_length,
-        );
+        let spartan_key = UniformSpartanKey::from(&r1cs_builder);
         transcript.append_scalar(&spartan_key.vk_digest);
 
         let r1cs_proof = R1CSProof {

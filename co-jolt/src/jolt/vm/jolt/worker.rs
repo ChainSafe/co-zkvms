@@ -165,10 +165,15 @@ where
 
         let r1cs_builder = Constraints::construct_constraints(
             trace_len_worker,
-            program_io.memory_layout.input_start,
+            program_io.memory_layout.untrusted_advice_start,
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
-
+        tracing::info!(
+            "spartan_key num_steps {} num_rows {} num_constraints {}",
+            spartan_key.num_steps,
+            spartan_key.uniform_r1cs.num_rows,
+            spartan_key.offset_eq_r1cs.num_constraints()
+        );
         r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
 
         assert_eq!(

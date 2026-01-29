@@ -113,11 +113,11 @@ impl<const C: usize, F: JoltField> R1CSConstraints<C, F> for JoltRV32IMConstrain
             JoltR1CSInputs::RAM_Read,
             JoltR1CSInputs::RAM_Write,
         );
-        cs.constrain_eq_conditional(
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load),
-            JoltR1CSInputs::RAM_Read,
-            JoltR1CSInputs::RD_Write,
-        );
+        // cs.constrain_eq_conditional(
+        //     JoltR1CSInputs::OpFlags(CircuitFlags::Load),
+        //     JoltR1CSInputs::RAM_Read,
+        //     JoltR1CSInputs::RD_Write,
+        // );
         cs.constrain_eq_conditional(
             JoltR1CSInputs::OpFlags(CircuitFlags::Store),
             JoltR1CSInputs::RS2_Read,
