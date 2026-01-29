@@ -136,6 +136,8 @@ where
         drop(_guard);
         drop(span);
 
+        println!("coordinator bytecode done");
+
         let instruction_lookups_proof = InstructionLookupsProof::prove_rep3(
             trace_length,
             &preprocessing.instruction_lookups,
@@ -144,14 +146,19 @@ where
             &mut transcript,
         )?;
 
+        println!("coordinator instructions done");
+
         let memory_proof = ReadWriteMemoryProof::prove_rep3(
             meta.padded_trace_length,
             meta.read_write_memory_size,
+            meta.memory_layout,
             &preprocessing.read_write_memory,
             &mut opening_accumulator,
             &mut transcript,
             network,
         )?;
+
+        println!("coordinator memory done");
 
         let r1cs_proof = UniformSpartanProof::prove_rep3::<PCS>(
             &spartan_key,

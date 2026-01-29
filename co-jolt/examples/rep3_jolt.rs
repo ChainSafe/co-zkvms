@@ -24,8 +24,10 @@ use color_eyre::{
     Result,
 };
 use itertools::{izip, Itertools};
+use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_core::jolt::vm::JoltVerifierPreprocessing;
 
+use jolt_core::jolt::vm::read_write_memory::memory_address_to_witness_index;
 use mpc_net::{
     config::{NetworkConfig, NetworkConfigFile},
     topology::MpcStarNetWorker,
@@ -211,6 +213,16 @@ pub fn run_coordinator(
     let (program_io, trace) = program.trace(&inputs, &untrusted_advice);
 
     println!("untrusted advice: {:?}", program_io.untrusted_advice);
+    println!("memory layout: {:?}", program_io.memory_layout);
+
+    {
+        let ram_start_index =
+            memory_address_to_witness_index(RAM_START_ADDRESS, &program_io.memory_layout) as u64;
+        assert!(
+            ram_start_index.is_power_of_two(),
+            "ram_start_index must be a power of two"
+        );
+    }
 
     if config.is_coordinator {
         print_used_instructions(&trace);
@@ -273,8 +285,13 @@ pub fn run_coordinator(
         &mut network,
     )?;
 
-    RV32IJoltVM::verify(preprocessing, proof, commitments, program_io)
-        .context("while verifying Lasso (rep3) proof")?;
+    RV32IJoltVM::verify(
+        preprocessing,
+        proof,
+        commitments,
+        program_io.into_verifier_io(),
+    )
+    .context("while verifying Lasso (rep3) proof")?;
 
     tracing::info!("VERIFIED!");
 

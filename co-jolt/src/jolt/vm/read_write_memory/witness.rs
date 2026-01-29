@@ -551,10 +551,10 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         .unwrap();
 
         let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
-        let advise_index = memory_address_to_witness_index(
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-        );
+        // let advise_index = memory_address_to_witness_index(
+        //     program_io.memory_layout.untrusted_advice_start,
+        //     &program_io.memory_layout,
+        // );
         let input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -563,7 +563,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
-        v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
+        // v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
         v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_words[..]);
         v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_words[..]);
 
@@ -585,7 +585,8 @@ impl<F: JoltField> Rep3ProgramIO<F> {
 
         let v_advice = {
             // TODO: let coeffs = v_io.as_shared().coeffs.clone();
-            let advise_len_padded = advice_words.len().next_power_of_two();
+            let advise_len_padded =
+                (memory_layout.max_untrusted_advice_size / 4).next_power_of_two() as usize;
             advice_words.resize(advise_len_padded, Rep3PrimeFieldShare::zero_share());
             Rep3MultilinearPolynomial::new_shard_shared(
                 advice_words,

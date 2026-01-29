@@ -243,6 +243,8 @@ where
         drop(_guard);
         drop(span);
 
+        println!("worker bytecode done");
+
         self.io_ctx.sync_with_parties()?;
 
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
@@ -255,6 +257,8 @@ where
             &mut self.io_ctx,
         )?;
 
+        println!("worker instructions done");
+
         self.io_ctx.sync_with_parties()?;
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
@@ -264,6 +268,8 @@ where
             &mut opening_accumulator,
             &mut self.io_ctx,
         )?;
+
+        println!("worker memory done");
 
         self.io_ctx.sync_with_parties()?;
 

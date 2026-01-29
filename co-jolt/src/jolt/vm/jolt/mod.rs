@@ -24,7 +24,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Context;
 use jolt_common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{MemoryLayout, NUM_CIRCUIT_FLAGS},
+    rv_trace::{MemoryLayout, VerifierProgramIO, NUM_CIRCUIT_FLAGS},
 };
 use jolt_tracer::{ELFInstruction, JoltDevice};
 use serde::{Deserialize, Serialize};
@@ -296,7 +296,7 @@ where
             ProofTranscript,
         >,
         commitments: JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
+        program_io: VerifierProgramIO,
         // _debug_info: Option<ProverDebugInfo<F, ProofTranscript>>,
     ) -> eyre::Result<()> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
@@ -447,20 +447,14 @@ where
         memory_layout: &MemoryLayout,
         proof: ReadWriteMemoryProof<F, PCS, ProofTranscript>,
         commitment: &'a JoltCommitments<PCS, ProofTranscript>,
-        program_io: JoltDevice,
+        program_io: VerifierProgramIO,
         opening_accumulator: &mut VerifierOpeningAccumulator<F, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         assert!(program_io.inputs.len() <= memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= memory_layout.max_output_size as usize);
         // pair the memory layout with the program io from the proof
-        preprocessing.program_io = Some(JoltDevice {
-            inputs: program_io.inputs,
-            outputs: program_io.outputs,
-            untrusted_advice: todo!(),
-            panic: program_io.panic,
-            memory_layout: memory_layout.clone(),
-        });
+        preprocessing.program_io = Some(program_io.clone());
 
         ReadWriteMemoryProof::verify(
             proof,

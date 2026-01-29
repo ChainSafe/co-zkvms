@@ -18,7 +18,7 @@ use jolt_core::jolt::vm::read_write_memory::{
     RegisterAddressOpenings,
 };
 use jolt_core::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
@@ -164,14 +164,19 @@ where
         let advice_vars = ((program_io.memory_layout.max_untrusted_advice_size / 4)
             .next_power_of_two() as usize)
             .log_2();
-        if io_ctx.party_idx() == 0 && io_ctx.worker_idx() == 0 {
-            io_ctx.network().send_response(advice_vars)?;
-        }
+
         let r_advice = &r_sumcheck[..advice_vars];
-        opening_accumulator.append(
+        tracing::info!(
+            "advice_vars: {} v_advice coeffs len {}",
+            advice_vars,
+            polynomials.v_advice.len()
+        );
+        let advice_claim = polynomials.v_advice.evaluate(&r_advice);
+        opening_accumulator.append_send_claims(
             &[&polynomials.v_advice],
             DensePolynomial::new(EqPolynomial::evals(&r_advice)),
             r_advice.to_vec(),
+            &[advice_claim],
             io_ctx.main(),
         )?;
 
@@ -380,7 +385,7 @@ where
     }
 
     fn compute_openings(
-        preprocessing: &Self::Preprocessing,
+        _preprocessing: &Self::Preprocessing,
         opening_accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         polynomials: &Self::Rep3Polynomials,
         jolt_polynomials: &Rep3JoltPolynomials<F>,
@@ -396,24 +401,6 @@ where
             r_init_final,
             io_ctx,
         )?;
-
-        // let max_advice_size = preprocessing
-        //     .program_io
-        //     .as_ref()
-        //     .unwrap()
-        //     .memory_layout
-        //     .max_untrusted_advice_size;
-        // let bytecode_vars = preprocessing.bytecode_words.len().log_2();
-        // let advice_vars = ((max_advice_size / 4).next_power_of_two() as usize).log_2();
-        // let r_advice = &r_init_final
-        //     [r_init_final.len() - advice_vars - bytecode_vars..r_init_final.len() - bytecode_vars];
-
-        // opening_accumulator.append(
-        //     &[&polynomials.v_advice],
-        //     DensePolynomial::new(EqPolynomial::evals(&r_advice)),
-        //     r_advice.to_vec(),
-        //     io_ctx.main(),
-        // )?;
 
         Ok(())
     }

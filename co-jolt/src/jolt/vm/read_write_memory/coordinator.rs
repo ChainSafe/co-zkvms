@@ -8,6 +8,7 @@ use crate::poly::opening_proof::Rep3OpeningAccumulatorCoordinator;
 use crate::subprotocols::grand_product::Rep3BatchedDenseGrandProduct;
 use crate::subprotocols::sumcheck;
 use crate::utils::transcript::TranscriptExt;
+use jolt_common::rv_trace::MemoryLayout;
 use jolt_core::jolt::vm::read_write_memory::ReadWriteMemoryProof;
 use jolt_core::jolt::vm::read_write_memory::{OutputSumcheckProof, ReadWriteMemoryPreprocessing};
 use jolt_core::jolt::vm::timestamp_range_check::TimestampValidityProof;
@@ -28,6 +29,7 @@ where
     fn prove_rep3(
         num_ops: usize,
         memory_size: usize,
+        memory_layout: MemoryLayout,
         preprocessing: &ReadWriteMemoryPreprocessing,
         opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
@@ -48,6 +50,7 @@ where
     fn prove_rep3(
         num_ops: usize,
         memory_size: usize,
+        memory_layout: MemoryLayout,
         preprocessing: &ReadWriteMemoryPreprocessing,
         opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
         transcript: &mut ProofTranscript,
@@ -62,8 +65,13 @@ where
             network,
         )?;
 
-        let output_proof =
-            coordinate_prove_outputs(memory_size, opening_accumulator, transcript, network)?;
+        let output_proof = coordinate_prove_outputs(
+            memory_size,
+            memory_layout,
+            opening_accumulator,
+            transcript,
+            network,
+        )?;
 
         let timestamp_validity_proof = TimestampValidityProof::prove_distributed(
             num_ops,
@@ -84,6 +92,7 @@ where
 #[tracing::instrument(skip_all, name = "prove_outputs", level = "info")]
 fn coordinate_prove_outputs<F, PCS, ProofTranscript, Network>(
     memory_size: usize,
+    memory_layout: MemoryLayout,
     opening_accumulator: &mut Rep3OpeningAccumulatorCoordinator<F>,
     transcript: &mut ProofTranscript,
     network: &mut Network,
@@ -119,7 +128,8 @@ where
         network,
     )?;
 
-    let advice_nv = network.receive_response(PartyID::ID0, 0)?;
+    let advice_nv =
+        ((memory_layout.max_untrusted_advice_size / 4).next_power_of_two() as usize).log_2();
     let advice_opening = opening_accumulator.append(advice_nv, transcript, network)?[0];
 
     Ok(OutputSumcheckProof {
