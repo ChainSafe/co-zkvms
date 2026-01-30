@@ -115,6 +115,28 @@ where
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
+        {
+            let mut t = transcript.clone();
+            // jolt_commitments
+            //     .read_write_memory
+            //     .v_init
+            //     .as_ref()
+            //     .unwrap()
+            //     .append_to_transcript(&mut t);
+            // tracing::info!("v_init: {:?}", t.challenge_scalar::<F>());
+            jolt_commitments
+                .read_write_memory
+                .t_final
+                .append_to_transcript(&mut t);
+            tracing::info!("t_final: {:?}", t.challenge_scalar::<F>());
+
+            jolt_commitments
+                .read_write_memory
+                .v_final
+                .append_to_transcript(&mut t);
+            tracing::info!("v_final: {:?}", t.challenge_scalar::<F>());
+        }
+
         transcript.append_scalar(&spartan_key.vk_digest);
         jolt_commitments
             .read_write_values()

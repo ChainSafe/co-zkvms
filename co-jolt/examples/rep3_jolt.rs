@@ -119,10 +119,11 @@ fn main() -> Result<()> {
     program.build(co_jolt::host::DEFAULT_TARGET_DIR);
 
     let mut inputs = vec![];
-    inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+    // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     let mut untrusted_advice = vec![];
+    untrusted_advice.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     untrusted_advice.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
 
     if config.is_coordinator {
@@ -249,8 +250,21 @@ pub fn run_coordinator(
     let (program_io_shares, trace_shares) =
         program.generate_trace_shares::<F, _>(&inputs, &untrusted_advice, &mut rng);
 
+    println!(
+        "worker program_io_shares: {:?} trace_shares: {:?}",
+        program_io_shares.len(),
+        trace_shares.len()
+    );
+
     let mut network =
         Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
+    {
+        println!(
+            "program_io_share: {:?} trace_share: {}",
+            bincode::serialize(&program_io_shares[0]).unwrap().len(),
+            bincode::serialize(&trace_shares[0]).unwrap().len(),
+        );
+    }
     // network.trim_subnets(1).unwrap();
     let worker_shares = izip!(program_io_shares, trace_shares)
         .map(|s| bincode::serialize(&s))
@@ -258,6 +272,7 @@ pub fn run_coordinator(
         .take(3 * args.num_workers_per_party)
         .collect::<bincode::Result<Vec<_>>>()
         .context("while serializing trace shares")?;
+
     network.send_requests_blocking(worker_shares)?;
 
     let (spartan_key, meta) = RV32IJoltVM::init_rep3(&preprocessing, &mut network)?;

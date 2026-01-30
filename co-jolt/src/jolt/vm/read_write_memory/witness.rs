@@ -74,20 +74,27 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             preprocessing.min_bytecode_address,
             &program_io.memory_layout,
         );
-        let v_inputs_range = v_init_index..v_init_index + preprocessing.bytecode_words.len();
+        let v_bytecode_range = v_init_index..v_init_index + preprocessing.bytecode_words.len();
         let id = io_ctx.party_id();
-        v_init[v_inputs_range]
+        v_init[v_bytecode_range]
             .par_iter_mut()
             .zip_eq(&preprocessing.bytecode_words)
             .for_each(|(v_init, word)| {
                 *v_init = rep3::arithmetic::promote_to_trivial_share(id, F::from_u32(*word))
             });
         let v_inputs_index = memory_address_to_witness_index(
-            program_io.memory_layout.input_start,
+            program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
         );
+
         // Copy input words
         let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
+        tracing::info!(
+            "v_inputs_range: {:?} input_words_len {}",
+            v_inputs_range,
+            program_io.input_words_len
+        );
+
         v_init[v_inputs_range.clone()]
             .par_iter_mut()
             .zip_eq(&program_io.v_io.as_shared().coeffs[v_inputs_range]) // TODO: worker range
@@ -446,19 +453,30 @@ impl Rep3ProgramIOInput {
             memory_layout,
         } = program_io;
 
-        let untrusted_advice = transpose(
-            untrusted_advice
-                .into_iter()
-                .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
-                .collect::<Vec<_>>(),
-        );
+        tracing::info!("untrusted_advice len: {}", untrusted_advice.len());
 
-        let inputs = transpose(
-            inputs
-                .into_iter()
-                .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
-                .collect::<Vec<_>>(),
-        );
+        let untrusted_advice = if untrusted_advice.is_empty() {
+            vec![vec![]; 3]
+        } else {
+            transpose(
+                untrusted_advice
+                    .into_iter()
+                    .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        tracing::info!("inputs len: {}", inputs.len());
+        let inputs = if inputs.is_empty() {
+            vec![vec![]; 3]
+        } else {
+            transpose(
+                inputs
+                    .into_iter()
+                    .map(|byte| rep3_ring::binary::generate_shares_rep3(byte.into(), rng))
+                    .collect::<Vec<_>>(),
+            )
+        };
 
         let outputs = transpose(
             outputs
@@ -551,10 +569,10 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         .unwrap();
 
         let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
-        // let advise_index = memory_address_to_witness_index(
-        //     program_io.memory_layout.untrusted_advice_start,
-        //     &program_io.memory_layout,
-        // );
+        let advise_index = memory_address_to_witness_index(
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+        );
         let input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -563,7 +581,15 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
-        // v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
+        tracing::info!(
+            "advise range: {:?}",
+            advise_index..advise_index + advice_words_len
+        );
+        tracing::info!(
+            "inputs range: {:?}",
+            input_index..input_index + input_words_len
+        );
+        v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
         v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_words[..]);
         v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_words[..]);
 
@@ -601,7 +627,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             v_advice,
             memory_layout,
             memory_size,
-            input_words_len,
+            input_words_len: advice_words_len + input_words_len, // TODO: error when both instance and advice
         })
     }
 }
