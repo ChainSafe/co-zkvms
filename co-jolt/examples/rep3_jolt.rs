@@ -37,6 +37,7 @@ use mpc_net::{
     topology::MpcStarNetCoordinator,
 };
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_forest::util::LevelFilter;
@@ -123,8 +124,8 @@ fn main() -> Result<()> {
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     let mut untrusted_advice = vec![];
-    untrusted_advice.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     untrusted_advice.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    untrusted_advice.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs, untrusted_advice)?;
@@ -212,6 +213,9 @@ pub fn run_coordinator(
 
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace(&inputs, &untrusted_advice);
+
+    let mut file = File::create(&Path::new("trace_advice.json"))?;
+    serde_json::to_writer_pretty(&mut file, &trace)?;
 
     if config.is_coordinator {
         print_used_instructions(&trace);
