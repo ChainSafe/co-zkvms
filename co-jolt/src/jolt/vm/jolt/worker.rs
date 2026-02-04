@@ -168,12 +168,6 @@ where
             program_io.memory_layout.untrusted_advice_start,
         );
         let spartan_key = UniformSpartanKey::from(&r1cs_builder);
-        tracing::info!(
-            "spartan_key num_steps {} num_rows {} num_constraints {}",
-            spartan_key.num_steps,
-            spartan_key.uniform_r1cs.num_rows,
-            spartan_key.offset_eq_r1cs.num_constraints()
-        );
         r1cs_builder.compute_aux(&mut polynomials, &mut io_ctx)?;
 
         assert_eq!(
@@ -248,8 +242,6 @@ where
         drop(_guard);
         drop(span);
 
-        println!("worker bytecode done");
-
         self.io_ctx.sync_with_parties()?;
 
         Rep3InstructionLookupsProver::<C, M, F, Instructions, Subtables, Network>::prove::<
@@ -262,8 +254,6 @@ where
             &mut self.io_ctx,
         )?;
 
-        println!("worker instructions done");
-
         self.io_ctx.sync_with_parties()?;
 
         Rep3ReadWriteMemoryProver::<F, PCS, ProofTranscript, Network>::prove(
@@ -273,8 +263,6 @@ where
             &mut opening_accumulator,
             &mut self.io_ctx,
         )?;
-
-        println!("worker memory done");
 
         self.io_ctx.sync_with_parties()?;
 

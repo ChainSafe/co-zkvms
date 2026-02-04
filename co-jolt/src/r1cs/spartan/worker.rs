@@ -72,8 +72,6 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        println!("num_rounds_x: {}", num_rounds_x);
-
         // ---------- Sumcheck 1: Outer sumcheck ---------- //
         let _span = tracing::info_span!("outer_sumcheck").entered();
         let tau = io_ctx.network().receive_request::<Vec<F>>()?;

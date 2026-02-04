@@ -307,10 +307,10 @@ pub trait Rep3JoltPolynomialsExt<F: JoltField> {
 
                 acc.bytecode.t_final =
                     PCS::concat_commitments(&acc.bytecode.t_final, &next.bytecode.t_final);
-                acc.read_write_memory.v_advice = PCS::concat_commitments(
-                    &acc.read_write_memory.v_advice,
-                    &next.read_write_memory.v_advice,
-                );
+                // acc.read_write_memory.v_advice = PCS::concat_commitments(
+                //     &acc.read_write_memory.v_advice,
+                //     &next.read_write_memory.v_advice,
+                // );
                 acc
             })
             .unwrap();
@@ -405,6 +405,11 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
                 )
             },
         );
+        commitments.read_write_memory.v_advice = PCS::commit_rep3(
+            &self.read_write_memory.v_advice,
+            &preprocessing.generators,
+            false,
+        );
         drop(_guard);
         drop(span);
 
@@ -417,12 +422,6 @@ impl<F: JoltField> Rep3JoltPolynomialsExt<F> for Rep3JoltPolynomials<F> {
         );
         drop(_guard);
         drop(span);
-
-        commitments.read_write_memory.v_advice = PCS::commit_rep3(
-            &self.read_write_memory.v_advice,
-            &preprocessing.generators,
-            false,
-        );
 
         io_ctx.sync_with_parties()?;
 

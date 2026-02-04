@@ -39,8 +39,6 @@ where
         let log_num_workers = network.log_num_workers();
         let num_rounds_x = key.num_rows_bits();
 
-        println!("---num_rounds_x: {}", num_rounds_x);
-
         /* Sumcheck 1: Outer sumcheck */
         let span = tracing::info_span!("outer_sumcheck");
         let _guard = span.enter();

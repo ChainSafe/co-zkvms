@@ -41,6 +41,7 @@ pub struct Rep3ProgramIO<F: JoltField> {
     pub memory_layout: MemoryLayout,
     pub memory_size: usize,
     input_words_len: usize,
+    advice_words_len: usize,
 }
 
 impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
@@ -82,19 +83,28 @@ impl<F: JoltField> Rep3Polynomials<F, ReadWriteMemoryPreprocessing>
             .for_each(|(v_init, word)| {
                 *v_init = rep3::arithmetic::promote_to_trivial_share(id, F::from_u32(*word))
             });
-        let v_inputs_index = memory_address_to_witness_index(
+
+        let v_advice_index = memory_address_to_witness_index(
             program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+        );
+
+        // Copy untrusted advice words
+        let v_advice_range = v_advice_index..v_advice_index + program_io.advice_words_len;
+        v_init[v_advice_range.clone()]
+            .par_iter_mut()
+            .zip_eq(&program_io.v_advice.as_shared().coeffs[v_advice_range]) // TODO: worker range
+            .for_each(|(v_init, word)| {
+                *v_init = *word;
+            });
+
+        let v_inputs_index = memory_address_to_witness_index(
+            program_io.memory_layout.input_start,
             &program_io.memory_layout,
         );
 
         // Copy input words
         let v_inputs_range = v_inputs_index..v_inputs_index + program_io.input_words_len;
-        tracing::info!(
-            "v_inputs_range: {:?} input_words_len {}",
-            v_inputs_range,
-            program_io.input_words_len
-        );
-
         v_init[v_inputs_range.clone()]
             .par_iter_mut()
             .zip_eq(&program_io.v_io.as_shared().coeffs[v_inputs_range]) // TODO: worker range
@@ -569,10 +579,7 @@ impl<F: JoltField> Rep3ProgramIO<F> {
         .unwrap();
 
         let mut v_io: Vec<_> = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
-        let advise_index = memory_address_to_witness_index(
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-        );
+
         let input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -581,15 +588,8 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             program_io.memory_layout.output_start,
             &program_io.memory_layout,
         );
-        tracing::info!(
-            "advise range: {:?}",
-            advise_index..advise_index + advice_words_len
-        );
-        tracing::info!(
-            "inputs range: {:?}",
-            input_index..input_index + input_words_len
-        );
-        v_io[advise_index..advise_index + advice_words_len].swap_with_slice(&mut advice_words[..]);
+
+        // v_io[advise_index..advise_index + advice_words_len].copy_from_slice(&mut advice_words[..]);
         v_io[input_index..input_index + input_words_len].swap_with_slice(&mut input_words[..]);
         v_io[output_index..output_index + output_words_len].swap_with_slice(&mut output_words[..]);
 
@@ -609,25 +609,39 @@ impl<F: JoltField> Rep3ProgramIO<F> {
             io_ctx.worker_idx(),
         );
 
-        let v_advice = {
-            // TODO: let coeffs = v_io.as_shared().coeffs.clone();
-            let advise_len_padded =
-                (memory_layout.max_untrusted_advice_size / 4).next_power_of_two() as usize;
-            advice_words.resize(advise_len_padded, Rep3PrimeFieldShare::zero_share());
-            Rep3MultilinearPolynomial::new_shard_shared(
-                advice_words,
-                advise_len_padded,
-                io_ctx.log_num_workers(),
-                io_ctx.worker_idx(),
-            )
-        };
+        let advise_index = memory_address_to_witness_index(
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+        );
+        let mut v_advice = vec![Rep3PrimeFieldShare::zero_share(); memory_size];
+        v_advice[advise_index..advise_index + advice_words_len]
+            .swap_with_slice(&mut advice_words[..]);
+        // let v_advice = {
+        //     // TODO: let coeffs = v_io.as_shared().coeffs.clone();
+        //     let advise_len_padded =
+        //         (memory_layout.max_untrusted_advice_size / 4).next_power_of_two() as usize;
+        //     advice_words.resize(advise_len_padded, Rep3PrimeFieldShare::zero_share());
+        //     Rep3MultilinearPolynomial::new_shard_shared(
+        //         advice_words,
+        //         advise_len_padded,
+        //         io_ctx.log_num_workers(),
+        //         io_ctx.worker_idx(),
+        //     )
+        // };
+        let v_advice = Rep3MultilinearPolynomial::new_shard_shared(
+            v_advice,
+            memory_size,
+            io_ctx.log_num_workers(),
+            io_ctx.worker_idx(),
+        );
 
         Ok(Self {
             v_io,
             v_advice,
             memory_layout,
             memory_size,
-            input_words_len: advice_words_len + input_words_len, // TODO: error when both instance and advice
+            input_words_len,
+            advice_words_len,
         })
     }
 }

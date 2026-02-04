@@ -123,9 +123,10 @@ fn main() -> Result<()> {
     // inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
     // let inputs = postcard::to_stdvec(&1u32).unwrap();
     // let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    inputs.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
+
     let mut untrusted_advice = vec![];
     untrusted_advice.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    untrusted_advice.append(&mut postcard::to_stdvec(&args.num_iterations).unwrap());
 
     if config.is_coordinator {
         run_coordinator(args, config, program, inputs, untrusted_advice)?;

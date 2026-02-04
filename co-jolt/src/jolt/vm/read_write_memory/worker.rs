@@ -161,24 +161,24 @@ where
             io_ctx.main(),
         )?;
 
-        let advice_vars = ((program_io.memory_layout.max_untrusted_advice_size / 4)
-            .next_power_of_two() as usize)
-            .log_2();
+        // let advice_vars = ((program_io.memory_layout.max_untrusted_advice_size / 4)
+        //     .next_power_of_two() as usize)
+        //     .log_2();
 
-        let r_advice = &r_sumcheck[..advice_vars];
-        tracing::info!(
-            "advice_vars: {} v_advice coeffs len {}",
-            advice_vars,
-            polynomials.v_advice.len()
-        );
-        let advice_claim = polynomials.v_advice.evaluate(&r_advice);
-        opening_accumulator.append_send_claims(
-            &[&polynomials.v_advice],
-            DensePolynomial::new(EqPolynomial::evals(&r_advice)),
-            r_advice.to_vec(),
-            &[advice_claim],
-            io_ctx.main(),
-        )?;
+        // let r_advice = &r_sumcheck[..advice_vars];
+        // tracing::info!(
+        //     "advice_vars: {} v_advice coeffs len {}",
+        //     advice_vars,
+        //     polynomials.v_advice.len()
+        // );
+        // let advice_claim = polynomials.v_advice.evaluate(&r_advice);
+        // opening_accumulator.append_send_claims(
+        //     &[&polynomials.v_advice],
+        //     DensePolynomial::new(EqPolynomial::evals(&r_advice)),
+        //     r_advice.to_vec(),
+        //     &[advice_claim],
+        //     io_ctx.main(),
+        // )?;
 
         Ok(())
     }
@@ -401,6 +401,24 @@ where
             r_init_final,
             io_ctx,
         )?;
+
+        // // let max_advice_size = preprocessing
+        // //     .program_io
+        // //     .as_ref()
+        // //     .unwrap()
+        // //     .memory_layout
+        // //     .max_untrusted_advice_size;
+        // // let bytecode_vars = preprocessing.bytecode_words.len().log_2();
+        // // let advice_vars = ((max_advice_size / 4).next_power_of_two() as usize).log_2();
+        // // let r_advice = &r_init_final
+        // //     [r_init_final.len() - advice_vars - bytecode_vars..r_init_final.len() - bytecode_vars];
+
+        // opening_accumulator.append(
+        //     &[&polynomials.v_advice],
+        //     DensePolynomial::new(EqPolynomial::evals(&r_read_write)),
+        //     r_read_write.to_vec(),
+        //     io_ctx.main(),
+        // )?;
 
         Ok(())
     }

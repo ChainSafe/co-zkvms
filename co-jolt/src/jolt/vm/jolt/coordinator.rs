@@ -115,28 +115,6 @@ where
 
         let jolt_commitments = Rep3JoltPolynomials::receive_commitments(&preprocessing, network)?;
 
-        {
-            let mut t = transcript.clone();
-            // jolt_commitments
-            //     .read_write_memory
-            //     .v_init
-            //     .as_ref()
-            //     .unwrap()
-            //     .append_to_transcript(&mut t);
-            // tracing::info!("v_init: {:?}", t.challenge_scalar::<F>());
-            jolt_commitments
-                .read_write_memory
-                .t_final
-                .append_to_transcript(&mut t);
-            tracing::info!("t_final: {:?}", t.challenge_scalar::<F>());
-
-            jolt_commitments
-                .read_write_memory
-                .v_final
-                .append_to_transcript(&mut t);
-            tracing::info!("v_final: {:?}", t.challenge_scalar::<F>());
-        }
-
         transcript.append_scalar(&spartan_key.vk_digest);
         jolt_commitments
             .read_write_values()
@@ -163,8 +141,6 @@ where
         drop(_guard);
         drop(span);
 
-        println!("coordinator bytecode done");
-
         let instruction_lookups_proof = InstructionLookupsProof::prove_rep3(
             trace_length,
             &preprocessing.instruction_lookups,
@@ -173,19 +149,14 @@ where
             &mut transcript,
         )?;
 
-        println!("coordinator instructions done");
-
         let memory_proof = ReadWriteMemoryProof::prove_rep3(
             meta.padded_trace_length,
             meta.read_write_memory_size,
-            meta.memory_layout,
             &preprocessing.read_write_memory,
             &mut opening_accumulator,
             &mut transcript,
             network,
         )?;
-
-        println!("coordinator memory done");
 
         let r1cs_proof = UniformSpartanProof::prove_rep3::<PCS>(
             &spartan_key,
