@@ -215,9 +215,6 @@ pub fn run_coordinator(
     let (bytecode, memory_init) = program.decode();
     let (program_io, trace) = program.trace(&inputs, &untrusted_advice);
 
-    let mut file = File::create(&Path::new("trace_advice.json"))?;
-    serde_json::to_writer_pretty(&mut file, &trace)?;
-
     if config.is_coordinator {
         print_used_instructions(&trace);
     }
@@ -255,21 +252,9 @@ pub fn run_coordinator(
     let (program_io_shares, trace_shares) =
         program.generate_trace_shares::<F, _>(&inputs, &untrusted_advice, &mut rng);
 
-    println!(
-        "worker program_io_shares: {:?} trace_shares: {:?}",
-        program_io_shares.len(),
-        trace_shares.len()
-    );
-
     let mut network =
         Rep3QuicNetCoordinator::new(config, args.num_workers_per_party.log_2()).unwrap();
-    {
-        println!(
-            "program_io_share: {:?} trace_share: {}",
-            bincode::serialize(&program_io_shares[0]).unwrap().len(),
-            bincode::serialize(&trace_shares[0]).unwrap().len(),
-        );
-    }
+
     // network.trim_subnets(1).unwrap();
     let worker_shares = izip!(program_io_shares, trace_shares)
         .map(|s| bincode::serialize(&s))
