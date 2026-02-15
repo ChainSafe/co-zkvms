@@ -1,6 +1,7 @@
 pub mod dense_mlpoly;
 pub mod mixed_polynomial;
 pub mod multilinear_polynomial;
+pub mod one_hot_polynomial;
 
 pub use dense_mlpoly::*;
 pub use multilinear_polynomial::*;

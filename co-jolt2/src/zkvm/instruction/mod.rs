@@ -1,15 +1,21 @@
 pub mod format;
 
+use jolt2_common::constants::XLEN;
+use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup};
+use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::casts::downcast;
+use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use num_traits::AsPrimitive;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::format::NormalizedOperands;
-use tracer::instruction::{Cycle, Instruction, RISCVCycle, RISCVInstruction};
+use tracer::instruction::{
+    Cycle, Instruction, RAMAccess, RAMRead, RAMWrite, RISCVCycle, RISCVInstruction,
+};
 
 // Import all instruction types for Rep3Cycle enum
 use tracer::instruction::add::ADD;
@@ -280,6 +286,140 @@ pub fn promote_operand_to_share(operand: &Rep3Operand, party_id: PartyID) -> Rep
     }
 }
 
+// ── Rep3 RAM Types ──────────────────────────────────────────────────────────
+
+/// Rep3 version of vanilla `RAMRead`. Address is public, value is shared.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Rep3RAMRead {
+    pub address: u64,
+    pub value: Rep3Operand,
+}
+
+/// Rep3 version of vanilla `RAMWrite`. Address is public, pre/post values are shared.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Rep3RAMWrite {
+    pub address: u64,
+    pub pre_value: Rep3Operand,
+    pub post_value: Rep3Operand,
+}
+
+/// Rep3 version of vanilla `RAMAccess`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Rep3RAMAccess {
+    Read(Rep3RAMRead),
+    Write(Rep3RAMWrite),
+    NoOp,
+}
+
+/// Static NoOp for returning references from Rep3Cycle::ram_access() on NoOp variants.
+pub static REP3_RAM_NOOP: Rep3RAMAccess = Rep3RAMAccess::NoOp;
+
+impl Rep3RAMAccess {
+    pub fn address(&self) -> u64 {
+        match self {
+            Rep3RAMAccess::Read(read) => read.address,
+            Rep3RAMAccess::Write(write) => write.address,
+            Rep3RAMAccess::NoOp => 0,
+        }
+    }
+
+    pub fn promote_to_shares(&mut self, party_id: PartyID) {
+        match self {
+            Rep3RAMAccess::Read(read) => {
+                read.value = promote_operand_to_share(&read.value, party_id);
+            }
+            Rep3RAMAccess::Write(write) => {
+                write.pre_value = promote_operand_to_share(&write.pre_value, party_id);
+                write.post_value = promote_operand_to_share(&write.post_value, party_id);
+            }
+            Rep3RAMAccess::NoOp => {}
+        }
+    }
+
+    pub fn populate_arithmetic<N: Rep3Network>(
+        &mut self,
+        io_ctx: &mut IoContext<N>,
+    ) -> std::io::Result<()> {
+        match self {
+            Rep3RAMAccess::Read(read) => {
+                if let Rep3Operand::Shared { binary, .. } = &read.value {
+                    let binary_shares = vec![*binary];
+                    let arithmetic_shares = upcast_many_from_binary(&binary_shares, io_ctx)?;
+                    read.value =
+                        Rep3Operand::from_arithmetic(binary_shares[0], arithmetic_shares[0]);
+                }
+            }
+            Rep3RAMAccess::Write(write) => {
+                let mut binary_shares = Vec::new();
+                let mut indices = Vec::new(); // track which fields to update
+                if let Rep3Operand::Shared { binary, .. } = &write.pre_value {
+                    binary_shares.push(*binary);
+                    indices.push(0);
+                }
+                if let Rep3Operand::Shared { binary, .. } = &write.post_value {
+                    binary_shares.push(*binary);
+                    indices.push(1);
+                }
+                if !binary_shares.is_empty() {
+                    let arithmetic_shares = upcast_many_from_binary(&binary_shares, io_ctx)?;
+                    let mut arith_iter = arithmetic_shares.into_iter();
+                    for idx in indices {
+                        let arith = arith_iter.next().unwrap();
+                        match idx {
+                            0 => {
+                                let bin = write.pre_value.as_binary();
+                                write.pre_value = Rep3Operand::from_arithmetic(bin, arith);
+                            }
+                            1 => {
+                                let bin = write.post_value.as_binary();
+                                write.post_value = Rep3Operand::from_arithmetic(bin, arith);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            Rep3RAMAccess::NoOp => {}
+        }
+        Ok(())
+    }
+}
+
+impl From<RAMRead> for Rep3RAMAccess {
+    fn from(read: RAMRead) -> Self {
+        Rep3RAMAccess::Read(Rep3RAMRead {
+            address: read.address,
+            value: Rep3Operand::Public(read.value),
+        })
+    }
+}
+
+impl From<RAMWrite> for Rep3RAMAccess {
+    fn from(write: RAMWrite) -> Self {
+        Rep3RAMAccess::Write(Rep3RAMWrite {
+            address: write.address,
+            pre_value: Rep3Operand::Public(write.pre_value),
+            post_value: Rep3Operand::Public(write.post_value),
+        })
+    }
+}
+
+impl From<()> for Rep3RAMAccess {
+    fn from(_: ()) -> Self {
+        Rep3RAMAccess::NoOp
+    }
+}
+
+impl From<RAMAccess> for Rep3RAMAccess {
+    fn from(access: RAMAccess) -> Self {
+        match access {
+            RAMAccess::Read(read) => read.into(),
+            RAMAccess::Write(write) => write.into(),
+            RAMAccess::NoOp => Rep3RAMAccess::NoOp,
+        }
+    }
+}
+
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
 
 /// Shorthand: the Rep3RegisterState type for an instruction T
@@ -288,10 +428,11 @@ pub type Rep3RegState<T> =
 
 /// Rep3 version of RISCVCycle.
 /// Register state type derived from instruction's Format (same pattern as vanilla).
+/// RAM access uses Rep3RAMAccess (shared values, public addresses).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "T: Serialize, T::RAMAccess: Serialize, Rep3RegState<T>: Serialize",
-    deserialize = "T: Deserialize<'de>, T::RAMAccess: Deserialize<'de>, Rep3RegState<T>: Deserialize<'de>"
+    serialize = "T: Serialize, Rep3RegState<T>: Serialize",
+    deserialize = "T: Deserialize<'de>, Rep3RegState<T>: Deserialize<'de>"
 ))]
 pub struct Rep3RISCVCycle<T: RISCVInstruction>
 where
@@ -299,7 +440,7 @@ where
 {
     pub instruction: T,
     pub register_state: Rep3RegState<T>,
-    pub ram_access: T::RAMAccess,
+    pub ram_access: Rep3RAMAccess,
 }
 
 impl<T: RISCVInstruction> Rep3RISCVCycle<T>
@@ -311,13 +452,14 @@ where
         Self {
             instruction: cycle.instruction,
             register_state: Rep3RegState::<T>::from_public(&cycle.register_state),
-            ram_access: cycle.ram_access,
+            ram_access: Rep3RAMAccess::from(Into::<RAMAccess>::into(cycle.ram_access)),
         }
     }
 
     /// Promote all public operands to trivial shares
     pub fn promote_to_shares(&mut self, party_id: PartyID) {
         self.register_state.promote_to_shares(party_id);
+        self.ram_access.promote_to_shares(party_id);
     }
 
     /// Populate arithmetic representations via network
@@ -325,7 +467,8 @@ where
         &mut self,
         io_ctx: &mut IoContext<N>,
     ) -> std::io::Result<()> {
-        self.register_state.populate_arithmetic(io_ctx)
+        self.register_state.populate_arithmetic(io_ctx)?;
+        self.ram_access.populate_arithmetic(io_ctx)
     }
 }
 
@@ -348,7 +491,6 @@ pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
     party_id: PartyID,
 ) where
     T::Format: Rep3InstructionFormat,
-    T::RAMAccess: Send + Sync,
     Rep3RegState<T>: Send + Sync,
 {
     use rayon::prelude::*;
@@ -378,11 +520,11 @@ where
 /// Rep3 version of LookupQuery trait.
 /// Returns shared operands instead of plaintext values.
 pub trait Rep3LookupQuery<const XLEN: usize> {
-    fn to_instruction_inputs_rep3(&self) -> (Rep3Operand, Rep3Operand);
-    fn to_lookup_index_rep3(&self) -> Rep3RingShare<u128> {
+    fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
+    fn to_lookup_index(&self) -> Rep3RingShare<u128> {
         todo!("to_lookup_index_rep3 deferred to Lasso/Shout phase")
     }
-    fn to_lookup_output_rep3(&self) -> Rep3Operand {
+    fn to_lookup_output(&self) -> Rep3Operand {
         todo!("to_lookup_output_rep3 deferred to Lasso/Shout phase")
     }
 }
@@ -473,6 +615,17 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
+            /// Get the RAM access for this cycle.
+            pub fn ram_access(&self) -> &Rep3RAMAccess {
+                match self {
+                    Rep3Cycle::NoOp => &REP3_RAM_NOOP,
+                    $(
+                        Rep3Cycle::$instr(cycle) => &cycle.ram_access,
+                    )*
+                    Rep3Cycle::INLINE(cycle) => &cycle.ram_access,
+                }
+            }
+
             /// Convert from vanilla Cycle (all values become public Rep3Operands).
             pub fn from_public_cycle(cycle: &Cycle) -> Self {
                 match cycle {
@@ -508,10 +661,20 @@ macro_rules! define_rep3_cycle {
                     Rep3Cycle::INLINE(cycle) => cycle.populate_arithmetic(io_ctx),
                 }
             }
+
+            pub fn get_pc(&self, preprocessing: &BytecodePreprocessing) -> usize {
+                if matches!(self, Rep3Cycle::NoOp) {
+                    return 0;
+                }
+                let instr = self.instruction().normalize();
+                preprocessing.pc_map
+                    .get_pc(instr.address, instr.inline_sequence_remaining.unwrap_or(0))
+            }
         }
     };
 }
 
+use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 define_rep3_cycle! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
@@ -537,6 +700,77 @@ define_rep3_cycle! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+    ]
+}
+
+// ── InstructionLookup for Rep3Cycle ──────────────────────────────────────────
+
+impl InstructionLookup<XLEN> for Rep3Cycle {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+        self.instruction().lookup_table()
+    }
+}
+
+// ── Rep3LookupQuery for Rep3Cycle ───────────────────────────────────────────
+
+/// Macro to implement `Rep3LookupQuery` for `Rep3Cycle`, listing only
+/// instructions that have lookup implementations (mirrors vanilla
+/// `define_rv32im_trait_impls!`).
+macro_rules! impl_rep3_lookup_query {
+    (instructions: [$($instr:ident),* $(,)?]) => {
+        impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3Cycle {
+            fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
+                match self {
+                    Rep3Cycle::NoOp => (Rep3Operand::Public(0), Rep3Operand::Public(0)),
+                    $(
+                        Rep3Cycle::$instr(cycle) => {
+                            let flags = cycle.instruction.circuit_flags();
+                            let left = if flags[CircuitFlags::LeftOperandIsPC as usize] {
+                                Rep3Operand::Public(cycle.instruction.address)
+                            } else if flags[CircuitFlags::LeftOperandIsRs1Value as usize] {
+                                cycle.register_state.rs1_operand().clone()
+                            } else {
+                                Rep3Operand::Public(0)
+                            };
+                            let right = if flags[CircuitFlags::RightOperandIsImm as usize] {
+                                Rep3Operand::Public(
+                                    NormalizedOperands::from(cycle.instruction.operands).imm as u64,
+                                )
+                            } else if flags[CircuitFlags::RightOperandIsRs2Value as usize] {
+                                cycle.register_state.rs2_operand().clone()
+                            } else {
+                                Rep3Operand::Public(0)
+                            };
+                            (left, right)
+                        }
+                    )*
+                    _ => panic!(
+                        "Unexpected instruction for Rep3LookupQuery: {:?}",
+                        self.instruction()
+                    ),
+                }
+            }
+        }
+    };
+}
+
+impl_rep3_lookup_query! {
+    instructions: [
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
+        SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign,
+        VirtualMULI, VirtualPow2,
+        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualROTRI, VirtualROTRIW,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
     ]
 }
 

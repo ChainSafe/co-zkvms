@@ -20,15 +20,28 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 
 ## Rules
 
-## Usage of References
+### Naming Conventions
+- Use **suffix** pattern for Worker/Coordinator structs: `StateManagerWorker`, `SumcheckStagesCoordinator` (not `WorkerStateManager`)
+- Methods on `*Worker`/`*Coordinator` structs **omit** the role from method names: `prove()`, not `prove_worker()`
+- Worker and Coordinator are **separate structs in separate files**
+
+### Usage of References
 
 - Use vanilla Jolt (`../../examples/jolt/`) as the LOGIC reference w.r.t Jolt VM logic. 
 - Co-jolt v1 (`../co-jolt/`) is LEGACY
   - use it as MPC arhitecture reference **but be extremely cautious not to use it as Jolt VM logic reference**
   - use it to copy proven MPC utility implementations (Rep3Operand, share operations) , never for Jolt related architectural patterns.
 
+### Naming Conventions
 
-## Modifying Vanilla Jolt
+1. Structs use **suffix** pattern: `StateManagerWorker`, `SumcheckStagesCoordinator` (not `WorkerStateManager`)
+2. Methods on `*Worker`/`*Coordinator` structs **omit** "worker"/"coordinator" from method names (e.g. `prove()`, `stage1_prove()`, `stage2_instances()` — not `prove_worker()`, `stage1_prove_worker()`)
+3. `JoltDAGWorker` and `JoltDAGCoordinator` are **separate structs in separate files** (not methods on a shared enum)
+
+These conventions must also be added to PROJECT.md Rules section during implementation.
+
+
+### Modifying Vanilla Jolt
 When the vanilla codebase (`../../examples/jolt/`) has private methods or attributes that co-jolt2 needs, you are allowed to make them `pub` directly in the vanilla code. This is a prototype — don't waste time on workarounds.
 
 ## File Structure Must Mirror Vanilla
@@ -91,15 +104,367 @@ For VirtualAdvice: `advice` value directly.
 
 This is a **nonlinear** operation on shared values when both operands are shared (R-type, B-type).
 
-### Witness Field Computations in `generate_witness_batch`
 
-| Field | Computation | Operation Type |
-|-------|-------------|----------------|
-| `left_instruction_input[i]` | `left` | Direct assignment of shared or public value |
-| `right_instruction_input[i]` | `right` | Direct assignment of shared or public value |
-| `write_lookup_output_to_rd[i]` | `rd_write_flag * circuit_flags[WriteLookupOutputToRD]` | **PUBLIC * PUBLIC** (both from instruction encoding) |
-| `write_pc_to_rd[i]` | `rd_write_flag * circuit_flags[Jump]` | **PUBLIC * PUBLIC** |
-| `should_branch[i]` | `lookup_output * circuit_flags[Branch]` | **SHARED * PUBLIC** (public scalar mult) |
-| `should_jump[i]` | `is_jump * (1 - is_next_noop)` | **PUBLIC * PUBLIC** |
-| `rd_inc[i]` | `post_rd - pre_rd` (as i128) | **SHARED - SHARED** (but we use Option A: store separately) |
-| `instruction_ra[j][i]` | `(lookup_index >> shift) % K_CHUNK` | Derived from **lookup_index** (see below) |
+---
+
+## MPC Architecture: Worker/Coordinator Pattern
+
+Extracted from co-jolt v1 (`../co-jolt/src/jolt/vm/jolt/`). This pattern applies to the new vanilla DAG-based architecture.
+
+### Roles
+
+**Worker** (`io_ctx: IoContextPool<Network>`)
+- Holds MPC-shared witness polynomials (`Rep3MultilinearPolynomial<F>`)
+- Generates witness from shared trace data
+- Commits polynomial shares independently, sends commitment shares to coordinator
+- Performs distributed sumcheck: receives challenge points, computes evaluations, sends results; commitments, and opening proofs
+- All MPC compute happens here
+
+**Coordinator** (`network: &mut Network`)
+- Owns the Fiat-Shamir transcript — sole generator of challenges
+- Receives commitment shares from workers, combines into public commitments
+- Broadcasts transcript challenges to workers at each protocol phase
+- Receives evaluation shares from workers, combines into public values
+- Assembles the final proof struct
+
+### Communication Flow
+
+```
+COORDINATOR                              WORKER(s)
+    │                                        │
+    │  ←── commitment_shares ──────────────  │  (worker commits poly shares)
+    │  (combine → public commitments)        │
+    │  (append to transcript)                │
+    │                                        │
+    │  ── challenge (from transcript) ─────→ │  (broadcast_request)
+    │                                        │  (worker computes on challenge)
+    │  ←── evaluation_shares ──────────────  │  (send_response)
+    │  (combine → public eval)               │
+    │  (append proof to transcript)          │
+    │                                        │
+    │  ... repeat per protocol phase ...     │
+    │                                        │
+    │  ── opening_point ───────────────────→ │  (final batch opening)
+    │  ←── opening_proof_shares ───────────  │
+    │  (assemble JoltProof)                  │
+```
+
+### v1 Prove Flow (for reference)
+
+**Coordinator** (`prove_rep3`):
+1. `receive_commitments()` → combine shares → append to transcript
+2. `BytecodeProof::coordinate_memory_checking()` — broadcast challenges, receive proof shares
+3. `InstructionLookupsProof::prove_rep3()` — broadcast r_eq, coordinate sumcheck
+4. `ReadWriteMemoryProof::prove_rep3()` — coordinate output sumcheck + timestamp
+5. `UniformSpartanProof::prove_rep3()` — broadcast tau, coordinate outer sumcheck
+6. `opening_accumulator.reduce_and_prove()` — batch all openings into single proof
+7. Assemble `JoltProof` struct
+
+**Worker** (`prove`):
+1. `polynomials.commit()` → send commitment shares
+2. `Rep3BytecodeProver::prove_memory_checking()` — receive challenges, compute grand products
+3. `Rep3InstructionLookupsProver::prove()` — receive r_eq, compute sumcheck evals
+4. `Rep3ReadWriteMemoryProver::prove()` — receive challenges, compute memory proofs
+5. `Rep3UniformSpartanProver::prove()` — receive tau, compute Spartan evals
+6. `opening_accumulator.reduce_and_prove()` — send opening shares
+
+### Key Types from v1
+
+| v1 Type | Role | Key Fields |
+|---------|------|------------|
+| `JoltRep3Prover` (worker) | Worker state machine | `io_ctx`, `polynomials`, `preprocessing`, `r1cs_builder`, `spartan_key` |
+| `JoltRep3` trait (coordinator) | Coordinator interface | `init_rep3()`, `prove_rep3()` |
+| `Rep3OpeningAccumulatorWorker` | Worker opening batching | Accumulates claims, sends to coordinator |
+| `Rep3OpeningAccumulatorCoordinator` | Coordinator opening batching | Receives shares, combines, produces single proof |
+| `JoltWitnessMeta` | Init metadata | `padded_trace_length`, `read_write_memory_size`, `memory_layout` |
+
+---
+
+## Vanilla DAG Architecture
+
+The vanilla Jolt proof is organized as a 5-stage DAG pipeline in `jolt-core/src/zkvm/dag/`.
+
+### DAG Components
+
+| File | Purpose |
+|------|---------|
+| `jolt_dag.rs` | `JoltDAG` enum — orchestrates `prove()` and `verify()` |
+| `state_manager.rs` | `StateManager` — central hub holding transcript, proofs, commitments, accumulator |
+| `stage.rs` | `SumcheckStages` trait — interface for subsystem DAG nodes |
+| `proof_serialization.rs` | `JoltProof` — serializable proof artifact with conversion methods |
+
+### StateManager
+
+Central state container threaded through all DAG stages:
+
+```rust
+struct StateManager<'a, F, ProofTranscript, PCS> {
+    transcript: Rc<RefCell<ProofTranscript>>,      // Fiat-Shamir
+    proofs: Rc<RefCell<BTreeMap<ProofKeys, ProofData>>>,  // Accumulated proofs
+    commitments: Rc<RefCell<Vec<PCS::Commitment>>>,       // PCS commitments
+    untrusted_advice_commitment: Option<PCS::Commitment>,
+    trusted_advice_commitment: Option<PCS::Commitment>,
+    ram_K: usize,
+    twist_sumcheck_switch_index: usize,
+    program_io: JoltDevice,
+    prover_state: Option<ProverState<'a, F, PCS>>,   // Trace + accumulator
+    verifier_state: Option<VerifierState<'a, F, PCS>>,
+}
+```
+
+### SumcheckStages Trait
+
+Each subsystem implements this to plug into the staged pipeline:
+
+```rust
+trait SumcheckStages<F, ProofTranscript, PCS> {
+    fn stage1_prove(&mut self, state_manager: &mut StateManager) -> Result<()>;
+    fn stage2_prover_instances(&mut self, state_manager: &mut StateManager)
+        -> Vec<Box<dyn SumcheckInstance>>;
+    fn stage3_prover_instances(...) -> Vec<Box<dyn SumcheckInstance>>;
+    fn stage4_prover_instances(...) -> Vec<Box<dyn SumcheckInstance>>;
+    // + verify counterparts
+}
+```
+
+### Subsystem DAG Nodes
+
+| Node | Stages Active | Purpose |
+|------|---------------|---------|
+| `SpartanDag` | 1, 2, 3 | R1CS constraint verification (outer sumcheck) |
+| `RegistersDag` | 2, 3 | Register read/write consistency |
+| `RamDag` | 2, 3, 4 | RAM read/write consistency |
+| `LookupsDag` | 2, 3, 4 | Instruction lookup table proofs |
+| `BytecodeDag` | 4 | Bytecode integrity proofs |
+
+### Vanilla Prove Flow
+
+```
+JoltDAG::prove(state_manager):
+  1. fiat_shamir_preamble()
+  2. commit_untrusted_advice() (if any)
+  3. generate_and_commit_polynomials() → all witness polys committed
+  4. Append commitments + advice commitments to transcript
+  
+  Stage 1: SpartanDag::stage1_prove() — outer sumcheck
+  
+  Stage 2: BatchedSumcheck::prove([
+      SpartanDag, RegistersDag, RamDag, LookupsDag
+  ].stage2_prover_instances())
+  
+  Stage 3: BatchedSumcheck::prove([
+      SpartanDag, RegistersDag, LookupsDag, RamDag
+  ].stage3_prover_instances())
+  
+  Stage 4: BatchedSumcheck::prove([
+      RamDag, BytecodeDag, LookupsDag
+  ].stage4_prover_instances())
+  
+  Stage 5: Opening proofs
+    - trusted_advice opening proof
+    - untrusted_advice opening proof
+    - accumulator.reduce_and_prove() → single batch PCS proof
+  
+  → JoltProof::from_prover_state_manager()
+```
+
+### Data Flow Between Stages
+
+- **Fiat-Shamir transcript**: Each stage's proof appended → next stage derives challenges from it
+- **Opening accumulator**: All stages append polynomial openings → Stage 5 batches them all
+- **ProofKeys map**: Each stage inserts its proof under a key (Stage1Sumcheck..Stage4Sumcheck, ReducedOpeningProof, etc.)
+
+---
+
+## DAG Implementation Plan: MPC Version
+
+### Design Principle
+
+Map the vanilla DAG's `StateManager` pattern onto the worker/coordinator split:
+
+| Vanilla | MPC Worker | MPC Coordinator |
+|---------|------------|-----------------|
+| `StateManager` | `StateManagerWorker` | `StateManagerCoordinator` |
+| `ProverState` (trace + accumulator) | `ProverStateWorker` (shared polys + advice poly) | N/A (no trace) |
+| `ProverOpeningAccumulator` | `Rep3OpeningAccumulatorWorker` | `Rep3OpeningAccumulatorCoordinator` |
+| `transcript` (owns) | N/A (no transcript) | `transcript` (owns) |
+| `commitments` (stores) | sends shares | receives + combines |
+| `SumcheckStages` trait | `SumcheckStagesWorker` trait | `SumcheckStagesCoordinator` trait |
+
+### Module Structure
+
+```
+src/zkvm/dag/
+├── mod.rs                       // Module declarations
+├── state_manager.rs             // StateManagerWorker, StateManagerCoordinator
+├── stage.rs                     // SumcheckStagesWorker, SumcheckStagesCoordinator traits
+├── jolt_dag_worker.rs           // JoltDAGWorker — worker prove flow
+├── jolt_dag_coordinator.rs      // JoltDAGCoordinator — coordinator prove flow
+└── (no proof_serialization.rs)  // Re-use vanilla's JoltProof (coordinator assembles it)
+```
+
+### Types
+
+#### `StateManagerWorker`
+
+```rust
+pub struct StateManagerWorker<'a, F, PCS, N: Rep3Network> {
+    pub io_ctx: IoContextPool<N>,
+    pub commitments: Vec<PCS::Commitment>,  // worker's commitment shares
+    pub ram_K: usize,
+    pub twist_sumcheck_switch_index: usize,
+    pub program_io: JoltDevice,  // public portion
+    pub prover_state: ProverStateWorker<'a, F, PCS>,
+}
+
+pub struct ProverStateWorker<'a, F, PCS> {
+    pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+    pub trace: Vec<Rep3Cycle>,  // MPC-shared trace
+    pub final_memory_state: Memory,
+    pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
+}
+```
+
+#### `StateManagerCoordinator`
+
+```rust
+pub struct StateManagerCoordinator<'a, F, ProofTranscript, PCS> {
+    pub transcript: ProofTranscript,
+    pub proofs: BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>,
+    pub commitments: Vec<PCS::Commitment>,  // combined public commitments
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub trusted_advice_commitment: Option<PCS::Commitment>,
+    pub ram_K: usize,
+    pub twist_sumcheck_switch_index: usize,
+    pub program_io: JoltDevice,
+    pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+}
+```
+
+#### Split `SumcheckStages` Trait
+
+```rust
+// Worker: produces sumcheck instance contributions (shared polynomials)
+pub trait SumcheckStagesWorker<F, PCS, N: Rep3Network> {
+    fn stage1_prove(&mut self, state: &mut StateManagerWorker<F, PCS, N>) -> Result<()> { Ok(()) }
+    fn stage2_instances(&mut self, state: &mut StateManagerWorker<F, PCS, N>)
+        -> Vec<Box<dyn Rep3SumcheckInstance<F>>> { vec![] }
+    fn stage3_instances(...) -> Vec<...> { vec![] }
+    fn stage4_instances(...) -> Vec<...> { vec![] }
+}
+
+// Coordinator: drives sumcheck rounds via transcript
+pub trait SumcheckStagesCoordinator<F, ProofTranscript, PCS> {
+    fn stage1_prove(&mut self, state: &mut StateManagerCoordinator<...>) -> Result<()> { Ok(()) }
+    fn stage2_instances(&mut self, state: &mut StateManagerCoordinator<...>) -> Vec<...> { vec![] }
+    fn stage3_instances(...) -> Vec<...> { vec![] }
+    fn stage4_instances(...) -> Vec<...> { vec![] }
+}
+```
+
+#### `JoltDAGWorker` / `JoltDAGCoordinator`
+
+```rust
+// jolt_dag_worker.rs
+pub struct JoltDAGWorker;
+
+impl JoltDAGWorker {
+    /// Worker side: generates shared witness, commits, participates in sumchecks
+    pub fn prove<F, PCS, N>(
+        state: StateManagerWorker<F, PCS, N>,
+    ) -> Result<()>;
+}
+
+// jolt_dag_coordinator.rs
+pub struct JoltDAGCoordinator;
+
+impl JoltDAGCoordinator {
+    /// Coordinator side: drives transcript, coordinates sumchecks, assembles proof
+    pub fn prove<F, ProofTranscript, PCS, N>(
+        state: StateManagerCoordinator<F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> Result<JoltProof<F, PCS, ProofTranscript>>;
+}
+```
+
+### Prove Flow (MPC)
+
+```
+COORDINATOR                              WORKER(s)
+    │                                        │
+    │  fiat_shamir_preamble()                │
+    │                                        │
+    │  ←── commitment_shares ──────────────  │  generate_and_commit_polynomials()
+    │  combine → set commitments             │
+    │  append commitments to transcript      │
+    │                                        │
+    │  ── sync ────────────────────────────  │
+    │                                        │
+    │  Stage 1 (Spartan outer sumcheck):     │
+    │  ── tau ─────────────────────────────→ │
+    │  ←── sumcheck_evals ─────────────────  │  SpartanDagWorker::stage1_prove()
+    │  SpartanDagCoordinator::stage1_prove() │
+    │  insert Stage1Sumcheck proof           │
+    │                                        │
+    │  Stage 2 (batched sumcheck):           │
+    │  coord gets instances                  │  worker gets instances
+    │  ── batching_challenge ──────────────→ │
+    │  for each round:                       │
+    │    ←── round_evals ──────────────────  │  worker binds + evaluates
+    │    combine, derive challenge           │
+    │    ── round_challenge ───────────────→ │
+    │  insert Stage2Sumcheck proof           │
+    │                                        │
+    │  Stage 3 (same pattern) ...            │
+    │  Stage 4 (same pattern) ...            │
+    │                                        │
+    │  Stage 5 (batch opening):              │
+    │  ── opening_point ───────────────────→ │
+    │  ←── opening_proof_shares ───────────  │  accumulator.reduce_and_prove()
+    │  combine → ReducedOpeningProof         │
+    │                                        │
+    │  Assemble JoltProof                    │
+```
+
+
+
+## Implementation Steps 
+
+### Worker
+
+TODO what's aleady done
+
+TODO what's needs to be done
+
+### Prover
+
+**Step 1: Foundation types** (Done)
+- `src/zkvm/dag/mod.rs` — module declarations
+- `src/zkvm/dag/state_manager.rs` — `StateManagerWorker`, `StateManagerCoordinator` structs
+- `src/zkvm/dag/stage.rs` — `SumcheckStagesWorker`, `SumcheckStagesCoordinator` traits
+- `src/zkvm/dag/jolt_dag_worker.rs` — `JoltDAGWorker` with skeleton `prove()`
+- `src/zkvm/dag/jolt_dag_coordinator.rs` — `JoltDAGCoordinator` with skeleton `prove()`
+
+**Step 2: Polynomial commitment phase**
+- Worker: generate witness polys → commit shares → send to coordinator
+- Coordinator: receive commitment shares → combine → append to transcript
+
+**Step 3: Batched sumcheck infrastructure**
+- Distributed `BatchedSumcheck` that coordinates sumcheck rounds between worker/coordinator
+- Worker computes round evaluations on shared polynomials
+- Coordinator drives rounds via transcript challenges
+
+**Step 4: Per-subsystem DAG nodes**
+- `SpartanDag` worker/coordinator split
+- `RegistersDag` worker/coordinator split
+- `RamDag` worker/coordinator split
+- `LookupsDag` worker/coordinator split
+- `BytecodeDag` worker/coordinator split
+
+**Step 5: Opening proof batching**
+- Worker accumulates opening claims → sends shares
+- Coordinator combines → produces `ReducedOpeningProof`
+
+**Step 6: Integration**
+- Wire up `JoltDAGWorker::prove()` and `JoltDAGCoordinator::prove()` with all subsystem DAG nodes
+- End-to-end test with MPC network
