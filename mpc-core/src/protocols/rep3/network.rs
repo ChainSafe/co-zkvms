@@ -2,7 +2,7 @@
 //!
 //! This module contains implementation of the rep3 mpc network
 
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
 use bytes::Bytes;

@@ -1,11 +1,11 @@
 use crate::field::JoltField;
-use ark_ff::PrimeField;
 use itertools::Itertools;
 use mpc_core::protocols::rep3::{
     self,
     network::{IoContext, Rep3Network},
     Rep3BigUintShare, Rep3PrimeFieldShare,
 };
+use mpc_types::field::PrimeField;
 use rand::{rngs::StdRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::iter::Sum;

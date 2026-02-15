@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -33,15 +33,15 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
         Self(F::zero())
     }
 
-    /// Double the share in place
-    pub fn double_in_place(&mut self) {
-        self.0.double_in_place();
-    }
+    // /// Double the share in place
+    // pub fn double_in_place(&mut self) {
+    //     self.0.double_in_place();
+    // }
 
-    /// Double the share in place
-    pub fn double(&self) -> Self {
-        Self(self.0.double())
-    }
+    // /// Double the share in place
+    // pub fn double(&self) -> Self {
+    //     Self(self.0.double())
+    // }
 
     /// Promotes a public field element to a replicated share by setting the additive share of the party with id=0 and leaving all other shares to be 0. Thus, the replicated shares of party 0 and party 1 are set.
     pub fn promote_from_trivial(public_value: F, id: PartyID) -> Self {
@@ -51,7 +51,7 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
             PartyID::ID2 => Self(F::zero()),
         }
     }
-    
+
     /// Casts the additive share into a field element. Use with caution.
     pub fn into_fe(self) -> F {
         self.0
@@ -148,4 +148,3 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
         }
     }
 }
-

@@ -14,7 +14,7 @@ use crate::{
         network::{IoContext, Rep3Network},
     },
 };
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use core::panic;
 use fancy_garbling::{
     BinaryBundle, Fancy, FancyBinary, WireLabel, WireMod2, errors::GarblerError, util::output_tweak,

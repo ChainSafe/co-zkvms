@@ -2,8 +2,8 @@
 //!
 //! This module implements the shamir share and combine opertions and shamir preprocessing
 
+use crate::field::PrimeField;
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use itertools::izip;
 
 use rand::{CryptoRng, Rng};
@@ -169,7 +169,7 @@ pub fn evaluate_poly<F: PrimeField>(poly: &[F], x: F) -> F {
     let mut eval = iter.next().unwrap().to_owned();
     for coeff in iter {
         eval *= x;
-        eval += coeff;
+        eval += *coeff;
     }
     eval
 }
@@ -197,7 +197,7 @@ pub fn share<F: PrimeField, R: Rng>(
     let mut coeffs = Vec::with_capacity(degree + 1);
     coeffs.push(secret);
     for _ in 0..degree {
-        coeffs.push(F::rand(rng));
+        coeffs.push(F::random(rng));
     }
     for i in 1..=num_shares {
         let share = evaluate_poly(&coeffs, F::from(i as u64));
@@ -390,7 +390,7 @@ pub(crate) fn interpolate_poly<F: PrimeField>(shares: &[F], coeffs: &[usize]) ->
             }
         }
         let mut c = d.inverse().expect("Inverse in lagrange should work");
-        c *= p;
+        c *= *p;
         for (r, n) in res.iter_mut().zip(num.iter()) {
             *r += *n * c;
         }
@@ -443,7 +443,7 @@ pub fn reconstruct_point<C: CurveGroup>(shares: &[C], lagrange: &[C::ScalarField
 mod shamir_test {
     use super::*;
     use ark_ff::UniformRand;
-    use rand::{SeedableRng, seq::IteratorRandom};
+    use rand::{seq::IteratorRandom, SeedableRng};
     use rand_chacha::ChaCha12Rng;
 
     const TESTRUNS: usize = 5;
@@ -452,7 +452,7 @@ mod shamir_test {
         let mut rng = ChaCha12Rng::from_entropy();
 
         for _ in 0..TESTRUNS {
-            let secret = F::rand(&mut rng);
+            let secret = F::random(&mut rng);
             let shares = super::share(secret, NUM_PARTIES, DEGREE, &mut rng);
 
             // Test first D+1 shares
@@ -522,13 +522,13 @@ mod shamir_test {
         let mut rng = ChaCha12Rng::from_entropy();
 
         for _ in 0..TESTRUNS {
-            let secret = F::rand(&mut rng);
+            let secret = F::random(&mut rng);
 
             // Random poly
             let mut poly = Vec::with_capacity(DEGREE + 1);
             poly.push(secret);
             for _ in 0..DEGREE {
-                poly.push(F::rand(&mut rng));
+                poly.push(F::random(&mut rng));
             }
 
             // Get Shares

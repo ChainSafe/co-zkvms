@@ -92,14 +92,14 @@ impl<C: CurveGroup> std::ops::Mul<C::ScalarField> for &'_ Rep3PointShare<C> {
     }
 }
 
-impl<C: CurveGroup> std::ops::Mul<&Rep3PointShare<C>> for Rep3PrimeFieldShare<C::ScalarField> {
-    type Output = C;
+// impl<C: CurveGroup> std::ops::Mul<&Rep3PointShare<C>> for Rep3PrimeFieldShare<C::ScalarField> {
+//     type Output = C;
 
-    // Local part of mul only
-    fn mul(self, rhs: &Rep3PointShare<C>) -> Self::Output {
-        rhs.a * self.a + rhs.b * self.a + rhs.a * self.b
-    }
-}
+//     // Local part of mul only
+//     fn mul(self, rhs: &Rep3PointShare<C>) -> Self::Output {
+//         rhs.a * self.a + rhs.b * self.a + rhs.a * self.b
+//     }
+// }
 
 impl<C: CurveGroup> std::ops::Neg for Rep3PointShare<C> {
     type Output = Rep3PointShare<C>;

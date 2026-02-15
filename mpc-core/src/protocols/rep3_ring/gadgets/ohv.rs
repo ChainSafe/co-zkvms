@@ -2,7 +2,8 @@
 //!
 //! This module contains some algorithms to create a random one-hot encoded vector for the Rep3 protocol.
 
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::{One, Zero};
+use mpc_types::field::PrimeField;
 use itertools::{Itertools, izip};
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},

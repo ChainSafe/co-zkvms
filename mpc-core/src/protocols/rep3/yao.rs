@@ -12,10 +12,11 @@ use super::network::{IoContext, Rep3Network};
 use super::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use crate::IoResult;
 use crate::protocols::rep3::yao::circuits::SHA256Table;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::Zero;
 use circuits::GarbledCircuits;
 use fancy_garbling::{BinaryBundle, WireLabel, WireMod2, hash_wires, util::tweak2};
 use itertools::{Itertools, izip};
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3::id::PartyID;
 use num_bigint::BigUint;
 use rand::{CryptoRng, Rng};
@@ -251,14 +252,14 @@ impl GCUtils {
 
     fn field_to_bits<F: PrimeField>(field: F) -> Vec<bool> {
         let n_bits = F::MODULUS_BIT_SIZE as usize;
-        let bigint: BigUint = field.into();
+        let bigint: BigUint = field.into_biguint();
 
         Self::biguint_to_bits(&bigint, n_bits)
     }
 
     fn field_to_bits_as_u16<F: PrimeField>(field: F) -> Vec<u16> {
         let n_bits = F::MODULUS_BIT_SIZE as usize;
-        let bigint: BigUint = field.into();
+        let bigint: BigUint = field.into_biguint();
 
         Self::biguint_to_bits_as_u16(&bigint, n_bits)
     }

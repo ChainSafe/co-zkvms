@@ -1,4 +1,5 @@
-use ark_ff::{BigInteger, PrimeField};
+use crate::field::PrimeField;
+use ark_ff::BigInteger;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -54,18 +55,18 @@ impl<F: PrimeField> Rep3PrimeFieldShare<F> {
     }
 
     /// Double the share in place
-    pub fn double_in_place(&mut self) {
-        self.a.double_in_place();
-        self.b.double_in_place();
-    }
+    // pub fn double_in_place(&mut self) {
+    //     self.a.double_in_place();
+    //     self.b.double_in_place();
+    // }
 
-    /// Double the share in place
-    pub fn double(&self) -> Self {
-        Self {
-            a: self.a.double(),
-            b: self.b.double(),
-        }
-    }
+    // /// Double the share in place
+    // pub fn double(&self) -> Self {
+    //     Self {
+    //         a: self.a.double(),
+    //         b: self.b.double(),
+    //     }
+    // }
 
     /// Double the share in place
     pub fn square(&self) -> AdditivePrimeFieldShare<F> {

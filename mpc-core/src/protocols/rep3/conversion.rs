@@ -12,9 +12,9 @@ use super::{
         streaming_evaluator::StreamingRep3Evaluator, streaming_garbler::StreamingRep3Garbler,
     },
 };
-use ark_ff::PrimeField;
 use fancy_garbling::{BinaryBundle, WireMod2};
 use itertools::{Itertools as _, izip};
+use mpc_types::field::PrimeField;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
@@ -69,15 +69,15 @@ pub fn a2b<F: PrimeField, N: Rep3Network>(
     match io_context.id {
         PartyID::ID0 => {
             x01.a = r;
-            x2.b = x.b.into();
+            x2.b = x.b.into_biguint();
         }
         PartyID::ID1 => {
-            let val: BigUint = (x.a + x.b).into();
+            let val: BigUint = (x.a + x.b).into_biguint();
             x01.a = val ^ r;
         }
         PartyID::ID2 => {
             x01.a = r;
-            x2.a = x.a.into();
+            x2.a = x.a.into_biguint();
         }
     }
 
@@ -110,20 +110,20 @@ pub fn a2b_many<F: PrimeField, N: Rep3Network>(
     let x01_a = match io_context.id {
         PartyID::ID0 => {
             for (x2, x) in izip!(x2.iter_mut(), x) {
-                x2.b = x.b.into();
+                x2.b = x.b.into_biguint();
             }
             r_vec
         }
 
         PartyID::ID1 => izip!(x, r_vec)
             .map(|(x, r)| {
-                let tmp: BigUint = (x.a + x.b).into();
+                let tmp: BigUint = (x.a + x.b).into_biguint();
                 tmp ^ r
             })
             .collect(),
         PartyID::ID2 => {
             for (x2, x) in izip!(x2.iter_mut(), x) {
-                x2.a = x.a.into();
+                x2.a = x.a.into_biguint();
             }
             r_vec
         }
@@ -179,7 +179,7 @@ pub fn b2a<F: PrimeField, N: Rep3Network>(
 
             let k2_comp = k2.0 + k2.1 + k2.2;
             let k3_comp = k3.0 + k3.1 + k3.2;
-            let val: BigUint = (k2_comp + k3_comp).into();
+            let val: BigUint = (k2_comp + k3_comp).into_biguint();
             y.a = val ^ r;
             res.a = k3_comp.neg();
             res.b = k2_comp.neg();
@@ -261,7 +261,7 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
 
                 let k2_comp = k2.0 + k2.1 + k2.2;
                 let k3_comp = k3.0 + k3.1 + k3.2;
-                let val: BigUint = (k2_comp + k3_comp).into();
+                let val: BigUint = (k2_comp + k3_comp).into_biguint();
 
                 res.a = k3_comp.neg();
                 res.b = k2_comp.neg();

@@ -11,7 +11,8 @@ use crate::{
         network::{IoContext, Rep3Network},
     },
 };
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::{One, Zero};
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3::id::PartyID;
 use mpc_types::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare};
 use mpc_types::protocols::rep3_ring::Rep3RingShare;
@@ -226,7 +227,7 @@ fn inject_public_bit<F: PrimeField>(inputs: &[F], bit: usize) -> Vec<RingElement
     let len = inputs.len();
     let mut bits = Vec::with_capacity(len);
     for inp in inputs.iter().cloned() {
-        let inp: BigUint = inp.into();
+        let inp: BigUint = inp.into_biguint();
         bits.push(RingElement(inp.bit(bit as u64) as PermRing));
     }
     bits

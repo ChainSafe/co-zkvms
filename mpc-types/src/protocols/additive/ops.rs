@@ -1,7 +1,7 @@
-use ark_ff::{PrimeField, Zero};
+use crate::field::PrimeField;
+use ark_ff::Zero;
 
 use super::AdditivePrimeFieldShare;
-
 
 impl<F: PrimeField> std::ops::Add for AdditivePrimeFieldShare<F> {
     type Output = Self;
@@ -24,7 +24,9 @@ impl<F: PrimeField> std::ops::AddAssign<AdditivePrimeFieldShare<F>> for Additive
     }
 }
 
-impl<F: PrimeField> std::ops::AddAssign<&AdditivePrimeFieldShare<F>> for AdditivePrimeFieldShare<F> {
+impl<F: PrimeField> std::ops::AddAssign<&AdditivePrimeFieldShare<F>>
+    for AdditivePrimeFieldShare<F>
+{
     fn add_assign(&mut self, rhs: &AdditivePrimeFieldShare<F>) {
         self.0 += rhs.0;
     }
@@ -51,7 +53,6 @@ impl<F: PrimeField> std::ops::SubAssign<AdditivePrimeFieldShare<F>> for Additive
         self.0 -= rhs.0;
     }
 }
-
 
 impl<F: PrimeField> std::ops::Mul<F> for AdditivePrimeFieldShare<F> {
     type Output = AdditivePrimeFieldShare<F>;

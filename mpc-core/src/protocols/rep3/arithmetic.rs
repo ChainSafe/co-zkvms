@@ -5,8 +5,8 @@
 use core::panic;
 use num_traits::cast::ToPrimitive;
 
-use ark_ff::PrimeField;
 use itertools::{Itertools, izip};
+use mpc_types::field::PrimeField;
 use num_bigint::BigUint;
 use num_traits::One;
 use num_traits::Zero;
@@ -785,7 +785,7 @@ pub fn pow_2_public<F: PrimeField>(shared: FieldShare<F>, public: F) -> FieldSha
     if public.is_zero() {
         shared
     } else {
-        let shift: BigUint = public.into();
+        let shift: BigUint = public.into_biguint();
         let shift = shift.to_u32().expect("can cast shift operand to u32");
         if shift >= F::MODULUS_BIT_SIZE {
             panic!(
@@ -794,7 +794,7 @@ pub fn pow_2_public<F: PrimeField>(shared: FieldShare<F>, public: F) -> FieldSha
                 shift
             );
         } else {
-            mul_public(shared, F::from(2u64).pow(public.into_bigint()))
+            mul_public(shared, F::from_u64(2u64).pow(public.into_bigint()))
         }
     }
 }

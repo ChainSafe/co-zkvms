@@ -18,7 +18,7 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 serde = { workspace = true }
 snarks-core = { path = "../snarks-core" }
+jolt-core = { path = "../../examples/jolt/jolt-core" }
 
 [dev-dependencies]
 ark-bn254 = { workspace = true }
-

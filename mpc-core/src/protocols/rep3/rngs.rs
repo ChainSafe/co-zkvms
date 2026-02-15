@@ -5,7 +5,8 @@
 use super::yao::GCUtils;
 use crate::RngType;
 use ark_ec::CurveGroup;
-use ark_ff::{One, PrimeField};
+use ark_ff::One;
+use mpc_types::field::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use fancy_garbling::WireMod2;
 use mpc_types::protocols::rep3::id::PartyID;

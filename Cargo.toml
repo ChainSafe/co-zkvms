@@ -1,23 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "co-jolt",
-    "co-noir-spartan/co-spartan",
+    "co-jolt2",
+    # "co-jolt",
+    # "co-noir-spartan/co-spartan",
     # "co-noir-spartan/co-noir",
-    "co-noir-spartan/spartan",
-    "co-noir-spartan/noir-r1cs",
+    # "co-noir-spartan/spartan",
+    # "co-noir-spartan/noir-r1cs",
     "mpc-net",
     "mpc-core",
     "mpc-types",
     "snarks-core",
-    "co-jolt/examples/fibonacci",
-    "co-jolt/examples/fibonacci/guest",
-    "co-jolt/examples/sha3-ex",
-    "co-jolt/examples/sha3-ex/guest",
-    "co-jolt/examples/sha2-chain",
-    "co-jolt/examples/sha2-chain/guest",
-    "co-jolt/examples/sha3-chain",
-    "co-jolt/examples/sha3-chain/guest",
+    # "co-jolt/examples/fibonacci",
+    # "co-jolt/examples/fibonacci/guest",
+    # "co-jolt/examples/sha3-ex",
+    # "co-jolt/examples/sha3-ex/guest",
+    # "co-jolt/examples/sha2-chain",
+    # "co-jolt/examples/sha2-chain/guest",
+    # "co-jolt/examples/sha3-chain",
+    # "co-jolt/examples/sha3-chain/guest",
 ]
 
 [workspace.package]
@@ -98,9 +99,12 @@ argh = "0.1.12"
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bls12-381 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 # [patch."https://github.com/nulltea/co-snarks"]
 # mpc-net = { path = "./mpc-net" }

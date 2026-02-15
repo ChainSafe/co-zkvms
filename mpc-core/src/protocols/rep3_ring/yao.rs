@@ -16,7 +16,7 @@ use crate::{
         rep3_ring::conversion,
     },
 };
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use fancy_garbling::{BinaryBundle, WireLabel, WireMod2};
 use itertools::izip;
 use mpc_types::protocols::{

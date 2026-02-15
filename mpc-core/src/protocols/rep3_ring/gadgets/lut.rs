@@ -9,7 +9,7 @@ use crate::{
         rep3_ring::{arithmetic::RingShare, binary, conversion, gadgets},
     },
 };
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{Rep3RingShare, ring::int_ring::IntRing2k},
@@ -58,7 +58,7 @@ where
             // The pad with 0 case
             continue;
         }
-        let lut_val: BigUint = lut[index].into();
+        let lut_val: BigUint = lut[index].into_biguint();
         if e.a.0.convert() {
             t.a ^= &lut_val;
         }
@@ -125,7 +125,7 @@ where
                 // The pad with 0 case
                 continue;
             }
-            let lut_val: BigUint = lut[index].into();
+            let lut_val: BigUint = lut[index].into_biguint();
             let mut g = Rep3BigUintShare::<F>::default();
             if f0.a.0.convert() {
                 g.a ^= &lut_val;
@@ -247,7 +247,7 @@ where
                     // The pad with 0 case
                     continue;
                 }
-                let lut_val: BigUint = lut[index].into();
+                let lut_val: BigUint = lut[index].into_biguint();
                 let mut g = Rep3BigUintShare::<F>::default();
                 if f0.a.0.convert() {
                     g.a ^= &lut_val;

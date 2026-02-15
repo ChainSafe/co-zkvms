@@ -2,7 +2,7 @@
 //!
 //! This module contains the abstraction to lookup tables
 
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use num_bigint::BigUint;
 use std::{io, marker::PhantomData};
 
@@ -88,7 +88,7 @@ impl<F: PrimeField> LookupTableProvider<F> for PlainLookupTableProvider<F> {
         _network0: &mut Self::NetworkProvider,
         _network1: &mut Self::NetworkProvider,
     ) -> io::Result<F> {
-        let index: BigUint = index.into();
+        let index: BigUint = index.into_biguint();
         let index = usize::try_from(index).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -106,7 +106,7 @@ impl<F: PrimeField> LookupTableProvider<F> for PlainLookupTableProvider<F> {
         _network0: &mut Self::NetworkProvider,
         _network1: &mut Self::NetworkProvider,
     ) -> io::Result<()> {
-        let index: BigUint = index.into();
+        let index: BigUint = index.into_biguint();
         let index = usize::try_from(index).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

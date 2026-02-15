@@ -2,7 +2,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::Itertools;
 use std::marker::PhantomData;
 
-use ark_ff::{PrimeField, Zero};
+use crate::field::PrimeField;
+use ark_ff::Zero;
 use num_bigint::BigUint;
 
 use crate::protocols::rep3;

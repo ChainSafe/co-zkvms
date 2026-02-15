@@ -19,9 +19,9 @@ use crate::{
         rep3_ring::arithmetic,
     },
 };
-use ark_ff::PrimeField;
 use fancy_garbling::{BinaryBundle, WireMod2};
 use itertools::{Itertools, izip};
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3PrimeFieldShare, id::PartyID},
     rep3_ring::{

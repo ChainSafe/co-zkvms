@@ -8,7 +8,7 @@ use crate::protocols::rep3::{
     conversion::A2BType,
     network::{IoContext, Rep3Network},
 };
-use ark_ff::PrimeField;
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{

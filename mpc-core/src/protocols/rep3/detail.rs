@@ -5,10 +5,10 @@ use super::network::IoContext;
 use crate::IoResult;
 use crate::protocols::rep3::{Rep3BigUintShare, Rep3PrimeFieldShare, network::Rep3Network};
 use ark_ff::One;
-use ark_ff::PrimeField;
 use ark_ff::Zero;
 use itertools::Itertools as _;
 use itertools::izip;
+use mpc_types::field::PrimeField;
 use num_bigint::BigUint;
 
 pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>(
@@ -383,7 +383,7 @@ pub(crate) fn unsigned_ge_const_lhs<F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
 ) -> IoResult<Rep3BigUintShare<F>> {
     let b_bits = conversion::a2b_selector(y, io_context)?;
-    let diff = low_depth_binary_sub_from_const(&x.into(), &b_bits, io_context)?;
+    let diff = low_depth_binary_sub_from_const(&x.into_biguint(), &b_bits, io_context)?;
 
     Ok(&(&diff >> F::MODULUS_BIT_SIZE as usize) & &BigUint::one())
 }
@@ -395,7 +395,7 @@ pub(crate) fn unsigned_ge_const_rhs<F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
 ) -> IoResult<Rep3BigUintShare<F>> {
     let a_bits = conversion::a2b_selector(x, io_context)?;
-    let diff = low_depth_binary_sub_by_const(&a_bits, &y.into(), io_context)?;
+    let diff = low_depth_binary_sub_by_const(&a_bits, &y.into_biguint(), io_context)?;
 
     Ok(&(&diff >> F::MODULUS_BIT_SIZE as usize) & &BigUint::one())
 }

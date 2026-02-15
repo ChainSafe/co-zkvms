@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use ark_ff::PrimeField;
+use crate::field::PrimeField;
 use num_bigint::BigUint;
 
 use super::types::Rep3BigUintShare;

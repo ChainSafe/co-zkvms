@@ -13,8 +13,9 @@ use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 
-use ark_ff::{One, PrimeField};
-use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
+use crate::field::PrimeField;
+use ark_ff::One;
+use rand::{distributions::Standard, prelude::Distribution, CryptoRng, Rng, SeedableRng};
 
 pub use arithmetic::types::Rep3PrimeFieldShare;
 pub use binary::types::Rep3BigUintShare;
@@ -85,7 +86,7 @@ where
                 let mut rng = U::from_seed(seed);
                 let mut shares = Vec::with_capacity(len);
                 for _ in 0..len {
-                    shares.push(F::rand(&mut rng));
+                    shares.push(F::random(&mut rng));
                 }
                 shares
             }
@@ -112,7 +113,7 @@ where
             SeededType::Seed(seed, len, _) => {
                 assert_eq!(len, 1);
                 let mut rng = U::from_seed(seed);
-                F::rand(&mut rng)
+                F::random(&mut rng)
             }
         }
     }
@@ -178,8 +179,8 @@ pub fn share_field_element<F: PrimeField, R: Rng + CryptoRng>(
     val: F,
     rng: &mut R,
 ) -> [Rep3PrimeFieldShare<F>; 3] {
-    let a = F::rand(rng);
-    let b = F::rand(rng);
+    let a = F::random(rng);
+    let b = F::random(rng);
     let c = val - a - b;
     let share1 = Rep3PrimeFieldShare::new(a, c);
     let share2 = Rep3PrimeFieldShare::new(b, a);
@@ -192,8 +193,8 @@ pub fn share_field_element_additive<F: PrimeField, R: Rng + CryptoRng>(
     val: F,
     rng: &mut R,
 ) -> [F; 3] {
-    let a = F::rand(rng);
-    let b = F::rand(rng);
+    let a = F::random(rng);
+    let b = F::random(rng);
     let c = val - a - b;
     [a, b, c]
 }
@@ -217,8 +218,8 @@ where
     let mut rng_b = U::from_seed(seed_b.to_owned());
     let mut rng_c = U::from_seed(seed_c.to_owned());
 
-    let b = F::rand(&mut rng_b);
-    let c = F::rand(&mut rng_c);
+    let b = F::random(&mut rng_b);
+    let c = F::random(&mut rng_c);
     let a = val - b - c;
 
     let a = SeededType::Shares(a);
@@ -256,8 +257,8 @@ where
     let mut rng_b = U::from_seed(seed_b.to_owned());
     let mut rng_c = U::from_seed(seed_c.to_owned());
 
-    let b = F::rand(&mut rng_b);
-    let c = F::rand(&mut rng_c);
+    let b = F::random(&mut rng_b);
+    let c = F::random(&mut rng_c);
     let a = val - b - c;
 
     let a = SeededType::Shares(a);
@@ -372,8 +373,8 @@ where
 
     let mut a = Vec::with_capacity(vals.len());
     for val in vals {
-        let b_ = F::rand(&mut rng_b);
-        let c_ = F::rand(&mut rng_c);
+        let b_ = F::random(&mut rng_b);
+        let c_ = F::random(&mut rng_c);
         let a_ = *val - b_ - c_;
         a.push(a_);
     }
@@ -417,8 +418,8 @@ where
 
     let mut a = Vec::with_capacity(vals.len());
     for val in vals {
-        let b_ = F::rand(&mut rng_b);
-        let c_ = F::rand(&mut rng_c);
+        let b_ = F::random(&mut rng_b);
+        let c_ = F::random(&mut rng_c);
         let a_ = *val - b_ - c_;
         a.push(a_);
     }
@@ -433,7 +434,7 @@ pub fn share_biguint<F: PrimeField, R: Rng + CryptoRng>(
     val: F,
     rng: &mut R,
 ) -> [Rep3BigUintShare<F>; 3] {
-    let val: BigUint = val.into();
+    let val: BigUint = val.into_biguint();
     let limbsize = F::MODULUS_BIT_SIZE.div_ceil(32);
     let mask = (BigUint::from(1u32) << F::MODULUS_BIT_SIZE) - BigUint::one();
     let a = BigUint::new((0..limbsize).map(|_| rng.r#gen()).collect()) & &mask;
@@ -493,7 +494,6 @@ pub fn combine_binary_element<F: PrimeField>(
 ) -> BigUint {
     share1.a ^ share2.a ^ share3.a
 }
-
 
 /// Reconstructs a curve point from its arithmetic replicated shares.
 pub fn combine_curve_point<C: CurveGroup>(

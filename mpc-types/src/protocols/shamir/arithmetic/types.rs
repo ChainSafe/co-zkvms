@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::mem::ManuallyDrop;
 
@@ -84,9 +84,9 @@ mod unsafe_test {
 
     fn conversion_test<F: PrimeField>() {
         let mut rng = ChaCha12Rng::from_entropy();
-        let t_vec: Vec<F> = (0..ELEMENTS).map(|_| F::rand(&mut rng)).collect();
+        let t_vec: Vec<F> = (0..ELEMENTS).map(|_| F::random(&mut rng)).collect();
         let rt_vec: Vec<ShamirPrimeFieldShare<F>> = (0..ELEMENTS)
-            .map(|_| ShamirPrimeFieldShare::new(F::rand(&mut rng)))
+            .map(|_| ShamirPrimeFieldShare::new(F::random(&mut rng)))
             .collect();
 
         // Convert vec<F> to vec<G<F>>

@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::field::PrimeField;
 
 use crate::protocols::additive::AdditivePrimeFieldShare;
 
