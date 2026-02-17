@@ -1,13 +1,15 @@
 use std::array;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
+use itertools::Itertools;
 use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
-use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup};
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
@@ -40,7 +42,6 @@ struct Rep3WitnessData {
     rd_post: Vec<Rep3RingShare<u64>>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
-    should_branch: Vec<Rep3RingShare<u8>>,
     should_jump: Vec<u8>,
     ram_pre: Vec<Rep3RingShare<u64>>,
     ram_post: Vec<Rep3RingShare<u64>>,
@@ -59,7 +60,6 @@ impl Rep3WitnessData {
             rd_post: vec![Rep3RingShare::default(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
-            should_branch: vec![Rep3RingShare::default(); trace_len],
             should_jump: vec![0; trace_len],
             ram_pre: vec![Rep3RingShare::default(); trace_len],
             ram_post: vec![Rep3RingShare::default(); trace_len],
@@ -74,6 +74,56 @@ impl Rep3WitnessData {
 struct SharedRep3WitnessData(UnsafeCell<Rep3WitnessData>);
 unsafe impl Sync for SharedRep3WitnessData {}
 
+// ── compute_lookup_outputs ──────────────────────────────────────────────────
+
+/// Compute the lookup output for each cycle in the trace.
+///
+/// Mirrors v1's `compute_lookup_outputs_rep3`:
+/// 1. Initialize output futures as `Ready(zero_share)`
+/// 2. Group `(cycle, &mut future)` pairs by instruction discriminant (skip NoOp/INLINE)
+/// 3. Process each group via `par_chunks` → `to_lookup_output_batched`
+/// 4. `fulfill_batched` all futures into `Rep3PrimeFieldShare<F>`
+pub fn compute_lookup_outputs<F, N>(
+    trace: &[Rep3Cycle],
+    io_ctx: &mut IoContextPool<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
+where
+    F: JoltField,
+    N: Rep3NetworkWorker,
+    Standard: Distribution<u32>,
+{
+    let mut output_futures: Vec<FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>> =
+        vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); trace.len()];
+
+    // Group by instruction type, skipping non-lookup cycles (NoOp, INLINE)
+    let ops_by_instruction: Vec<(
+        Vec<&Rep3Cycle>,
+        Vec<&mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+    )> = trace
+        .iter()
+        .zip(output_futures.iter_mut())
+        .filter(|(cycle, _)| cycle.lookup_table().is_some())
+        .group_by(|(cycle, _)| mem::discriminant(*cycle))
+        .into_iter()
+        .map(|(_, group)| group.unzip())
+        .collect();
+
+    // Process each instruction group via par_chunks
+    io_ctx.par_chunks(
+        ops_by_instruction,
+        None,
+        |groups, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
+            for (steps, out) in groups {
+                Rep3LookupQuery::<XLEN>::to_lookup_output_batched(steps[0], &steps, io_ctx, out)?;
+            }
+            Ok(vec![()])
+        },
+    )?;
+
+    // Fulfill all pending futures (batched casts via io_ctx)
+    output_futures.fulfill_batched(io_ctx, |res, ()| res)
+}
+
 // ── generate_witness_batch_rep3 ─────────────────────────────────────────────
 
 /// Rep3 version of vanilla `CommittedPolynomial::generate_witness_batch`.
@@ -84,7 +134,7 @@ unsafe impl Sync for SharedRep3WitnessData {}
 ///
 /// - Shared fields (register values) go through `ring_to_field_a2b_many` → `Shared(...)`
 /// - Public fields (flags derived from opcode) → `Public(...)`
-/// - Deferred fields (instruction_ra, should_branch) are skipped or zeroed
+/// - Deferred fields (instruction_ra) are skipped or zeroed
 pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
@@ -148,10 +198,10 @@ where
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
 
-                let (left, right) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                let (left, right) = Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle, party_id);
 
-                batch_ref.left_instruction_input[i] = left.as_arithmetic_u64();
-                batch_ref.right_instruction_input[i] = left.as_arithmetic_u128();
+                batch_ref.left_instruction_input[i] = left;
+                batch_ref.right_instruction_input[i] = right;
 
                 // Rd write: (rd_write_flag, pre, post)
                 let (rd_write_flag, pre, post) = cycle.rd_write();
@@ -167,10 +217,6 @@ where
                 // WritePCtoRD (public)
                 batch_ref.write_pc_to_rd[i] =
                     rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
-
-                // ShouldBranch: deferred (needs to_lookup_output_rep3)
-                // Vanilla: should_branch[i] = (lookup_output as u8) * (circuit_flags[Branch] as u8)
-                // batch_ref.should_branch[i] remains default zero share
 
                 // ShouldJump (public)
                 let is_jump = circuit_flags[CircuitFlags::Jump as usize] as u8;
@@ -241,6 +287,9 @@ where
         .0
         .into_inner();
 
+    // Phase 4: Compute lookup outputs (batched per instruction type)
+    let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> = compute_lookup_outputs(trace, io_ctx)?;
+
     // -- Convert to polynomials --
     let mut results = HashMap::with_capacity(polynomials.len());
 
@@ -273,11 +322,21 @@ where
                 );
             }
             CommittedPolynomial::ShouldBranch => {
-                // Deferred: needs to_lookup_output_rep3 (Lasso/Shout phase)
-                let coeffs = std::mem::take(&mut batch.should_branch);
-                let field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&coeffs, io_ctx.main())?;
-                results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
+                // should_branch[i] = lookup_output[i] * circuit_flags[Branch] (public scalar)
+                let should_branch: Vec<Rep3PrimeFieldShare<F>> = lookup_outputs
+                    .iter()
+                    .zip(trace.iter())
+                    .map(|(output, cycle)| {
+                        let is_branch =
+                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                        if is_branch {
+                            *output
+                        } else {
+                            Rep3PrimeFieldShare::zero_share()
+                        }
+                    })
+                    .collect();
+                results.insert(*poly, Rep3MultilinearPolynomial::from(should_branch));
             }
             CommittedPolynomial::ShouldJump => {
                 let coeffs = std::mem::take(&mut batch.should_jump);
