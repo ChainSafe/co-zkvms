@@ -37,6 +37,17 @@ impl Rep3RegisterState for Rep3RegisterStateFormatInline {
         }
     }
 
+    fn from_shared<T: InstructionRegisterState>(
+        _public_state: &T,
+        shares: &mut impl Iterator<Item = Rep3Operand>,
+    ) -> Self {
+        Self {
+            rs1: shares.next().unwrap(),
+            rs2: shares.next().unwrap(),
+            rs3: shares.next().unwrap(),
+        }
+    }
+
     fn promote_to_shares(&mut self, party_id: PartyID) {
         self.rs1 = promote_operand_to_share(&self.rs1, party_id);
         self.rs2 = promote_operand_to_share(&self.rs2, party_id);
@@ -45,6 +56,11 @@ impl Rep3RegisterState for Rep3RegisterStateFormatInline {
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
         vec![&mut self.rs1, &mut self.rs2, &mut self.rs3]
+    }
+
+    fn operand_values<T: InstructionRegisterState>(state: &T) -> Vec<u64> {
+        // rs3 is not exposed by InstructionRegisterState trait, default to 0
+        vec![state.rs1_value(), state.rs2_value(), 0]
     }
 }
 

@@ -34,6 +34,13 @@ pub trait Rep3RegisterState:
     /// Convert from vanilla RegisterState (u64 -> Rep3Operand::Public)
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self;
 
+    /// Convert from vanilla RegisterState using pre-generated binary shares.
+    /// Consumes operands from `shares` in the same order as `shared_operands_mut`.
+    fn from_shared<T: InstructionRegisterState>(
+        public_state: &T,
+        shares: &mut impl Iterator<Item = Rep3Operand>,
+    ) -> Self;
+
     /// Promote public operands to trivial shares
     fn promote_to_shares(&mut self, party_id: PartyID);
 
@@ -41,6 +48,11 @@ pub trait Rep3RegisterState:
     /// Used by batched `populate_operands_casts` to collect binary shares
     /// across the entire trace in one pass.
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand>;
+
+    /// Extract operand values from a vanilla register state in the same order
+    /// as `shared_operands_mut` returns them. Used by `share_cycle` to know
+    /// which values to generate binary shares for.
+    fn operand_values<T: InstructionRegisterState>(state: &T) -> Vec<u64>;
 }
 
 /// Maps vanilla InstructionFormat to its Rep3 register state equivalent.

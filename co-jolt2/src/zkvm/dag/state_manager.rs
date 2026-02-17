@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
 use crate::field::JoltField;
+use crate::host::memory::Rep3Memory;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use tracer::emulator::memory::Memory;
 use tracer::JoltDevice;
 
 // Re-export vanilla DAG types
@@ -20,7 +20,7 @@ pub use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys, Proofs};
 pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
     pub trace: Vec<Rep3Cycle>,
-    pub final_memory_state: Memory,
+    pub final_memory_state: Rep3Memory,
     pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
 }
 
@@ -48,7 +48,7 @@ where
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: Vec<Rep3Cycle>,
         program_io: JoltDevice,
-        final_memory_state: Memory,
+        final_memory_state: Rep3Memory,
         io_ctx: IoContextPool<N>,
         ram_K: usize,
     ) -> Self {
@@ -82,7 +82,7 @@ where
         &'a JoltProverPreprocessing<F, PCS>,
         &Vec<Rep3Cycle>,
         &JoltDevice,
-        &Memory,
+        &Rep3Memory,
     ) {
         (
             self.prover_state.preprocessing,

@@ -5168,6 +5168,11 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "ark-bls12-381"
+version = "0.5.0-alpha.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+
+[[patch.unused]]
 name = "common"
 version = "0.2.0"
 
@@ -5178,8 +5183,3 @@ version = "0.1.0"
 [[patch.unused]]
 name = "tracer"
 version = "0.2.0"
-
-[[patch.unused]]
-name = "ark-bls12-381"
-version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"

@@ -32,12 +32,25 @@ impl Rep3RegisterState for Rep3AssertAlignRegisterState {
         }
     }
 
+    fn from_shared<T: InstructionRegisterState>(
+        _public_state: &T,
+        shares: &mut impl Iterator<Item = Rep3Operand>,
+    ) -> Self {
+        Self {
+            rs1: shares.next().unwrap(),
+        }
+    }
+
     fn promote_to_shares(&mut self, party_id: PartyID) {
         self.rs1 = promote_operand_to_share(&self.rs1, party_id);
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
         vec![&mut self.rs1]
+    }
+
+    fn operand_values<T: InstructionRegisterState>(state: &T) -> Vec<u64> {
+        vec![state.rs1_value()]
     }
 }
 
