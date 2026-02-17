@@ -8,8 +8,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<SUB> {
         )
     }
 
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        todo!("to_lookup_operands: sub-index")
+    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
+        let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
+        let l = left.as_arithmetic_or_trivial::<u128>(party_id);
+        let r = right.as_arithmetic_or_trivial::<u128>(party_id);
+        let neg_r =
+            rep3_ring::arithmetic::sub_public_by_shared((1u128 << XLEN).into(), r, party_id);
+        (Rep3RingShare::default(), l + neg_r)
     }
 
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {

@@ -5,7 +5,6 @@ mod addi;
 mod and;
 mod andi;
 mod andn;
-mod atomic;
 mod auipc;
 mod beq;
 mod bge;
@@ -22,10 +21,7 @@ mod ld;
 mod load;
 mod lui;
 mod mul;
-mod mulh;
-mod mulhsu;
 mod mulhu;
-mod non_vanilla_rv64;
 mod or;
 mod ori;
 mod rem;
@@ -89,26 +85,6 @@ use tracer::instruction::{
 // Import all instruction types for Rep3Cycle enum
 use tracer::instruction::add::ADD;
 use tracer::instruction::addi::ADDI;
-use tracer::instruction::addiw::ADDIW;
-use tracer::instruction::addw::ADDW;
-use tracer::instruction::amoaddd::AMOADDD;
-use tracer::instruction::amoaddw::AMOADDW;
-use tracer::instruction::amoandd::AMOANDD;
-use tracer::instruction::amoandw::AMOANDW;
-use tracer::instruction::amomaxd::AMOMAXD;
-use tracer::instruction::amomaxud::AMOMAXUD;
-use tracer::instruction::amomaxuw::AMOMAXUW;
-use tracer::instruction::amomaxw::AMOMAXW;
-use tracer::instruction::amomind::AMOMIND;
-use tracer::instruction::amominud::AMOMINUD;
-use tracer::instruction::amominuw::AMOMINUW;
-use tracer::instruction::amominw::AMOMINW;
-use tracer::instruction::amoord::AMOORD;
-use tracer::instruction::amoorw::AMOORW;
-use tracer::instruction::amoswapd::AMOSWAPD;
-use tracer::instruction::amoswapw::AMOSWAPW;
-use tracer::instruction::amoxord::AMOXORD;
-use tracer::instruction::amoxorw::AMOXORW;
 use tracer::instruction::and::AND;
 use tracer::instruction::andi::ANDI;
 use tracer::instruction::andn::ANDN;
@@ -121,8 +97,6 @@ use tracer::instruction::bltu::BLTU;
 use tracer::instruction::bne::BNE;
 use tracer::instruction::div::DIV;
 use tracer::instruction::divu::DIVU;
-use tracer::instruction::divuw::DIVUW;
-use tracer::instruction::divw::DIVW;
 use tracer::instruction::ecall::ECALL;
 use tracer::instruction::fence::FENCE;
 use tracer::instruction::inline::INLINE;
@@ -133,45 +107,30 @@ use tracer::instruction::lbu::LBU;
 use tracer::instruction::ld::LD;
 use tracer::instruction::lh::LH;
 use tracer::instruction::lhu::LHU;
-use tracer::instruction::lrd::LRD;
-use tracer::instruction::lrw::LRW;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
-use tracer::instruction::lwu::LWU;
 use tracer::instruction::mul::MUL;
 use tracer::instruction::mulh::MULH;
 use tracer::instruction::mulhsu::MULHSU;
 use tracer::instruction::mulhu::MULHU;
-use tracer::instruction::mulw::MULW;
 use tracer::instruction::or::OR;
 use tracer::instruction::ori::ORI;
 use tracer::instruction::rem::REM;
 use tracer::instruction::remu::REMU;
-use tracer::instruction::remuw::REMUW;
-use tracer::instruction::remw::REMW;
 use tracer::instruction::sb::SB;
-use tracer::instruction::scd::SCD;
-use tracer::instruction::scw::SCW;
 use tracer::instruction::sd::SD;
 use tracer::instruction::sh::SH;
 use tracer::instruction::sll::SLL;
 use tracer::instruction::slli::SLLI;
-use tracer::instruction::slliw::SLLIW;
-use tracer::instruction::sllw::SLLW;
 use tracer::instruction::slt::SLT;
 use tracer::instruction::slti::SLTI;
 use tracer::instruction::sltiu::SLTIU;
 use tracer::instruction::sltu::SLTU;
 use tracer::instruction::sra::SRA;
 use tracer::instruction::srai::SRAI;
-use tracer::instruction::sraiw::SRAIW;
-use tracer::instruction::sraw::SRAW;
 use tracer::instruction::srl::SRL;
 use tracer::instruction::srli::SRLI;
-use tracer::instruction::srliw::SRLIW;
-use tracer::instruction::srlw::SRLW;
 use tracer::instruction::sub::SUB;
-use tracer::instruction::subw::SUBW;
 use tracer::instruction::sw::SW;
 use tracer::instruction::virtual_advice::VirtualAdvice;
 use tracer::instruction::virtual_assert_eq::VirtualAssertEQ;
@@ -308,6 +267,18 @@ impl Rep3Operand {
             Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             Rep3Operand::Public(v) => {
                 rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement(*v as u128))
+            }
+        }
+    }
+
+    pub fn as_arithmetic_or_trivial<T: IntRing2k>(&self, id: PartyID) -> Rep3RingShare<T>
+    where
+        u128: AsPrimitive<T>,
+    {
+        match self {
+            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
+            Rep3Operand::Public(v) => {
+                rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement((*v as u128).as_()))
             }
         }
     }
@@ -603,12 +574,18 @@ where
 pub trait Rep3LookupQuery<const XLEN: usize> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
 
-    /// Returns the lookup operands. By default, same as `to_instruction_inputs`.
-    /// Instructions that combine inputs (add/sub/mul-index) override this to
-    /// return `(Public(0), combined)`.
+    /// Returns the lookup operands as arithmetic shares.
     /// Mirrors vanilla `to_lookup_operands`.
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        self.to_instruction_inputs()
+    /// Default: passes through instruction inputs as arithmetic shares.
+    /// Add-index overrides return `(zero, x + y)`.
+    /// Sub-index overrides return `(zero, x + (2^XLEN - y))`.
+    /// Mul-index instructions do NOT override (mul handled in `to_lookup_index`).
+    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
+        let (left, right) = self.to_instruction_inputs();
+        (
+            left.as_arithmetic_or_trivial::<u64>(party_id),
+            right.as_arithmetic_or_trivial::<u128>(party_id),
+        )
     }
 
     /// Returns a FutureRep3Ring representing the lookup index.
@@ -618,7 +595,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
     ///
     /// Default: computes interleave from binary operands (Ready, no comms).
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
-        let (left, right) = self.to_lookup_operands();
+        let (left, right) = self.to_instruction_inputs();
         let left = operand_to_binary_u128(&left, party_id);
         let right = operand_to_binary_u128(&right, party_id);
         FutureRep3Ring::Ready(interleave_bits_shared(left, right))
@@ -797,6 +774,7 @@ macro_rules! define_rep3_cycle {
                         Cycle::$instr(c) => Rep3Cycle::$instr(Rep3RISCVCycle::from_public_cycle(c)),
                     )*
                     Cycle::INLINE(c) => Rep3Cycle::INLINE(Rep3RISCVCycle::from_public_cycle(c)),
+                    other => panic!("Unsupported instruction for Rep3: {:?}", other.instruction()),
                 }
             }
 
@@ -844,14 +822,6 @@ define_rep3_cycle! {
         ECALL, FENCE, JAL, JALR, LB, LBU, LD, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
         MULHU, OR, ORI, REM, REMU, SB, SD, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
         SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
-        // RV64I
-        ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW, LWU,
-        // RV64M
-        DIVUW, DIVW, MULW, REMUW, REMW,
-        // RV32A
-        LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
-        // RV64A
-        LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment,
         VirtualAssertLTE, VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
@@ -895,11 +865,14 @@ macro_rules! impl_rep3_lookup_query {
                 }
             }
 
-            fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
+            fn to_lookup_operands(
+                &self,
+                party_id: PartyID,
+            ) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
                 match self {
-                    Rep3Cycle::NoOp => (Rep3Operand::Public(0), Rep3Operand::Public(0)),
+                    Rep3Cycle::NoOp => (Rep3RingShare::default(), Rep3RingShare::default()),
                     $(
-                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle),
+                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle, party_id),
                     )*
                     _ => panic!(
                         "Unexpected instruction for Rep3LookupQuery: {:?}",

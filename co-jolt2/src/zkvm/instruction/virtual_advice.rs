@@ -5,9 +5,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         (Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        // Vanilla: (0, advice_value)
-        todo!("to_lookup_operands: VirtualAdvice — requires advice value access")
+    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
+        // Vanilla: (0, advice_value truncated to XLEN bits)
+        // Advice is a public value stored in the instruction.
+        let advice = self.instruction.advice as u128;
+        (
+            Rep3RingShare::default(),
+            rep3_ring::arithmetic::promote_to_trivial_share(party_id, RingElement(advice)),
+        )
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(

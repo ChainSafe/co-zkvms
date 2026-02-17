@@ -8,10 +8,6 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMu
         )
     }
 
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        todo!("to_lookup_operands: mul-index")
-    }
-
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_u128(party_id);

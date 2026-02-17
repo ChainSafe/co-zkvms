@@ -4,14 +4,16 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualPow2W> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(0),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        todo!("to_lookup_operands: add-index")
+    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
+        let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
+        (
+            Rep3RingShare::default(),
+            left.as_arithmetic_or_trivial::<u128>(party_id)
+                + right.as_arithmetic_or_trivial::<u128>(party_id),
+        )
     }
 
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
@@ -47,8 +49,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualPow2IW> 
         )
     }
 
-    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
-        todo!("to_lookup_operands: add-index")
+    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
+        let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
+        (
+            Rep3RingShare::default(),
+            left.as_arithmetic_or_trivial::<u128>(party_id)
+                + right.as_arithmetic_or_trivial::<u128>(party_id),
+        )
     }
 
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {

@@ -35,7 +35,7 @@ use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 /// Mirrors vanilla `WitnessData` but uses `Rep3RingShare` for shared fields.
 struct Rep3WitnessData {
     left_instruction_input: Vec<Rep3RingShare<u64>>,
-    right_instruction_input: Vec<Rep3RingShare<u64>>,
+    right_instruction_input: Vec<Rep3RingShare<u128>>,
     rd_pre: Vec<Rep3RingShare<u64>>,
     rd_post: Vec<Rep3RingShare<u64>>,
     write_lookup_output_to_rd: Vec<u8>,
@@ -148,11 +148,10 @@ where
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
 
-                // Instruction inputs: rs1 → left, rs2 → right
-                let (_rs1_idx, rs1_val) = cycle.rs1_read();
-                let (_rs2_idx, rs2_val) = cycle.rs2_read();
-                batch_ref.left_instruction_input[i] = rs1_val.as_arithmetic_u64();
-                batch_ref.right_instruction_input[i] = rs2_val.as_arithmetic_u64();
+                let (left, right) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+
+                batch_ref.left_instruction_input[i] = left.as_arithmetic_u64();
+                batch_ref.right_instruction_input[i] = left.as_arithmetic_u128();
 
                 // Rd write: (rd_write_flag, pre, post)
                 let (rd_write_flag, pre, post) = cycle.rd_write();
