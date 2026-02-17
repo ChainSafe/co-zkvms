@@ -10,7 +10,6 @@ pub mod format_u;
 pub mod format_virtual_right_shift_i;
 pub mod format_virtual_right_shift_r;
 
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
@@ -38,11 +37,10 @@ pub trait Rep3RegisterState:
     /// Promote public operands to trivial shares
     fn promote_to_shares(&mut self, party_id: PartyID);
 
-    /// Populate arithmetic representations via network
-    fn populate_arithmetic<N: Rep3Network>(
-        &mut self,
-        io_ctx: &mut IoContext<N>,
-    ) -> std::io::Result<()>;
+    /// Returns mutable references to all shared operand fields.
+    /// Used by batched `populate_operands_casts` to collect binary shares
+    /// across the entire trace in one pass.
+    fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand>;
 }
 
 /// Maps vanilla InstructionFormat to its Rep3 register state equivalent.

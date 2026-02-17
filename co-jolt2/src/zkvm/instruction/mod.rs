@@ -388,52 +388,12 @@ impl Rep3RAMAccess {
         }
     }
 
-    pub fn populate_arithmetic<N: Rep3Network>(
-        &mut self,
-        io_ctx: &mut IoContext<N>,
-    ) -> std::io::Result<()> {
+    pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
         match self {
-            Rep3RAMAccess::Read(read) => {
-                if let Rep3Operand::Shared { binary, .. } = &read.value {
-                    let binary_shares = vec![*binary];
-                    let arithmetic_shares = upcast_many_from_binary(&binary_shares, io_ctx)?;
-                    read.value =
-                        Rep3Operand::from_arithmetic(binary_shares[0], arithmetic_shares[0]);
-                }
-            }
-            Rep3RAMAccess::Write(write) => {
-                let mut binary_shares = Vec::new();
-                let mut indices = Vec::new(); // track which fields to update
-                if let Rep3Operand::Shared { binary, .. } = &write.pre_value {
-                    binary_shares.push(*binary);
-                    indices.push(0);
-                }
-                if let Rep3Operand::Shared { binary, .. } = &write.post_value {
-                    binary_shares.push(*binary);
-                    indices.push(1);
-                }
-                if !binary_shares.is_empty() {
-                    let arithmetic_shares = upcast_many_from_binary(&binary_shares, io_ctx)?;
-                    let mut arith_iter = arithmetic_shares.into_iter();
-                    for idx in indices {
-                        let arith = arith_iter.next().unwrap();
-                        match idx {
-                            0 => {
-                                let bin = write.pre_value.as_binary();
-                                write.pre_value = Rep3Operand::from_arithmetic(bin, arith);
-                            }
-                            1 => {
-                                let bin = write.post_value.as_binary();
-                                write.post_value = Rep3Operand::from_arithmetic(bin, arith);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
-            }
-            Rep3RAMAccess::NoOp => {}
+            Rep3RAMAccess::Read(read) => vec![&mut read.value],
+            Rep3RAMAccess::Write(write) => vec![&mut write.pre_value, &mut write.post_value],
+            Rep3RAMAccess::NoOp => vec![],
         }
-        Ok(())
     }
 }
 
@@ -514,13 +474,11 @@ where
         self.ram_access.promote_to_shares(party_id);
     }
 
-    /// Populate arithmetic representations via network
-    pub fn populate_arithmetic<N: Rep3Network>(
-        &mut self,
-        io_ctx: &mut IoContext<N>,
-    ) -> std::io::Result<()> {
-        self.register_state.populate_arithmetic(io_ctx)?;
-        self.ram_access.populate_arithmetic(io_ctx)
+    /// Returns mutable references to all shared operands (register state + RAM).
+    pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
+        let mut ops = self.register_state.shared_operands_mut();
+        ops.extend(self.ram_access.shared_operands_mut());
+        ops
     }
 }
 
@@ -551,20 +509,6 @@ pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
         .for_each(|step: &mut Rep3RISCVCycle<T>| {
             step.promote_to_shares(party_id);
         });
-}
-
-/// Populate arithmetic representations for all trace operands (sequential - needs network)
-pub fn populate_trace_arithmetic<T: RISCVInstruction, N: Rep3Network>(
-    trace: &mut [Rep3RISCVCycle<T>],
-    io_ctx: &mut IoContext<N>,
-) -> std::io::Result<()>
-where
-    T::Format: Rep3InstructionFormat,
-{
-    for step in trace.iter_mut() {
-        step.populate_arithmetic(io_ctx)?;
-    }
-    Ok(())
 }
 
 // ── Rep3LookupQuery ─────────────────────────────────────────────────────────
@@ -789,17 +733,14 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
-            /// Populate arithmetic representations via network.
-            pub fn populate_arithmetic<N: Rep3Network>(
-                &mut self,
-                io_ctx: &mut IoContext<N>,
-            ) -> std::io::Result<()> {
+            /// Returns mutable references to all shared operands in this cycle.
+            pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
                 match self {
-                    Rep3Cycle::NoOp => Ok(()),
+                    Rep3Cycle::NoOp => vec![],
                     $(
-                        Rep3Cycle::$instr(cycle) => cycle.populate_arithmetic(io_ctx),
+                        Rep3Cycle::$instr(cycle) => cycle.shared_operands_mut(),
                     )*
-                    Rep3Cycle::INLINE(cycle) => cycle.populate_arithmetic(io_ctx),
+                    Rep3Cycle::INLINE(cycle) => cycle.shared_operands_mut(),
                 }
             }
 
@@ -950,13 +891,53 @@ pub fn promote_rep3_trace_to_shares(trace: &mut [Rep3Cycle], party_id: PartyID) 
     }
 }
 
-/// Populate arithmetic representations for all trace operands.
-pub fn populate_rep3_trace_arithmetic<N: Rep3Network>(
+/// Populate arithmetic representations for all shared operands across the trace
+/// in a single batched `upcast_many_from_binary` call.
+///
+/// Mirrors v1's `Rep3JoltInstructionSet::populate_operands_casts`:
+/// 1. Collect all `Shared { arithmetic: None }` operands and their binary shares
+/// 2. Single batched `upcast_many_from_binary`
+/// 3. Write arithmetic shares back
+pub fn populate_operands_casts<N: Rep3Network>(
     trace: &mut [Rep3Cycle],
     io_ctx: &mut IoContext<N>,
-) -> std::io::Result<()> {
-    for cycle in trace.iter_mut() {
-        cycle.populate_arithmetic(io_ctx)?;
+) -> eyre::Result<()> {
+    let (binary, operands): (Vec<Rep3RingShare<u32>>, Vec<&mut Rep3Operand>) = trace
+        .iter_mut()
+        .flat_map(|cycle| cycle.shared_operands_mut())
+        .filter_map(|op| match op {
+            Rep3Operand::Shared {
+                arithmetic: None,
+                binary,
+                ..
+            } => Some((*binary, op)),
+            _ => None,
+        })
+        .unzip();
+
+    if binary.is_empty() {
+        return Ok(());
     }
+
+    let arithmetic = upcast_many_from_binary(&binary, io_ctx)?;
+
+    operands
+        .into_iter()
+        .zip(arithmetic)
+        .for_each(|(operand, arith)| match operand {
+            Rep3Operand::Shared {
+                arithmetic: None,
+                binary,
+                public,
+            } => {
+                *operand = Rep3Operand::Shared {
+                    binary: std::mem::take(binary),
+                    arithmetic: Some(arith),
+                    public: std::mem::take(public),
+                };
+            }
+            _ => panic!("Expected shared operand"),
+        });
+
     Ok(())
 }

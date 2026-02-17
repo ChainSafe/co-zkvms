@@ -1,6 +1,4 @@
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
-use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::format::InstructionRegisterState;
@@ -45,23 +43,8 @@ impl Rep3RegisterState for Rep3RegisterStateFormatInline {
         self.rs3 = promote_operand_to_share(&self.rs3, party_id);
     }
 
-    fn populate_arithmetic<N: Rep3Network>(
-        &mut self,
-        io_ctx: &mut IoContext<N>,
-    ) -> std::io::Result<()> {
-        let binary_shares = vec![
-            self.rs1.as_binary(),
-            self.rs2.as_binary(),
-            self.rs3.as_binary(),
-        ];
-
-        let arithmetic_shares: Vec<_> = upcast_many_from_binary(&binary_shares, io_ctx)?;
-
-        self.rs1 = Rep3Operand::from_arithmetic(binary_shares[0], arithmetic_shares[0]);
-        self.rs2 = Rep3Operand::from_arithmetic(binary_shares[1], arithmetic_shares[1]);
-        self.rs3 = Rep3Operand::from_arithmetic(binary_shares[2], arithmetic_shares[2]);
-
-        Ok(())
+    fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
+        vec![&mut self.rs1, &mut self.rs2, &mut self.rs3]
     }
 }
 
