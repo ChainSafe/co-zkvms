@@ -17,16 +17,16 @@ pub struct Rep3RegisterStateFormatB {
 }
 
 impl Rep3RegisterState for Rep3RegisterStateFormatB {
-    fn rs1_operand(&self) -> &Rep3Operand {
-        &self.rs1
+    fn rs1_operand(&self) -> Rep3Operand {
+        self.rs1
     }
 
-    fn rs2_operand(&self) -> &Rep3Operand {
-        &self.rs2
+    fn rs2_operand(&self) -> Rep3Operand {
+        self.rs2
     }
 
-    fn rd_operands(&self) -> (&Rep3Operand, &Rep3Operand) {
-        (&PUBLIC_ZERO, &PUBLIC_ZERO)
+    fn rd_operands(&self) -> (Rep3Operand, Rep3Operand) {
+        (PUBLIC_ZERO, PUBLIC_ZERO)
     }
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {

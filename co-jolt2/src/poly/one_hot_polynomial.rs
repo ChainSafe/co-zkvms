@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
+use snarks_core::math::Math;
 
 use crate::field::JoltField;
 

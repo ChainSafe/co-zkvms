@@ -24,13 +24,13 @@ pub trait Rep3RegisterState:
     Default + Clone + Serialize + DeserializeOwned + Debug + Send + Sync
 {
     /// Get source register 1 operand
-    fn rs1_operand(&self) -> &Rep3Operand;
+    fn rs1_operand(&self) -> Rep3Operand;
 
     /// Get source register 2 operand
-    fn rs2_operand(&self) -> &Rep3Operand;
+    fn rs2_operand(&self) -> Rep3Operand;
 
     /// Get destination register operands (old_value, new_value)
-    fn rd_operands(&self) -> (&Rep3Operand, &Rep3Operand);
+    fn rd_operands(&self) -> (Rep3Operand, Rep3Operand);
 
     /// Convert from vanilla RegisterState (u64 -> Rep3Operand::Public)
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self;

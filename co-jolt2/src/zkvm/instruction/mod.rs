@@ -1,12 +1,80 @@
 pub mod format;
 
+mod add;
+mod addi;
+mod and;
+mod andi;
+mod andn;
+mod atomic;
+mod auipc;
+mod beq;
+mod bge;
+mod bgeu;
+mod blt;
+mod bltu;
+mod bne;
+mod div;
+mod ecall;
+mod fence;
+mod jal;
+mod jalr;
+mod ld;
+mod load;
+mod lui;
+mod mul;
+mod mulh;
+mod mulhsu;
+mod mulhu;
+mod non_vanilla_rv64;
+mod or;
+mod ori;
+mod rem;
+mod sd;
+mod sll;
+mod slt;
+mod slti;
+mod sltiu;
+mod sltu;
+mod sra;
+mod srl;
+mod store;
+mod sub;
+mod virtual_advice;
+mod virtual_assert_eq;
+mod virtual_assert_halfword_alignment;
+mod virtual_assert_lte;
+mod virtual_assert_mulu_no_overflow;
+mod virtual_assert_valid_div0;
+mod virtual_assert_valid_unsigned_remainder;
+mod virtual_assert_word_alignment;
+mod virtual_change_divisor;
+mod virtual_move;
+mod virtual_movsign;
+mod virtual_muli;
+mod virtual_pow2;
+mod virtual_pow2_w;
+mod virtual_rev8w;
+mod virtual_rotri;
+mod virtual_shift_right_bitmask;
+mod virtual_sign_extend_word;
+mod virtual_sra;
+mod virtual_srai;
+mod virtual_srl;
+mod virtual_srli;
+mod virtual_xor_rot;
+mod virtual_xor_rotw;
+mod virtual_zero_extend_word;
+mod xor;
+mod xori;
+
 use jolt2_common::constants::XLEN;
 use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
-use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::downcast;
 use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
+use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
@@ -14,7 +82,8 @@ use num_traits::AsPrimitive;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::format::NormalizedOperands;
 use tracer::instruction::{
-    Cycle, Instruction, RAMAccess, RAMRead, RAMWrite, RISCVCycle, RISCVInstruction,
+    Cycle, Instruction, NormalizedInstruction, RAMAccess, RAMRead, RAMWrite, RISCVCycle,
+    RISCVInstruction,
 };
 
 // Import all instruction types for Rep3Cycle enum
@@ -143,11 +212,14 @@ use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
 use tracer::instruction::xori::XORI;
 
+use crate::field::JoltField;
+use crate::utils::future_ring::FutureRep3Ring;
+
 use self::format::{Rep3InstructionFormat, Rep3RegisterState};
 
 // ── Rep3Operand ─────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Rep3Operand {
     Shared {
         binary: Rep3RingShare<u32>,
@@ -227,6 +299,15 @@ impl Rep3Operand {
             Rep3Operand::Shared { binary, .. } => binary,
             Rep3Operand::Public(value) => {
                 rep3_ring::binary::promote_to_trivial_share(id, &(value as u32).into())
+            }
+        }
+    }
+
+    pub fn as_arithmetic_or_trivial_u128(&self, id: PartyID) -> Rep3RingShare<u128> {
+        match self {
+            Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
+            Rep3Operand::Public(v) => {
+                rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement(*v as u128))
             }
         }
     }
@@ -521,12 +602,94 @@ where
 /// Returns shared operands instead of plaintext values.
 pub trait Rep3LookupQuery<const XLEN: usize> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
-    fn to_lookup_index(&self) -> Rep3RingShare<u128> {
-        todo!("to_lookup_index_rep3 deferred to Lasso/Shout phase")
+
+    /// Returns the lookup operands. By default, same as `to_instruction_inputs`.
+    /// Instructions that combine inputs (add/sub/mul-index) override this to
+    /// return `(Public(0), combined)`.
+    /// Mirrors vanilla `to_lookup_operands`.
+    fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
+        self.to_instruction_inputs()
     }
-    fn to_lookup_output(&self) -> Rep3Operand {
-        todo!("to_lookup_output_rep3 deferred to Lasso/Shout phase")
+
+    /// Returns a FutureRep3Ring representing the lookup index.
+    /// - Interleave instructions: Ready(interleaved) — no network needed.
+    /// - Add/Sub-index: Pending(RingA2B(sum)) — needs batch A2B.
+    /// - Mul-index: Pending(RingMulA2B(a, b)) — needs batch mul + A2B.
+    ///
+    /// Default: computes interleave from binary operands (Ready, no comms).
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+        let (left, right) = self.to_lookup_operands();
+        let left = operand_to_binary_u128(&left, party_id);
+        let right = operand_to_binary_u128(&right, party_id);
+        FutureRep3Ring::Ready(interleave_bits_shared(left, right))
     }
+
+    fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
+        &self,
+        steps: &[&impl Rep3LookupQuery<XLEN>],
+        io_ctx: &mut IoContext<N>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+    ) -> eyre::Result<()>;
+}
+
+// ── Lookup index helpers ────────────────────────────────────────────────────
+
+/// Convert a Rep3Operand to a binary Rep3RingShare<u128> for use in interleave_bits_shared.
+/// For Shared: zero-extend the binary u32 share components to u128.
+/// For Public: promote to trivial binary share.
+pub fn operand_to_binary_u128(op: &Rep3Operand, id: PartyID) -> Rep3RingShare<u128> {
+    match op {
+        Rep3Operand::Shared { binary, .. } => {
+            // Binary share zero-extension: upper bits are 0 in both components.
+            // This is valid because in XOR sharing (a XOR b = value),
+            // casting each component preserves correctness: 0 XOR 0 = 0 for upper bits.
+            Rep3RingShare::new_ring(
+                RingElement(binary.a.0 as u128),
+                RingElement(binary.b.0 as u128),
+            )
+        }
+        Rep3Operand::Public(v) => {
+            rep3_ring::binary::promote_to_trivial_share(id, &RingElement(*v as u128))
+        }
+    }
+}
+
+/// Mirrors vanilla `interleave_bits` on Rep3RingShare<u128>.
+/// Interleave is a bit-permutation, so it can be applied to each XOR-share
+/// component independently (preserving the XOR sharing). No communication.
+pub fn interleave_bits_shared(
+    even_bits: Rep3RingShare<u128>,
+    odd_bits: Rep3RingShare<u128>,
+) -> Rep3RingShare<u128> {
+    fn interleave_cleartext(even: u128, odd: u128) -> u128 {
+        let mut x = even;
+        x = (x | (x << 32)) & 0x0000_0000_FFFF_FFFF_0000_0000_FFFF_FFFFu128;
+        x = (x | (x << 16)) & 0x0000_FFFF_0000_FFFF_0000_FFFF_0000_FFFFu128;
+        x = (x | (x << 8)) & 0x00FF_00FF_00FF_00FF_00FF_00FF_00FF_00FFu128;
+        x = (x | (x << 4)) & 0x0F0F_0F0F_0F0F_0F0F_0F0F_0F0F_0F0F_0F0Fu128;
+        x = (x | (x << 2)) & 0x3333_3333_3333_3333_3333_3333_3333_3333u128;
+        x = (x | (x << 1)) & 0x5555_5555_5555_5555_5555_5555_5555_5555u128;
+
+        let mut y = odd;
+        y = (y | (y << 32)) & 0x0000_0000_FFFF_FFFF_0000_0000_FFFF_FFFFu128;
+        y = (y | (y << 16)) & 0x0000_FFFF_0000_FFFF_0000_FFFF_0000_FFFFu128;
+        y = (y | (y << 8)) & 0x00FF_00FF_00FF_00FF_00FF_00FF_00FF_00FFu128;
+        y = (y | (y << 4)) & 0x0F0F_0F0F_0F0F_0F0F_0F0F_0F0F_0F0F_0F0Fu128;
+        y = (y | (y << 2)) & 0x3333_3333_3333_3333_3333_3333_3333_3333u128;
+        y = (y | (y << 1)) & 0x5555_5555_5555_5555_5555_5555_5555_5555u128;
+
+        (x << 1) | y
+    }
+
+    Rep3RingShare::new_ring(
+        RingElement(interleave_cleartext(even_bits.a.0, odd_bits.a.0)),
+        RingElement(interleave_cleartext(even_bits.b.0, odd_bits.b.0)),
+    )
+}
+
+/// Upcast a `Rep3RingShare<Bit>` to `Rep3RingShare<u32>` (zero-extend in XOR domain).
+pub fn bit_to_ring32(b: Rep3RingShare<Bit>) -> Rep3RingShare<u32> {
+    Rep3RingShare::new(u8::from(b.a.0) as u32, u8::from(b.b.0) as u32)
 }
 
 // ── Rep3Cycle enum ──────────────────────────────────────────────────────────
@@ -560,9 +723,9 @@ macro_rules! define_rep3_cycle {
 
             /// Get rs1 register read: (register_index, shared_value).
             /// Register index is public, value is shared.
-            pub fn rs1_read(&self) -> (u8, &Rep3Operand) {
+            pub fn rs1_read(&self) -> (u8, Rep3Operand) {
                 match self {
-                    Rep3Cycle::NoOp => (0, &PUBLIC_ZERO),
+                    Rep3Cycle::NoOp => (0, PUBLIC_ZERO),
                     $(
                         Rep3Cycle::$instr(cycle) => (
                             NormalizedOperands::from(cycle.instruction.operands).rs1,
@@ -577,9 +740,9 @@ macro_rules! define_rep3_cycle {
             }
 
             /// Get rs2 register read: (register_index, shared_value).
-            pub fn rs2_read(&self) -> (u8, &Rep3Operand) {
+            pub fn rs2_read(&self) -> (u8, Rep3Operand) {
                 match self {
-                    Rep3Cycle::NoOp => (0, &PUBLIC_ZERO),
+                    Rep3Cycle::NoOp => (0, PUBLIC_ZERO),
                     $(
                         Rep3Cycle::$instr(cycle) => (
                             NormalizedOperands::from(cycle.instruction.operands).rs2,
@@ -595,9 +758,9 @@ macro_rules! define_rep3_cycle {
 
             /// Get rd register write: (register_index, pre_value, post_value).
             /// Register index is public, pre/post values are shared.
-            pub fn rd_write(&self) -> (u8, &Rep3Operand, &Rep3Operand) {
+            pub fn rd_write(&self) -> (u8, Rep3Operand, Rep3Operand) {
                 match self {
-                    Rep3Cycle::NoOp => (0, &PUBLIC_ZERO, &PUBLIC_ZERO),
+                    Rep3Cycle::NoOp => (0, PUBLIC_ZERO, PUBLIC_ZERO),
                     $(
                         Rep3Cycle::$instr(cycle) => {
                             let (pre, post) = cycle.register_state.rd_operands();
@@ -713,8 +876,8 @@ impl InstructionLookup<XLEN> for Rep3Cycle {
 
 // ── Rep3LookupQuery for Rep3Cycle ───────────────────────────────────────────
 
-/// Macro to implement `Rep3LookupQuery` for `Rep3Cycle`, listing only
-/// instructions that have lookup implementations (mirrors vanilla
+/// Macro to implement `Rep3LookupQuery` for `Rep3Cycle`, dispatching to
+/// per-instruction `Rep3RISCVCycle<X>` implementations (mirrors vanilla
 /// `define_rv32im_trait_impls!`).
 macro_rules! impl_rep3_lookup_query {
     (instructions: [$($instr:ident),* $(,)?]) => {
@@ -723,26 +886,56 @@ macro_rules! impl_rep3_lookup_query {
                 match self {
                     Rep3Cycle::NoOp => (Rep3Operand::Public(0), Rep3Operand::Public(0)),
                     $(
-                        Rep3Cycle::$instr(cycle) => {
-                            let flags = cycle.instruction.circuit_flags();
-                            let left = if flags[CircuitFlags::LeftOperandIsPC as usize] {
-                                Rep3Operand::Public(cycle.instruction.address)
-                            } else if flags[CircuitFlags::LeftOperandIsRs1Value as usize] {
-                                cycle.register_state.rs1_operand().clone()
-                            } else {
-                                Rep3Operand::Public(0)
-                            };
-                            let right = if flags[CircuitFlags::RightOperandIsImm as usize] {
-                                Rep3Operand::Public(
-                                    NormalizedOperands::from(cycle.instruction.operands).imm as u64,
-                                )
-                            } else if flags[CircuitFlags::RightOperandIsRs2Value as usize] {
-                                cycle.register_state.rs2_operand().clone()
-                            } else {
-                                Rep3Operand::Public(0)
-                            };
-                            (left, right)
-                        }
+                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_instruction_inputs(cycle),
+                    )*
+                    _ => panic!(
+                        "Unexpected instruction for Rep3LookupQuery: {:?}",
+                        self.instruction()
+                    ),
+                }
+            }
+
+            fn to_lookup_operands(&self) -> (Rep3Operand, Rep3Operand) {
+                match self {
+                    Rep3Cycle::NoOp => (Rep3Operand::Public(0), Rep3Operand::Public(0)),
+                    $(
+                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle),
+                    )*
+                    _ => panic!(
+                        "Unexpected instruction for Rep3LookupQuery: {:?}",
+                        self.instruction()
+                    ),
+                }
+            }
+
+            fn to_lookup_index(
+                &self,
+                party_id: PartyID,
+            ) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+                match self {
+                    Rep3Cycle::NoOp => FutureRep3Ring::Ready(Rep3RingShare::default()),
+                    $(
+                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_index(cycle, party_id),
+                    )*
+                    _ => panic!(
+                        "Unexpected instruction for Rep3LookupQuery: {:?}",
+                        self.instruction()
+                    ),
+                }
+            }
+
+            fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
+                &self,
+                steps: &[&impl Rep3LookupQuery<XLEN>],
+                io_ctx: &mut IoContext<N>,
+                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+            ) -> eyre::Result<()> {
+                match self {
+                    Rep3Cycle::NoOp => {
+                        Ok(())
+                    },
+                    $(
+                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_output_batched(cycle, steps, io_ctx, out),
                     )*
                     _ => panic!(
                         "Unexpected instruction for Rep3LookupQuery: {:?}",
@@ -763,10 +956,8 @@ impl_rep3_lookup_query! {
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
-        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign,
-        VirtualMULI, VirtualPow2,
-        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W,
-        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
+        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,

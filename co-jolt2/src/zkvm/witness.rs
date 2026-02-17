@@ -11,7 +11,9 @@ use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{
+    IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker,
+};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -23,7 +25,7 @@ use snarks_core::math::Math;
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::utils::future_ring::FutureRep3Ring;
+use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::zkvm::instruction::Rep3LookupQuery;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
@@ -87,13 +89,13 @@ pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: &[Rep3Cycle],
-    io_ctx: &mut IoContext<N>,
-) -> std::io::Result<HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>>
+    io_ctx: &mut IoContextPool<N>,
+) -> eyre::Result<HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    N: Rep3Network,
-    Standard: Distribution<u64> + Distribution<u8>,
+    N: Rep3NetworkWorker,
+    Standard: Distribution<u64> + Distribution<u8> + Distribution<u128>,
 {
     let mut ram_d = 0;
     let mut bytecode_d = 0;
@@ -130,90 +132,109 @@ where
 
     let instruction_ra_shifts: [usize; instruction_lookups::D] =
         array::from_fn(|i| instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i));
+    let party_id = io_ctx.party_id();
     let batch_cell = Arc::new(SharedRep3WitnessData(UnsafeCell::new(batch)));
 
     // -- Parallel trace collection (mirrors vanilla par_iter) --
     // SAFETY: Each thread writes to a unique index of a pre-allocated vector
-    (0..trace.len()).into_par_iter().for_each({
-        let batch_cell = batch_cell.clone();
-        move |i| {
-            let cycle = &trace[i];
-            let batch_ref = unsafe { &mut *batch_cell.0.get() };
+    //
+    // Phase 1: Collect all data that doesn't require communication, plus
+    //          FutureRep3Ring futures for instruction_ra indices.
+    let index_futures: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> = (0..trace.len())
+        .into_par_iter()
+        .map({
+            let batch_cell = batch_cell.clone();
+            move |i| {
+                let cycle = &trace[i];
+                let batch_ref = unsafe { &mut *batch_cell.0.get() };
 
-            // Instruction inputs: rs1 → left, rs2 → right
-            let (_rs1_idx, rs1_val) = cycle.rs1_read();
-            let (_rs2_idx, rs2_val) = cycle.rs2_read();
-            batch_ref.left_instruction_input[i] = rs1_val.as_arithmetic_u64();
-            batch_ref.right_instruction_input[i] = rs2_val.as_arithmetic_u64();
+                // Instruction inputs: rs1 → left, rs2 → right
+                let (_rs1_idx, rs1_val) = cycle.rs1_read();
+                let (_rs2_idx, rs2_val) = cycle.rs2_read();
+                batch_ref.left_instruction_input[i] = rs1_val.as_arithmetic_u64();
+                batch_ref.right_instruction_input[i] = rs2_val.as_arithmetic_u64();
 
-            // Rd write: (rd_write_flag, pre, post)
-            let (rd_write_flag, pre, post) = cycle.rd_write();
-            batch_ref.rd_pre[i] = pre.as_arithmetic_u64();
-            batch_ref.rd_post[i] = post.as_arithmetic_u64();
+                // Rd write: (rd_write_flag, pre, post)
+                let (rd_write_flag, pre, post) = cycle.rd_write();
+                batch_ref.rd_pre[i] = pre.as_arithmetic_u64();
+                batch_ref.rd_post[i] = post.as_arithmetic_u64();
 
-            let circuit_flags = cycle.instruction().circuit_flags();
+                let circuit_flags = cycle.instruction().circuit_flags();
 
-            // WriteLookupOutputToRD (public)
-            batch_ref.write_lookup_output_to_rd[i] =
-                rd_write_flag * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
+                // WriteLookupOutputToRD (public)
+                batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
+                    * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
 
-            // WritePCtoRD (public)
-            batch_ref.write_pc_to_rd[i] =
-                rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
+                // WritePCtoRD (public)
+                batch_ref.write_pc_to_rd[i] =
+                    rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
 
-            // ShouldBranch: deferred (needs to_lookup_output_rep3)
-            // Vanilla: should_branch[i] = (lookup_output as u8) * (circuit_flags[Branch] as u8)
-            // batch_ref.should_branch[i] remains default zero share
+                // ShouldBranch: deferred (needs to_lookup_output_rep3)
+                // Vanilla: should_branch[i] = (lookup_output as u8) * (circuit_flags[Branch] as u8)
+                // batch_ref.should_branch[i] remains default zero share
 
-            // ShouldJump (public)
-            let is_jump = circuit_flags[CircuitFlags::Jump as usize] as u8;
-            let is_next_noop = if i + 1 < trace.len() {
-                trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop as usize] as u8
-            } else {
-                1 // Last cycle, treat as if next is NoOp
-            };
-            batch_ref.should_jump[i] = is_jump * (1 - is_next_noop);
+                // ShouldJump (public)
+                let is_jump = circuit_flags[CircuitFlags::Jump as usize] as u8;
+                let is_next_noop = if i + 1 < trace.len() {
+                    trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop as usize] as u8
+                } else {
+                    1 // Last cycle, treat as if next is NoOp
+                };
+                batch_ref.should_jump[i] = is_jump * (1 - is_next_noop);
 
-            // RAM inc data
-            if let Rep3RAMAccess::Write(w) = cycle.ram_access() {
-                batch_ref.ram_pre[i] = w.pre_value.as_arithmetic_u64();
-                batch_ref.ram_post[i] = w.post_value.as_arithmetic_u64();
+                // RAM inc data
+                if let Rep3RAMAccess::Write(w) = cycle.ram_access() {
+                    batch_ref.ram_pre[i] = w.pre_value.as_arithmetic_u64();
+                    batch_ref.ram_post[i] = w.post_value.as_arithmetic_u64();
+                }
+
+                // BytecodeRa indices
+                if let Some((d, log_K_chunk, K_chunk)) = bytecode_constants {
+                    let pc = cycle.get_pc(&preprocessing.shared.bytecode);
+
+                    for j in 0..bytecode_d {
+                        let index = (pc >> (log_K_chunk * (d - 1 - j))) % K_chunk;
+                        batch_ref.bytecode_ra[j][i] = Some(index as u8);
+                    }
+                }
+
+                if let Some(dth_log) = dth_root_log {
+                    let address_opt = remap_address(
+                        cycle.ram_access().address() as u64,
+                        &preprocessing.shared.memory_layout,
+                    );
+
+                    for j in 0..ram_d {
+                        let index = address_opt.map(|address| {
+                            ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K)
+                                as u8
+                        });
+                        batch_ref.ram_ra[j][i] = index;
+                    }
+                }
+
+                // Return the lookup index future for batched fulfillment
+                Rep3LookupQuery::<XLEN>::to_lookup_index(cycle, party_id)
             }
+        })
+        .collect();
 
-            // InstructionRa indices
-            let lookup_index = Rep3LookupQuery::<XLEN>::to_lookup_index(cycle);
+    // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
+    let indices: Vec<Rep3RingShare<u128>> = index_futures.fulfill_batched(io_ctx, |r, ()| r)?;
+
+    // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
+    // SAFETY: Each thread writes to a unique index i across the D arrays
+    indices
+        .par_iter()
+        .enumerate()
+        .for_each(|(i, lookup_index)| {
+            let batch_ref = unsafe { &mut *batch_cell.0.get() };
             for j in 0..instruction_lookups::D {
-                // $x \mod 2^t$ is simply the low $t$ bits.
-                let k = (lookup_index >> instruction_ra_shifts[j])
+                let k = (*lookup_index >> instruction_ra_shifts[j])
                     & RingElement(instruction_lookups::K_CHUNK as u128 - 1);
                 batch_ref.instruction_ra[j][i] = Some(k.downcast());
             }
-
-            // BytecodeRa indices
-            if let Some((d, log_K_chunk, K_chunk)) = bytecode_constants {
-                let pc = cycle.get_pc(&preprocessing.shared.bytecode);
-
-                for j in 0..bytecode_d {
-                    let index = (pc >> (log_K_chunk * (d - 1 - j))) % K_chunk;
-                    batch_ref.bytecode_ra[j][i] = Some(index as u8);
-                }
-            }
-
-            if let Some(dth_log) = dth_root_log {
-                let address_opt = remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                );
-
-                for j in 0..ram_d {
-                    let index = address_opt.map(|address| {
-                        ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K) as u8
-                    });
-                    batch_ref.ram_ra[j][i] = index;
-                }
-            }
-        }
-    });
+        });
 
     let mut batch = Arc::try_unwrap(batch_cell)
         .ok()
@@ -229,13 +250,13 @@ where
             CommittedPolynomial::LeftInstructionInput => {
                 let coeffs = std::mem::take(&mut batch.left_instruction_input);
                 let field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&coeffs, io_ctx)?;
+                    ring_to_field_a2b_many(&coeffs, io_ctx.main())?;
                 results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
             }
             CommittedPolynomial::RightInstructionInput => {
                 let coeffs = std::mem::take(&mut batch.right_instruction_input);
                 let field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&coeffs, io_ctx)?;
+                    ring_to_field_a2b_many(&coeffs, io_ctx.main())?;
                 results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
             }
             CommittedPolynomial::WriteLookupOutputToRD => {
@@ -256,7 +277,7 @@ where
                 // Deferred: needs to_lookup_output_rep3 (Lasso/Shout phase)
                 let coeffs = std::mem::take(&mut batch.should_branch);
                 let field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&coeffs, io_ctx)?;
+                    ring_to_field_a2b_many(&coeffs, io_ctx.main())?;
                 results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
             }
             CommittedPolynomial::ShouldJump => {
@@ -269,9 +290,9 @@ where
             CommittedPolynomial::RdInc => {
                 // rd_inc = rd_post - rd_pre in the field (MPC: subtract after conversion)
                 let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_pre, io_ctx)?;
+                    ring_to_field_a2b_many(&batch.rd_pre, io_ctx.main())?;
                 let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_post, io_ctx)?;
+                    ring_to_field_a2b_many(&batch.rd_post, io_ctx.main())?;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
@@ -282,9 +303,9 @@ where
             CommittedPolynomial::RamInc => {
                 // ram_inc = post_value - pre_value in the field (MPC: subtract after conversion)
                 let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_pre, io_ctx)?;
+                    ring_to_field_a2b_many(&batch.ram_pre, io_ctx.main())?;
                 let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_post, io_ctx)?;
+                    ring_to_field_a2b_many(&batch.ram_post, io_ctx.main())?;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
