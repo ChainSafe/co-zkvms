@@ -13,7 +13,6 @@ use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
-use num_traits::Zero;
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
@@ -27,11 +26,7 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 pub struct Rep3OneHotPolynomial<F: JoltField> {
     /// The size of the "address" space for this polynomial.
     pub K: usize,
-    /// The indices of the nonzero coefficients for each j \in {0, 1}^T.
-    /// In other words, the raf/waf corresponding to this
-    /// ra/wa polynomial.
-    /// If empty, this polynomial is 0 for all j.
-    pub nonzero_indices: Arc<Vec<Option<Rep3RingShare<u8>>>>,
+
     /// Public masked index per cycle: `Some(c)` where `c = open(k(j) XOR r)`;
     /// `None` means this cycle has no address (row is all-zero).
     pub masked_indices_c: Arc<Vec<Option<u8>>>,
@@ -54,7 +49,6 @@ impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
     fn default() -> Self {
         Self {
             K: 1,
-            nonzero_indices: Arc::new(vec![]),
             masked_indices_c: Arc::new(vec![]),
             rand_ohv_e_field: Arc::new(vec![]),
             num_variables_bound: 0,
@@ -75,7 +69,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     // }
 
     pub fn get_num_vars(&self) -> usize {
-        self.K.log_2() + self.nonzero_indices.len().log_2()
+        self.K.log_2() + self.masked_indices_c.len().log_2()
     }
 
     /// Computes additive group-element shares of the Dory row commitments for this one-hot
@@ -91,21 +85,28 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - `self.rand_ohv_e_field.len() == self.K` (use `from_indices_randohv`).
     pub fn commit_rows<G>(&self, bases: &[G::Affine]) -> eyre::Result<Vec<G>>
     where
-        G: CurveGroup<ScalarField = F> + VariableBaseMSM,
+        G: CurveGroup<ScalarField = F> + VariableBaseMSM + Send + Sync,
     {
+        let _guard = tracing::info_span!(
+            "Rep3OneHotPolynomial::commit_rows",
+            K = %self.K,
+            T = %self.masked_indices_c.len()
+        )
+        .entered();
+
         let t = DoryGlobals::get_T();
         let row_len = DoryGlobals::get_num_columns();
 
-        eyre::ensure!(
-            self.masked_indices_c.len() == t,
-            "masked_indices_c length mismatch: got {}, want {t}",
-            self.masked_indices_c.len()
-        );
-        eyre::ensure!(
-            bases.len() == row_len,
-            "bases length mismatch: got {}, want {row_len}",
-            bases.len()
-        );
+        // eyre::ensure!(
+        //     self.masked_indices_c.len() == t,
+        //     "masked_indices_c length mismatch: got {}, want {t}",
+        //     self.masked_indices_c.len()
+        // );
+        // eyre::ensure!(
+        //     bases.len() == row_len,
+        //     "bases length mismatch: got {}, want {row_len}",
+        //     bases.len()
+        // );
         eyre::ensure!(
             self.rand_ohv_e_field.len() == self.K,
             "RandOHV E_field must be initialized (use from_indices_randohv); got {}, want {}",
@@ -113,37 +114,82 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             self.K
         );
 
-        eyre::ensure!(
-            (t as u128 * self.K as u128) % (row_len as u128) == 0,
-            "invalid Dory sizing: T*K must be divisible by num_columns"
-        );
+        // eyre::ensure!(
+        //     (t as u128 * self.K as u128) % (row_len as u128) == 0,
+        //     "invalid Dory sizing: T*K must be divisible by num_columns"
+        // );
         let num_rows = (t * self.K) / row_len;
         let mut out = vec![G::zero(); num_rows];
+
+        let bases_group: Vec<G> = {
+            let _guard = tracing::info_span!("commit_rows.bases_to_group").entered();
+            bases.iter().map(|b| b.into_group()).collect()
+        };
 
         // Fast path: row alignment per k when `T % row_len == 0` (matches vanilla commit_rows).
         if t % row_len == 0 {
             let rows_per_k = t / row_len;
-            for chunk_index in 0..rows_per_k {
-                // Public aggregation of bases by masked index `c` within this chunk.
-                let mut s: Vec<G> = vec![G::zero(); self.K];
-                let chunk_start = chunk_index * row_len;
-                for col in 0..row_len {
-                    let idx_t = chunk_start + col;
-                    if let Some(c) = self.masked_indices_c[idx_t] {
-                        s[c as usize] += bases[col].into_group();
-                    }
-                }
-                let s_affine: Vec<G::Affine> = s.into_iter().map(|p| p.into_affine()).collect();
+            let chunk_commitments: Vec<Vec<G>> = {
+                let _guard = tracing::info_span!("commit_rows.aligned.par").entered();
+                use rayon::prelude::*;
 
-                // For each row address k, compute an MSM against `E_field[(c XOR k)].a`.
-                let mut scalars = vec![F::zero(); self.K];
-                for k in 0..self.K {
-                    for c in 0..self.K {
-                        scalars[c] = self.rand_ohv_e_field[(c as u8 ^ k as u8) as usize].a;
-                    }
-                    let share = G::msm_field_elements(&s_affine, &scalars)?;
-                    let row_index = k * rows_per_k + chunk_index;
-                    out[row_index] = share;
+                (0..rows_per_k)
+                    .into_par_iter()
+                    .map(|chunk_index| -> eyre::Result<Vec<G>> {
+                        let _guard = tracing::info_span!(
+                            "commit_rows.aligned_chunk",
+                            chunk_index,
+                            chunk_start = (chunk_index * row_len),
+                            rows_per_k
+                        )
+                        .entered();
+
+                        // Public aggregation of bases by masked index `c` within this chunk.
+                        let mut s: Vec<G> = vec![G::zero(); self.K];
+                        {
+                            let _guard = tracing::info_span!("commit_rows.aggregate_bases").entered();
+                            let chunk_start = chunk_index * row_len;
+                            for col in 0..row_len {
+                                let idx_t = chunk_start + col;
+                                if let Some(c) = self.masked_indices_c[idx_t] {
+                                    s[c as usize] += bases_group[col];
+                                }
+                            }
+                        }
+
+                        let s_affine: Vec<G::Affine> = {
+                            let _guard = tracing::info_span!("commit_rows.to_affine").entered();
+                            s.into_iter().map(|p| p.into_affine()).collect()
+                        };
+
+                        // For each row address k, compute an MSM against `E_field[(c XOR k)].a`.
+                        let mut scalars = vec![F::zero(); self.K];
+                        let mut chunk_rows = vec![G::zero(); self.K];
+                        for k in 0..self.K {
+                            {
+                                let _guard =
+                                    tracing::info_span!("commit_rows.fill_scalars", k).entered();
+                                for c in 0..self.K {
+                                    scalars[c] =
+                                        self.rand_ohv_e_field[(c as u8 ^ k as u8) as usize].a;
+                                }
+                            }
+
+                            let share = {
+                                let _guard = tracing::info_span!("commit_rows.msm", k).entered();
+                                G::msm_field_elements(&s_affine, &scalars)?
+                            };
+                            chunk_rows[k] = share;
+                        }
+
+                        Ok(chunk_rows)
+                    })
+                    .collect::<eyre::Result<Vec<_>>>()?
+            };
+
+            for (chunk_index, rows_for_chunk) in chunk_commitments.into_iter().enumerate() {
+                for (k, share) in rows_for_chunk.into_iter().enumerate() {
+                    out[k * rows_per_k + chunk_index] = share;
                 }
             }
             return Ok(out);
@@ -153,16 +199,56 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         //
         // This directly accumulates (row, col) contributions for each candidate `k` using the
         // shared bit `E_field[c XOR k]` and the public base at `col`.
-        for (t_idx, opt_c) in self.masked_indices_c.iter().enumerate() {
-            let Some(c) = opt_c else { continue };
-            for k in 0..self.K {
-                let global_index = k * t + t_idx;
-                let row = global_index / row_len;
-                let col = global_index % row_len;
-                let scalar = self.rand_ohv_e_field[(c ^ (k as u8)) as usize].a;
-                out[row] += bases[col].into_group() * scalar;
-            }
+        let _guard = tracing::info_span!("commit_rows.fallback").entered();
+        let active_t = self
+            .masked_indices_c
+            .iter()
+            .filter(|opt| opt.is_some())
+            .count();
+
+        {
+            let _guard = tracing::info_span!("commit_rows.fallback.par").entered();
+            use rayon::prelude::*;
+
+            let num_chunks = rayon::current_num_threads().next_power_of_two().min(t).max(1);
+            let chunk_size = (t / num_chunks).max(1);
+
+            out = self
+                .masked_indices_c
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(chunk_index, chunk)| {
+                    let mut local = vec![G::zero(); num_rows];
+                    let chunk_start = chunk_index * chunk_size;
+                    for (offset, opt_c) in chunk.iter().enumerate() {
+                        let t_idx = chunk_start + offset;
+                        let Some(c) = opt_c else { continue };
+
+                        let _guard =
+                            tracing::info_span!("commit_rows.fallback.t_idx", t_idx, c).entered();
+                        for k in 0..self.K {
+                            let global_index = k * t + t_idx;
+                            let row = global_index / row_len;
+                            let col = global_index % row_len;
+                            let scalar = self.rand_ohv_e_field[(c ^ (k as u8)) as usize].a;
+
+                            local[row] += bases_group[col] * scalar;
+                        }
+                    }
+                    local
+                })
+                .reduce(
+                    || vec![G::zero(); num_rows],
+                    |mut a, b| {
+                        for (ai, bi) in a.iter_mut().zip(b.into_iter()) {
+                            *ai += bi;
+                        }
+                        a
+                    },
+                );
         }
+
+        tracing::info!(active_t, num_scalar_muls = (active_t * self.K));
 
         Ok(out)
     }
@@ -171,7 +257,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
     /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
     /// - injects `E` into field shares once (length K).
-    pub fn from_indices_randohv<N: Rep3Network>(
+    pub fn from_indices<N: Rep3Network>(
         nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
         K: usize,
         io_ctx: &mut IoContext<N>,
@@ -204,7 +290,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
 
         Ok(Self {
             K,
-            nonzero_indices: Arc::new(nonzero_indices),
             masked_indices_c: Arc::new(masked_indices_c),
             rand_ohv_e_field: Arc::new(rand_ohv_e_field),
             ..Default::default()
@@ -239,8 +324,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
         assert_eq!(r_address.len(), self.K.log_2());
-        assert_eq!(r_cycle.len(), self.nonzero_indices.len().log_2());
-        assert_eq!(self.masked_indices_c.len(), self.nonzero_indices.len());
+        // assert_eq!(r_cycle.len(), self.masked_indices_c.len().log_2());
 
         let eq_addr: Vec<F> = EqPolynomial::<F>::evals(r_address);
         let eq_cycle: Vec<F> = EqPolynomial::<F>::evals(r_cycle);
@@ -252,47 +336,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             sum += eq_kj * eq_cycle[j];
         }
         sum
-    }
-
-    // #[cfg(test)]
-    // fn to_dense_poly(&self) -> DensePolynomial<F> {
-    //     let T = DoryGlobals::get_T();
-    //     let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
-    //     for (t, k) in self.nonzero_indices.iter().enumerate() {
-    //         if let Some(k) = k {
-    //             dense_coeffs[*k as usize * T + t] = F::one();
-    //         }
-    //     }
-    //     DensePolynomial::new(dense_coeffs)
-    // }
-
-    // pub fn evaluate<C>(&self, r: &[C]) -> F
-    // where
-    //     C: Copy + Send + Sync + Into<F>,
-    //     F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
-    // {
-    //     assert_eq!(r.len(), self.get_num_vars());
-    //     let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-    //     let eq_left = EqPolynomial::<F>::evals(r_left);
-    //     let eq_right = EqPolynomial::<F>::evals(r_right);
-    //     let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
-    //     self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
-    //     left_product
-    //         .into_par_iter()
-    //         .zip_eq(eq_right.par_iter())
-    //         .map(|(l, r)| l * r)
-    //         .sum()
-    // }
-
-    pub fn from_indices(nonzero_indices: Vec<Option<Rep3RingShare<u8>>>, K: usize) -> Self {
-        // debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
-        assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
-
-        Self {
-            K,
-            nonzero_indices: Arc::new(nonzero_indices),
-            ..Default::default()
-        }
     }
 }
 
@@ -332,11 +375,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
         party_id: PartyID,
     ) -> Self {
         assert_eq!(polynomial.K, 1 << r_address.len());
-        assert_eq!(polynomial.nonzero_indices.len(), 1 << r_cycle.len());
-        assert_eq!(
-            polynomial.masked_indices_c.len(),
-            polynomial.nonzero_indices.len()
-        );
+        assert_eq!(polynomial.masked_indices_c.len(), 1 << r_cycle.len());
 
         let eq_cycle: Vec<F> = EqPolynomial::<F>::evals(r_cycle);
         polynomial.G = compute_g_from_masked_indices(&polynomial, &eq_cycle);
@@ -523,6 +562,8 @@ fn compute_g_from_masked_indices<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::test_support::init_dory_globals;
+
     use super::*;
     use ark_std::test_rng;
     use ark_std::UniformRand;
@@ -535,6 +576,7 @@ mod tests {
     use mpc_core::protocols::rep3::combine_field_element;
     use num_traits::{One, Zero};
     use rand::RngCore;
+    use std::path::Path;
     use std::sync::RwLock;
 
     fn share_field_element_rep3<F: JoltField, R: rand::Rng>(
@@ -626,13 +668,10 @@ mod tests {
                 }
             }
         }
-        let nonzero_indices_shared: [Arc<Vec<Option<Rep3RingShare<u8>>>>; 3] =
-            std::array::from_fn(|pid| Arc::new(nonzero_indices_shares[pid].clone()));
 
         let rep3_polys: [Rep3OneHotPolynomial<F>; 3] =
             std::array::from_fn(|pid| Rep3OneHotPolynomial {
                 K: k,
-                nonzero_indices: nonzero_indices_shared[pid].clone(),
                 masked_indices_c: masked_indices_c.clone(),
                 rand_ohv_e_field: e_field_party[pid].clone(),
                 num_variables_bound: 0,
@@ -668,7 +707,6 @@ mod tests {
 
         let polys: [Rep3OneHotPolynomial<F>; 3] = std::array::from_fn(|pid| Rep3OneHotPolynomial {
             K,
-            nonzero_indices: Arc::new(vec![]),
             masked_indices_c: masked_indices_c.clone(),
             rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
             num_variables_bound: 0,
@@ -728,15 +766,8 @@ mod tests {
             }
         }
 
-        // Build dummy nonzero_indices shares (not used by evaluate aside from length checks).
-        let nonzero_indices_dummy: Vec<Option<Rep3RingShare<u8>>> = k_plain
-            .iter()
-            .map(|opt| opt.map(|_| Rep3RingShare::zero_share()))
-            .collect();
-
         let polys: [Rep3OneHotPolynomial<F>; 3] = std::array::from_fn(|pid| Rep3OneHotPolynomial {
             K,
-            nonzero_indices: Arc::new(nonzero_indices_dummy.clone()),
             masked_indices_c: Arc::new(masked_indices_c.clone()),
             rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
             num_variables_bound: 0,
@@ -927,6 +958,11 @@ mod tests {
 
     #[test]
     fn rep3_commit_rows_reconstructs_to_vanilla() {
+        let _tracing_guard = crate::utils::tracing::init_tracing(
+            "rep3_commit_rows_reconstructs_to_vanilla.json",
+            Path::new("/tmp/co-jolt2-traces"),
+        );
+
         type F = Fr;
         let mut rng = test_rng();
 

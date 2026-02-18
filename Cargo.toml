@@ -105,7 +105,7 @@ ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bls12-381 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# ark-bls12-381 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 # [patch."https://github.com/nulltea/co-snarks"]

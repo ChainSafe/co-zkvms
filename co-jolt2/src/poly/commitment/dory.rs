@@ -527,6 +527,14 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         match public {
             Some(MaybeShared::Public(Some(c))) => c.clone(),
             None => {
+                // All Public(None) → skipped polynomial, return default commitment
+                if commitments
+                    .iter()
+                    .all(|c| matches!(c, MaybeShared::Public(None)))
+                {
+                    return DoryCommitment::default();
+                }
+                // Otherwise all must be Shared
                 let mut acc = JoltGTWrapper::<Bn254>(Fq12::one());
                 for c in commitments {
                     match c {
