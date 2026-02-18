@@ -75,29 +75,60 @@ fn share_trace<R: RngCore>(
     [t0, t1, t2]
 }
 
+/// Returns the indices of register operands that must remain public (not
+/// secret-shared) for a given cycle.  Certain virtual instructions compute
+/// their lookup output using the plaintext value of a register operand
+/// (e.g. `2^x` in VirtualPow2).  Mirroring v1, we keep that operand public
+/// so the MPC lookup-output code can call `as_public()` on it.
+///
+/// The indices refer to positions in the vector returned by
+/// `Rep3Cycle::extract_operand_values` / consumed by `from_cycle_shared`.
+/// For FormatI this is `[rs1=0, rd_old=1, rd_new=2, ...ram]`.
+fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize] {
+    use tracer::instruction::Cycle;
+    match cycle {
+        // rs1 holds the shift/exponent amount — keep it public
+        Cycle::VirtualPow2(_) | Cycle::VirtualPow2W(_) | Cycle::VirtualShiftRightBitmask(_) => &[0], // rs1
+        _ => &[],
+    }
+}
+
 /// Share a single vanilla Cycle into 3 Rep3Cycles with binary-shared operands.
 ///
 /// Extracts operand values directly from the vanilla Cycle, generates binary
 /// shares, and builds 3 Rep3Cycles via `from_cycle_shared`.
+/// Operands at indices returned by `public_operand_indices` are kept public.
 fn share_cycle(
     cycle: &tracer::instruction::Cycle,
     rng: &mut impl rand::Rng,
 ) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
     let values = Rep3Cycle::extract_operand_values(cycle);
+    let public_indices = public_operand_indices(cycle);
 
-    // Generate binary shares for each operand value
-    let shares_per_op: Vec<[Rep3RingShare<u32>; 3]> = values
+    // Generate shares for each operand — public indices get replicated as
+    // Rep3Operand::Public(v) for all 3 parties instead of binary shares.
+    let operands_per_party: Vec<[Rep3Operand; 3]> = values
         .iter()
-        .map(|&v| {
-            let s = rep3_ring::binary::generate_shares_rep3(v as u32, rng);
-            [s[0], s[1], s[2]]
+        .enumerate()
+        .map(|(i, &v)| {
+            if public_indices.contains(&i) {
+                let op = Rep3Operand::Public(v);
+                [op, op, op]
+            } else {
+                let s = rep3_ring::binary::generate_shares_rep3(v, rng);
+                [
+                    Rep3Operand::from_binary(s[0]),
+                    Rep3Operand::from_binary(s[1]),
+                    Rep3Operand::from_binary(s[2]),
+                ]
+            }
         })
         .collect();
 
     // Build 3 Rep3Cycles, one per party
-    let mut s0 = shares_per_op.iter().map(|s| Rep3Operand::from_binary(s[0]));
-    let mut s1 = shares_per_op.iter().map(|s| Rep3Operand::from_binary(s[1]));
-    let mut s2 = shares_per_op.iter().map(|s| Rep3Operand::from_binary(s[2]));
+    let mut s0 = operands_per_party.iter().map(|s| s[0]);
+    let mut s1 = operands_per_party.iter().map(|s| s[1]);
+    let mut s2 = operands_per_party.iter().map(|s| s[2]);
     (
         Rep3Cycle::from_cycle_shared(cycle, &mut s0),
         Rep3Cycle::from_cycle_shared(cycle, &mut s1),

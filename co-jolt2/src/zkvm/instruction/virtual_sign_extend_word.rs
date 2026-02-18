@@ -29,31 +29,40 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSignExte
     ) -> eyre::Result<()> {
         // Extract sign bit of lower word, conditionally extend upper bits
         let half = XLEN / 2;
-        let sign_bit_mask = RingElement(1u32 << (half - 1));
-        let upper_mask = RingElement(!((1u32 << half) - 1));
-        let lower_mask = RingElement((1u32 << half) - 1);
+        let sign_bit_mask = RingElement(1u64 << (half - 1));
+        // Use wrapping_shl to avoid overflow when half == 32 (XLEN == 64)
+        let lower_mask = RingElement(1u64.wrapping_shl(half as u32).wrapping_sub(1));
+        let upper_mask = RingElement(!lower_mask.0);
 
         let sign_bits: Vec<_> = steps
             .iter()
             .map(|st| {
                 let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                l.as_binary() & sign_bit_mask
+                l.as_binary_or_trivial(io_ctx.id) & sign_bit_mask
             })
             .collect();
         let is_positive = rep3_ring::binary::is_zero_many(&sign_bits, io_ctx)?;
-        let is_positive_u32: Vec<_> = is_positive.iter().map(|b| bit_to_ring32(*b)).collect();
+        let is_positive_u64: Vec<Rep3RingShare<u64>> = is_positive
+            .iter()
+            .map(|b| {
+                Rep3RingShare::new_ring(
+                    RingElement(u8::from(b.a.0) as u64),
+                    RingElement(u8::from(b.b.0) as u64),
+                )
+            })
+            .collect();
         let zeros: Vec<_> = (0..steps.len()).map(|_| Rep3RingShare::default()).collect();
         let upper_ones: Vec<_> = (0..steps.len())
             .map(|_| rep3_ring::binary::promote_to_trivial_share(io_ctx.id, &upper_mask))
             .collect();
         // if positive: upper = 0, else: upper = upper_mask
-        let uppers = rep3_ring::binary::cmux_many(&is_positive_u32, &zeros, &upper_ones, io_ctx)?;
+        let uppers = rep3_ring::binary::cmux_many(&is_positive_u64, &zeros, &upper_ones, io_ctx)?;
         // Combine: lower bits from input XOR upper bits from extension
         // (non-overlapping bit positions, so XOR = OR)
         itertools::izip!(steps, uppers, out).for_each(|(step, upper, out)| {
             let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-            let result = (l.as_binary() & lower_mask) ^ upper;
-            *out = FutureRep3Ring::cast_to_field_b2a(result);
+            let result = (l.as_binary_or_trivial(io_ctx.id) & lower_mask) ^ upper;
+            *out = FutureRep3Ring::cast_to_field_b2a(downcast(result));
         });
         Ok(())
     }

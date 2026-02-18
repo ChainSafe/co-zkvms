@@ -25,18 +25,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualRev8W> {
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
-        _io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Byte reversal is a bit permutation — apply component-wise
-        fn rev8w(v: u32) -> u32 {
-            v.swap_bytes()
-        }
-
+        // W-variant: operates on lower 32 bits
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-            let x = l.as_binary();
-            let reversed = Rep3RingShare::new(rev8w(x.a.0), rev8w(x.b.0));
+            let x: Rep3RingShare<u32> = downcast(l.as_binary_or_trivial(io_ctx.id));
+            let reversed = Rep3RingShare::new(x.a.0.swap_bytes(), x.b.0.swap_bytes());
             *out = FutureRep3Ring::cast_to_field_b2a(reversed);
         });
         Ok(())

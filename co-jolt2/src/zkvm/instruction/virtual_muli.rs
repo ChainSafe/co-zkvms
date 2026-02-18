@@ -25,7 +25,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMULI> {
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_arithmetic_u32(), r.as_arithmetic_u32())
+                (
+                    l.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+                )
             })
             .unzip();
         rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?

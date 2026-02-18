@@ -14,11 +14,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BEQ> {
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        let (a, b): (Vec<_>, Vec<_>) = steps
+        let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    downcast(l.as_arithmetic_or_trivial_u128(io_ctx.id)),
+                    downcast(r.as_arithmetic_or_trivial_u128(io_ctx.id)),
+                )
             })
             .unzip();
         rep3_ring::arithmetic::eq_many(&a, &b, io_ctx)?

@@ -25,6 +25,9 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 - Methods on `*Worker`/`*Coordinator` structs **omit** the role from method names: `prove()`, not `prove_worker()`
 - Worker and Coordinator are **separate structs in separate files**
 
+### Imports
+- When importing MPC ops from `(rep3|rep3_ring)::(arithmetic|binary)`, alias the module as `arithmetic`/`binary` (e.g. `use ...::rep3::arithmetic as arithmetic;`) unless the same file uses both `rep3` and `rep3_ring` `arithmetic`/`binary` (ambiguity).
+
 ### Usage of References
 
 - Use vanilla Jolt (`../../examples/jolt/`) as the LOGIC reference w.r.t Jolt VM logic. 

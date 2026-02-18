@@ -35,12 +35,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertHa
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_binary_or_trivial(io_ctx.id),
+                )
             })
             .unzip();
         let sums = rep3_ring::binary::add_many(&a, &b, io_ctx)?;
         // Mask to get just the LSB (as u32 share), then check if zero
-        let lsbs: Vec<_> = sums.iter().map(|s| *s & RingElement(1u32)).collect();
+        let lsbs: Vec<_> = sums.iter().map(|s| *s & RingElement(1u64)).collect();
         let is_even = rep3_ring::binary::is_zero_many(&lsbs, io_ctx)?;
         is_even.into_iter().zip(out).for_each(|(x, out)| {
             *out = FutureRep3Ring::bit_inject_to_field(x);

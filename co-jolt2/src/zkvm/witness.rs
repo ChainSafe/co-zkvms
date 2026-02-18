@@ -23,6 +23,7 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
 use snarks_core::math::Math;
+use tracing::{info, info_span};
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
@@ -83,6 +84,7 @@ unsafe impl Sync for SharedRep3WitnessData {}
 /// 2. Group `(cycle, &mut future)` pairs by instruction discriminant (skip NoOp/INLINE)
 /// 3. Process each group via `par_chunks` → `to_lookup_output_batched`
 /// 4. `fulfill_batched` all futures into `Rep3PrimeFieldShare<F>`
+#[tracing::instrument(skip_all, name = "compute_lookup_outputs")]
 pub fn compute_lookup_outputs<F, N>(
     trace: &[Rep3Cycle],
     io_ctx: &mut IoContextPool<N>,
@@ -135,6 +137,7 @@ where
 /// - Shared fields (register values) go through `ring_to_field_a2b_many` → `Shared(...)`
 /// - Public fields (flags derived from opcode) → `Public(...)`
 /// - Deferred fields (instruction_ra) are skipped or zeroed
+#[tracing::instrument(skip_all, name = "Witness::generate_witness_rep3")]
 pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
@@ -190,6 +193,10 @@ where
     //
     // Phase 1: Collect all data that doesn't require communication, plus
     //          FutureRep3Ring futures for instruction_ra indices.
+    eprintln!(
+        "[witness] phase1: parallel trace collection start | len: {}",
+        trace.len()
+    );
     let index_futures: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> = (0..trace.len())
         .into_par_iter()
         .map({
@@ -198,15 +205,17 @@ where
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
 
-                let (left, right) = Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle, party_id);
-
-                batch_ref.left_instruction_input[i] = left;
-                batch_ref.right_instruction_input[i] = right;
+                // Store raw instruction inputs (mirrors vanilla's to_instruction_inputs)
+                let (left_op, right_op) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                batch_ref.left_instruction_input[i] =
+                    left_op.as_arithmetic_or_trivial::<u64>(party_id);
+                batch_ref.right_instruction_input[i] =
+                    right_op.as_arithmetic_or_trivial::<u128>(party_id);
 
                 // Rd write: (rd_write_flag, pre, post)
                 let (rd_write_flag, pre, post) = cycle.rd_write();
-                batch_ref.rd_pre[i] = pre.as_arithmetic_u64();
-                batch_ref.rd_post[i] = post.as_arithmetic_u64();
+                batch_ref.rd_pre[i] = pre.as_arithmetic_or_trivial(party_id);
+                batch_ref.rd_post[i] = post.as_arithmetic_or_trivial(party_id);
 
                 let circuit_flags = cycle.instruction().circuit_flags();
 
@@ -264,8 +273,18 @@ where
         })
         .collect();
 
+    eprintln!("[witness] phase1: done | futures: {}", index_futures.len());
+
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
-    let indices: Vec<Rep3RingShare<u128>> = index_futures.fulfill_batched(io_ctx, |r, ()| r)?;
+    let indices: Vec<Rep3RingShare<u128>> = {
+        let _span = info_span!("fulfill_index_futures", count = index_futures.len()).entered();
+        index_futures.fulfill_batched(io_ctx, |r, ()| r)?
+    };
+
+    eprintln!(
+        "[witness] phase2: fulfill done | indices: {}",
+        indices.len()
+    );
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
     // SAFETY: Each thread writes to a unique index i across the D arrays
@@ -287,11 +306,23 @@ where
         .0
         .into_inner();
 
+    eprintln!("[witness] phase3: chunk indices done");
+
     // Phase 4: Compute lookup outputs (batched per instruction type)
+    eprintln!("[witness] phase4: compute_lookup_outputs start");
     let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> = compute_lookup_outputs(trace, io_ctx)?;
+    eprintln!(
+        "[witness] phase4: compute_lookup_outputs done | len: {}",
+        lookup_outputs.len()
+    );
 
     // -- Convert to polynomials --
+    eprintln!(
+        "[witness] phase5: convert_to_polynomials start | count: {}",
+        polynomials.len()
+    );
     let mut results = HashMap::with_capacity(polynomials.len());
+    let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
     for poly in polynomials {
         match poly {

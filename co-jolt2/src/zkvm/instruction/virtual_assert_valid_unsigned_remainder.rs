@@ -22,7 +22,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN>
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_binary_or_trivial(io_ctx.id),
+                )
             })
             .unzip();
         let rem_is_zero = rep3_ring::binary::is_zero_many(&remainders, io_ctx)?;

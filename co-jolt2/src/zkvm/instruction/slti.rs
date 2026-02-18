@@ -15,12 +15,25 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<SLTI> {
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        let sign_flip = RingElement(1u32 << 31);
-        let (a, b): (Vec<_>, Vec<_>) = steps
+        // ge_many's internal unsigned_ge_many expects binary (XOR-domain) shares.
+        // Flip the sign bit (binary XOR) to convert signed comparison to unsigned.
+        let sign_bit = RingElement(1u64 << (XLEN - 1));
+        let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary() ^ sign_flip, r.as_binary() ^ sign_flip)
+                (
+                    rep3_ring::binary::xor_public(
+                        &l.as_binary_or_trivial(io_ctx.id),
+                        &sign_bit,
+                        io_ctx.id,
+                    ),
+                    rep3_ring::binary::xor_public(
+                        &r.as_binary_or_trivial(io_ctx.id),
+                        &sign_bit,
+                        io_ctx.id,
+                    ),
+                )
             })
             .unzip();
         rep3_ring::arithmetic::ge_many(&a, &b, io_ctx)?

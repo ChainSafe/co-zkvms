@@ -20,7 +20,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_arithmetic_u32())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+                )
             })
             .unzip();
         let divisor_is_zero = rep3_ring::binary::is_zero_many(&divisors, io_ctx)?;

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Rep3Operand {
     Shared {
-        binary: Rep3RingShare<u32>,
+        binary: Rep3RingShare<u64>,
         arithmetic: Option<Rep3RingShare<u128>>,
         public: Option<u64>, // Some for trivial shares
     },
@@ -17,7 +17,7 @@ pub enum Rep3Operand {
 }
 
 impl Rep3Operand {
-    pub fn from_binary(share: Rep3RingShare<u32>) -> Self {
+    pub fn from_binary(share: Rep3RingShare<u64>) -> Self {
         Rep3Operand::Shared {
             binary: share,
             arithmetic: None,
@@ -25,7 +25,7 @@ impl Rep3Operand {
         }
     }
 
-    pub fn from_arithmetic(binary: Rep3RingShare<u32>, arithmetic: Rep3RingShare<u128>) -> Self {
+    pub fn from_arithmetic(binary: Rep3RingShare<u64>, arithmetic: Rep3RingShare<u128>) -> Self {
         Rep3Operand::Shared {
             binary,
             arithmetic: Some(arithmetic),
@@ -74,18 +74,18 @@ impl Rep3Operand {
         }
     }
 
-    pub fn as_binary(&self) -> Rep3RingShare<u32> {
+    pub fn as_binary(&self) -> Rep3RingShare<u64> {
         match self {
             Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),
         }
     }
 
-    pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<u32> {
+    pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<u64> {
         match *self {
             Rep3Operand::Shared { binary, .. } => binary,
             Rep3Operand::Public(value) => {
-                rep3_ring::binary::promote_to_trivial_share(id, &(value as u32).into())
+                rep3_ring::binary::promote_to_trivial_share(id, &value.into())
             }
         }
     }
@@ -155,7 +155,7 @@ impl From<Rep3Operand> for u32 {
 pub fn promote_operand_to_share(operand: &Rep3Operand, party_id: PartyID) -> Rep3Operand {
     match operand {
         Rep3Operand::Public(x) => Rep3Operand::Shared {
-            binary: rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(*x as u32)),
+            binary: rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(*x)),
             arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
                 party_id,
                 RingElement(*x as u128),

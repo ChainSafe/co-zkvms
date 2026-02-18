@@ -19,14 +19,17 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ORI> {
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_binary_or_trivial(io_ctx.id),
+                )
             })
             .unzip();
         rep3_ring::binary::or_many(&x, &y, io_ctx)?
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
             });
         Ok(())
     }

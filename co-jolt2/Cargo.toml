@@ -61,6 +61,9 @@ mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
 
+[dev-dependencies]
+rcgen = "0.13"
+
 [build-dependencies]
 jolt2-common = { path = "../../examples/jolt/common", package = "common" }
 

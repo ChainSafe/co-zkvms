@@ -6,7 +6,7 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use crate::zkvm::instruction::Rep3Operand;
 
 /// Convert a Rep3Operand to a binary Rep3RingShare<u128> for use in interleave_bits_shared.
-/// For Shared: zero-extend the binary u32 share components to u128.
+/// For Shared: zero-extend the binary u64 share components to u128.
 /// For Public: promote to trivial binary share.
 pub fn operand_to_binary_u128(op: &Rep3Operand, id: PartyID) -> Rep3RingShare<u128> {
     match op {

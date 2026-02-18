@@ -14,11 +14,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertLT
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        let (a, b): (Vec<_>, Vec<_>) = steps
+        // ge_many's internal unsigned_ge_many expects binary (XOR-domain) shares
+        let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_binary_or_trivial(io_ctx.id),
+                )
             })
             .unzip();
         // rs1 <= rs2 ≡ rs2 >= rs1

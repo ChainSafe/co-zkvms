@@ -28,12 +28,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ADDI> {
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
-        _io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-            *out = FutureRep3Ring::cast_to_field(l.as_arithmetic_u32() + r.as_arithmetic_u32());
+            *out = FutureRep3Ring::cast_to_field(
+                l.as_arithmetic_or_trivial::<u32>(io_ctx.id)
+                    + r.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+            );
         });
         Ok(())
     }

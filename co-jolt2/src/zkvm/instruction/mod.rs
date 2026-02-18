@@ -576,11 +576,12 @@ pub fn promote_rep3_trace_to_shares(trace: &mut [Rep3Cycle], party_id: PartyID) 
 /// 1. Collect all `Shared { arithmetic: None }` operands and their binary shares
 /// 2. Single batched `upcast_many_from_binary`
 /// 3. Write arithmetic shares back
+#[tracing::instrument(skip_all, name = "populate_operands_casts")]
 pub fn populate_operands_casts<N: Rep3Network>(
     trace: &mut [Rep3Cycle],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<()> {
-    let (binary, operands): (Vec<Rep3RingShare<u32>>, Vec<&mut Rep3Operand>) = trace
+    let (binary, operands): (Vec<Rep3RingShare<u64>>, Vec<&mut Rep3Operand>) = trace
         .iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {

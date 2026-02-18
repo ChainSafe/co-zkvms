@@ -35,12 +35,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertWo
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (l.as_binary(), r.as_binary())
+                (
+                    l.as_binary_or_trivial(io_ctx.id),
+                    r.as_binary_or_trivial(io_ctx.id),
+                )
             })
             .unzip();
         let sums = rep3_ring::binary::add_many(&a, &b, io_ctx)?;
         // Mask to get 2 LSBs (as u32 share), then check if zero
-        let low_bits: Vec<_> = sums.iter().map(|s| *s & RingElement(3u32)).collect();
+        let low_bits: Vec<_> = sums.iter().map(|s| *s & RingElement(3u64)).collect();
         let is_aligned = rep3_ring::binary::is_zero_many(&low_bits, io_ctx)?;
         is_aligned.into_iter().zip(out).for_each(|(x, out)| {
             *out = FutureRep3Ring::bit_inject_to_field(x);

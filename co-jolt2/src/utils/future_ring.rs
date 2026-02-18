@@ -15,13 +15,13 @@ use mpc_core::protocols::{
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FutureRep3Ring<R: IntRing2k, T, Args = ()> {
     Ready(T),
     Pending(FutureOp<R>, Args),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FutureOp<R: IntRing2k> {
     // Out: Rep3PrimeFieldShare<F>
     BitInject(Rep3RingShare<Bit>),
