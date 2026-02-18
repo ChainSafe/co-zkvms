@@ -41,32 +41,42 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> MaybeShared<Self::Commitment> {
+    ) -> (MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>) {
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
-                    let (c, _hint) = <Self as CommitmentScheme>::commit(poly, setup);
-                    MaybeShared::Public(Some(c))
+                    let (c, hint) = <Self as CommitmentScheme>::commit(poly, setup);
+                    (MaybeShared::Public(Some(c)), MaybeShared::Public(Some(hint)))
                 } else {
-                    MaybeShared::Public(None)
+                    (MaybeShared::Public(None), MaybeShared::Public(None))
                 }
             }
             Rep3MultilinearPolynomial::Shared(poly) => {
                 let sigma = DoryGlobals::get_num_columns().log_2();
                 let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
 
-                let row_commitments = compute_row_commitment_shares_a(poly, setup, nu);
-                let row_commitments_aff: Vec<G1Affine> =
-                    row_commitments.iter().map(|p| p.into_affine()).collect();
+                let row_commitments_share = compute_row_commitment_shares_a(poly, setup, nu);
+                let row_commitments_share_aff: Vec<G1Affine> = row_commitments_share
+                    .iter()
+                    .map(|p| p.into_affine())
+                    .collect();
 
-                let g2 = setup.core.g2_vec[..row_commitments_aff.len()]
+                let g2 = setup.core.g2_vec[..row_commitments_share_aff.len()]
                     .iter()
                     .map(|g| g.0.into_affine())
                     .collect::<Vec<G2Affine>>();
 
-                let commitment_share = Bn254::multi_pairing(row_commitments_aff, g2);
+                let commitment_share = Bn254::multi_pairing(row_commitments_share_aff, g2);
 
-                MaybeShared::Shared(DoryCommitment(commitment_share.into()))
+                let hint_share: Vec<JoltG1Wrapper> = row_commitments_share
+                    .into_iter()
+                    .map(JoltGroupWrapper)
+                    .collect();
+
+                (
+                    MaybeShared::Shared(DoryCommitment(commitment_share.into())),
+                    MaybeShared::Shared(hint_share),
+                )
             }
         }
     }
@@ -75,7 +85,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         polys: &[U],
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> Vec<MaybeShared<Self::Commitment>>
+    ) -> Vec<(MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>)>
     where
         U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
     {
@@ -532,6 +542,39 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             _ => unreachable!(),
         }
     }
+
+    fn combine_hint_shares(
+        hints: &[&MaybeShared<Self::OpeningProofHint>],
+    ) -> Self::OpeningProofHint {
+        let public = hints
+            .iter()
+            .find(|h| matches!(h, MaybeShared::Public(Some(_))));
+        match public {
+            Some(MaybeShared::Public(Some(h))) => h.clone(),
+            None => {
+                let num_rows = DoryGlobals::get_max_num_rows();
+                let mut acc = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
+
+                for h in hints {
+                    match h {
+                        MaybeShared::Shared(hint_share) => {
+                            for (i, row) in hint_share.iter().enumerate() {
+                                if i >= num_rows {
+                                    break;
+                                }
+                                acc[i].0 += row.0;
+                            }
+                        }
+                        MaybeShared::Public(None) => {}
+                        _ => unreachable!(),
+                    }
+                }
+
+                acc
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 // =============================================================================
@@ -650,13 +693,14 @@ mod tests {
     }
 
     #[test]
-    fn rep3_commit_reconstructs_to_vanilla_dory_commit() {
+    fn rep3_commit_reconstructs_to_vanilla_dory_commit_and_hint() {
         let mut rng = test_rng();
 
         let num_vars = 6;
         // Match the OneHotPolynomial tests' default sizing.
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_rows = DoryGlobals::get_max_num_rows();
 
         let len = 1usize << num_vars;
         let coeffs = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
@@ -669,35 +713,154 @@ mod tests {
 
         // Vanilla Dory commit on public polynomial.
         let public_poly = MultilinearPolynomial::from(coeffs.clone());
-        let (vanilla_commitment, _hint) =
+        let (vanilla_commitment, mut vanilla_hint) =
             <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
+        vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
         // Rep3 commit shares (each party commits to its local share.a coefficients).
         let shared_polys = share_poly_rep3(&coeffs, &mut rng);
-        let comm_0 =
+        let (comm_0, hint_0) =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
                 &Rep3MultilinearPolynomial::shared(shared_polys[0].clone()),
                 &setup,
                 false,
             );
-        let comm_1 =
+        let (comm_1, hint_1) =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
                 &Rep3MultilinearPolynomial::shared(shared_polys[1].clone()),
                 &setup,
                 false,
             );
-        let comm_2 =
+        let (comm_2, hint_2) =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
                 &Rep3MultilinearPolynomial::shared(shared_polys[2].clone()),
                 &setup,
                 false,
             );
 
-        let reconstructed =
+        let reconstructed_commitment =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::combine_commitment_shares(
                 &[&comm_0, &comm_1, &comm_2],
             );
 
-        assert_eq!(reconstructed, vanilla_commitment);
+        let reconstructed_hint =
+            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::combine_hint_shares(
+                &[&hint_0, &hint_1, &hint_2],
+            );
+
+        assert_eq!(reconstructed_commitment, vanilla_commitment);
+        assert_eq!(reconstructed_hint, vanilla_hint);
+    }
+
+    #[test]
+    fn rep3_commit_public_gating_matches_vanilla() {
+        let mut rng = test_rng();
+
+        let num_vars = 6;
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        let sigma = DoryGlobals::get_num_columns().log_2();
+
+        let len = 1usize << num_vars;
+        let coeffs = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+
+        let setup =
+            <DoryCommitmentScheme as CommitmentScheme>::setup_prover((2 * sigma).max(num_vars));
+
+        let public_poly = MultilinearPolynomial::from(coeffs);
+        let poly = Rep3MultilinearPolynomial::public(public_poly.clone());
+
+        let (c0, h0) =
+            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+                &poly,
+                &setup,
+                false,
+            );
+        assert!(matches!(c0, MaybeShared::Public(None)));
+        assert!(matches!(h0, MaybeShared::Public(None)));
+
+        let (c1, h1) =
+            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+                &poly,
+                &setup,
+                true,
+            );
+        let (vanilla_commitment, vanilla_hint) =
+            <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
+
+        assert!(matches!(c1, MaybeShared::Public(Some(_))));
+        assert!(matches!(h1, MaybeShared::Public(Some(_))));
+
+        match (c1, h1) {
+            (MaybeShared::Public(Some(c)), MaybeShared::Public(Some(h))) => {
+                assert_eq!(c, vanilla_commitment);
+                assert_eq!(h, vanilla_hint);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn rep3_batch_commit_matches_single_commit() {
+        let mut rng = test_rng();
+
+        let num_vars = 6;
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        let sigma = DoryGlobals::get_num_columns().log_2();
+
+        let len = 1usize << num_vars;
+        let coeffs_0 = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+        let coeffs_1 = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+
+        let setup =
+            <DoryCommitmentScheme as CommitmentScheme>::setup_prover((2 * sigma).max(num_vars));
+
+        let public_poly = Rep3MultilinearPolynomial::public(MultilinearPolynomial::from(coeffs_0));
+
+        let shared_coeffs = coeffs_1.clone();
+        let shared_polys = share_poly_rep3(&shared_coeffs, &mut rng);
+        let shared_poly = Rep3MultilinearPolynomial::shared(shared_polys[0].clone());
+
+        let polys = vec![public_poly, shared_poly];
+
+        let batch = <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::batch_commit_rep3(
+            &polys,
+            &setup,
+            true,
+        );
+
+        let single_0 =
+            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+                &polys[0],
+                &setup,
+                true,
+            );
+        let single_1 =
+            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+                &polys[1],
+                &setup,
+                true,
+            );
+
+        fn assert_commit_and_hint_eq(
+            a: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
+            b: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
+        ) {
+            match (&a.0, &b.0) {
+                (MaybeShared::Public(Some(ca)), MaybeShared::Public(Some(cb))) => assert_eq!(ca, cb),
+                (MaybeShared::Public(None), MaybeShared::Public(None)) => {}
+                (MaybeShared::Shared(ca), MaybeShared::Shared(cb)) => assert_eq!(ca, cb),
+                _ => panic!("commitment mismatch"),
+            }
+
+            match (&a.1, &b.1) {
+                (MaybeShared::Public(Some(ha)), MaybeShared::Public(Some(hb))) => assert_eq!(ha, hb),
+                (MaybeShared::Public(None), MaybeShared::Public(None)) => {}
+                (MaybeShared::Shared(ha), MaybeShared::Shared(hb)) => assert_eq!(ha, hb),
+                _ => panic!("hint mismatch"),
+            }
+        }
+
+        assert_commit_and_hint_eq(&batch[0], &single_0);
+        assert_commit_and_hint_eq(&batch[1], &single_1);
     }
 }

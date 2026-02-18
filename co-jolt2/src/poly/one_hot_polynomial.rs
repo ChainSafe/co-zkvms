@@ -537,13 +537,6 @@ mod tests {
     use rand::RngCore;
     use std::sync::RwLock;
 
-    static DORY_GUARD: std::sync::OnceLock<DoryGlobals> = std::sync::OnceLock::new();
-
-    fn init_dory_globals(k: usize, t: usize) {
-        let _ = DORY_GUARD.get_or_init(|| DoryGlobals::initialize(k, t));
-        assert_eq!(DoryGlobals::get_T(), t);
-    }
-
     fn share_field_element_rep3<F: JoltField, R: rand::Rng>(
         val: F,
         rng: &mut R,
@@ -783,7 +776,7 @@ mod tests {
         let t = 1usize << log_t;
 
         // Vanilla OneHotPolynomial depends on DoryGlobals for sizing assertions and its Dory-backed evaluate().
-        init_dory_globals(k, t);
+        crate::poly::commitment::dory::test_support::init_dory_globals(k, t);
         let (nonzero_indices_plain, vanilla_poly, polys) =
             build_matching_polys::<F, _>(&mut rng, k, t);
 
@@ -942,7 +935,7 @@ mod tests {
         let k = 1usize << log_k;
         let t = 1usize << log_t;
 
-        init_dory_globals(k, t);
+        crate::poly::commitment::dory::test_support::init_dory_globals(k, t);
         let row_len = DoryGlobals::get_num_columns();
 
         let (_nonzero_indices_plain, vanilla_poly, polys) =
