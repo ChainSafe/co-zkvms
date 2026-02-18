@@ -19,3 +19,6 @@ ark-ec.workspace = true
 ark-crypto-primitives.workspace = true
 merlin.workspace = true
 rand.workspace = true
+
+# Needed to provide `FieldExt` for the exact field types used by vanilla Jolt (path dep).
+jolt-core = { path = "../../examples/jolt/jolt-core" }
