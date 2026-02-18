@@ -791,6 +791,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "common",
+ "dory",
  "enum_dispatch",
  "eyre",
  "itertools 0.12.1",
