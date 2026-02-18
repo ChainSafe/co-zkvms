@@ -1,7 +1,11 @@
 pub mod future;
 pub mod future_ring;
 pub mod instruction_utils;
+pub mod tracing;
 pub mod types;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 /// Transpose a matrix represented as `Vec<Vec<T>>` (rows of columns)
 /// into columns of rows.

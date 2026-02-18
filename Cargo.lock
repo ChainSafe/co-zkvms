@@ -789,6 +789,7 @@ dependencies = [
  "ark-std",
  "bincode",
  "clap",
+ "co-jolt2",
  "color-eyre",
  "common",
  "dory",

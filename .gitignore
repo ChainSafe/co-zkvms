@@ -26,3 +26,5 @@ target/
 .vscode/
 
 .claude
+
+*.urs

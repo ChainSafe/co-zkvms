@@ -61,8 +61,10 @@ dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
+rcgen = { version = "0.13", optional = true }
 
 [dev-dependencies]
+co-jolt2 = { path = ".", features = ["test-utils"] }
 rcgen = "0.13"
 
 [build-dependencies]
@@ -78,3 +80,4 @@ std = [
     "ark-poly-commit/std",
 ]
 debug = []
+test-utils = ["rcgen"]
