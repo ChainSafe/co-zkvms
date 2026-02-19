@@ -225,9 +225,9 @@ mod tests {
     #[test]
     fn linear_combination_dense_correct() {
         let mut rng = test_rng();
-        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let t = DoryGlobals::get_T();
-        assert_eq!(t, 32);
+        assert_eq!(t, 512);
 
         let a = Fr::rand(&mut rng);
         let b = Fr::rand(&mut rng);
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn commit_rows_dense_only_correct() {
         let mut rng = test_rng();
-        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let t = DoryGlobals::get_T();
         let row_len = DoryGlobals::get_num_columns();
         let num_rows = DoryGlobals::get_max_num_rows();

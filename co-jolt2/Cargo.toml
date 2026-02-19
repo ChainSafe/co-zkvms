@@ -70,6 +70,10 @@ rcgen = "0.13"
 [build-dependencies]
 jolt2-common = { path = "../../examples/jolt/common", package = "common" }
 
+[[example]]
+name = "rep3_jolt"
+required-features = ["test-utils"]
+
 [features]
 default = ["std", "debug"]
 std = [

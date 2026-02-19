@@ -463,6 +463,7 @@ COORDINATOR                              WORKER(s)
 - **DAG worker**: commit + hint exchange in `zkvm/dag/worker.rs`
 - **Advice stubs**: `commit_untrusted_advice`, `compute_trusted_advice_poly` (empty-case only)
 
+
 ### Worker (Remaining)
 - Advice polynomial construction (non-empty case)
 - RAM initial/final memory state construction (use `Rep3Value<F>` for mixed public/shared)

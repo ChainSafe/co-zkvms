@@ -96,9 +96,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         final_memory_state: Rep3Memory,
         io_ctx: IoContextPool<N>,
         ram_K: usize,
-    ) -> eyre::Result<
-        HashMap<CommittedPolynomial, <DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
-    > {
+    ) -> eyre::Result<()> {
         let state = StateManagerWorker::new(
             preprocessing,
             trace,
@@ -107,7 +105,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             io_ctx,
             ram_K,
         );
-        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state)
+        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state);
     }
 }
 
@@ -149,6 +147,7 @@ mod tests {
     use tracing::{info, info_span};
 
     use crate::host::program::Rep3Program;
+    use crate::utils::compute_ram_k;
     use crate::utils::test_utils::run_rep3_test_with_coordinator;
     use crate::utils::tracing::init_tracing;
     use crate::zkvm::instruction::{populate_operands_casts, Rep3Cycle};
@@ -157,41 +156,17 @@ mod tests {
     use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
     use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
     use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-    use jolt_core::zkvm::ram::{remap_address, RAMPreprocessing};
+    use jolt_core::zkvm::ram::RAMPreprocessing;
     use jolt_core::zkvm::witness::{
         compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
     };
     use jolt_core::zkvm::{
         JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
     };
-    use rayon::prelude::*;
     use tracer::instruction::Cycle;
 
     type F = Fr;
     type PCS = DoryCommitmentScheme;
-
-    fn compute_ram_k(trace: &[Cycle], preprocessing: &JoltSharedPreprocessing) -> usize {
-        let max_from_trace = trace
-            .par_iter()
-            .filter_map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.memory_layout,
-                )
-            })
-            .max()
-            .unwrap_or(0);
-
-        let max_from_bytecode = remap_address(
-            preprocessing.ram.min_bytecode_address,
-            &preprocessing.memory_layout,
-        )
-        .unwrap_or(0)
-            + preprocessing.ram.bytecode_words.len() as u64
-            + 1;
-
-        max_from_trace.max(max_from_bytecode).next_power_of_two() as usize
-    }
 
     #[test]
     fn commitment_correct() {

@@ -21,6 +21,34 @@ impl Drop for TracingGuard {
     }
 }
 
+/// Initialize tracing for benchmarks: always produces a chrome trace file,
+/// with console output at the level specified by RUST_LOG (default INFO).
+pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
+    std::fs::create_dir_all(trace_dir).unwrap();
+    let trace_path = trace_dir.join(file);
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy()
+        .add_directive("jolt_core=off".parse().unwrap())
+        .add_directive("co_jolt2=info".parse().unwrap())
+        .add_directive("mpc_net=info".parse().unwrap())
+        .add_directive("quinn=off".parse().unwrap())
+        .add_directive("dory=off".parse().unwrap());
+
+    let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
+    let _ = tracing::subscriber::set_global_default(
+        Registry::default()
+            .with(env_filter)
+            .with(chrome_layer)
+            .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
+    );
+    info!("tracing_chrome writes to file: {}", file);
+    TracingGuard {
+        _guard: Some(_guard),
+        file: file.to_string(),
+    }
+}
+
 pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
     std::fs::create_dir_all(trace_dir).unwrap();
     let trace_path = trace_dir.join(file);

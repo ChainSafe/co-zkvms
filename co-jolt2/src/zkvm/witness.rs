@@ -193,10 +193,6 @@ where
     //
     // Phase 1: Collect all data that doesn't require communication, plus
     //          FutureRep3Ring futures for instruction_ra indices.
-    eprintln!(
-        "[witness] phase1: parallel trace collection start | len: {}",
-        trace.len()
-    );
     let index_futures: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> = (0..trace.len())
         .into_par_iter()
         .map({
@@ -273,18 +269,11 @@ where
         })
         .collect();
 
-    eprintln!("[witness] phase1: done | futures: {}", index_futures.len());
-
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
     let indices: Vec<Rep3RingShare<u128>> = {
         let _span = info_span!("fulfill_index_futures", count = index_futures.len()).entered();
         index_futures.fulfill_batched(io_ctx, |r, ()| r)?
     };
-
-    eprintln!(
-        "[witness] phase2: fulfill done | indices: {}",
-        indices.len()
-    );
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
     // SAFETY: Each thread writes to a unique index i across the D arrays
@@ -306,21 +295,10 @@ where
         .0
         .into_inner();
 
-    eprintln!("[witness] phase3: chunk indices done");
-
     // Phase 4: Compute lookup outputs (batched per instruction type)
-    eprintln!("[witness] phase4: compute_lookup_outputs start");
     let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> = compute_lookup_outputs(trace, io_ctx)?;
-    eprintln!(
-        "[witness] phase4: compute_lookup_outputs done | len: {}",
-        lookup_outputs.len()
-    );
 
     // -- Convert to polynomials --
-    eprintln!(
-        "[witness] phase5: convert_to_polynomials start | count: {}",
-        polynomials.len()
-    );
     let mut results = HashMap::with_capacity(polynomials.len());
     let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
@@ -457,6 +435,7 @@ mod tests {
     use crate::host::program::Rep3Program;
     use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
     use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
+    use crate::utils::compute_ram_k;
     use crate::utils::test_utils::{check_poly, run_rep3_test};
     use crate::utils::tracing::init_tracing;
     use crate::zkvm::instruction::{populate_operands_casts, Rep3Cycle, Rep3Operand};
@@ -465,42 +444,15 @@ mod tests {
     use jolt_core::poly::commitment::mock::MockCommitScheme;
     use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
     use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-    use jolt_core::zkvm::ram::{remap_address, RAMPreprocessing};
+    use jolt_core::zkvm::ram::RAMPreprocessing;
     use jolt_core::zkvm::witness::{
         compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
     };
     use jolt_core::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing};
-    use rayon::prelude::*;
     use tracer::instruction::Cycle;
 
     type F = Fr;
     type PCS = MockCommitScheme<F>;
-
-    fn compute_ram_k(
-        trace: &[tracer::instruction::Cycle],
-        preprocessing: &JoltSharedPreprocessing,
-    ) -> usize {
-        let max_from_trace = trace
-            .par_iter()
-            .filter_map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.memory_layout,
-                )
-            })
-            .max()
-            .unwrap_or(0);
-
-        let max_from_bytecode = remap_address(
-            preprocessing.ram.min_bytecode_address,
-            &preprocessing.memory_layout,
-        )
-        .unwrap_or(0)
-            + preprocessing.ram.bytecode_words.len() as u64
-            + 1;
-
-        max_from_trace.max(max_from_bytecode).next_power_of_two() as usize
-    }
 
     #[test]
     fn witness_batch_rep3() {

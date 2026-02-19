@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "co-jolt2",
+    "co-jolt2/examples/sha2-chain/guest",
     # "co-jolt",
     # "co-noir-spartan/co-spartan",
     # "co-noir-spartan/co-noir",
@@ -119,7 +120,7 @@ debug = false
 [profile.release]
 debug = true
 
-[patch."https://github.com/nulltea/jolt.git"]
-jolt-core = { path = "../jolt/jolt-core" }
-jolt-common = { path = "../jolt/common", package = "common" }
-jolt-tracer = { path = "../jolt/tracer", package = "tracer" }
+# [patch."https://github.com/nulltea/jolt.git"]
+# jolt-core = { path = "../jolt/jolt-core" }
+# jolt-common = { path = "../jolt/common", package = "common" }
+# jolt-tracer = { path = "../jolt/tracer", package = "tracer" }

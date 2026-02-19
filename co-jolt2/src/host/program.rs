@@ -89,6 +89,8 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
     match cycle {
         // rs1 holds the shift/exponent amount — keep it public
         Cycle::VirtualPow2(_) | Cycle::VirtualPow2W(_) | Cycle::VirtualShiftRightBitmask(_) => &[0], // rs1
+        // rs2 holds the bitmask (from VirtualShiftRightBitmask) — keep it public
+        Cycle::VirtualSRL(_) | Cycle::VirtualSRA(_) => &[1], // rs2
         _ => &[],
     }
 }

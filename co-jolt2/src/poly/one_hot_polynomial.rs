@@ -195,7 +195,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
 
             let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
-                let _guard = tracing::info_span!("commit_rows.aligned.par").entered();
+                let _guard = tracing::trace_span!("commit_rows.aligned.par").entered();
                 use rayon::prelude::*;
 
                 (0..rows_per_k)

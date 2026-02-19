@@ -2182,6 +2182,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-sdk"
+version = "0.1.0"
+dependencies = [
+ "jolt-platform",
+ "jolt-sdk-macros",
+ "postcard",
+ "serde",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3560,6 +3580,14 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2-chain-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "sha2",
 ]
 
 [[package]]
@@ -5159,15 +5187,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "common"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "jolt-core"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "tracer"
-version = "0.2.0"

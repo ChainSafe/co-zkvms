@@ -33,7 +33,7 @@ impl Rep3JoltDAGWorker {
     #[tracing::instrument(skip_all, name = "Rep3JoltDAGWorker::prove")]
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS, N>,
-    ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>
+    ) -> eyre::Result<()>
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -68,7 +68,7 @@ impl Rep3JoltDAGWorker {
         Self::compute_trusted_advice_poly::<F, PCS, N>(&mut state);
 
         // Future stages (sumcheck, opening proof) will go here...
-        Ok(hint_map)
+        Ok(())
     }
 
     /// Generate witness polynomials, commit shares, send commitments to
