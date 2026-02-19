@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use allocative::Allocative;
 use ark_ec::AffineRepr;
@@ -16,7 +16,7 @@ use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -40,7 +40,7 @@ pub struct Rep3OneHotPolynomial<F: JoltField> {
     G: Vec<Rep3PrimeFieldShare<F>>,
     /// Helper polynomial for cycle-variable rounds: `H(j) = eq(k(j), u)` for the fully-bound address
     /// challenge vector `u`.
-    H: Rep3DensePolynomial<F>,
+    H: Arc<RwLock<Rep3RaPolynomial<u8, F>>>,
     /// RandOHV mask `r` share — stored for reconstruction of plaintext indices.
     #[cfg(test)]
     r_share: Rep3RingShare<u8>,
@@ -54,7 +54,7 @@ impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
             rand_ohv_e_field: Arc::new(vec![]),
             num_variables_bound: 0,
             G: vec![],
-            H: Rep3DensePolynomial::zero(),
+            H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
             #[cfg(test)]
             r_share: Rep3RingShare::default(),
         }
@@ -464,7 +464,8 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
             // this is the inner sum term *without* the current linear eq factor.
             // Mirrors vanilla `OneHotPolynomialProverOpening` (but with secret-shared H).
             let d_gruen = &self.eq_cycle_state.D;
-            let H = &self.polynomial.H;
+            let h_guard = self.polynomial.H.read().unwrap();
+            let H = &*h_guard;
 
             let q0 = if d_gruen.E_in_current_len() == 1 {
                 let e_out = d_gruen.E_out_current();
@@ -527,8 +528,6 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
     }
 
     pub fn bind(&mut self, r: F::Challenge, round: usize) {
-        use rayon::prelude::*;
-
         let log_k = self.polynomial.K.log_2();
 
         if round < log_k {
@@ -543,27 +542,25 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 let eq_u = self.eq_address_state.F.clone_values();
                 assert_eq!(eq_u.len(), self.polynomial.K);
 
-                let mut h_vec =
-                    vec![Rep3PrimeFieldShare::zero_share(); self.polynomial.masked_indices_c.len()];
-                h_vec.par_iter_mut().enumerate().for_each(|(j, out)| {
-                    if let Some(c) = self.polynomial.masked_indices_c[j] {
-                        *out = self
-                            .polynomial
-                            .select_public_table_at_masked_index(&eq_u, c);
-                    }
-                });
-                self.polynomial.H = Rep3DensePolynomial::new(h_vec);
+                let table_shifted =
+                    shifted_table_from_rand_ohv(&eq_u, &self.polynomial.rand_ohv_e_field);
+                *self.polynomial.H.write().unwrap() =
+                    Rep3RaPolynomial::new(self.polynomial.masked_indices_c.clone(), table_shifted);
                 self.polynomial.G.clear();
             }
         } else {
             self.eq_cycle_state.D.bind(r);
             self.eq_cycle_state.num_variables_bound += 1;
-            self.polynomial.H.bind(r.into(), BindingOrder::HighToLow);
+            self.polynomial
+                .H
+                .write()
+                .unwrap()
+                .bind_parallel(r, BindingOrder::HighToLow);
         }
     }
 
     pub fn final_sumcheck_claim(&self) -> Rep3PrimeFieldShare<F> {
-        self.polynomial.H.final_sumcheck_claim()
+        self.polynomial.H.read().unwrap().final_sumcheck_claim()
     }
 }
 
@@ -737,7 +734,7 @@ mod tests {
                 rand_ohv_e_field: e_field_party[pid].clone(),
                 num_variables_bound: 0,
                 G: vec![],
-                H: Rep3DensePolynomial::zero(),
+                H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
                 r_share: Rep3RingShare::default(),
             });
 
@@ -773,7 +770,7 @@ mod tests {
             rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
             num_variables_bound: 0,
             G: vec![],
-            H: Rep3DensePolynomial::zero(),
+            H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
             r_share: Rep3RingShare::default(),
         });
 
@@ -835,7 +832,7 @@ mod tests {
             rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
             num_variables_bound: 0,
             G: vec![],
-            H: Rep3DensePolynomial::zero(),
+            H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
             r_share: Rep3RingShare::default(),
         });
 
