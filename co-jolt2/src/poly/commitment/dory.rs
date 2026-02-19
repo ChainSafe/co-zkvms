@@ -1,4 +1,4 @@
-use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::types::MaybeShared;
 use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
@@ -41,37 +41,66 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> (MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>) {
+    ) -> (
+        MaybeShared<Self::Commitment>,
+        MaybeShared<Self::OpeningProofHint>,
+    ) {
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let (c, hint) = <Self as CommitmentScheme>::commit(poly, setup);
-                    (MaybeShared::Public(Some(c)), MaybeShared::Public(Some(hint)))
+                    (
+                        MaybeShared::Public(Some(c)),
+                        MaybeShared::Public(Some(hint)),
+                    )
                 } else {
                     (MaybeShared::Public(None), MaybeShared::Public(None))
                 }
             }
-            Rep3MultilinearPolynomial::Shared(poly) => {
+            Rep3MultilinearPolynomial::Shared(shared_poly) => {
+                let (num_vars, row_commitments_share) = match shared_poly {
+                    Rep3SharedPoly::Dense(poly) => {
+                        let nu = dory::vmv::compute_nu(
+                            poly.get_num_vars(),
+                            DoryGlobals::get_num_columns().log_2(),
+                        );
+                        (
+                            poly.get_num_vars(),
+                            compute_row_commitment_shares_a(poly, setup, nu),
+                        )
+                    }
+                    Rep3SharedPoly::OneHot(poly) => {
+                        let num_columns = DoryGlobals::get_num_columns();
+                        let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
+                            .iter()
+                            .map(|g| g.0.into_affine())
+                            .collect();
+                        let rows = poly
+                            .commit_rows::<G1Projective>(&bases)
+                            .expect("OneHot commit_rows preconditions met");
+                        (poly.get_num_vars(), rows)
+                    }
+                };
+
                 let sigma = DoryGlobals::get_num_columns().log_2();
-                let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+                let nu = dory::vmv::compute_nu(num_vars, sigma);
+                let num_rows_target = 1usize << nu;
 
-                let row_commitments_share = compute_row_commitment_shares_a(poly, setup, nu);
-                let row_commitments_share_aff: Vec<G1Affine> = row_commitments_share
-                    .iter()
-                    .map(|p| p.into_affine())
-                    .collect();
+                let mut row_commitments = row_commitments_share;
+                row_commitments.resize(num_rows_target, G1Projective::zero());
 
-                let g2 = setup.core.g2_vec[..row_commitments_share_aff.len()]
+                let row_commitments_aff: Vec<G1Affine> =
+                    row_commitments.iter().map(|p| p.into_affine()).collect();
+
+                let g2: Vec<G2Affine> = setup.core.g2_vec[..row_commitments_aff.len()]
                     .iter()
                     .map(|g| g.0.into_affine())
-                    .collect::<Vec<G2Affine>>();
-
-                let commitment_share = Bn254::multi_pairing(row_commitments_share_aff, g2);
-
-                let hint_share: Vec<JoltG1Wrapper> = row_commitments_share
-                    .into_iter()
-                    .map(JoltGroupWrapper)
                     .collect();
+
+                let commitment_share = Bn254::multi_pairing(row_commitments_aff, g2);
+
+                let hint_share: Vec<JoltG1Wrapper> =
+                    row_commitments.into_iter().map(JoltGroupWrapper).collect();
 
                 (
                     MaybeShared::Shared(DoryCommitment(commitment_share.into())),
@@ -85,7 +114,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         polys: &[U],
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> Vec<(MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>)>
+    ) -> Vec<(
+        MaybeShared<Self::Commitment>,
+        MaybeShared<Self::OpeningProofHint>,
+    )>
     where
         U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
     {
@@ -746,15 +778,17 @@ mod tests {
                 false,
             );
 
-        let reconstructed_commitment =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::combine_commitment_shares(
-                &[&comm_0, &comm_1, &comm_2],
-            );
+        let reconstructed_commitment = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_commitment_shares(&[
+            &comm_0, &comm_1, &comm_2,
+        ]);
 
-        let reconstructed_hint =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::combine_hint_shares(
-                &[&hint_0, &hint_1, &hint_2],
-            );
+        let reconstructed_hint = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
 
         assert_eq!(reconstructed_commitment, vanilla_commitment);
         assert_eq!(reconstructed_hint, vanilla_hint);
@@ -779,18 +813,14 @@ mod tests {
 
         let (c0, h0) =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &poly,
-                &setup,
-                false,
+                &poly, &setup, false,
             );
         assert!(matches!(c0, MaybeShared::Public(None)));
         assert!(matches!(h0, MaybeShared::Public(None)));
 
         let (c1, h1) =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &poly,
-                &setup,
-                true,
+                &poly, &setup, true,
             );
         let (vanilla_commitment, vanilla_hint) =
             <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
@@ -838,15 +868,11 @@ mod tests {
 
         let single_0 =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &polys[0],
-                &setup,
-                true,
+                &polys[0], &setup, true,
             );
         let single_1 =
             <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &polys[1],
-                &setup,
-                true,
+                &polys[1], &setup, true,
             );
 
         fn assert_commit_and_hint_eq(
@@ -854,14 +880,18 @@ mod tests {
             b: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
         ) {
             match (&a.0, &b.0) {
-                (MaybeShared::Public(Some(ca)), MaybeShared::Public(Some(cb))) => assert_eq!(ca, cb),
+                (MaybeShared::Public(Some(ca)), MaybeShared::Public(Some(cb))) => {
+                    assert_eq!(ca, cb)
+                }
                 (MaybeShared::Public(None), MaybeShared::Public(None)) => {}
                 (MaybeShared::Shared(ca), MaybeShared::Shared(cb)) => assert_eq!(ca, cb),
                 _ => panic!("commitment mismatch"),
             }
 
             match (&a.1, &b.1) {
-                (MaybeShared::Public(Some(ha)), MaybeShared::Public(Some(hb))) => assert_eq!(ha, hb),
+                (MaybeShared::Public(Some(ha)), MaybeShared::Public(Some(hb))) => {
+                    assert_eq!(ha, hb)
+                }
                 (MaybeShared::Public(None), MaybeShared::Public(None)) => {}
                 (MaybeShared::Shared(ha), MaybeShared::Shared(hb)) => assert_eq!(ha, hb),
                 _ => panic!("hint mismatch"),

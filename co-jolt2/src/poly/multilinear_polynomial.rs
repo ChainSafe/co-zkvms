@@ -1,5 +1,6 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::utils::types::Rep3Value;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -9,13 +10,21 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
+use snarks_core::math::Math;
 
 use rayon::prelude::*;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Inner enum distinguishing shared polynomial representations.
+#[derive(Debug, Clone)]
+pub enum Rep3SharedPoly<F: JoltField> {
+    Dense(Rep3DensePolynomial<F>),
+    OneHot(Rep3OneHotPolynomial<F>),
+}
+
+#[derive(Debug, Clone)]
 pub enum Rep3MultilinearPolynomial<F: JoltField> {
     Public(MultilinearPolynomial<F>),
-    Shared(Rep3DensePolynomial<F>),
+    Shared(Rep3SharedPoly<F>),
 }
 
 impl<F: JoltField> Default for Rep3MultilinearPolynomial<F> {
@@ -30,7 +39,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     }
 
     pub fn shared(poly: Rep3DensePolynomial<F>) -> Self {
-        Self::Shared(poly)
+        Self::Shared(Rep3SharedPoly::Dense(poly))
+    }
+
+    pub fn shared_one_hot(poly: Rep3OneHotPolynomial<F>) -> Self {
+        Self::Shared(Rep3SharedPoly::OneHot(poly))
     }
 
     pub fn from_shared_coeffs(coeffs: Vec<Rep3PrimeFieldShare<F>>) -> Self {
@@ -67,19 +80,15 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
 
     pub fn as_shared(&self) -> &Rep3DensePolynomial<F> {
         match self {
-            Rep3MultilinearPolynomial::Shared(poly) => poly,
-            Rep3MultilinearPolynomial::Public { .. } => {
-                panic!("Not a shared polynomial")
-            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly,
+            _ => panic!("Not a shared dense polynomial"),
         }
     }
 
     pub fn as_shared_mut(&mut self) -> &mut Rep3DensePolynomial<F> {
         match self {
-            Rep3MultilinearPolynomial::Shared(poly) => poly,
-            Rep3MultilinearPolynomial::Public { .. } => {
-                panic!("Not a shared polynomial")
-            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly,
+            _ => panic!("Not a shared dense polynomial"),
         }
     }
 
@@ -104,7 +113,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     pub fn to_full_poly(self) -> Self {
         match self {
             Self::Public { .. } => unreachable!(),
-            Self::Shared(poly) => Self::shared(poly.as_full_poly()),
+            Self::Shared(Rep3SharedPoly::Dense(poly)) => Self::shared(poly.as_full_poly()),
+            Self::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: to_full_poly not applicable")
+            }
         }
     }
 
@@ -121,49 +133,76 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
     pub fn dot_product_with_public(&self, other: &[F]) -> Rep3Value<F> {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.dot_product(other).into(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.dot_product_with_public(other).into(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.dot_product_with_public(other).into()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: dot_product_with_public")
+            }
         }
     }
 
     pub fn get_coeff(&self, index: usize) -> Rep3Value<F> {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.get_coeff(index).into(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.get_coeff(index).into(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.get_coeff(index).into()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: get_coeff")
+            }
         }
     }
 
     pub fn get_bound_coeff(&self, index: usize) -> Rep3Value<F> {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.get_bound_coeff(index).into(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.get_bound_coeff(index).into(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.get_bound_coeff(index).into()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: get_bound_coeff")
+            }
         }
     }
 
     pub fn len(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.len(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
+                1 << poly.get_num_vars()
+            }
         }
     }
 
     pub fn original_len(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.original_len(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.coeffs_ref().len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.coeffs_ref().len()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
+                1 << poly.get_num_vars()
+            }
         }
     }
 
     pub fn full_len(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.len(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.full_len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.full_len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
+                1 << poly.get_num_vars()
+            }
         }
     }
 
     pub fn get_num_vars(&self) -> usize {
         match self {
             Rep3MultilinearPolynomial::Public(poly) => poly.get_num_vars(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly.get_num_vars(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.get_num_vars(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => poly.get_num_vars(),
         }
     }
 
@@ -173,7 +212,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 // TODO: delegate via PolynomialBinding<F> trait
                 false
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.is_bound(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.is_bound(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: is_bound")
+            }
         }
     }
 
@@ -183,7 +225,10 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 // TODO: delegate via PolynomialBinding<F> trait (takes F::Challenge)
                 todo!("bind for public polynomial requires Challenge type")
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.bind(r, order),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.bind(r, order),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: bind handled by Rep3OneHotPolynomialProverOpening")
+            }
         }
     }
 
@@ -200,7 +245,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 // TODO: delegate via PolynomialEvaluation<F> trait
                 todo!("sumcheck_evals for public polynomial requires Challenge type")
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.sumcheck_evals(index, degree, order),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.sumcheck_evals(index, degree, order)
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
+            }
         }
     }
 
@@ -210,8 +260,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .into_par_iter()
             .map(|&poly| match poly {
                 Rep3MultilinearPolynomial::Public(poly) => Rep3Value::Public(poly.dot_product(chi)),
-                Rep3MultilinearPolynomial::Shared(poly) => {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
                     Rep3Value::Additive(poly.evaluate_at_chi_optimized(chi))
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                    todo!("OneHot: batch_evaluate_at_chi")
                 }
             })
             .collect();
@@ -228,8 +281,11 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             .into_par_iter()
             .map(|&poly| match poly {
                 Rep3MultilinearPolynomial::Public(poly) => Rep3Value::Public(poly.dot_product(&eq)),
-                Rep3MultilinearPolynomial::Shared(poly) => {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
                     Rep3Value::Additive(poly.evaluate_at_chi_optimized(&eq))
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                    todo!("OneHot: batch_evaluate")
                 }
             })
             .collect();
@@ -243,7 +299,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 let eq = EqPolynomial::evals(r);
                 Rep3Value::Public(poly.dot_product(&eq))
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.evaluate(r).into(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.evaluate(r).into()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: evaluate")
+            }
         }
     }
 
@@ -253,7 +314,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 // TODO: delegate via PolynomialBinding<F> trait
                 todo!("final_sumcheck_claim for public polynomial requires Challenge type")
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly.final_sumcheck_claim().into(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => {
+                poly.final_sumcheck_claim().into()
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: final_sumcheck_claim")
+            }
         }
     }
 
@@ -268,11 +334,14 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 // TODO: delegate via PolynomialEvaluation<F> trait
                 todo!("sumcheck_evals for public polynomial requires Challenge type")
             }
-            Rep3MultilinearPolynomial::Shared(poly) => poly
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly
                 .sumcheck_evals(index, degree, order)
                 .into_iter()
                 .map(|x| x.into())
                 .collect(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
+            }
         }
     }
 }
@@ -285,12 +354,15 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Public(poly) => (0..self.len())
                 .map(|i| Rep3Value::Public(poly.get_bound_coeff(i)))
                 .collect(),
-            Rep3MultilinearPolynomial::Shared(poly) => poly
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly
                 .bound_coeffs()
                 .iter()
                 .copied()
                 .map(|x| x.into())
                 .collect(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                todo!("OneHot: get_bound_coeffs")
+            }
         }
     }
 }
@@ -302,8 +374,8 @@ impl<'a, F: JoltField> TryInto<&'a Rep3DensePolynomial<F>> for &'a Rep3Multiline
 
     fn try_into(self) -> Result<&'a Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
-            Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => Ok(poly),
+            _ => Err(eyre::eyre!("Not a shared dense polynomial")),
         }
     }
 }
@@ -315,8 +387,8 @@ impl<'a, F: JoltField> TryInto<&'a mut Rep3DensePolynomial<F>>
 
     fn try_into(self) -> Result<&'a mut Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
-            Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => Ok(poly),
+            _ => Err(eyre::eyre!("Not a shared dense polynomial")),
         }
     }
 }
@@ -326,8 +398,8 @@ impl<F: JoltField> TryInto<Rep3DensePolynomial<F>> for Rep3MultilinearPolynomial
 
     fn try_into(self) -> Result<Rep3DensePolynomial<F>, Self::Error> {
         match self {
-            Rep3MultilinearPolynomial::Public(_) => Err(eyre::eyre!("Public polynomial")),
-            Rep3MultilinearPolynomial::Shared(poly) => Ok(poly),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => Ok(poly),
+            _ => Err(eyre::eyre!("Not a shared dense polynomial")),
         }
     }
 }
@@ -375,13 +447,13 @@ impl<F: JoltField> From<MultilinearPolynomial<F>> for Rep3MultilinearPolynomial<
 
 impl<F: JoltField> From<Rep3DensePolynomial<F>> for Rep3MultilinearPolynomial<F> {
     fn from(poly: Rep3DensePolynomial<F>) -> Self {
-        Rep3MultilinearPolynomial::Shared(poly)
+        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly))
     }
 }
 
 impl<F: JoltField> From<Vec<Rep3PrimeFieldShare<F>>> for Rep3MultilinearPolynomial<F> {
     fn from(evals: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Rep3MultilinearPolynomial::Shared(Rep3DensePolynomial::new(evals))
+        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(Rep3DensePolynomial::new(evals)))
     }
 }
 

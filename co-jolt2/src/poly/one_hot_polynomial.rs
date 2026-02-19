@@ -60,6 +60,49 @@ impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
 }
 
 impl<F: JoltField> Rep3OneHotPolynomial<F> {
+    /// Builds a RandOHV proving view for this polynomial:
+    /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
+    /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
+    /// - injects `E` into field shares once (length K).
+    pub fn from_indices<N: Rep3Network>(
+        nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
+        K: usize,
+        io_ctx: &mut IoContext<N>,
+    ) -> eyre::Result<Self> {
+        assert!(K.is_power_of_two(), "K must be a power of two");
+        assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
+        let log_k = K.log_2();
+
+        // Sample one RandOHV for the mask `r` (binary-sharing domain).
+        let (r_share, e_bits) = gadgets::ohv::rand_ohv::<u8, _>(log_k, io_ctx)?;
+
+        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles.
+        let masked_vec: Vec<Rep3RingShare<u8>> = nonzero_indices
+            .iter()
+            .map(|opt| {
+                opt.map(|kj| kj ^ r_share)
+                    .unwrap_or_else(Rep3RingShare::zero_share)
+            })
+            .collect();
+        let opened = binary::open_vec(masked_vec, io_ctx)?;
+        let masked_indices_c: Vec<Option<u8>> = nonzero_indices
+            .iter()
+            .zip(opened.into_iter())
+            .map(|(opt, v)| opt.is_some().then_some(v as u8))
+            .collect();
+
+        // Inject the OHV bits into prime-field shares once.
+        let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
+            conversion::bit_inject_from_bits_to_field_many(&e_bits, io_ctx)?;
+
+        Ok(Self {
+            K,
+            masked_indices_c: Arc::new(masked_indices_c),
+            rand_ohv_e_field: Arc::new(rand_ohv_e_field),
+            ..Default::default()
+        })
+    }
+
     /// The number of rows in the coefficient matrix used to
     /// commit to this polynomial using Dory
     // pub fn num_rows(&self) -> usize {
@@ -236,49 +279,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         Ok(out)
     }
 
-    /// Builds a RandOHV proving view for this polynomial:
-    /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
-    /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
-    /// - injects `E` into field shares once (length K).
-    pub fn from_indices<N: Rep3Network>(
-        nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
-        K: usize,
-        io_ctx: &mut IoContext<N>,
-    ) -> eyre::Result<Self> {
-        assert!(K.is_power_of_two(), "K must be a power of two");
-        assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
-        let log_k = K.log_2();
-
-        // Sample one RandOHV for the mask `r` (binary-sharing domain).
-        let (r_share, e_bits) = gadgets::ohv::rand_ohv::<u8, _>(log_k, io_ctx)?;
-
-        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles.
-        let masked_vec: Vec<Rep3RingShare<u8>> = nonzero_indices
-            .iter()
-            .map(|opt| {
-                opt.map(|kj| kj ^ r_share)
-                    .unwrap_or_else(Rep3RingShare::zero_share)
-            })
-            .collect();
-        let opened = binary::open_vec(masked_vec, io_ctx)?;
-        let masked_indices_c: Vec<Option<u8>> = nonzero_indices
-            .iter()
-            .zip(opened.into_iter())
-            .map(|(opt, v)| opt.is_some().then_some(v as u8))
-            .collect();
-
-        // Inject the OHV bits into prime-field shares once.
-        let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
-            conversion::bit_inject_from_bits_to_field_many(&e_bits, io_ctx)?;
-
-        Ok(Self {
-            K,
-            masked_indices_c: Arc::new(masked_indices_c),
-            rand_ohv_e_field: Arc::new(rand_ohv_e_field),
-            ..Default::default()
-        })
-    }
-
     /// Selects `table[r XOR c]` from a public table using the field-injected RandOHV `E_field`.
     ///
     /// Uses the identity:
@@ -422,7 +422,12 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                     (inner0 * B_evals[0], inner2 * B_evals[1])
                 })
                 .reduce(
-                    || (Rep3PrimeFieldShare::zero_share(), Rep3PrimeFieldShare::zero_share()),
+                    || {
+                        (
+                            Rep3PrimeFieldShare::zero_share(),
+                            Rep3PrimeFieldShare::zero_share(),
+                        )
+                    },
                     |(mut a0, mut a2), (b0, b2)| {
                         a0 += b0;
                         a2 += b2;
@@ -521,16 +526,13 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
 
                 let mut h_vec =
                     vec![Rep3PrimeFieldShare::zero_share(); self.polynomial.masked_indices_c.len()];
-                h_vec
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(j, out)| {
-                        if let Some(c) = self.polynomial.masked_indices_c[j] {
-                            *out = self
-                                .polynomial
-                                .select_public_table_at_masked_index(&eq_u, c);
-                        }
-                    });
+                h_vec.par_iter_mut().enumerate().for_each(|(j, out)| {
+                    if let Some(c) = self.polynomial.masked_indices_c[j] {
+                        *out = self
+                            .polynomial
+                            .select_public_table_at_masked_index(&eq_u, c);
+                    }
+                });
                 self.polynomial.H = Rep3DensePolynomial::new(h_vec);
                 self.polynomial.G.clear();
             }

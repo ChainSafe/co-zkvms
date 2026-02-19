@@ -405,11 +405,12 @@ where
             CommittedPolynomial::InstructionRa(i) => {
                 if *i < instruction_lookups::D {
                     let indices = std::mem::take(&mut batch.instruction_ra[*i]);
-                    // let one_hot = Rep3OneHotPolynomial::<F>::from_indices(
-                    //     indices,
-                    //     instruction_lookups::K_CHUNK,
-                    // );
-                    // results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
+                    let one_hot = Rep3OneHotPolynomial::<F>::from_indices(
+                        indices,
+                        instruction_lookups::K_CHUNK,
+                        io_ctx.main(),
+                    )?;
+                    results.insert(*poly, Rep3MultilinearPolynomial::shared_one_hot(one_hot));
                 }
             }
             CommittedPolynomial::BytecodeRa(i) => {
@@ -419,15 +420,21 @@ where
                     let log_K = preprocessing.shared.bytecode.code_size.log_2();
                     let log_K_chunk = log_K.div_ceil(d);
                     let K_chunk = 1 << log_K_chunk;
-                    // let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
-                    // results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
+                    let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
+                    results.insert(
+                        *poly,
+                        Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)),
+                    );
                 }
             }
             CommittedPolynomial::RamRa(i) => {
                 if *i < ram_d {
                     let indices = std::mem::take(&mut batch.ram_ra[*i]);
-                    // let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
-                    // results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
+                    let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
+                    results.insert(
+                        *poly,
+                        Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)),
+                    );
                 }
             }
         }
