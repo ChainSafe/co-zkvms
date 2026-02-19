@@ -41,8 +41,9 @@ pub struct Rep3OneHotPolynomial<F: JoltField> {
     /// Helper polynomial for cycle-variable rounds: `H(j) = eq(k(j), u)` for the fully-bound address
     /// challenge vector `u`.
     H: Rep3DensePolynomial<F>,
-    // /// The array described in Section 6.3 of the Twist/Shout paper.
-    // H: Arc<RwLock<RaPolynomial<u8, F>>>,
+    /// RandOHV mask `r` share — stored for reconstruction of plaintext indices.
+    #[cfg(test)]
+    r_share: Rep3RingShare<u8>,
 }
 
 impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
@@ -54,7 +55,8 @@ impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
             num_variables_bound: 0,
             G: vec![],
             H: Rep3DensePolynomial::zero(),
-            // H: Arc::new(RwLock::new(RaPolynomial::None)),
+            #[cfg(test)]
+            r_share: Rep3RingShare::default(),
         }
     }
 }
@@ -99,8 +101,25 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             K,
             masked_indices_c: Arc::new(masked_indices_c),
             rand_ohv_e_field: Arc::new(rand_ohv_e_field),
+            #[cfg(test)]
+            r_share,
             ..Default::default()
         })
+    }
+
+    /// Reconstruct the plaintext `nonzero_indices` from 3 parties' Rep3OneHotPolynomial shares.
+    ///
+    /// Recovery: `k(j) = c[j] XOR r` where `r = s0.r_share.a XOR s1.r_share.a XOR s2.r_share.a`.
+    /// All 3 parties share the same `masked_indices_c` (it's public), so we just need `r`.
+    #[cfg(test)]
+    pub fn reconstruct_indices(polys: [&Self; 3]) -> Vec<Option<u8>> {
+        // Binary rep3 reconstruct: secret = a_0 XOR a_1 XOR a_2
+        let r = (polys[0].r_share.a ^ polys[1].r_share.a ^ polys[2].r_share.a).0;
+        polys[0]
+            .masked_indices_c
+            .iter()
+            .map(|opt| opt.map(|c| c ^ r))
+            .collect()
     }
 
     /// The number of rows in the coefficient matrix used to
@@ -606,8 +625,6 @@ fn compute_g_from_masked_indices<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::test_support::init_dory_globals;
-
     use super::*;
     use ark_std::test_rng;
     use ark_std::UniformRand;
@@ -721,6 +738,7 @@ mod tests {
                 num_variables_bound: 0,
                 G: vec![],
                 H: Rep3DensePolynomial::zero(),
+                r_share: Rep3RingShare::default(),
             });
 
         (nonzero_indices_plain, vanilla_poly, rep3_polys)
@@ -756,6 +774,7 @@ mod tests {
             num_variables_bound: 0,
             G: vec![],
             H: Rep3DensePolynomial::zero(),
+            r_share: Rep3RingShare::default(),
         });
 
         let shares: [Rep3PrimeFieldShare<F>; 3] =
@@ -817,6 +836,7 @@ mod tests {
             num_variables_bound: 0,
             G: vec![],
             H: Rep3DensePolynomial::zero(),
+            r_share: Rep3RingShare::default(),
         });
 
         // Random challenge points.

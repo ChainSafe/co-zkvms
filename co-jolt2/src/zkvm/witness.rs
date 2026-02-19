@@ -442,3 +442,261 @@ where
 
     Ok(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use tracing::info;
+
+    use crate::host::program::Rep3Program;
+    use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
+    use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
+    use crate::utils::test_utils::{check_poly, run_rep3_test};
+    use crate::utils::tracing::init_tracing;
+    use crate::zkvm::instruction::{populate_operands_casts, Rep3Cycle, Rep3Operand};
+    use jolt_core::host::Program;
+    use jolt_core::poly::commitment::dory::DoryGlobals;
+    use jolt_core::poly::commitment::mock::MockCommitScheme;
+    use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+    use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+    use jolt_core::zkvm::ram::{remap_address, RAMPreprocessing};
+    use jolt_core::zkvm::witness::{
+        compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
+    };
+    use jolt_core::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing};
+    use rayon::prelude::*;
+    use tracer::instruction::Cycle;
+
+    type F = Fr;
+    type PCS = MockCommitScheme<F>;
+
+    fn compute_ram_k(
+        trace: &[tracer::instruction::Cycle],
+        preprocessing: &JoltSharedPreprocessing,
+    ) -> usize {
+        let max_from_trace = trace
+            .par_iter()
+            .filter_map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.memory_layout,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+
+        let max_from_bytecode = remap_address(
+            preprocessing.ram.min_bytecode_address,
+            &preprocessing.memory_layout,
+        )
+        .unwrap_or(0)
+            + preprocessing.ram.bytecode_words.len() as u64
+            + 1;
+
+        max_from_trace.max(max_from_bytecode).next_power_of_two() as usize
+    }
+
+    #[test]
+    fn test_generate_witness_batch_rep3() {
+        let _tracing_guard = init_tracing("witness_test.json", Path::new("/tmp/co-jolt2-traces"));
+
+        // 1. Build and trace the fibonacci program
+        let mut program = Program::new("fibonacci-guest");
+        let elf_path = "/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest";
+        program.elf = Some(PathBuf::from(elf_path));
+        let inputs = postcard::to_stdvec(&9u32).unwrap();
+        let (bytecode, memory_init, _) = program.decode();
+
+        // 2. Generate trace and shares
+        let mut rng = test_rng();
+        let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
+
+        // Also get a vanilla trace for comparison
+        let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+
+        // Pad traces to next power of 2 (mirrors StateManager / DAG init).
+        // The +1 accounts for the implicit PC termination cycle.
+        let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
+        info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
+        vanilla_trace.resize(padded_len, Cycle::NoOp);
+        for (trace, _, _) in shares.iter_mut() {
+            trace.resize(padded_len, Rep3Cycle::NoOp);
+        }
+
+        // 3. Build preprocessing (shared between all parties + vanilla)
+        let shared = JoltSharedPreprocessing {
+            memory_layout: io_device.memory_layout.clone(),
+            bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
+            ram: RAMPreprocessing::preprocess(memory_init.clone()),
+        };
+        let preprocessing: JoltProverPreprocessing<F, PCS> = JoltProverPreprocessing {
+            generators: (),
+            shared: shared.clone(),
+        };
+
+        // 4. Determine which polynomials to test.
+        let ram_K = compute_ram_k(&vanilla_trace, &preprocessing.shared);
+        let bytecode_d = preprocessing.shared.bytecode.d;
+        let ram_d = compute_d_parameter(ram_K);
+        let _guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
+        // DoryGlobals needed for vanilla OneHotPolynomial::from_indices (debug_assert)
+        let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+
+        info!(total = all_polys.len(), "polynomial counts");
+
+        // 5. Run vanilla witness generation (including one-hot polys)
+        info!("running vanilla witness generation");
+        let vanilla_results =
+            CommittedPolynomial::generate_witness_batch(&all_polys, &preprocessing, &vanilla_trace);
+        info!(
+            count = vanilla_results.len(),
+            "vanilla witness generation complete"
+        );
+
+        // 6. Run MPC witness generation on 3 parties
+        let preprocessing_arc = Arc::new(preprocessing);
+        let base_port: u16 = 14200;
+
+        info!("launching 3-party MPC witness generation");
+        let mpc_results: [HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>; 3] =
+            run_rep3_test(
+                base_port,
+                4,
+                |party_idx| {
+                    let (trace, _memory, _io) = shares[party_idx].clone();
+                    let preprocessing = Arc::clone(&preprocessing_arc);
+                    (trace, preprocessing, all_polys.clone())
+                },
+                |input, io_ctx| {
+                    let (mut trace, preprocessing, polys) = input;
+                    let party = io_ctx.party_id();
+
+                    info!(?party, "populate_operands_casts start");
+                    populate_operands_casts(&mut trace, io_ctx.main())?;
+                    info!(?party, "populate_operands_casts done");
+
+                    // Verify arithmetic shares are populated
+                    let mut unpopulated = 0usize;
+                    let mut total_shared = 0usize;
+                    for cycle in trace.iter_mut() {
+                        for op in cycle.shared_operands_mut() {
+                            if let Rep3Operand::Shared { arithmetic, .. } = op {
+                                total_shared += 1;
+                                if arithmetic.is_none() {
+                                    unpopulated += 1;
+                                }
+                            }
+                        }
+                    }
+                    info!(?party, total_shared, unpopulated, "operand check");
+                    assert_eq!(unpopulated, 0, "unpopulated arithmetic shares remain");
+
+                    info!(?party, "generate_witness_batch_rep3 start");
+                    let results = generate_witness_batch_rep3::<F, PCS, _>(
+                        &polys,
+                        &preprocessing,
+                        &trace,
+                        io_ctx,
+                    )?;
+                    info!(
+                        ?party,
+                        count = results.len(),
+                        "generate_witness_batch_rep3 done"
+                    );
+                    Ok(results)
+                },
+            );
+
+        info!("MPC witness generation complete, reconstructing");
+
+        // 7. Reconstruct and compare
+        for poly_key in &all_polys {
+            let vanilla_poly = match vanilla_results.get(poly_key) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let share_polys: Vec<Rep3MultilinearPolynomial<F>> = (0..3)
+                .map(|i| {
+                    mpc_results[i]
+                        .get(poly_key)
+                        .unwrap_or_else(|| panic!("party {i} missing poly {poly_key:?}"))
+                        .clone()
+                })
+                .collect();
+
+            match &share_polys[0] {
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(mpc_ohp)) => {
+                    let vanilla_indices = match vanilla_poly {
+                        MultilinearPolynomial::OneHot(ohp) => &*ohp.nonzero_indices,
+                        _ => panic!("expected vanilla OneHot for {poly_key:?}"),
+                    };
+                    assert_eq!(
+                        &*mpc_ohp.nonzero_indices, vanilla_indices,
+                        "{poly_key:?} public OneHot indices mismatch"
+                    );
+                    info!(?poly_key, "public one-hot indices match");
+                }
+                Rep3MultilinearPolynomial::Public(pub_poly) => {
+                    check_poly(pub_poly, vanilla_poly, &format!("{poly_key:?} (public)"));
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(_)) => {
+                    let reconstructed = Rep3MultilinearPolynomial::combine_shares(share_polys);
+                    check_poly(
+                        &reconstructed,
+                        vanilla_poly,
+                        &format!("{poly_key:?} (shared dense)"),
+                    );
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                    let ohps: Vec<&Rep3OneHotPolynomial<F>> = share_polys
+                        .iter()
+                        .map(|p| match p {
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(ohp)) => ohp,
+                            _ => unreachable!(),
+                        })
+                        .collect();
+
+                    let reconstructed_indices =
+                        Rep3OneHotPolynomial::reconstruct_indices([ohps[0], ohps[1], ohps[2]]);
+
+                    let vanilla_indices = match vanilla_poly {
+                        MultilinearPolynomial::OneHot(ohp) => &*ohp.nonzero_indices,
+                        _ => panic!(
+                            "expected vanilla OneHot for {poly_key:?}, got {:?}",
+                            std::mem::discriminant(vanilla_poly)
+                        ),
+                    };
+
+                    assert_eq!(
+                        reconstructed_indices.len(),
+                        vanilla_indices.len(),
+                        "length mismatch for {poly_key:?}"
+                    );
+                    for (j, (mpc, vanilla)) in reconstructed_indices
+                        .iter()
+                        .zip(vanilla_indices.iter())
+                        .enumerate()
+                    {
+                        assert_eq!(
+                            mpc, vanilla,
+                            "{poly_key:?} index mismatch at cycle {j}: mpc={mpc:?} vanilla={vanilla:?}"
+                        );
+                    }
+                    info!(?poly_key, "one-hot indices match");
+                }
+            }
+        }
+
+        info!("all polynomials match!");
+    }
+}
