@@ -5,11 +5,13 @@ pub mod mixed_polynomial;
 pub mod multilinear_polynomial;
 pub mod one_hot_polynomial;
 pub mod ra_poly;
+pub mod rlc_polynomial;
 
 pub use commitment::*;
 pub use compact_polynomial::*;
 pub use dense_mlpoly::*;
 pub use multilinear_polynomial::*;
+pub use rlc_polynomial::*;
 
 use crate::{field::JoltField, utils::types::Rep3Value};
 
