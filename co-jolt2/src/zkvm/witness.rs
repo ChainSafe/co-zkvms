@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_witness_batch_rep3() {
+    fn witness_batch_rep3() {
         let _tracing_guard = init_tracing("witness_test.json", Path::new("/tmp/co-jolt2-traces"));
 
         // 1. Build and trace the fibonacci program

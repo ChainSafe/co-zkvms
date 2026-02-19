@@ -44,6 +44,17 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 These conventions must also be added to PROJECT.md Rules section during implementation.
 
 
+### Test Naming
+
+Format: `<subject>_<what_is_checked>`. Rules:
+1. No `test_` prefix — `#[test]` is enough
+2. No `_and_` — split into separate tests or pick the primary check
+3. No mentions of `vanilla` — correctness against vanilla is implied. Use `_correct` suffix
+4. Use `open` not `reconstruct`
+5. Keep names ≤ 5 snake_case tokens
+6. Subject first — e.g. `witness_batch`, `one_hot_eval`, `dory_commit`
+7. Abbreviations OK when unambiguous (`eval`, `commit`, `batch`). Use `one_hot` not `ohp`
+
 ### Modifying Vanilla Jolt
 When the vanilla codebase (`../../examples/jolt/`) has private methods or attributes that co-jolt2 needs, you are allowed to make them `pub` directly in the vanilla code. This is a prototype — don't waste time on workarounds.
 

@@ -745,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn select_public_table_at_masked_index_correct() {
+    fn one_hot_masked_select() {
         type F = Fr;
         let mut rng = test_rng();
 
@@ -786,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_matches_plaintext() {
+    fn one_hot_eval_correct() {
         type F = Fr;
         let mut rng = test_rng();
 
@@ -861,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn rep3_matches_vanilla_evaluate_and_opening_reduction_sumcheck() {
+    fn one_hot_eval_open_sumcheck() {
         type F = Fr;
         let mut rng = test_rng();
 
@@ -1021,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn rep3_commit_rows_reconstructs_to_vanilla() {
+    fn one_hot_commit_rows_correct() {
         let _tracing_guard = crate::utils::tracing::init_tracing(
             "rep3_commit_rows_reconstructs_to_vanilla.json",
             Path::new("/tmp/co-jolt2-traces"),

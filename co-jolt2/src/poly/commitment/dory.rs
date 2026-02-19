@@ -733,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn rep3_commit_reconstructs_to_vanilla_dory_commit_and_hint() {
+    fn dory_commit_hint_correct() {
         let mut rng = test_rng();
 
         let num_vars = 6;
@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn rep3_commit_public_gating_matches_vanilla() {
+    fn dory_public_gating_correct() {
         let mut rng = test_rng();
 
         let num_vars = 6;
@@ -838,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn rep3_batch_commit_matches_single_commit() {
+    fn dory_batch_eq_single() {
         let mut rng = test_rng();
 
         let num_vars = 6;
