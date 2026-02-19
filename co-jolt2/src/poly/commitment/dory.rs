@@ -737,8 +737,9 @@ mod tests {
         let mut rng = test_rng();
 
         let num_vars = 6;
-        // Match the OneHotPolynomial tests' default sizing.
-        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        // Use the same DoryGlobals sizing as the zkVM witness tests (T=512) to
+        // avoid global re-initialization conflicts within the test binary.
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
         let num_rows = DoryGlobals::get_max_num_rows();
 
@@ -799,7 +800,7 @@ mod tests {
         let mut rng = test_rng();
 
         let num_vars = 6;
-        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
 
         let len = 1usize << num_vars;
@@ -842,7 +843,7 @@ mod tests {
         let mut rng = test_rng();
 
         let num_vars = 6;
-        crate::poly::commitment::dory::test_support::init_dory_globals(256, 32);
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
 
         let len = 1usize << num_vars;

@@ -59,6 +59,11 @@ Format: `<subject>_<what_is_checked>`. Rules:
 7. Subject first — e.g. `witness_batch`, `one_hot_eval`, `dory_commit`
 8. Abbreviations OK when unambiguous (`eval`, `commit`, `batch`). Use `one_hot` not `ohp`
 
+### Running Tests (Important)
+
+- Run tests **scoped to the change** using a name/module filter (e.g. `cargo test -p co-jolt2 <filter>`), not the full suite.
+- Avoid `--offline` when running tests; it can cause confusing dependency/metadata failures in this repo.
+
 ### Modifying Vanilla Jolt
 When the vanilla codebase (`../../examples/jolt/`) has private methods or attributes that co-jolt2 needs, you are allowed to make them `pub` directly in the vanilla code. This is a prototype — don't waste time on workarounds.
 

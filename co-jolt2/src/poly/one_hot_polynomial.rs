@@ -863,7 +863,7 @@ mod tests {
         let mut rng = test_rng();
 
         let log_k = 8usize;
-        let log_t = 5usize;
+        let log_t = 9usize;
         let k = 1usize << log_k;
         let t = 1usize << log_t;
 
@@ -1028,7 +1028,7 @@ mod tests {
         let mut rng = test_rng();
 
         let log_k = 8usize;
-        let log_t = 5usize;
+        let log_t = 9usize;
         let k = 1usize << log_k;
         let t = 1usize << log_t;
 

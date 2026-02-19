@@ -52,13 +52,13 @@ impl Rep3JoltDAGWorker {
         let ram_K = state.ram_K;
         let bytecode_d = state.prover_state.preprocessing.shared.bytecode.d;
 
-        // --- Commit untrusted advice (uses separate DoryGlobals, must come first) ---
-        Self::commit_untrusted_advice::<F, PCS, N>(&mut state)?;
+        let _guard = (
+            DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
+            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
+        );
 
-        // --- Initialize main DoryGlobals and AllCommittedPolynomials ---
-        let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length);
-        let _poly_guard =
-            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+        // --- Commit untrusted advice (must use the same DoryGlobals T) ---
+        Self::commit_untrusted_advice::<F, PCS, N>(&mut state, padded_trace_length)?;
 
         let hint_map = Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
             party_id, &mut state,
@@ -133,11 +133,9 @@ impl Rep3JoltDAGWorker {
     /// into u64 words, builds a `MultilinearPolynomial`, commits with standard
     /// `PCS::commit` (advice is public data, not secret-shared), and stores the
     /// commitment + polynomial on state.
-    ///
-    /// Uses a separate `DoryGlobals(K=1, T=max_advice_size/8)` that is dropped
-    /// before the main witness DoryGlobals is initialized.
     fn commit_untrusted_advice<F, PCS, N>(
         state: &mut StateManagerWorker<'_, F, PCS, N>,
+        padded_trace_length: usize,
     ) -> eyre::Result<()>
     where
         F: JoltField,
@@ -149,7 +147,11 @@ impl Rep3JoltDAGWorker {
         }
 
         let max_size = state.program_io.memory_layout.max_untrusted_advice_size as usize / 8;
-        let _advice_dory_guard = DoryGlobals::initialize(1, max_size);
+        eyre::ensure!(
+            max_size <= padded_trace_length,
+            "max_untrusted_advice_size/8 ({max_size}) exceeds padded_trace_length ({padded_trace_length}); \
+             current PCS generators/DoryGlobals are built for padded_trace_length"
+        );
 
         let mut initial_memory_state = vec![0u64; max_size];
         let mut index = 1;

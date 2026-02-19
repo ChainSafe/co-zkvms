@@ -1,10 +1,11 @@
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
+use serde::{Deserialize, Serialize};
 use tracer::emulator::memory::Memory;
 
 use crate::utils::transpose;
 
 /// Rep3 secret-shared main memory.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rep3Memory {
     pub data: Vec<Rep3RingShare<u64>>,
 }
