@@ -18,6 +18,44 @@ use snarks_core::math::Math;
 use crate::field::JoltField;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 
+#[inline]
+fn fwht_field_in_place<F: JoltField>(a: &mut [F]) {
+    debug_assert!(a.len().is_power_of_two(), "FWHT input length must be power-of-two");
+    let n = a.len();
+    let mut len = 1usize;
+    while len < n {
+        let step = len * 2;
+        for i in (0..n).step_by(step) {
+            for j in 0..len {
+                let u = a[i + j];
+                let v = a[i + j + len];
+                a[i + j] = u + v;
+                a[i + j + len] = u - v;
+            }
+        }
+        len = step;
+    }
+}
+
+#[inline]
+fn fwht_group_in_place<F: JoltField, G: CurveGroup<ScalarField = F>>(a: &mut [G]) {
+    debug_assert!(a.len().is_power_of_two(), "FWHT input length must be power-of-two");
+    let n = a.len();
+    let mut len = 1usize;
+    while len < n {
+        let step = len * 2;
+        for i in (0..n).step_by(step) {
+            for j in 0..len {
+                let u = a[i + j];
+                let v = a[i + j + len];
+                a[i + j] = u + v;
+                a[i + j + len] = u + (-v);
+            }
+        }
+        len = step;
+    }
+}
+
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
@@ -193,6 +231,12 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         if t % row_len == 0 {
             let bases_group: Vec<G> = bases.iter().map(|b| b.into_group()).collect();
 
+            debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
+            let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
+            let mut g_hat = g;
+            fwht_field_in_place(&mut g_hat);
+            let inv_k = F::from(self.K as u64).inverse().expect("K invertible in field");
+
             let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
                 let _guard = tracing::trace_span!("commit_rows.aligned.par").entered();
@@ -223,25 +267,21 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                             }
                         }
 
-                        let s_affine: Vec<G::Affine> =
-                            s.into_iter().map(|p| p.into_affine()).collect();
-
-                        // For each row address k, compute an MSM against `E_field[(c XOR k)].a`.
-                        let mut scalars = vec![F::zero(); self.K];
-                        let mut chunk_rows = vec![G::zero(); self.K];
-                        for k in 0..self.K {
-                            for c in 0..self.K {
-                                scalars[c] = self.rand_ohv_e_field[(c as u8 ^ k as u8) as usize].a;
+                        // Compute all rows for this chunk via FWHT XOR-convolution:
+                        // out[k] = Σ_c s[c] * g_hat_fwht[c XOR k].
+                        {
+                            let _guard = tracing::trace_span!("commit_rows.fwht").entered();
+                            fwht_group_in_place(&mut s);
+                            for (si, &gi) in s.iter_mut().zip(g_hat.iter()) {
+                                *si = *si * gi;
                             }
-
-                            let share = {
-                                let _guard = tracing::trace_span!("commit_rows.msm", k).entered();
-                                G::msm_field_elements(&s_affine, &scalars)?
-                            };
-                            chunk_rows[k] = share;
+                            fwht_group_in_place(&mut s);
+                            for si in s.iter_mut() {
+                                *si = *si * inv_k;
+                            }
                         }
 
-                        Ok(chunk_rows)
+                        Ok(s)
                     })
                     .collect::<eyre::Result<Vec<_>>>()?
             };
