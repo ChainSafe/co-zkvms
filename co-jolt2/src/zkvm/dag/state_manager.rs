@@ -22,6 +22,7 @@ pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>
     pub trace: Vec<Rep3Cycle>,
     pub final_memory_state: Rep3Memory,
     pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
+    pub trusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
 }
 
 pub struct StateManagerWorker<
@@ -32,6 +33,7 @@ pub struct StateManagerWorker<
 > {
     pub io_ctx: IoContextPool<N>,
     pub commitments: Vec<PCS::Commitment>,
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -64,6 +66,7 @@ where
         Self {
             io_ctx,
             commitments: vec![],
+            untrusted_advice_commitment: None,
             ram_K,
             twist_sumcheck_switch_index,
             program_io,
@@ -72,6 +75,7 @@ where
                 trace,
                 final_memory_state,
                 untrusted_advice_polynomial: None,
+                trusted_advice_polynomial: None,
             },
         }
     }

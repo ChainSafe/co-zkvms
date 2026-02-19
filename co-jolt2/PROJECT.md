@@ -16,6 +16,9 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 - Summary of Jolt codebase wrt. Instructions `/Users/timofey/repos/examples/jolt/Instructions.md`
 - Summary of Jolt codebase wrt. Witness `/Users/timofey/repos/examples/jolt/Instructions.md`
 - Summary of `co-jolt` (v1) and `mpc-types` crates wrt. MPC types and core methods `../co-jolt/MpcTypes.md`
+- Implementation docs:
+  - Rep3 Dory commitment scheme `co-jolt2/docs/DORY.md`
+  - Rep3 Polynomials `co-jolt2/docs/POLY.md`
 
 
 ## Rules
@@ -442,43 +445,46 @@ COORDINATOR                              WORKER(s)
 
 
 
-## Implementation Steps 
+## Implementation Steps
 
-### Worker
+### Worker (Done)
+- **Trace sharing**: `host/program.rs` — `share_trace`, `share_cycle`, `generate_trace_shares`
+- **Instructions**: 70+ `Rep3LookupQuery` impls in `zkvm/instruction/`
+- **Operand promotion**: `populate_operands_casts` in `zkvm/instruction/mod.rs`
+- **Witness generation**: `generate_witness_batch_rep3` in `zkvm/witness.rs`
+- **Polynomial types**: `Rep3MultilinearPolynomial`, `Rep3DensePolynomial`, `Rep3OneHotPolynomial`
+- **Commitment**: `Rep3CommitmentScheme` + Dory impl in `poly/commitment/`
+- **DAG worker**: commit + hint exchange in `zkvm/dag/worker.rs`
+- **Advice stubs**: `commit_untrusted_advice`, `compute_trusted_advice_poly` (empty-case only)
 
-TODO what's aleady done
+### Worker (Remaining)
+- Advice polynomial construction (non-empty case)
+- RAM initial/final memory state construction (use `Rep3Value<F>` for mixed public/shared)
+- Virtual polynomial evaluation (`compute_claimed_witness_evals_rep3`)
+- Subsystem DAG nodes: `SpartanDagWorker`, `RegistersDagWorker`, `RamDagWorker`, `LookupsDagWorker`, `BytecodeDagWorker`
+- `Rep3BatchedSumcheck` (distributed round evaluation)
+- `Rep3OpeningAccumulatorWorker`
 
-TODO what's needs to be done
+### Coordinator (Done)
+- **Commitment receive + combine** in `zkvm/dag/coordinator.rs`
+- **Fiat-Shamir preamble** in `zkvm/dag/state_manager.rs`
+- **Advice stubs**: empty-case advice checks, transcript append ordering
+- **Stub JoltProof construction**: real commitments + default placeholders for unimplemented stages
 
-### Prover
+### Coordinator (Remaining)
+- Advice commitment handling (non-empty case)
+- Subsystem DAG node coordination (stages 1-4)
+- `Rep3BatchedSumcheck` transcript-driven round coordination
+- `Rep3OpeningAccumulatorCoordinator`
+- Proof assembly with real opening proofs
 
-**Step 1: Foundation types** (Done)
-- `src/zkvm/dag/mod.rs` — module declarations
-- `src/zkvm/dag/state_manager.rs` — `StateManagerWorker`, `StateManagerCoordinator` structs
-- `src/zkvm/dag/stage.rs` — `SumcheckStagesWorker`, `SumcheckStagesCoordinator` traits
-- `src/zkvm/dag/jolt_dag_worker.rs` — `JoltDAGWorker` with skeleton `prove()`
-- `src/zkvm/dag/jolt_dag_coordinator.rs` — `JoltDAGCoordinator` with skeleton `prove()`
+### Tests (Done)
+- `witness_batch_rep3`: 3-party witness generation correctness (in `zkvm/witness.rs`)
+- `commitment_correct`: 3 workers + 1 coordinator end-to-end commitment correctness (in `zkvm/mod.rs`)
 
-**Step 2: Polynomial commitment phase**
-- Worker: generate witness polys → commit shares → send to coordinator
-- Coordinator: receive commitment shares → combine → append to transcript
-
-**Step 3: Batched sumcheck infrastructure**
-- Distributed `BatchedSumcheck` that coordinates sumcheck rounds between worker/coordinator
-- Worker computes round evaluations on shared polynomials
-- Coordinator drives rounds via transcript challenges
-
-**Step 4: Per-subsystem DAG nodes**
-- `SpartanDag` worker/coordinator split
-- `RegistersDag` worker/coordinator split
-- `RamDag` worker/coordinator split
-- `LookupsDag` worker/coordinator split
-- `BytecodeDag` worker/coordinator split
-
-**Step 5: Opening proof batching**
-- Worker accumulates opening claims → sends shares
-- Coordinator combines → produces `ReducedOpeningProof`
-
-**Step 6: Integration**
-- Wire up `JoltDAGWorker::prove()` and `JoltDAGCoordinator::prove()` with all subsystem DAG nodes
-- End-to-end test with MPC network
+### RAM Memory State Design Note
+Use `Rep3Value<F>` (`src/utils/types/rep3_value.rs`) for mixed initial/final memory state:
+- Bytecode words → `Rep3Value::Public(F::from(word))`
+- Advice bytes → `Rep3Value::Shared(ring_to_field(packed_shared_u64))`
+- Input bytes → `Rep3Value::Public(F::from(word))` (inputs are public)
+- Cascading: `eq(r,k)` is public challenge → `Public * Shared = Shared` propagates correctly through Twist sumchecks

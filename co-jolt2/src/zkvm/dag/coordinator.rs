@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::utils::types::MaybeShared;
@@ -5,7 +7,7 @@ use crate::zkvm::dag::state_manager::StateManagerCoordinator;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
-use jolt_core::zkvm::dag::proof_serialization::JoltProof;
+use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
@@ -50,12 +52,36 @@ impl Rep3JoltDAGCoordinator {
         // --- Receive, combine, and store commitments ---
         Self::receive_commitments::<F, PCS, ProofTranscript, N>(&mut state, network)?;
 
-        // Stage 1: coordinate Spartan outer sumcheck
-        // Stage 2: coordinate batched sumcheck
-        // Stage 3: coordinate batched sumcheck
-        // Stage 4: coordinate batched sumcheck
-        // Stage 5: coordinate opening proof, assemble JoltProof
-        todo!("remaining stages")
+        // --- Receive untrusted advice commitment from workers ---
+        Self::receive_untrusted_advice_commitment::<F, PCS, ProofTranscript, N>(
+            &mut state, network,
+        )?;
+
+        // --- Append advice commitments to transcript (matching vanilla ordering) ---
+        if let Some(ref untrusted_advice_commitment) = state.untrusted_advice_commitment {
+            state
+                .transcript
+                .append_serializable(untrusted_advice_commitment);
+        }
+
+        if let Some(ref trusted_advice_commitment) = state.trusted_advice_commitment {
+            state
+                .transcript
+                .append_serializable(trusted_advice_commitment);
+        }
+
+        // --- Construct stub JoltProof with real commitments, deferred stages ---
+        let proof = JoltProof {
+            opening_claims: Claims(BTreeMap::new()),
+            commitments: std::mem::take(&mut state.commitments),
+            proofs: std::mem::take(&mut state.proofs),
+            untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
+            trace_length,
+            ram_K: state.ram_K,
+            bytecode_d: state.preprocessing.shared.bytecode.d,
+            twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
+        };
+        Ok(proof)
     }
 
     fn receive_commitments<F, PCS, ProofTranscript, N>(
@@ -99,6 +125,37 @@ impl Rep3JoltDAGCoordinator {
             state.transcript.append_serializable(commitment);
         }
 
+        Ok(())
+    }
+
+    /// Receive the untrusted advice commitment from all 3 workers.
+    ///
+    /// All workers compute the same public commitment, so we verify consistency
+    /// and store the first non-None value.
+    fn receive_untrusted_advice_commitment<F, PCS, ProofTranscript, N>(
+        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        N: Rep3NetworkCoordinator,
+    {
+        let commitments: Vec<Option<PCS::Commitment>> = network.receive_responses()?;
+        eyre::ensure!(
+            commitments.len() == 3,
+            "expected untrusted advice commitment from 3 parties, got {}",
+            commitments.len()
+        );
+
+        // All workers should produce identical results (public computation)
+        eyre::ensure!(
+            commitments[0] == commitments[1] && commitments[1] == commitments[2],
+            "untrusted advice commitment mismatch across parties"
+        );
+
+        state.untrusted_advice_commitment = commitments.into_iter().next().unwrap();
         Ok(())
     }
 }

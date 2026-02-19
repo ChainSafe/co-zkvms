@@ -138,3 +138,203 @@ impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
         Rep3JoltDAGCoordinator::prove(state, network)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use tracing::{info, info_span};
+
+    use crate::host::program::Rep3Program;
+    use crate::utils::test_utils::run_rep3_test_with_coordinator;
+    use crate::utils::tracing::init_tracing;
+    use crate::zkvm::instruction::{populate_operands_casts, Rep3Cycle};
+    use crate::zkvm::{Rep3Jolt, Rep3JoltWorker};
+    use jolt_core::host::Program;
+    use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+    use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
+    use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+    use jolt_core::zkvm::ram::{remap_address, RAMPreprocessing};
+    use jolt_core::zkvm::witness::{
+        compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
+    };
+    use jolt_core::zkvm::{
+        JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    };
+    use rayon::prelude::*;
+    use tracer::instruction::Cycle;
+
+    type F = Fr;
+    type PCS = DoryCommitmentScheme;
+
+    fn compute_ram_k(trace: &[Cycle], preprocessing: &JoltSharedPreprocessing) -> usize {
+        let max_from_trace = trace
+            .par_iter()
+            .filter_map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &preprocessing.memory_layout,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+
+        let max_from_bytecode = remap_address(
+            preprocessing.ram.min_bytecode_address,
+            &preprocessing.memory_layout,
+        )
+        .unwrap_or(0)
+            + preprocessing.ram.bytecode_words.len() as u64
+            + 1;
+
+        max_from_trace.max(max_from_bytecode).next_power_of_two() as usize
+    }
+
+    #[test]
+    fn commitment_correct() {
+        let _tracing_guard =
+            init_tracing("commitment_test.json", Path::new("/tmp/co-jolt2-traces"));
+
+        // 1. Build and trace the fibonacci program
+        let mut program = Program::new("fibonacci-guest");
+        let elf_path = "/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest";
+        program.elf = Some(PathBuf::from(elf_path));
+        let inputs = postcard::to_stdvec(&9u32).unwrap();
+        let (bytecode, memory_init, _) = program.decode();
+
+        // 2. Generate trace and shares
+        let mut rng = test_rng();
+        let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
+
+        let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+
+        // Pad traces
+        let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
+        info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
+        vanilla_trace.resize(padded_len, Cycle::NoOp);
+        for (trace, _, _) in shares.iter_mut() {
+            trace.resize(padded_len, Rep3Cycle::NoOp);
+        }
+
+        // 3. Build preprocessing with Dory generators
+        let shared = JoltSharedPreprocessing {
+            memory_layout: io_device.memory_layout.clone(),
+            bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
+            ram: RAMPreprocessing::preprocess(memory_init.clone()),
+        };
+        let preprocessing: JoltProverPreprocessing<F, PCS> =
+            <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+                bytecode,
+                io_device.memory_layout.clone(),
+                memory_init,
+                padded_len,
+            );
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
+
+        // 4. Compute ram_K
+        let ram_K = compute_ram_k(&vanilla_trace, &shared);
+        let bytecode_d = shared.bytecode.d;
+        let ram_d = compute_d_parameter(ram_K);
+
+        // 5. Vanilla: generate witness polys and commit
+        // DoryGlobals guard kept alive for entire test — workers get non-owning guards
+        let _vanilla_span = info_span!("vanilla_commitments").entered();
+        let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+        let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
+
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let mut vanilla_witness =
+            CommittedPolynomial::generate_witness_batch(&all_polys, &preprocessing, &vanilla_trace);
+
+        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+            .filter_map(|poly| vanilla_witness.remove(poly))
+            .collect();
+
+        let vanilla_commits: Vec<<PCS as CommitmentScheme>::Commitment> =
+            PCS::batch_commit(&committed_polys, &preprocessing.generators)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
+        drop(committed_polys);
+        drop(_vanilla_span);
+
+        // 6. MPC: run 3 workers + 1 coordinator
+        let preprocessing_arc = Arc::new(preprocessing);
+        let io_device_arc = Arc::new(io_device);
+        let base_port: u16 = 14300;
+
+        let _mpc_span = info_span!("mpc_commitment").entered();
+        let (_worker_results, coordinator_result) = run_rep3_test_with_coordinator(
+            base_port,
+            4,
+            |party_idx| {
+                let (trace, memory, _io) = shares[party_idx].clone();
+                let preprocessing = Arc::clone(&preprocessing_arc);
+                let io_device = (*io_device_arc).clone();
+                (trace, memory, preprocessing, io_device, ram_K)
+            },
+            || {
+                let verifier_preprocessing = verifier_preprocessing.clone();
+                let io_device = (*io_device_arc).clone();
+                (verifier_preprocessing, io_device, ram_K, padded_len)
+            },
+            |input, mut io_ctx| {
+                let (mut trace, memory, preprocessing, io_device, ram_K) = input;
+
+                let party = io_ctx.party_id();
+                let _span = info_span!("populate_operands_casts", ?party).entered();
+                populate_operands_casts(&mut trace, io_ctx.main())?;
+                drop(_span);
+
+                let hint_map = <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+                    &preprocessing,
+                    trace,
+                    io_device,
+                    memory,
+                    io_ctx,
+                    ram_K,
+                )?;
+                info!(?party, hints = hint_map.len(), "worker done");
+                Ok(hint_map)
+            },
+            |input, network| {
+                let (verifier_preprocessing, io_device, ram_K, trace_length) = input;
+                let _span = info_span!("coordinator_prove").entered();
+                let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
+                    &verifier_preprocessing,
+                    io_device,
+                    network,
+                    ram_K,
+                    trace_length,
+                )?;
+                info!(commitments = proof.commitments.len(), "coordinator done");
+                Ok(proof)
+            },
+        );
+
+        drop(_mpc_span);
+
+        // 7. Compare commitments
+        let proof = coordinator_result;
+        assert_eq!(
+            proof.commitments.len(),
+            vanilla_commits.len(),
+            "commitment count mismatch: mpc={} vanilla={}",
+            proof.commitments.len(),
+            vanilla_commits.len()
+        );
+        for (i, (mpc, vanilla)) in proof
+            .commitments
+            .iter()
+            .zip(vanilla_commits.iter())
+            .enumerate()
+        {
+            assert_eq!(mpc, vanilla, "commitment mismatch at index {i}");
+        }
+        info!("all {} commitments match!", proof.commitments.len());
+    }
+}
