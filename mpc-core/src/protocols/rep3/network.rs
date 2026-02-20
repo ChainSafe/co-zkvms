@@ -449,7 +449,16 @@ impl Rep3Network for Rep3MpcNet {
     }
 }
 
-pub trait Rep3NetworkWorker: Rep3Network + MpcStarNetWorker + 'static {}
+pub trait Rep3NetworkWorker: Rep3Network + MpcStarNetWorker + 'static {
+    fn exchange<Req, Resp>(&mut self, request: Req) -> eyre::Result<Resp>
+    where
+        Req: CanonicalSerialize + CanonicalDeserialize,
+        Resp: CanonicalSerialize + CanonicalDeserialize,
+    {
+        self.send_response(request).context("send_response")?;
+        self.receive_request().context("receive_request")
+    }
+}
 pub trait Rep3NetworkCoordinator: MpcStarNetCoordinator + 'static {
     fn sync_with_parties(&mut self) -> eyre::Result<()>;
 }

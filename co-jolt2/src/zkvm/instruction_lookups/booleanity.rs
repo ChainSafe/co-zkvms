@@ -338,7 +338,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3BooleanitySumcheckWorke
         LOG_K_CHUNK + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim_public(&self) -> F {
         F::zero()
     }
 
@@ -477,7 +477,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
         LOG_K_CHUNK + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim_public(&self) -> F {
         F::zero()
     }
 

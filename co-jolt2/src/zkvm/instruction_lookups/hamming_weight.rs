@@ -48,7 +48,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3HammingWeightSumcheckWo
         LOG_K_CHUNK
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim_public(&self) -> F {
         self.gamma.iter().copied().sum()
     }
 
@@ -165,7 +165,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3HammingWeig
         LOG_K_CHUNK
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim_public(&self) -> F {
         self.gamma.iter().copied().sum()
     }
 

@@ -84,4 +84,4 @@ std = [
     "ark-poly-commit/std",
 ]
 debug = []
-test-utils = ["rcgen"]
+test-utils = ["rcgen", "mpc-core/test-utils"]

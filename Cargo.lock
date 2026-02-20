@@ -2443,6 +2443,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "bytesize",
+ "color-eyre",
  "eyre",
  "fancy-garbling",
  "itertools 0.12.1",

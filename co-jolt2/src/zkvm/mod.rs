@@ -1,5 +1,6 @@
 pub mod dag;
 pub mod instruction;
+pub mod instruction_lookups;
 pub mod witness;
 
 use std::collections::HashMap;
@@ -45,7 +46,7 @@ where
         final_memory_state: Rep3Memory,
         io_ctx: IoContextPool<N>,
         ram_K: usize,
-    ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>;
+    ) -> eyre::Result<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +106,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             io_ctx,
             ram_K,
         );
-        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state);
+        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state)
     }
 }
 
@@ -273,7 +274,6 @@ mod tests {
                     io_ctx,
                     ram_K,
                 )?;
-                info!(?party, hints = hint_map.len(), "worker done");
                 Ok(hint_map)
             },
             |input, network| {

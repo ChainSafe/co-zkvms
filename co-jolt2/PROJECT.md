@@ -40,12 +40,14 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 
 ### Naming Conventions
 
-1. Structs use **suffix** pattern: `StateManagerWorker`, `SumcheckStagesCoordinator` (not `WorkerStateManager`)
-2. Methods on `*Worker`/`*Coordinator` structs **omit** "worker"/"coordinator" from method names (e.g. `prove()`, `stage1_prove()`, `stage2_instances()` — not `prove_worker()`, `stage1_prove_worker()`)
+1. All structs ported from vanilla use `Rep3` prefix (e.g. `Rep3LookupsDag`, `Rep3BooleanitySumcheck`, `Rep3OpeningAccumulator`)
+2. Structs use **suffix** pattern: `StateManagerWorker`.
+  - **No `Coordinator` suffix** on coordinator variants — if it's not `*Worker` it's implicitly the coordinator. Worker structs DO get `Worker` suffix.
+   - Worker: `Rep3LookupsDagWorker`, `Rep3BooleanitySumcheckWorker`, `Rep3OpeningAccumulatorWorker`
+   - Coordinator: `Rep3LookupsDag`, `Rep3BooleanitySumcheck`, `Rep3OpeningAccumulator`
 3. `JoltDAGWorker` and `JoltDAGCoordinator` are **separate structs in separate files** (not methods on a shared enum)
-
-These conventions must also be added to PROJECT.md Rules section during implementation.
-
+4. Methods on Rep3 structs **omit** `_mpc`/`_rep3`, "worker"/"coordinator" suffix (e.g. `compute_ra_evals`, not `compute_ra_evals_mpc`; `prove()`, `stage1_prove()`, `stage2_instances()` — not `prove_worker()`, `stage1_prove_worker()`)
+5. RandOHV Field Naming: Fields containing publicly-opened masked indices (from RandOHV masking) use `masked_` prefix (e.g. `masked_H_indices`, `masked_indices_c`)
 
 ### Test Naming
 
@@ -67,6 +69,11 @@ Format: `<subject>_<what_is_checked>`. Rules:
 ### Modifying Vanilla Jolt
 When the vanilla codebase (`../../examples/jolt/`) has private methods or attributes that co-jolt2 needs, you are allowed to make them `pub` directly in the vanilla code. This is a prototype — don't waste time on workarounds.
 
+### MPC Networking (Important)
+- Use tuples / existing container types in `send_response` / `broadcast_request`; do **not** introduce protocol message structs.
+- Only send data that the receiver cannot deterministically derive cheaply. Avoid sending `round` indices, active sets, or values derivable from transcript or local state.
+- Worker/coordinator loops must be fully deterministic and match send/recv order exactly.
+
 ## File Structure Must Mirror Vanilla
 co-jolt2's `src/` directory structure must mirror the vanilla Jolt codebase. We combine:
 - `../../examples/jolt/tracer/src/instruction/` (tracer instruction types)
@@ -82,6 +89,14 @@ into a single `src/zkvm/instruction/` directory.
 | `tracer/src/instruction/format/` | `src/zkvm/instruction/format/` |
 
 When adding new modules (e.g., `bytecode/`, `r1cs/`, `witness.rs`), place them at the same relative path as vanilla's `jolt-core/src/zkvm/`.
+
+--- 
+
+## Rep3-based algorithms primer
+
+### Rep3 Share Multiplication Properties
+- Multiplying two `Rep3PrimeFieldShare<F>` yields `AdditivePrimeFieldShare<F>` **locally** (no network). The additive result supports further public-scalar multiplication and addition. Reconstruction requires all 3 parties to send their additive component.
+- **Design implication**: sumcheck round evaluations involving `share * share` (e.g. `h_0²` in Booleanity Phase 2) can be computed entirely locally — accumulate into additive shares, then send only the final aggregate to coordinator for reconstruction. No `io_ctx`/network argument needed in `compute_prover_message`.
 
 ---
 
@@ -126,7 +141,6 @@ For ADD-type (AddOperands flag): `left + right` (single combined operand).
 For VirtualAdvice: `advice` value directly.
 
 This is a **nonlinear** operation on shared values when both operands are shared (R-type, B-type).
-
 
 ---
 

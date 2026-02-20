@@ -15,6 +15,7 @@ ark-linear-sumcheck.workspace = true
 rand.workspace = true
 itertools.workspace = true
 eyre.workspace = true
+color-eyre = { workspace = true, optional = true }
 rayon = { version = "1.10.0", optional = true }
 rand_chacha.workspace = true
 tracing.workspace = true
@@ -47,3 +48,4 @@ parallel = [
     "ark-std/parallel",
     "rayon",
 ]
+test-utils = ["std", "color-eyre"]

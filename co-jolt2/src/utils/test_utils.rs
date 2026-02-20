@@ -245,6 +245,9 @@ where
     (worker_array, coordinator_result)
 }
 
+#[cfg(feature = "test-utils")]
+pub use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+
 // ── Polynomial Comparison ───────────────────────────────────────────────────
 
 /// Compare two multilinear polynomials coefficient-by-coefficient.

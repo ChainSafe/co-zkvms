@@ -1,6 +1,8 @@
 pub mod arithmetic;
 pub mod binary;
 pub mod network;
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 // pub mod poly;
 pub mod conversion;
 pub mod detail;

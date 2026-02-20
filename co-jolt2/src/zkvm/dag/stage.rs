@@ -1,12 +1,18 @@
-use crate::field::JoltField;
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 
+use crate::field::JoltField;
+pub use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
+use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+
+// ---------------------------------------------------------------------------
+// Staged sumcheck pipeline traits (per-subsystem interface)
+// ---------------------------------------------------------------------------
+
 /// Worker side of the staged sumcheck pipeline.
 ///
-/// Each subsystem DAG node (e.g. `SpartanDagWorker`, `RegistersDagWorker`)
+/// Each subsystem DAG node (e.g. `Rep3LookupsDagWorker`)
 /// implements this trait to contribute sumcheck instances from shared polynomials.
 pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 {
@@ -17,24 +23,31 @@ pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N
         Ok(())
     }
 
-    // Placeholder return type — will be replaced with actual sumcheck instance
-    // type (e.g. Vec<Box<dyn Rep3SumcheckInstance<F>>>) in Step 3.
-    fn stage2_instances(&mut self, _sm: &mut StateManagerWorker<'_, F, PCS, N>) -> Vec<()> {
+    fn stage2_instances(
+        &mut self,
+        _sm: &mut StateManagerWorker<'_, F, PCS, N>,
+    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         vec![]
     }
 
-    fn stage3_instances(&mut self, _sm: &mut StateManagerWorker<'_, F, PCS, N>) -> Vec<()> {
+    fn stage3_instances(
+        &mut self,
+        _sm: &mut StateManagerWorker<'_, F, PCS, N>,
+    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         vec![]
     }
 
-    fn stage4_instances(&mut self, _sm: &mut StateManagerWorker<'_, F, PCS, N>) -> Vec<()> {
+    fn stage4_instances(
+        &mut self,
+        _sm: &mut StateManagerWorker<'_, F, PCS, N>,
+    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         vec![]
     }
 }
 
 /// Coordinator side of the staged sumcheck pipeline.
 ///
-/// Each subsystem DAG node (e.g. `SpartanDagCoordinator`, `RegistersDagCoordinator`)
+/// Each subsystem DAG node (e.g. `Rep3LookupsDag`)
 /// implements this trait to drive sumcheck rounds via the Fiat-Shamir transcript.
 pub trait SumcheckStagesCoordinator<
     F: JoltField,
@@ -49,26 +62,24 @@ pub trait SumcheckStagesCoordinator<
         Ok(())
     }
 
-    // Placeholder return type — will be replaced with actual sumcheck instance
-    // type in Step 3.
     fn stage2_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<()> {
+    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
         vec![]
     }
 
     fn stage3_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<()> {
+    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
         vec![]
     }
 
     fn stage4_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<()> {
+    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
         vec![]
     }
 }
