@@ -22,6 +22,24 @@ This supports:
   `Rep3PointShare`); each party uses only the `.a` limb of `E_field` scalars and the coordinator
   reconstructs row commitments by summing group shares (PST13-style linearity).
 
+### `commit_rows` perf: aligned FWHT (XOR-convolution)
+
+When the Dory layout is **aligned** (`T % num_columns == 0`), each output row corresponds to a
+single cycle-chunk of length `num_columns`, and we can compute all `K` row values for that chunk as
+an XOR-convolution:
+
+- Let `s[c] = Σ_{t in chunk, masked_index(t)=c} base[col(t)]` (public aggregation of bases by opened
+  masked index `c`).
+- Let `g[x] = E_field[x].a` (per-party scalar limb of the shared one-hot vector).
+- Then for each `k`: `out[k] = Σ_c s[c] * g[c XOR k]`.
+
+This is a standard XOR-correlation and is computed via two Walsh–Hadamard transforms (FWHT):
+`FWHT(out) = FWHT(s) ⊙ FWHT(g)`, with the inverse implemented as a second FWHT plus scaling by
+`1/K` (requires `K` power-of-two and invertible in `F`).
+
+Effect: per chunk cost drops from “`K` MSM-style accumulations of size `K`” to ~`O(K log K)` group
+adds + `O(K)` scalar muls, and we keep the existing outer parallelism over chunks (rayon).
+
 ## Rep3RaPolynomial (MPC RA helper)
 
 `Rep3RaPolynomial<I, F>` is an MPC port of vanilla’s RA helper used during the last cycle-variable

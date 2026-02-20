@@ -604,7 +604,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
     }
 }
 
-fn compute_g_from_masked_indices<F: JoltField>(
+pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
     polynomial: &Rep3OneHotPolynomial<F>,
     eq_cycle: &[F],
 ) -> Vec<Rep3PrimeFieldShare<F>> {

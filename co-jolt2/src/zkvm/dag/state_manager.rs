@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::field::JoltField;
 use crate::host::memory::Rep3Memory;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
+use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
@@ -38,6 +39,7 @@ pub struct StateManagerWorker<
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
     pub prover_state: ProverStateWorker<'a, F, PCS>,
+    pub accumulator: Rep3OpeningAccumulatorWorker<F>,
 }
 
 impl<'a, F, PCS, N> StateManagerWorker<'a, F, PCS, N>
@@ -77,6 +79,7 @@ where
                 untrusted_advice_polynomial: None,
                 trusted_advice_polynomial: None,
             },
+            accumulator: Rep3OpeningAccumulatorWorker::new(),
         }
     }
 
@@ -116,6 +119,7 @@ pub struct StateManagerCoordinator<
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub accumulator: Rep3OpeningAccumulator<F>,
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManagerCoordinator<'a, F, ProofTranscript, PCS>
@@ -140,6 +144,7 @@ where
             twist_sumcheck_switch_index,
             program_io,
             preprocessing,
+            accumulator: Rep3OpeningAccumulator::new(),
         }
     }
 
