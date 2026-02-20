@@ -4,7 +4,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use mpc_core::protocols::rep3::arithmetic;
-use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
@@ -132,7 +132,8 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
 /// returns 41 evaluations in `ALL_R1CS_INPUTS` order.
 #[tracing::instrument(skip_all)]
 pub fn compute_claimed_witness_evals_rep3<F, PCS, N>(
-    state: &mut StateManagerWorker<'_, F, PCS, N>,
+    state: &mut StateManagerWorker<'_, F, PCS>,
+    io_ctx: &mut IoContextPool<N>,
     r_cycle: &[F::Challenge],
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
 where
@@ -153,7 +154,7 @@ where
         trace_len.log_2()
     );
 
-    let party_id = state.io_ctx.party_id();
+    let party_id = state.party_id;
 
     let pc = &cycle_witness.pc;
     let unexpanded_pc = &cycle_witness.unexpanded_pc;
@@ -185,7 +186,7 @@ where
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !mul_rows.is_empty() {
         let lhs: Vec<_> = mul_rows.iter().map(|&t| rs1_field[t]).collect();
         let rhs: Vec<_> = mul_rows.iter().map(|&t| rs2_field[t]).collect();
-        arithmetic::mul_vec_par(&lhs, &rhs, state.io_ctx.main())?
+        arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
     } else {
         vec![]
     };
