@@ -6,7 +6,6 @@ use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use crate::field::JoltField;
@@ -64,12 +63,12 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3LookupsDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS>
+    for Rep3LookupsDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
-        sm: &mut StateManagerWorker<'_, F, PCS, N>,
+        sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         let r_cycle = sm
             .accumulator
@@ -91,7 +90,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             &self.one_hot_polys,
             &r_cycle,
             sm.prover_state.trace.len(),
-            sm.io_ctx.party_id(),
+            sm.party_id,
         );
 
         vec![Box::new(booleanity)]
@@ -99,7 +98,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 
     fn stage3_instances(
         &mut self,
-        _sm: &mut StateManagerWorker<'_, F, PCS, N>,
+        _sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         let G = self.G.take().unwrap();
         let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G);

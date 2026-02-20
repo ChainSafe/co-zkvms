@@ -26,6 +26,7 @@ use snarks_core::math::Math;
 use tracing::info_span;
 
 use crate::field::JoltField;
+use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
@@ -137,7 +138,8 @@ where
 #[tracing::instrument(skip_all, name = "Witness::generate_witness_rep3")]
 pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
-    state: &mut StateManagerWorker<'_, F, PCS, N>,
+    state: &mut StateManagerWorker<'_, F, PCS>,
+    io_ctx: &mut IoContextPool<N>,
 ) -> eyre::Result<HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>>
 where
     F: JoltField,
@@ -145,12 +147,12 @@ where
     N: Rep3NetworkWorker,
     Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
 {
-    let party_id = state.io_ctx.party_id();
+    let party_id = state.party_id;
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
     let trace: &[Rep3Cycle] = &state.prover_state.trace;
 
-    let cycle_witness = &state.prover_state.cycle_witness;
-    let lookup_outputs: &[Rep3PrimeFieldShare<F>] = &cycle_witness.lookup_output;
+    let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> =
+        state.prover_state.cycle_witness.lookup_output.clone();
 
     let mut ram_d = 0;
     let mut bytecode_d = 0;
@@ -266,7 +268,7 @@ where
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
     let indices: Vec<Rep3RingShare<u128>> = {
         let _span = info_span!("fulfill_index_futures", count = index_futures.len()).entered();
-        index_futures.fulfill_batched(&mut state.io_ctx, |r, ()| r)?
+        index_futures.fulfill_batched(io_ctx, |r, ()| r)?
     };
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
@@ -294,8 +296,8 @@ where
     let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
     // Instruction inputs are derived from the cached cycle witness (no extra casts).
-    let cycle_witness = &state.prover_state.cycle_witness;
-    let flags_bits = &cycle_witness.flags_bits;
+    // Clone flags_bits to release borrow on cycle_witness, allowing assignment of rd_inc/ram_inc later.
+    let flags_bits = state.prover_state.cycle_witness.flags_bits.clone();
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
     let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
@@ -303,11 +305,11 @@ where
         .iter()
         .any(|p| matches!(p, CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput))
     {
-        let n = cycle_witness.len();
+        let n = state.prover_state.cycle_witness.len();
         left_input_field = Vec::with_capacity(n);
         right_input_field = Vec::with_capacity(n);
         for t in 0..n {
-            let (l, r) = cycle_witness.row(t).to_instruction_inputs(party_id);
+            let (l, r) = state.prover_state.cycle_witness.row(t).to_instruction_inputs(party_id);
             left_input_field.push(l);
             right_input_field.push(r);
         }
@@ -363,28 +365,35 @@ where
             CommittedPolynomial::RdInc => {
                 // rd_inc = rd_post - rd_pre in the field (MPC: subtract after conversion)
                 let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_pre, state.io_ctx.main())?;
+                    ring_to_field_a2b_many(&batch.rd_pre, io_ctx.main())?;
                 let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_post, state.io_ctx.main())?;
+                    ring_to_field_a2b_many(&batch.rd_post, io_ctx.main())?;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
                     .map(|(post, pre)| post - pre)
                     .collect();
-                results.insert(*poly, Rep3MultilinearPolynomial::from(inc));
+                // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
+                // Arc internally — no data duplication.
+                let dense = Rep3DensePolynomial::new(inc);
+                state.prover_state.cycle_witness.rd_inc = Some(dense.clone());
+                results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::RamInc => {
                 // ram_inc = post_value - pre_value in the field (MPC: subtract after conversion)
                 let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_pre, state.io_ctx.main())?;
+                    ring_to_field_a2b_many(&batch.ram_pre, io_ctx.main())?;
                 let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_post, state.io_ctx.main())?;
+                    ring_to_field_a2b_many(&batch.ram_post, io_ctx.main())?;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
                     .map(|(post, pre)| post - pre)
                     .collect();
-                results.insert(*poly, Rep3MultilinearPolynomial::from(inc));
+                // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
+                let dense = Rep3DensePolynomial::new(inc);
+                state.prover_state.cycle_witness.ram_inc = Some(dense.clone());
+                results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::InstructionRa(i) => {
                 if *i < instruction_lookups::D {
@@ -392,7 +401,7 @@ where
                     let one_hot = Rep3OneHotPolynomial::<F>::from_indices(
                         indices,
                         instruction_lookups::K_CHUNK,
-                        state.io_ctx.main(),
+                        io_ctx.main(),
                     )?;
                     results.insert(*poly, Rep3MultilinearPolynomial::shared_one_hot(one_hot));
                 }

@@ -2,6 +2,8 @@ pub mod dag;
 pub mod instruction;
 pub mod r1cs;
 pub mod instruction_lookups;
+pub mod ram;
+pub mod registers;
 pub mod witness;
 
 use std::collections::HashMap;
@@ -99,15 +101,16 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: IoContextPool<N>,
         ram_K: usize,
     ) -> eyre::Result<()> {
+        let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
             preprocessing,
             trace,
             program_io,
             final_memory_state,
-            io_ctx,
+            party_id,
             ram_K,
         );
-        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state)
+        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx)
     }
 }
 

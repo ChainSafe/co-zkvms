@@ -15,7 +15,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
-use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use rand::distributions::{Distribution, Standard};
 
@@ -32,7 +32,8 @@ impl Rep3JoltDAGWorker {
     /// Returns the opened hint map (keyed by `CommittedPolynomial`).
     #[tracing::instrument(skip_all, name = "Rep3JoltDAGWorker::prove")]
     pub fn prove<F, PCS, ProofTranscript, N>(
-        mut state: StateManagerWorker<'_, F, PCS, N>,
+        mut state: StateManagerWorker<'_, F, PCS>,
+        mut io_ctx: IoContextPool<N>,
     ) -> eyre::Result<()>
     where
         F: JoltField,
@@ -44,10 +45,10 @@ impl Rep3JoltDAGWorker {
     {
         let trace_length = state.prover_state.trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
-        let party_id = state.io_ctx.party_id();
+        let party_id = io_ctx.party_id();
 
         // --- Send trace_length to coordinator ---
-        state.io_ctx.network().send_response(trace_length)?;
+        io_ctx.network().send_response(trace_length)?;
 
         let ram_K = state.ram_K;
         let bytecode_d = state.prover_state.preprocessing.shared.bytecode.d;
@@ -58,14 +59,16 @@ impl Rep3JoltDAGWorker {
         );
 
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
-        Self::commit_untrusted_advice::<F, PCS, N>(&mut state, padded_trace_length)?;
+        Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
 
         let hint_map = Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
-            party_id, &mut state,
+            party_id,
+            &mut state,
+            &mut io_ctx,
         )?;
 
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
-        Self::compute_trusted_advice_poly::<F, PCS, N>(&mut state);
+        Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
 
         // Future stages (sumcheck, opening proof) will go here...
         Ok(())
@@ -75,7 +78,8 @@ impl Rep3JoltDAGWorker {
     /// coordinator, and open hint shares across parties.
     fn generate_and_commit_polynomials<F, PCS, ProofTranscript, N>(
         party_id: PartyID,
-        state: &mut StateManagerWorker<'_, F, PCS, N>,
+        state: &mut StateManagerWorker<'_, F, PCS>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>
     where
         F: JoltField,
@@ -88,7 +92,7 @@ impl Rep3JoltDAGWorker {
         let poly_keys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
 
-        let witness_polys = generate_witness_batch_rep3(&poly_keys, state)?;
+        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx)?;
 
         // Collect polys in AllCommittedPolynomials order for alignment with coordinator.
         let commit_to_public = party_id == PartyID::ID0;
@@ -111,17 +115,17 @@ impl Rep3JoltDAGWorker {
         // (Future stages that need PCS openings will store them on state.)
 
         // Send commitment shares to coordinator
-        state.io_ctx.network().send_response(commitment_shares)?;
+        io_ctx.network().send_response(commitment_shares)?;
 
         // Send untrusted advice commitment to coordinator (all workers computed
         // the same public commitment; coordinator verifies consistency).
-        state
-            .io_ctx
+        io_ctx
             .network()
             .send_response(state.untrusted_advice_commitment.clone())?;
 
         // Open hints across parties (without coordinator)
-        let hint_map = Self::open_hints::<F, PCS, ProofTranscript, N>(&poly_keys, hint_shares, state)?;
+        let hint_map =
+            Self::open_hints::<F, PCS, ProofTranscript, N>(&poly_keys, hint_shares, state, io_ctx)?;
 
         // Ring-shared trace is no longer needed after witness generation; drop it to free memory.
         state.prover_state.trace.clear();
@@ -136,14 +140,13 @@ impl Rep3JoltDAGWorker {
     /// into u64 words, builds a `MultilinearPolynomial`, commits with standard
     /// `PCS::commit` (advice is public data, not secret-shared), and stores the
     /// commitment + polynomial on state.
-    fn commit_untrusted_advice<F, PCS, N>(
-        state: &mut StateManagerWorker<'_, F, PCS, N>,
+    fn commit_untrusted_advice<F, PCS>(
+        state: &mut StateManagerWorker<'_, F, PCS>,
         padded_trace_length: usize,
     ) -> eyre::Result<()>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
-        N: Rep3NetworkWorker,
     {
         if state.program_io.untrusted_advice.is_empty() {
             return Ok(());
@@ -183,11 +186,10 @@ impl Rep3JoltDAGWorker {
     /// bytes into u64 words, builds a `MultilinearPolynomial`, and stores it
     /// on prover state. No commitment is computed here — the trusted advice
     /// commitment comes from an external source.
-    fn compute_trusted_advice_poly<F, PCS, N>(state: &mut StateManagerWorker<'_, F, PCS, N>)
+    fn compute_trusted_advice_poly<F, PCS>(state: &mut StateManagerWorker<'_, F, PCS>)
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
-        N: Rep3NetworkWorker,
     {
         if state.program_io.trusted_advice.is_empty() {
             return;
@@ -218,7 +220,8 @@ impl Rep3JoltDAGWorker {
     fn open_hints<F, PCS, ProofTranscript, N>(
         poly_keys: &[CommittedPolynomial],
         hint_shares: Vec<MaybeShared<PCS::OpeningProofHint>>,
-        state: &mut StateManagerWorker<'_, F, PCS, N>,
+        state: &mut StateManagerWorker<'_, F, PCS>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>
     where
         F: JoltField,
@@ -251,11 +254,11 @@ impl Rep3JoltDAGWorker {
 
         // Round 1: send own shares to next party, receive prev party's shares
         let prev_shared: Vec<PCS::OpeningProofHint> =
-            state.io_ctx.main().network.reshare_many(&own_shared)?;
+            io_ctx.main().network.reshare_many(&own_shared)?;
 
         // Round 2: forward prev's shares, receive the third party's shares
         let prev_prev_shared: Vec<PCS::OpeningProofHint> =
-            state.io_ctx.main().network.reshare_many(&prev_shared)?;
+            io_ctx.main().network.reshare_many(&prev_shared)?;
 
         // Combine all 3 shares per polynomial
         let mut hint_map = HashMap::with_capacity(poly_keys.len());

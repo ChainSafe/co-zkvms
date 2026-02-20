@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 
 use crate::field::JoltField;
 
@@ -59,6 +59,40 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             OpeningId::Virtual(polynomial, sumcheck),
             (opening_point, claim),
         );
+    }
+
+    /// Append a virtual polynomial opening where the claim is PUBLIC.
+    /// Promotes the public claim to a trivial rep3 share internally.
+    pub fn append_virtual_public(
+        &mut self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+        party_id: PartyID,
+    ) {
+        self.append_virtual(
+            polynomial,
+            sumcheck,
+            opening_point,
+            rep3_arith::promote_to_trivial_share(party_id, claim),
+        );
+    }
+
+    /// Append dense (committed) polynomial openings at a shared opening point.
+    pub fn append_dense(
+        &mut self,
+        polynomials: Vec<CommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+        claims: &[Rep3PrimeFieldShare<F>],
+    ) {
+        assert_eq!(polynomials.len(), claims.len());
+        for (label, claim) in polynomials.into_iter().zip(claims.iter()) {
+            let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let key = OpeningId::Committed(label, sumcheck);
+            self.openings.insert(key, (point, *claim));
+        }
     }
 
     pub fn get_opening(&self, key: OpeningId) -> Rep3PrimeFieldShare<F> {
@@ -133,6 +167,25 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
 
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
+            let key = OpeningId::Committed(label, sumcheck);
+            self.openings.insert(key, (point, claim));
+        }
+    }
+
+    /// Append dense (committed) polynomial openings with transcript interaction.
+    pub fn append_dense<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        polynomials: Vec<CommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F::Challenge>,
+        claims: Vec<F>,
+    ) {
+        assert_eq!(polynomials.len(), claims.len());
+        claims.iter().for_each(|claim| transcript.append_scalar(claim));
+
+        for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
+            let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
             let key = OpeningId::Committed(label, sumcheck);
             self.openings.insert(key, (point, claim));
         }

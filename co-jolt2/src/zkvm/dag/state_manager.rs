@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::field::JoltField;
 use crate::host::memory::Rep3Memory;
+use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::instruction::Rep3Cycle;
@@ -10,7 +11,6 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use tracer::JoltDevice;
 
@@ -40,6 +40,8 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     pub unexpanded_pc: Vec<u64>,
     pub imm: Vec<i128>,
     pub rd_addr: Vec<u8>,
+    pub rs1_addr: Vec<u8>,
+    pub rs2_addr: Vec<u8>,
     pub ram_addr: Vec<u64>,
     /// Bit i corresponds to `CircuitFlags as usize == i`.
     pub flags_bits: Vec<u32>,
@@ -54,6 +56,12 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     pub rd_write_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_read_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_write_value: Vec<Rep3PrimeFieldShare<F>>,
+
+    /// RdInc polynomial (post - pre for register writes). Stored as
+    /// `Option<Rep3DensePolynomial>` so provers can `.take()` ownership.
+    pub rd_inc: Option<Rep3DensePolynomial<F>>,
+    /// RamInc polynomial (post - pre for RAM writes).
+    pub ram_inc: Option<Rep3DensePolynomial<F>>,
 }
 
 impl<F: JoltField> Rep3CycleWitnesses<F> {
@@ -95,6 +103,14 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
 
     pub fn rd_addr(&self) -> u8 {
         self.w.rd_addr[self.t]
+    }
+
+    pub fn rs1_addr(&self) -> u8 {
+        self.w.rs1_addr[self.t]
+    }
+
+    pub fn rs2_addr(&self) -> u8 {
+        self.w.rs2_addr[self.t]
     }
 
     pub fn ram_addr(&self) -> u64 {
@@ -250,9 +266,8 @@ pub struct StateManagerWorker<
     'a,
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    N: Rep3NetworkWorker,
 > {
-    pub io_ctx: IoContextPool<N>,
+    pub party_id: PartyID,
     pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
@@ -262,18 +277,17 @@ pub struct StateManagerWorker<
     pub accumulator: Rep3OpeningAccumulatorWorker<F>,
 }
 
-impl<'a, F, PCS, N> StateManagerWorker<'a, F, PCS, N>
+impl<'a, F, PCS> StateManagerWorker<'a, F, PCS>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    N: Rep3NetworkWorker,
 {
     pub fn new(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: Vec<Rep3Cycle>,
         program_io: JoltDevice,
         final_memory_state: Rep3Memory,
-        io_ctx: IoContextPool<N>,
+        party_id: PartyID,
         ram_K: usize,
     ) -> Self {
         let T = trace.len();
@@ -286,7 +300,7 @@ where
         };
 
         Self {
-            io_ctx,
+            party_id,
             commitments: vec![],
             untrusted_advice_commitment: None,
             ram_K,
@@ -342,6 +356,7 @@ pub struct StateManagerCoordinator<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
+    pub trace_length: usize,
     pub program_io: JoltDevice,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub accumulator: Rep3OpeningAccumulator<F>,
@@ -367,6 +382,7 @@ where
             trusted_advice_commitment: None,
             ram_K,
             twist_sumcheck_switch_index,
+            trace_length: 0,
             program_io,
             preprocessing,
             accumulator: Rep3OpeningAccumulator::new(),
