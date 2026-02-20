@@ -12,10 +12,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMovsign>
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Extract sign bit (MSB), then cmux: if sign_bit then 0xFFFFFFFF else 0
-        let all_ones = RingElement(u32::MAX);
+        let all_ones = RingElement(u64::from(u32::MAX));
         let vals: Vec<_> = steps
             .iter()
             .map(|st| {
@@ -32,9 +32,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMovsign>
             .into_iter()
             .map(|z| {
                 let neg = !z; // neg == 1 when sign bit is 1
-                let neg_u32 = bit_to_ring32(neg);
+                let neg_u64 = bit_to_ring64(neg);
                 // neg_u32 * 0xFFFFFFFF
-                neg_u32 * all_ones
+                neg_u64 * all_ones
             })
             .collect();
         results.into_iter().zip(out).for_each(|(r, out)| {

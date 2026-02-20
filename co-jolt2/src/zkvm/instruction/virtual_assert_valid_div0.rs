@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // divisor (left), quotient (right)
         // if divisor == 0: check quotient == MAX, else: return 1
@@ -22,26 +22,29 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
                     l.as_binary_or_trivial(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
                 )
             })
             .unzip();
         let divisor_is_zero = rep3_ring::binary::is_zero_many(&divisors, io_ctx)?;
         let max_vals: Vec<_> = (0..steps.len())
             .map(|_| {
-                rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(u32::MAX))
+                rep3_ring::arithmetic::promote_to_trivial_share(
+                    io_ctx.id,
+                    RingElement(u64::from(u32::MAX)),
+                )
             })
             .collect();
         let quotient_eq_max = rep3_ring::arithmetic::eq_many(&quotients, &max_vals, io_ctx)?;
         let ones: Vec<_> = (0..steps.len())
-            .map(|_| rep3_ring::binary::promote_to_trivial_share(io_ctx.id, &RingElement(1u32)))
+            .map(|_| rep3_ring::binary::promote_to_trivial_share(io_ctx.id, &RingElement(1u64)))
             .collect();
-        let quotient_eq_max_u32: Vec<_> =
-            quotient_eq_max.iter().map(|b| bit_to_ring32(*b)).collect();
-        let divisor_is_zero_u32: Vec<_> =
-            divisor_is_zero.iter().map(|b| bit_to_ring32(*b)).collect();
+        let quotient_eq_max_u64: Vec<_> =
+            quotient_eq_max.iter().map(|b| bit_to_ring64(*b)).collect();
+        let divisor_is_zero_u64: Vec<_> =
+            divisor_is_zero.iter().map(|b| bit_to_ring64(*b)).collect();
         // if divisor == 0: result = (quotient == MAX), else: result = 1
-        rep3_ring::binary::cmux_many(&divisor_is_zero_u32, &quotient_eq_max_u32, &ones, io_ctx)?
+        rep3_ring::binary::cmux_many(&divisor_is_zero_u64, &quotient_eq_max_u64, &ones, io_ctx)?
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {

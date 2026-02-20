@@ -19,15 +19,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMULI> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    l.as_arithmetic_or_trivial::<u32>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u32>(io_ctx.id),
+                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
                 )
             })
             .unzip();

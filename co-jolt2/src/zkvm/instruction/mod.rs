@@ -22,6 +22,7 @@ use tracer::instruction::{Cycle, Instruction, RAMAccess, RISCVCycle, RISCVInstru
 use crate::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
+pub use crate::utils::instruction_utils::bit_to_ring64;
 use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_u128};
 
 use self::format::{Rep3InstructionFormat, Rep3RegisterState};
@@ -138,20 +139,6 @@ pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
 pub trait Rep3LookupQuery<const XLEN: usize> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
 
-    /// Returns the lookup operands as arithmetic shares.
-    /// Mirrors vanilla `to_lookup_operands`.
-    /// Default: passes through instruction inputs as arithmetic shares.
-    /// Add-index overrides return `(zero, x + y)`.
-    /// Sub-index overrides return `(zero, x + (2^XLEN - y))`.
-    /// Mul-index instructions do NOT override (mul handled in `to_lookup_index`).
-    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
-        let (left, right) = self.to_instruction_inputs();
-        (
-            left.as_arithmetic_or_trivial::<u64>(party_id),
-            right.as_arithmetic_or_trivial::<u128>(party_id),
-        )
-    }
-
     /// Returns a FutureRep3Ring representing the lookup index.
     /// - Interleave instructions: Ready(interleaved) — no network needed.
     /// - Add/Sub-index: Pending(RingA2B(sum)) — needs batch A2B.
@@ -169,7 +156,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()>;
 }
 
@@ -484,22 +471,6 @@ macro_rules! impl_rep3_lookup_query {
                 }
             }
 
-            fn to_lookup_operands(
-                &self,
-                party_id: PartyID,
-            ) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
-                match self {
-                    Rep3Cycle::NoOp => (Rep3RingShare::default(), Rep3RingShare::default()),
-                    $(
-                        Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_operands(cycle, party_id),
-                    )*
-                    _ => panic!(
-                        "Unexpected instruction for Rep3LookupQuery: {:?}",
-                        self.instruction()
-                    ),
-                }
-            }
-
             fn to_lookup_index(
                 &self,
                 party_id: PartyID,
@@ -520,7 +491,7 @@ macro_rules! impl_rep3_lookup_query {
                 &self,
                 steps: &[&impl Rep3LookupQuery<XLEN>],
                 io_ctx: &mut IoContext<N>,
-                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
             ) -> eyre::Result<()> {
                 match self {
                     Rep3Cycle::NoOp => {

@@ -63,7 +63,7 @@ pub fn run_rep3_test<I, O, W>(
 where
     I: Send + 'static,
     O: Send + 'static,
-    W: Fn(I, &mut IoContextPool<Rep3MpcNet>) -> eyre::Result<O> + Send + Sync + 'static,
+    W: Fn(I, IoContextPool<Rep3MpcNet>) -> eyre::Result<O> + Send + Sync + 'static,
 {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -89,10 +89,10 @@ where
                     let network = Rep3MpcNet::new(config, 0)
                         .with_context(|| format!("party {i} network init"))
                         .unwrap();
-                    let mut io_ctx = IoContextPool::init(network, num_io_forks)
+                    let io_ctx = IoContextPool::init(network, num_io_forks)
                         .with_context(|| format!("party {i} io_ctx init"))
                         .unwrap();
-                    work_fn(input, &mut io_ctx)
+                    work_fn(input, io_ctx)
                         .with_context(|| format!("party {i} work"))
                         .unwrap()
                 })

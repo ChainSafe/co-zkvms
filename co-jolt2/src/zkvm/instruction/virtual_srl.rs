@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         use crate::utils::instruction_utils::operand_to_binary_u128;
 
@@ -37,16 +37,16 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
                 y_bits.push(((bitmask >> (XLEN - 1 - i)) & 1) != 0);
             }
 
-            let mut coeff = RingElement(1u32);
-            let mut result_shares: Vec<Rep3RingShare<u32>> = Vec::with_capacity(XLEN);
+            let mut coeff = RingElement(1u64);
+            let mut result_shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(XLEN);
 
             for i in 0..XLEN {
                 let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1u128);
-                let x_i_u32: Rep3RingShare<u32> = downcast(x_i);
+                let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
 
                 if y_bits[i] {
-                    result_shares.push(&x_i_u32 * coeff);
-                    coeff = coeff * RingElement(2u32);
+                    result_shares.push(&x_i_u64 * coeff);
+                    coeff = coeff * RingElement(2u64);
                 }
             }
 

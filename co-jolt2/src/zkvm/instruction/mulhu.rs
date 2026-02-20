@@ -19,15 +19,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
+                    l.as_arithmetic_or_trivial::<u128>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<u128>(io_ctx.id),
                 )
             })
             .unzip();
@@ -35,7 +35,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
             .into_iter()
             .zip(out)
             .for_each(|(product, out)| {
-                let upper: Rep3RingShare<u32> = downcast(product >> 32);
+                // RV64 MULHU: upper 64 bits of the 128-bit product.
+                let upper: Rep3RingShare<u64> = downcast(product >> 64);
                 *out = FutureRep3Ring::cast_to_field(upper);
             });
         Ok(())

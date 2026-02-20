@@ -8,15 +8,6 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertWo
         )
     }
 
-    fn to_lookup_operands(&self, party_id: PartyID) -> (Rep3RingShare<u64>, Rep3RingShare<u128>) {
-        let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
-        (
-            Rep3RingShare::default(),
-            left.as_arithmetic_or_trivial::<u128>(party_id)
-                + right.as_arithmetic_or_trivial::<u128>(party_id),
-        )
-    }
-
     fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_u128(party_id);
@@ -28,7 +19,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertWo
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Check (lhs + rhs) % 4 == 0: add in binary, check 2 LSBs are zero
         let (a, b): (Vec<_>, Vec<_>) = steps
