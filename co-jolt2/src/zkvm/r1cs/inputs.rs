@@ -6,6 +6,7 @@ use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use mpc_core::protocols::rep3::arithmetic;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
@@ -139,11 +140,7 @@ where
     PCS: jolt_core::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>,
     N: Rep3NetworkWorker,
 {
-    let cycle_witness = state
-        .prover_state
-        .cycle_witness
-        .as_ref()
-        .expect("cycle_witness missing; generate witness first");
+    let cycle_witness = &state.prover_state.cycle_witness;
     let trace_len = cycle_witness.len();
     eyre::ensure!(
         trace_len.is_power_of_two(),
@@ -168,21 +165,21 @@ where
     let rs1_field = &cycle_witness.rs1_value;
     let rs2_field = &cycle_witness.rs2_value;
 
-    // Prepare batched shared×shared products (rows where both instruction inputs are shared).
+    // Batched shared×shared products: only needed for rows where both instruction
+    // inputs are shared AND the row is a MultiplyOperands instruction (the only
+    // R1CS constraint that references Product is gated by MultiplyOperands).
     let mask_left_rs1 = 1u32 << (CircuitFlags::LeftOperandIsRs1Value as usize);
     let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
+    let mask_mul = 1u32 << (CircuitFlags::MultiplyOperands as usize);
 
-    let mut mul_rows = Vec::new();
+    let mask_shared_mul = mask_mul | mask_left_rs1 | mask_right_rs2;
+    let mul_rows: Vec<usize> = (0..trace_len)
+        .into_par_iter()
+        .filter(|&t| (flags_bits[t] & mask_shared_mul) == mask_shared_mul)
+        .collect();
     let mut mul_map = vec![None; trace_len];
-    for t in 0..trace_len {
-        let fb = flags_bits[t];
-        let left_shared = (fb & mask_left_rs1) != 0;
-        let right_shared = (fb & mask_right_rs2) != 0;
-        if left_shared && right_shared {
-            let k = mul_rows.len();
-            mul_rows.push(t);
-            mul_map[t] = Some(k);
-        }
+    for (k, &t) in mul_rows.iter().enumerate() {
+        mul_map[t] = Some(k);
     }
 
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !mul_rows.is_empty() {
@@ -193,57 +190,6 @@ where
         vec![]
     };
 
-    // Pre-compute per-row products (left_input * right_input in field domain).
-    // Shared×shared rows use the batched mul_products; other combos are local.
-    let mask_left_pc = 1u32 << (CircuitFlags::LeftOperandIsPC as usize);
-    let mask_right_imm = 1u32 << (CircuitFlags::RightOperandIsImm as usize);
-
-    let row_products: Vec<Rep3PrimeFieldShare<F>> = (0..trace_len)
-        .map(|t| {
-            let fb = flags_bits[t];
-            let left_shared = (fb & mask_left_rs1) != 0;
-            let right_shared = (fb & mask_right_rs2) != 0;
-            let left_is_pc = (fb & mask_left_pc) != 0;
-            let right_is_imm = (fb & mask_right_imm) != 0;
-
-            match (left_shared, right_shared) {
-                (true, true) => {
-                    let k = mul_map[t].expect("mul_map missing entry");
-                    mul_products[k]
-                }
-                (true, false) => {
-                    let r = if right_is_imm {
-                        F::from_i128(imm[t])
-                    } else {
-                        F::zero()
-                    };
-                    arithmetic::mul_public(rs1_field[t], r)
-                }
-                (false, true) => {
-                    let l = if left_is_pc {
-                        F::from_u64(unexpanded_pc[t])
-                    } else {
-                        F::zero()
-                    };
-                    arithmetic::mul_public(rs2_field[t], l)
-                }
-                (false, false) => {
-                    let l = if left_is_pc {
-                        F::from_u64(unexpanded_pc[t])
-                    } else {
-                        F::zero()
-                    };
-                    let r = if right_is_imm {
-                        F::from_i128(imm[t])
-                    } else {
-                        F::zero()
-                    };
-                    arithmetic::promote_to_trivial_share(party_id, l * r)
-                }
-            }
-        })
-        .collect();
-
     // Eq tables for r_cycle (same nested structure as vanilla)
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
@@ -253,9 +199,6 @@ where
     );
 
     let n_inputs = ALL_R1CS_INPUTS.len();
-    let mut acc_public: Vec<F> = vec![F::zero(); n_inputs];
-    let mut acc_shared: Vec<Rep3PrimeFieldShare<F>> =
-        vec![Rep3PrimeFieldShare::zero_share(); n_inputs];
 
     let idx_left = JoltR1CSInputs::LeftInstructionInput.to_index();
     let idx_right = JoltR1CSInputs::RightInstructionInput.to_index();
@@ -281,90 +224,134 @@ where
     let idx_next_is_noop = JoltR1CSInputs::NextIsNoop.to_index();
     let idx_should_jump = JoltR1CSInputs::ShouldJump.to_index();
 
-    for x1 in 0..eq_one.len() {
-        let eq1_val = eq_one[x1];
-        let mut inner_public: Vec<F> = vec![F::zero(); n_inputs];
-        let mut inner_shared: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); n_inputs];
+    // Parallel outer loop over eq_one, serial inner loop over eq_two (mirrors vanilla).
+    let (acc_public, acc_shared) = (0..eq_one.len())
+        .into_par_iter()
+        .map(|x1| {
+            let eq1_val = eq_one[x1];
+            let mut inner_public = vec![F::zero(); n_inputs];
+            let mut inner_shared = vec![Rep3PrimeFieldShare::zero_share(); n_inputs];
 
-        for x2 in 0..eq_two.len() {
-            let eq2_val = eq_two[x2];
-            let t = x1 * eq_two.len() + x2;
+            for x2 in 0..eq_two.len() {
+                let eq2_val = eq_two[x2];
+                let t = x1 * eq_two.len() + x2;
 
-            let row = cycle_witness.row(t);
+                let row = cycle_witness.row(t);
 
-            // Base always-present inputs
-            inner_public[idx_pc] += F::from_u64(pc[t]) * eq2_val;
-            inner_public[idx_unexp_pc] += F::from_u64(unexpanded_pc[t]) * eq2_val;
-            inner_public[idx_rd] += F::from_u64(rd_addr[t] as u64) * eq2_val;
-            inner_public[idx_imm] += F::from_i128(imm[t]) * eq2_val;
-            inner_public[idx_ram_addr] += F::from_u64(ram_addr[t]) * eq2_val;
-            let next_unexp = if t + 1 < trace_len {
-                unexpanded_pc[t + 1]
-            } else {
-                0
-            };
-            let next_pc_val = if t + 1 < trace_len { pc[t + 1] } else { 0 };
-            let next_is_noop = row.next_is_noop();
-            inner_public[idx_next_unexp] += F::from_u64(next_unexp) * eq2_val;
-            inner_public[idx_next_pc] += F::from_u64(next_pc_val) * eq2_val;
-            inner_public[idx_next_is_noop] += F::from_bool(next_is_noop) * eq2_val;
+                // Public per-cycle values
+                inner_public[idx_pc] += F::from_u64(pc[t]) * eq2_val;
+                inner_public[idx_unexp_pc] += F::from_u64(unexpanded_pc[t]) * eq2_val;
+                inner_public[idx_rd] += F::from_u64(rd_addr[t] as u64) * eq2_val;
+                inner_public[idx_imm] += F::from_i128(imm[t]) * eq2_val;
+                inner_public[idx_ram_addr] += F::from_u64(ram_addr[t]) * eq2_val;
+                let next_unexp = if t + 1 < trace_len {
+                    unexpanded_pc[t + 1]
+                } else {
+                    0
+                };
+                let next_pc_val = if t + 1 < trace_len { pc[t + 1] } else { 0 };
+                let next_is_noop = row.next_is_noop();
+                inner_public[idx_next_unexp] += F::from_u64(next_unexp) * eq2_val;
+                inner_public[idx_next_pc] += F::from_u64(next_pc_val) * eq2_val;
+                inner_public[idx_next_is_noop] += F::from_bool(next_is_noop) * eq2_val;
 
-            // Shared per-cycle values
-            let lookup_output = row.to_lookup_output();
-            inner_shared[idx_lookup_output] += arithmetic::mul_public(lookup_output, eq2_val);
-
-            inner_shared[idx_rs1] += arithmetic::mul_public(row.rs1_value(), eq2_val);
-            inner_shared[idx_rs2] += arithmetic::mul_public(row.rs2_value(), eq2_val);
-            inner_shared[idx_rd_write] += arithmetic::mul_public(row.rd_write_value(), eq2_val);
-            inner_shared[idx_ram_read] += arithmetic::mul_public(row.ram_read_value(), eq2_val);
-            inner_shared[idx_ram_write] += arithmetic::mul_public(row.ram_write_value(), eq2_val);
-
-            // Instruction inputs, product, and lookup operands via new methods
-            let (left_input, right_input) = row.to_instruction_inputs(party_id);
-            let product = row_products[t];
-            let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
-
-            inner_shared[idx_left] += arithmetic::mul_public(left_input, eq2_val);
-            inner_shared[idx_right] += arithmetic::mul_public(right_input, eq2_val);
-            inner_shared[idx_product] += arithmetic::mul_public(product, eq2_val);
-            inner_shared[idx_left_lookup] += arithmetic::mul_public(left_lookup, eq2_val);
-            inner_shared[idx_right_lookup] += arithmetic::mul_public(right_lookup, eq2_val);
-
-            // WriteLookupOutputToRD (committed, public): rd * WriteLookupOutputToRD flag
-            let fb = flags_bits[t];
-            if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                inner_public[idx_write_lookup] += F::from_u64(rd_addr[t] as u64) * eq2_val;
-            }
-
-            // WritePCtoRD (committed, public): rd * Jump flag
-            let is_jump = row.flag(CircuitFlags::Jump);
-            if is_jump {
-                inner_public[idx_write_pc] += F::from_u64(rd_addr[t] as u64) * eq2_val;
-            }
-
-            // ShouldBranch (committed, shared): lookup_output if Branch else 0
-            if row.flag(CircuitFlags::Branch) {
-                inner_shared[idx_should_branch] +=
+                // Shared per-cycle values
+                let lookup_output = row.to_lookup_output();
+                inner_shared[idx_lookup_output] +=
                     arithmetic::mul_public(lookup_output, eq2_val);
+                inner_shared[idx_rs1] += arithmetic::mul_public(row.rs1_value(), eq2_val);
+                inner_shared[idx_rs2] += arithmetic::mul_public(row.rs2_value(), eq2_val);
+                inner_shared[idx_rd_write] +=
+                    arithmetic::mul_public(row.rd_write_value(), eq2_val);
+                inner_shared[idx_ram_read] +=
+                    arithmetic::mul_public(row.ram_read_value(), eq2_val);
+                inner_shared[idx_ram_write] +=
+                    arithmetic::mul_public(row.ram_write_value(), eq2_val);
+
+                // Instruction inputs, product, and lookup operands.
+                // Product only constrained for MultiplyOperands (RightLookupEqProductIfMul).
+                let (left_input, right_input) = row.to_instruction_inputs(party_id);
+                let product = if row.flag(CircuitFlags::MultiplyOperands) {
+                    match mul_map[t] {
+                        Some(k) => mul_products[k],
+                        None => {
+                            let fb = flags_bits[t];
+                            let left_shared = (fb & mask_left_rs1) != 0;
+                            let right_shared = (fb & mask_right_rs2) != 0;
+                            match (left_shared, right_shared) {
+                                (true, false) => {
+                                    arithmetic::mul_public(rs1_field[t], row.to_right_public_input())
+                                }
+                                (false, true) => {
+                                    arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
+                                }
+                                (false, false) => {
+                                    let l = row.to_left_public_input();
+                                    let r = row.to_right_public_input();
+                                    arithmetic::promote_to_trivial_share(party_id, l * r)
+                                }
+                                (true, true) => unreachable!("should be in mul_map"),
+                            }
+                        }
+                    }
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                };
+                let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
+
+                inner_shared[idx_left] += arithmetic::mul_public(left_input, eq2_val);
+                inner_shared[idx_right] += arithmetic::mul_public(right_input, eq2_val);
+                inner_shared[idx_product] += arithmetic::mul_public(product, eq2_val);
+                inner_shared[idx_left_lookup] +=
+                    arithmetic::mul_public(left_lookup, eq2_val);
+                inner_shared[idx_right_lookup] +=
+                    arithmetic::mul_public(right_lookup, eq2_val);
+
+                let fb = flags_bits[t];
+                if row.flag(CircuitFlags::WriteLookupOutputToRD) {
+                    inner_public[idx_write_lookup] +=
+                        F::from_u64(rd_addr[t] as u64) * eq2_val;
+                }
+                let is_jump = row.flag(CircuitFlags::Jump);
+                if is_jump {
+                    inner_public[idx_write_pc] += F::from_u64(rd_addr[t] as u64) * eq2_val;
+                }
+                if row.flag(CircuitFlags::Branch) {
+                    inner_shared[idx_should_branch] +=
+                        arithmetic::mul_public(lookup_output, eq2_val);
+                }
+                inner_public[idx_should_jump] +=
+                    F::from_bool(is_jump && !next_is_noop) * eq2_val;
+
+                for flag in CircuitFlags::iter() {
+                    let idx = JoltR1CSInputs::OpFlags(flag).to_index();
+                    let bit = 1u32 << (flag as usize);
+                    inner_public[idx] += F::from_bool((fb & bit) != 0) * eq2_val;
+                }
             }
 
-            // ShouldJump (committed, public): Jump && !NextIsNoop
-            inner_public[idx_should_jump] += F::from_bool(is_jump && !next_is_noop) * eq2_val;
-
-            // OpFlags
-            for flag in CircuitFlags::iter() {
-                let idx = JoltR1CSInputs::OpFlags(flag).to_index();
-                let bit = 1u32 << (flag as usize);
-                inner_public[idx] += F::from_bool((fb & bit) != 0) * eq2_val;
+            // Multiply inner sums by eq1[x1]
+            for i in 0..n_inputs {
+                inner_public[i] *= eq1_val;
+                inner_shared[i] = arithmetic::mul_public(inner_shared[i], eq1_val);
             }
-        }
-
-        for i in 0..n_inputs {
-            acc_public[i] += inner_public[i] * eq1_val;
-            acc_shared[i] += arithmetic::mul_public(inner_shared[i], eq1_val);
-        }
-    }
+            (inner_public, inner_shared)
+        })
+        .reduce(
+            || {
+                (
+                    vec![F::zero(); n_inputs],
+                    vec![Rep3PrimeFieldShare::zero_share(); n_inputs],
+                )
+            },
+            |(mut acc_pub, mut acc_sh), (item_pub, item_sh)| {
+                for i in 0..n_inputs {
+                    acc_pub[i] += item_pub[i];
+                    acc_sh[i] += item_sh[i];
+                }
+                (acc_pub, acc_sh)
+            },
+        );
 
     Ok((0..n_inputs)
         .map(|i| acc_shared[i] + arithmetic::promote_to_trivial_share(party_id, acc_public[i]))

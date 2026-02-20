@@ -5,9 +5,9 @@ use crate::host::memory::Rep3Memory;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::instruction::Rep3Cycle;
-use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
@@ -28,13 +28,13 @@ pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>
     pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
     pub trusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
     /// Field-domain per-cycle cache for R1CS virtual inputs.
-    pub cycle_witness: Option<Rep3CycleWitnesses<F>>,
+    pub cycle_witness: Rep3CycleWitnesses<F>,
 }
 
 /// Field-domain per-cycle witness cache (struct-of-arrays).
 ///
 /// This is the post-witness representation that lets us drop the ring-shared trace.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Rep3CycleWitnesses<F: JoltField> {
     pub pc: Vec<u64>,
     pub unexpanded_pc: Vec<u64>,
@@ -165,6 +165,26 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
         self.flag(CircuitFlags::Jump) && !self.next_is_noop()
     }
 
+    /// Returns the left instruction input as a public field element.
+    /// Only valid when the left operand is NOT `Rs1Value` (i.e., it's PC or zero).
+    pub fn to_left_public_input(&self) -> F {
+        if self.flag(CircuitFlags::LeftOperandIsPC) {
+            F::from_u64(self.unexpanded_pc())
+        } else {
+            F::zero()
+        }
+    }
+
+    /// Returns the right instruction input as a public field element.
+    /// Only valid when the right operand is NOT `Rs2Value` (i.e., it's Imm or zero).
+    pub fn to_right_public_input(&self) -> F {
+        if self.flag(CircuitFlags::RightOperandIsImm) {
+            F::from_i128(self.imm())
+        } else {
+            F::zero()
+        }
+    }
+
     /// Mirrors vanilla `LookupQuery::to_instruction_inputs`.
     /// Returns `(left_input, right_input)` as field shares.
     pub fn to_instruction_inputs(
@@ -210,7 +230,10 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (zero, promote_to_trivial_share(party_id, F::from_u64(self.advice())))
+            (
+                zero,
+                promote_to_trivial_share(party_id, F::from_u64(self.advice())),
+            )
         } else {
             (left_input, right_input)
         }
@@ -275,7 +298,7 @@ where
                 final_memory_state,
                 untrusted_advice_polynomial: None,
                 trusted_advice_polynomial: None,
-                cycle_witness: None,
+                cycle_witness: Rep3CycleWitnesses::default(),
             },
             accumulator: Rep3OpeningAccumulatorWorker::new(),
         }
@@ -295,6 +318,10 @@ where
             &self.program_io,
             &self.prover_state.final_memory_state,
         )
+    }
+
+    pub fn get_cycle_witness(&self) -> &Rep3CycleWitnesses<F> {
+        &self.prover_state.cycle_witness
     }
 }
 

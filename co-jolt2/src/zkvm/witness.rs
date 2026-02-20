@@ -9,28 +9,27 @@ use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
-use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS};
+use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup};
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
-use mpc_core::protocols::rep3::arithmetic as arithmetic;
 use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker,
+    IoContext, IoContextPool, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
-use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
 use snarks_core::math::Math;
-use tracing::{info, info_span};
+use tracing::info_span;
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
-use crate::zkvm::dag::state_manager::{Rep3CycleWitnesses, StateManagerWorker};
+use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::Rep3LookupQuery;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
@@ -150,146 +149,7 @@ where
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
     let trace: &[Rep3Cycle] = &state.prover_state.trace;
 
-    // Build (or reuse) the field-domain per-cycle witness cache needed for
-    // R1CS virtualization after we drop the ring-shared trace.
-    if state.prover_state.cycle_witness.is_none() {
-        debug_assert!(NUM_CIRCUIT_FLAGS <= 32);
-
-        let lookup_output: Vec<Rep3PrimeFieldShare<F>> =
-            compute_lookup_outputs(trace, &mut state.io_ctx)?;
-
-        #[derive(Copy, Clone)]
-        struct RowData {
-            pc: u64,
-            unexpanded_pc: u64,
-            imm: i128,
-            rd_addr: u8,
-            ram_addr: u64,
-            flags_bits: u32,
-            advice: u64,
-            rs1_op: super::instruction::Rep3Operand,
-            rs2_op: super::instruction::Rep3Operand,
-            rd_write_op: super::instruction::Rep3Operand,
-            ram_read_op: super::instruction::Rep3Operand,
-            ram_write_op: super::instruction::Rep3Operand,
-        }
-
-        let rows: Vec<RowData> = (0..trace.len())
-            .into_par_iter()
-            .map(|t| {
-                let cycle = &trace[t];
-                let instr = cycle.instruction();
-                let norm = instr.normalize();
-                let flags_view = instr.circuit_flags();
-
-                let mut flags_bits = 0u32;
-                for i in 0..NUM_CIRCUIT_FLAGS {
-                    if flags_view[i] {
-                        flags_bits |= 1u32 << i;
-                    }
-                }
-
-                let (ram_read_op, ram_write_op) = match cycle.ram_access() {
-                    Rep3RAMAccess::Read(r) => (r.value, r.value),
-                    Rep3RAMAccess::Write(w) => (w.pre_value, w.post_value),
-                    Rep3RAMAccess::NoOp => (
-                        super::instruction::Rep3Operand::Public(0),
-                        super::instruction::Rep3Operand::Public(0),
-                    ),
-                };
-
-                let advice = match cycle {
-                    Rep3Cycle::VirtualAdvice(c) => c.instruction.advice,
-                    _ => 0,
-                };
-
-                RowData {
-                    pc: cycle.get_pc(&preprocessing.shared.bytecode) as u64,
-                    unexpanded_pc: norm.address as u64,
-                    imm: norm.operands.imm,
-                    rd_addr: cycle.rd_write().0,
-                    ram_addr: cycle.ram_access().address(),
-                    flags_bits,
-                    advice,
-                    rs1_op: cycle.rs1_read().1,
-                    rs2_op: cycle.rs2_read().1,
-                    rd_write_op: cycle.rd_write().2,
-                    ram_read_op,
-                    ram_write_op,
-                }
-            })
-            .collect();
-
-        let pc: Vec<u64> = rows.iter().map(|r| r.pc).collect();
-        let unexpanded_pc: Vec<u64> = rows.iter().map(|r| r.unexpanded_pc).collect();
-        let imm: Vec<i128> = rows.iter().map(|r| r.imm).collect();
-        let rd_addr: Vec<u8> = rows.iter().map(|r| r.rd_addr).collect();
-        let ram_addr: Vec<u64> = rows.iter().map(|r| r.ram_addr).collect();
-        let flags_bits: Vec<u32> = rows.iter().map(|r| r.flags_bits).collect();
-        let advice: Vec<u64> = rows.iter().map(|r| r.advice).collect();
-
-        let cast_word = |op: super::instruction::Rep3Operand| -> FutureRep3Ring<u64, Rep3PrimeFieldShare<F>> {
-            match op {
-                super::instruction::Rep3Operand::Public(v) => FutureRep3Ring::Ready(
-                    arithmetic::promote_to_trivial_share(party_id, F::from_u64(v)),
-                ),
-                super::instruction::Rep3Operand::Shared { public: Some(v), .. } => {
-                    FutureRep3Ring::Ready(arithmetic::promote_to_trivial_share(party_id, F::from_u64(v)))
-                }
-                op @ super::instruction::Rep3Operand::Shared { .. } => {
-                    FutureRep3Ring::cast_to_field(op.as_arithmetic_u64())
-                }
-            }
-        };
-
-        let rs1_value: Vec<Rep3PrimeFieldShare<F>> = rows
-            .iter()
-            .map(|r| cast_word(r.rs1_op))
-            .collect::<Vec<_>>()
-            .fulfill_batched(&mut state.io_ctx, |res, ()| res)?;
-        let rs2_value: Vec<Rep3PrimeFieldShare<F>> = rows
-            .iter()
-            .map(|r| cast_word(r.rs2_op))
-            .collect::<Vec<_>>()
-            .fulfill_batched(&mut state.io_ctx, |res, ()| res)?;
-        let rd_write_value: Vec<Rep3PrimeFieldShare<F>> = rows
-            .iter()
-            .map(|r| cast_word(r.rd_write_op))
-            .collect::<Vec<_>>()
-            .fulfill_batched(&mut state.io_ctx, |res, ()| res)?;
-        let ram_read_value: Vec<Rep3PrimeFieldShare<F>> = rows
-            .iter()
-            .map(|r| cast_word(r.ram_read_op))
-            .collect::<Vec<_>>()
-            .fulfill_batched(&mut state.io_ctx, |res, ()| res)?;
-        let ram_write_value: Vec<Rep3PrimeFieldShare<F>> = rows
-            .iter()
-            .map(|r| cast_word(r.ram_write_op))
-            .collect::<Vec<_>>()
-            .fulfill_batched(&mut state.io_ctx, |res, ()| res)?;
-
-        state.prover_state.cycle_witness = Some(Rep3CycleWitnesses {
-            pc,
-            unexpanded_pc,
-            imm,
-            rd_addr,
-            ram_addr,
-            flags_bits,
-            advice,
-            lookup_output,
-            rs1_value,
-            rs2_value,
-            rd_write_value,
-            ram_read_value,
-            ram_write_value,
-        });
-    }
-
-    let cycle_witness = state
-        .prover_state
-        .cycle_witness
-        .as_ref()
-        .expect("cycle_witness must be initialized");
+    let cycle_witness = &state.prover_state.cycle_witness;
     let lookup_outputs: &[Rep3PrimeFieldShare<F>] = &cycle_witness.lookup_output;
 
     let mut ram_d = 0;
@@ -434,11 +294,7 @@ where
     let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
     // Instruction inputs are derived from the cached cycle witness (no extra casts).
-    let cycle_witness = state
-        .prover_state
-        .cycle_witness
-        .as_ref()
-        .expect("cycle_witness must be initialized");
+    let cycle_witness = &state.prover_state.cycle_witness;
     let flags_bits = &cycle_witness.flags_bits;
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
