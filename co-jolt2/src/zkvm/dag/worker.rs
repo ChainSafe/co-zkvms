@@ -15,7 +15,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
-use mpc_core::protocols::rep3::network::{Rep3Network, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
 use rand::distributions::{Distribution, Standard};
 
@@ -40,7 +40,7 @@ impl Rep3JoltDAGWorker {
         PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
         N: Rep3NetworkWorker,
-        Standard: Distribution<u64> + Distribution<u8> + Distribution<u128>,
+        Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
     {
         let trace_length = state.prover_state.trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -83,18 +83,12 @@ impl Rep3JoltDAGWorker {
         PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
         N: Rep3NetworkWorker,
-        Standard: Distribution<u64> + Distribution<u8> + Distribution<u128>,
+        Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
     {
         let poly_keys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
 
-        // Access fields directly to avoid overlapping borrows on `state`
-        let witness_polys = generate_witness_batch_rep3(
-            &poly_keys,
-            state.prover_state.preprocessing,
-            &state.prover_state.trace,
-            &mut state.io_ctx,
-        )?;
+        let witness_polys = generate_witness_batch_rep3(&poly_keys, state)?;
 
         // Collect polys in AllCommittedPolynomials order for alignment with coordinator.
         let commit_to_public = party_id == PartyID::ID0;
@@ -113,6 +107,9 @@ impl Rep3JoltDAGWorker {
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 
+        // Drop the committed witness polynomials after committing for now.
+        // (Future stages that need PCS openings will store them on state.)
+
         // Send commitment shares to coordinator
         state.io_ctx.network().send_response(commitment_shares)?;
 
@@ -124,7 +121,13 @@ impl Rep3JoltDAGWorker {
             .send_response(state.untrusted_advice_commitment.clone())?;
 
         // Open hints across parties (without coordinator)
-        Self::open_hints::<F, PCS, ProofTranscript, N>(&poly_keys, hint_shares, state)
+        let hint_map = Self::open_hints::<F, PCS, ProofTranscript, N>(&poly_keys, hint_shares, state)?;
+
+        // Ring-shared trace is no longer needed after witness generation; drop it to free memory.
+        state.prover_state.trace.clear();
+        state.prover_state.trace.shrink_to_fit();
+
+        Ok(hint_map)
     }
 
     /// Commit the untrusted advice polynomial (if non-empty).

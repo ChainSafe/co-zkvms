@@ -14,7 +14,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN>
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // remainder (left), divisor (right)
         // valid if remainder == 0 OR remainder < divisor
@@ -30,9 +30,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN>
             .unzip();
         let rem_is_zero = rep3_ring::binary::is_zero_many(&remainders, io_ctx)?;
         let rem_lt_div = rep3_ring::arithmetic::lt_many(&remainders, &divisors, io_ctx)?;
-        let rem_is_zero_u32: Vec<_> = rem_is_zero.iter().map(|b| bit_to_ring32(*b)).collect();
-        let rem_lt_div_u32: Vec<_> = rem_lt_div.iter().map(|b| bit_to_ring32(*b)).collect();
-        rep3_ring::binary::or_many(&rem_is_zero_u32, &rem_lt_div_u32, io_ctx)?
+        let rem_is_zero_u64: Vec<_> = rem_is_zero.iter().map(|b| bit_to_ring64(*b)).collect();
+        let rem_lt_div_u64: Vec<_> = rem_lt_div.iter().map(|b| bit_to_ring64(*b)).collect();
+        rep3_ring::binary::or_many(&rem_is_zero_u64, &rem_lt_div_u64, io_ctx)?
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {

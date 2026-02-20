@@ -62,3 +62,8 @@ pub fn interleave_bits_shared(
 pub fn bit_to_ring32(b: Rep3RingShare<Bit>) -> Rep3RingShare<u32> {
     Rep3RingShare::new(u8::from(b.a.0) as u32, u8::from(b.b.0) as u32)
 }
+
+/// Upcast a `Rep3RingShare<Bit>` to `Rep3RingShare<u64>` (zero-extend in XOR domain).
+pub fn bit_to_ring64(b: Rep3RingShare<Bit>) -> Rep3RingShare<u64> {
+    Rep3RingShare::new(u8::from(b.a.0) as u64, u8::from(b.b.0) as u64)
+}

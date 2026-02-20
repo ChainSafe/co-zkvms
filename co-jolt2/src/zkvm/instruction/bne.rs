@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BNE> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u32, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
             .iter()

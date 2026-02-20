@@ -5,9 +5,11 @@ use crate::host::memory::Rep3Memory;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::instruction::Rep3Cycle;
+use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use tracer::JoltDevice;
 
@@ -24,6 +26,143 @@ pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>
     pub final_memory_state: Rep3Memory,
     pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
     pub trusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
+    /// Field-domain per-cycle cache for R1CS virtual inputs.
+    pub cycle_witness: Option<Rep3CycleWitnesses<F>>,
+}
+
+/// Field-domain per-cycle witness cache (struct-of-arrays).
+///
+/// This is the post-witness representation that lets us drop the ring-shared trace.
+#[derive(Clone, Debug)]
+pub struct Rep3CycleWitnesses<F: JoltField> {
+    pub pc: Vec<u64>,
+    pub unexpanded_pc: Vec<u64>,
+    pub imm: Vec<i128>,
+    pub rd_addr: Vec<u8>,
+    pub ram_addr: Vec<u64>,
+    /// Bit i corresponds to `CircuitFlags as usize == i`.
+    pub flags_bits: Vec<u32>,
+    /// Advice payload (public for now); only meaningful when `Advice` flag is set.
+    pub advice: Vec<u64>,
+
+    /// Cached lookup output per cycle (field shares).
+    pub lookup_output: Vec<Rep3PrimeFieldShare<F>>,
+
+    pub rs1_value: Vec<Rep3PrimeFieldShare<F>>,
+    pub rs2_value: Vec<Rep3PrimeFieldShare<F>>,
+    pub rd_write_value: Vec<Rep3PrimeFieldShare<F>>,
+    pub ram_read_value: Vec<Rep3PrimeFieldShare<F>>,
+    pub ram_write_value: Vec<Rep3PrimeFieldShare<F>>,
+}
+
+impl<F: JoltField> Rep3CycleWitnesses<F> {
+    pub fn len(&self) -> usize {
+        self.pc.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pc.is_empty()
+    }
+
+    pub fn row(&self, t: usize) -> Rep3CycleWitnessRef<'_, F> {
+        Rep3CycleWitnessRef { w: self, t }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Rep3CycleWitnessRef<'a, F: JoltField> {
+    w: &'a Rep3CycleWitnesses<F>,
+    t: usize,
+}
+
+impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
+    pub fn flags_bits(&self) -> u32 {
+        self.w.flags_bits[self.t]
+    }
+
+    pub fn pc(&self) -> u64 {
+        self.w.pc[self.t]
+    }
+
+    pub fn unexpanded_pc(&self) -> u64 {
+        self.w.unexpanded_pc[self.t]
+    }
+
+    pub fn imm(&self) -> i128 {
+        self.w.imm[self.t]
+    }
+
+    pub fn rd_addr(&self) -> u8 {
+        self.w.rd_addr[self.t]
+    }
+
+    pub fn ram_addr(&self) -> u64 {
+        self.w.ram_addr[self.t]
+    }
+
+    pub fn advice(&self) -> u64 {
+        self.w.advice[self.t]
+    }
+
+    pub fn lookup_output(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.lookup_output[self.t]
+    }
+
+    pub fn rs1_value(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.rs1_value[self.t]
+    }
+
+    pub fn rs2_value(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.rs2_value[self.t]
+    }
+
+    pub fn rd_write_value(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.rd_write_value[self.t]
+    }
+
+    pub fn ram_read_value(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.ram_read_value[self.t]
+    }
+
+    pub fn ram_write_value(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.ram_write_value[self.t]
+    }
+
+    pub fn flag(&self, flag: CircuitFlags) -> bool {
+        debug_assert!(NUM_CIRCUIT_FLAGS <= 32);
+        let bit = 1u32 << (flag as usize);
+        (self.w.flags_bits[self.t] & bit) != 0
+    }
+
+    pub fn next_is_noop(&self) -> bool {
+        // Match vanilla/witness semantics: treat the last cycle as if the next cycle is NoOp.
+        if self.t + 1 >= self.w.len() {
+            true
+        } else {
+            let bit = 1u32 << (CircuitFlags::IsNoop as usize);
+            (self.w.flags_bits[self.t + 1] & bit) != 0
+        }
+    }
+
+    pub fn next_pc(&self) -> u64 {
+        if self.t + 1 >= self.w.len() {
+            0
+        } else {
+            self.w.pc[self.t + 1]
+        }
+    }
+
+    pub fn next_unexpanded_pc(&self) -> u64 {
+        if self.t + 1 >= self.w.len() {
+            0
+        } else {
+            self.w.unexpanded_pc[self.t + 1]
+        }
+    }
+
+    pub fn should_jump(&self) -> bool {
+        self.flag(CircuitFlags::Jump) && !self.next_is_noop()
+    }
 }
 
 pub struct StateManagerWorker<
@@ -78,6 +217,7 @@ where
                 final_memory_state,
                 untrusted_advice_polynomial: None,
                 trusted_advice_polynomial: None,
+                cycle_witness: None,
             },
             accumulator: Rep3OpeningAccumulatorWorker::new(),
         }
