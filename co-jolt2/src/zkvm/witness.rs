@@ -13,9 +13,7 @@ use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLo
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
-use mpc_core::protocols::rep3::network::{
-    IoContext, IoContextPool, Rep3NetworkWorker,
-};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -301,15 +299,21 @@ where
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
     let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
-    if polynomials
-        .iter()
-        .any(|p| matches!(p, CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput))
-    {
+    if polynomials.iter().any(|p| {
+        matches!(
+            p,
+            CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput
+        )
+    }) {
         let n = state.prover_state.cycle_witness.len();
         left_input_field = Vec::with_capacity(n);
         right_input_field = Vec::with_capacity(n);
         for t in 0..n {
-            let (l, r) = state.prover_state.cycle_witness.row(t).to_instruction_inputs(party_id);
+            let (l, r) = state
+                .prover_state
+                .cycle_witness
+                .row(t)
+                .to_instruction_inputs(party_id);
             left_input_field.push(l);
             right_input_field.push(r);
         }
@@ -544,7 +548,14 @@ mod tests {
                     let (trace, memory, _io) = shares[party_idx].clone();
                     let preprocessing = Arc::clone(&preprocessing_arc);
                     let io_device = Arc::clone(&io_device_arc);
-                    (trace, memory, io_device, preprocessing, ram_K, all_polys.clone())
+                    (
+                        trace,
+                        memory,
+                        io_device,
+                        preprocessing,
+                        ram_K,
+                        all_polys.clone(),
+                    )
                 },
                 |input, mut io_ctx| {
                     let (mut trace, memory, io_device, preprocessing, ram_k, polys) = input;
@@ -575,15 +586,13 @@ mod tests {
                         trace,
                         (*io_device).clone(),
                         memory,
-                        io_ctx,
+                        io_ctx.party_id(),
                         ram_k,
                     );
 
                     info!(?party, "generate_witness_batch_rep3 start");
-                    let results = generate_witness_batch_rep3::<F, PCS, _>(
-                        &polys,
-                        &mut state,
-                    )?;
+                    let results =
+                        generate_witness_batch_rep3::<F, PCS, _>(&polys, &mut state, &mut io_ctx)?;
                     info!(
                         ?party,
                         count = results.len(),

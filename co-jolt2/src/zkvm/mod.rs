@@ -1,9 +1,8 @@
 pub mod dag;
 pub mod instruction;
-pub mod r1cs;
 pub mod instruction_lookups;
+pub mod r1cs;
 pub mod ram;
-pub mod registers;
 pub mod witness;
 
 use std::collections::HashMap;

@@ -258,14 +258,11 @@ where
 
                 // Shared per-cycle values
                 let lookup_output = row.to_lookup_output();
-                inner_shared[idx_lookup_output] +=
-                    arithmetic::mul_public(lookup_output, eq2_val);
+                inner_shared[idx_lookup_output] += arithmetic::mul_public(lookup_output, eq2_val);
                 inner_shared[idx_rs1] += arithmetic::mul_public(row.rs1_value(), eq2_val);
                 inner_shared[idx_rs2] += arithmetic::mul_public(row.rs2_value(), eq2_val);
-                inner_shared[idx_rd_write] +=
-                    arithmetic::mul_public(row.rd_write_value(), eq2_val);
-                inner_shared[idx_ram_read] +=
-                    arithmetic::mul_public(row.ram_read_value(), eq2_val);
+                inner_shared[idx_rd_write] += arithmetic::mul_public(row.rd_write_value(), eq2_val);
+                inner_shared[idx_ram_read] += arithmetic::mul_public(row.ram_read_value(), eq2_val);
                 inner_shared[idx_ram_write] +=
                     arithmetic::mul_public(row.ram_write_value(), eq2_val);
 
@@ -280,9 +277,10 @@ where
                             let left_shared = (fb & mask_left_rs1) != 0;
                             let right_shared = (fb & mask_right_rs2) != 0;
                             match (left_shared, right_shared) {
-                                (true, false) => {
-                                    arithmetic::mul_public(rs1_field[t], row.to_right_public_input())
-                                }
+                                (true, false) => arithmetic::mul_public(
+                                    rs1_field[t],
+                                    row.to_right_public_input(),
+                                ),
                                 (false, true) => {
                                     arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
                                 }
@@ -303,15 +301,12 @@ where
                 inner_shared[idx_left] += arithmetic::mul_public(left_input, eq2_val);
                 inner_shared[idx_right] += arithmetic::mul_public(right_input, eq2_val);
                 inner_shared[idx_product] += arithmetic::mul_public(product, eq2_val);
-                inner_shared[idx_left_lookup] +=
-                    arithmetic::mul_public(left_lookup, eq2_val);
-                inner_shared[idx_right_lookup] +=
-                    arithmetic::mul_public(right_lookup, eq2_val);
+                inner_shared[idx_left_lookup] += arithmetic::mul_public(left_lookup, eq2_val);
+                inner_shared[idx_right_lookup] += arithmetic::mul_public(right_lookup, eq2_val);
 
                 let fb = flags_bits[t];
                 if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                    inner_public[idx_write_lookup] +=
-                        F::from_u64(rd_addr[t] as u64) * eq2_val;
+                    inner_public[idx_write_lookup] += F::from_u64(rd_addr[t] as u64) * eq2_val;
                 }
                 let is_jump = row.flag(CircuitFlags::Jump);
                 if is_jump {
@@ -321,8 +316,7 @@ where
                     inner_shared[idx_should_branch] +=
                         arithmetic::mul_public(lookup_output, eq2_val);
                 }
-                inner_public[idx_should_jump] +=
-                    F::from_bool(is_jump && !next_is_noop) * eq2_val;
+                inner_public[idx_should_jump] += F::from_bool(is_jump && !next_is_noop) * eq2_val;
 
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
@@ -460,7 +454,7 @@ mod tests {
                     trace,
                     (*io_device).clone(),
                     mem,
-                    io_ctx,
+                    io_ctx.party_id(),
                     ram_k,
                 );
 
@@ -468,11 +462,11 @@ mod tests {
                 let poly_keys: Vec<CommittedPolynomial> =
                     AllCommittedPolynomials::iter().copied().collect();
                 let _witness_polys =
-                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state)?;
+                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx)?;
                 state.prover_state.trace.clear();
                 state.prover_state.trace.shrink_to_fit();
 
-                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &r_cycle)
+                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)
             },
         );
 

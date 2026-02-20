@@ -262,11 +262,7 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
     }
 }
 
-pub struct StateManagerWorker<
-    'a,
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-> {
+pub struct StateManagerWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub party_id: PartyID,
     pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
