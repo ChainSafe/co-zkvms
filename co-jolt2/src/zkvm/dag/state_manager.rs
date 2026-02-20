@@ -9,8 +9,9 @@ use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use tracer::JoltDevice;
 
 // Re-export vanilla DAG types
@@ -162,6 +163,63 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
 
     pub fn should_jump(&self) -> bool {
         self.flag(CircuitFlags::Jump) && !self.next_is_noop()
+    }
+
+    /// Mirrors vanilla `LookupQuery::to_instruction_inputs`.
+    /// Returns `(left_input, right_input)` as field shares.
+    pub fn to_instruction_inputs(
+        &self,
+        party_id: PartyID,
+    ) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
+        let left = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
+            self.rs1_value()
+        } else if self.flag(CircuitFlags::LeftOperandIsPC) {
+            promote_to_trivial_share(party_id, F::from_u64(self.unexpanded_pc()))
+        } else {
+            Rep3PrimeFieldShare::zero_share()
+        };
+        let right = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
+            self.rs2_value()
+        } else if self.flag(CircuitFlags::RightOperandIsImm) {
+            promote_to_trivial_share(party_id, F::from_i128(self.imm()))
+        } else {
+            Rep3PrimeFieldShare::zero_share()
+        };
+        (left, right)
+    }
+
+    /// Mirrors vanilla `LookupQuery::to_lookup_operands`.
+    /// Returns `(left_lookup, right_lookup)` as field shares.
+    ///
+    /// For Mul: `right_lookup = product = left * right`; since this requires
+    /// shared multiplication (MPC communication), the caller must supply
+    /// the pre-computed product.
+    pub fn to_lookup_operands(
+        &self,
+        party_id: PartyID,
+        product: Rep3PrimeFieldShare<F>,
+    ) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
+        let (left_input, right_input) = self.to_instruction_inputs(party_id);
+        let zero = Rep3PrimeFieldShare::zero_share();
+
+        if self.flag(CircuitFlags::AddOperands) {
+            (zero, left_input + right_input)
+        } else if self.flag(CircuitFlags::SubtractOperands) {
+            let two_pow_64 = promote_to_trivial_share(party_id, F::from_u128(1u128 << 64));
+            (zero, left_input - right_input + two_pow_64)
+        } else if self.flag(CircuitFlags::MultiplyOperands) {
+            (zero, product)
+        } else if self.flag(CircuitFlags::Advice) {
+            (zero, promote_to_trivial_share(party_id, F::from_u64(self.advice())))
+        } else {
+            (left_input, right_input)
+        }
+    }
+
+    /// Mirrors vanilla `LookupQuery::to_lookup_output`.
+    /// Returns the cached lookup output (already computed during witness gen).
+    pub fn to_lookup_output(&self) -> Rep3PrimeFieldShare<F> {
+        self.w.lookup_output[self.t]
     }
 }
 

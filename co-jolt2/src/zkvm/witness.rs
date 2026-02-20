@@ -439,17 +439,7 @@ where
         .cycle_witness
         .as_ref()
         .expect("cycle_witness must be initialized");
-    let unexpanded_pc = &cycle_witness.unexpanded_pc;
-    let imm = &cycle_witness.imm;
     let flags_bits = &cycle_witness.flags_bits;
-    let rs1 = &cycle_witness.rs1_value;
-    let rs2 = &cycle_witness.rs2_value;
-
-    let bit = |flag: CircuitFlags| -> u32 { 1u32 << (flag as usize) };
-    let left_is_rs1 = bit(CircuitFlags::LeftOperandIsRs1Value);
-    let left_is_pc = bit(CircuitFlags::LeftOperandIsPC);
-    let right_is_rs2 = bit(CircuitFlags::RightOperandIsRs2Value);
-    let right_is_imm = bit(CircuitFlags::RightOperandIsImm);
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
     let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
@@ -457,35 +447,15 @@ where
         .iter()
         .any(|p| matches!(p, CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput))
     {
-        left_input_field = (0..trace.len())
-            .map(|t| {
-                let fb = flags_bits[t];
-                if (fb & left_is_rs1) != 0 {
-                    rs1[t]
-                } else if (fb & left_is_pc) != 0 {
-                    arithmetic::promote_to_trivial_share(party_id, F::from_u64(unexpanded_pc[t]))
-                } else {
-                    Rep3PrimeFieldShare::zero_share()
-                }
-            })
-            .collect();
-
-        right_input_field = (0..trace.len())
-            .map(|t| {
-                let fb = flags_bits[t];
-                if (fb & right_is_rs2) != 0 {
-                    rs2[t]
-                } else if (fb & right_is_imm) != 0 {
-                    arithmetic::promote_to_trivial_share(party_id, F::from_i128(imm[t]))
-                } else {
-                    Rep3PrimeFieldShare::zero_share()
-                }
-            })
-            .collect();
+        let n = cycle_witness.len();
+        left_input_field = Vec::with_capacity(n);
+        right_input_field = Vec::with_capacity(n);
+        for t in 0..n {
+            let (l, r) = cycle_witness.row(t).to_instruction_inputs(party_id);
+            left_input_field.push(l);
+            right_input_field.push(r);
+        }
     }
-
-    let mut left_input_field = left_input_field;
-    let mut right_input_field = right_input_field;
 
     for poly in polynomials {
         match poly {

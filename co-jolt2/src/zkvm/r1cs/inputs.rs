@@ -3,14 +3,14 @@
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
-use mpc_core::protocols::rep3::arithmetic as arithmetic;
+use mpc_core::protocols::rep3::arithmetic;
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
-use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::state_manager::Rep3CycleWitnessRef;
+use crate::zkvm::dag::state_manager::StateManagerWorker;
 
 pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 
@@ -21,6 +21,9 @@ pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITT
 pub struct Rep3R1CSCycleInputs<F: JoltField> {
     pub left_input: Rep3PrimeFieldShare<F>,
     pub right_input: Rep3PrimeFieldShare<F>,
+    pub product: Rep3PrimeFieldShare<F>,
+    pub left_lookup: Rep3PrimeFieldShare<F>,
+    pub right_lookup: Rep3PrimeFieldShare<F>,
     pub lookup_output: Rep3PrimeFieldShare<F>,
 
     pub rd_addr: u8,
@@ -47,30 +50,14 @@ pub struct Rep3R1CSCycleInputs<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3R1CSCycleInputs<F> {
-    pub fn from_witness(party_id: mpc_core::protocols::rep3::PartyID, row: Rep3CycleWitnessRef<'_, F>) -> Self {
-        let fb = row.flags_bits();
-        let mask_left_rs1 = 1u32 << (CircuitFlags::LeftOperandIsRs1Value as usize);
-        let mask_left_pc = 1u32 << (CircuitFlags::LeftOperandIsPC as usize);
-        let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
-        let mask_right_imm = 1u32 << (CircuitFlags::RightOperandIsImm as usize);
-
-        let left_input = if (fb & mask_left_rs1) != 0 {
-            row.rs1_value()
-        } else if (fb & mask_left_pc) != 0 {
-            arithmetic::promote_to_trivial_share(party_id, F::from_u64(row.unexpanded_pc()))
-        } else {
-            Rep3PrimeFieldShare::zero_share()
-        };
-
-        let right_input = if (fb & mask_right_rs2) != 0 {
-            row.rs2_value()
-        } else if (fb & mask_right_imm) != 0 {
-            arithmetic::promote_to_trivial_share(party_id, F::from_i128(row.imm()))
-        } else {
-            Rep3PrimeFieldShare::zero_share()
-        };
-
-        let lookup_output = row.lookup_output();
+    pub fn from_trace(
+        party_id: mpc_core::protocols::rep3::PartyID,
+        row: Rep3CycleWitnessRef<'_, F>,
+        product: Rep3PrimeFieldShare<F>,
+    ) -> Self {
+        let (left_input, right_input) = row.to_instruction_inputs(party_id);
+        let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
+        let lookup_output = row.to_lookup_output();
 
         let rd_addr = row.rd_addr();
         let rs1_read_value = row.rs1_value();
@@ -105,11 +92,18 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         } else {
             0
         };
-        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) { rd_addr } else { 0 };
+        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) {
+            rd_addr
+        } else {
+            0
+        };
 
         Self {
             left_input,
             right_input,
+            product,
+            left_lookup,
+            right_lookup,
             lookup_output,
             rd_addr,
             rs1_read_value,
@@ -162,16 +156,7 @@ where
         trace_len.log_2()
     );
 
-    let lookup_outputs = &cycle_witness.lookup_output;
-
     let party_id = state.io_ctx.party_id();
-
-    eyre::ensure!(
-        lookup_outputs.len() == trace_len,
-        "lookup_outputs length mismatch: got {}, expected {}",
-        lookup_outputs.len(),
-        trace_len
-    );
 
     let pc = &cycle_witness.pc;
     let unexpanded_pc = &cycle_witness.unexpanded_pc;
@@ -179,23 +164,13 @@ where
     let rd_addr = &cycle_witness.rd_addr;
     let ram_addr = &cycle_witness.ram_addr;
     let flags_bits = &cycle_witness.flags_bits;
-    let advice = &cycle_witness.advice;
 
     let rs1_field = &cycle_witness.rs1_value;
     let rs2_field = &cycle_witness.rs2_value;
-    let rd_write_field = &cycle_witness.rd_write_value;
-    let ram_read_field = &cycle_witness.ram_read_value;
-    let ram_write_field = &cycle_witness.ram_write_value;
 
     // Prepare batched shared×shared products (rows where both instruction inputs are shared).
     let mask_left_rs1 = 1u32 << (CircuitFlags::LeftOperandIsRs1Value as usize);
-    let mask_left_pc = 1u32 << (CircuitFlags::LeftOperandIsPC as usize);
     let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
-    let mask_right_imm = 1u32 << (CircuitFlags::RightOperandIsImm as usize);
-    let mask_add = 1u32 << (CircuitFlags::AddOperands as usize);
-    let mask_sub = 1u32 << (CircuitFlags::SubtractOperands as usize);
-    let mask_mul = 1u32 << (CircuitFlags::MultiplyOperands as usize);
-    let mask_advice = 1u32 << (CircuitFlags::Advice as usize);
 
     let mut mul_rows = Vec::new();
     let mut mul_map = vec![None; trace_len];
@@ -218,12 +193,64 @@ where
         vec![]
     };
 
-    let two_pow_64 = F::from_u128(1u128 << 64);
+    // Pre-compute per-row products (left_input * right_input in field domain).
+    // Shared×shared rows use the batched mul_products; other combos are local.
+    let mask_left_pc = 1u32 << (CircuitFlags::LeftOperandIsPC as usize);
+    let mask_right_imm = 1u32 << (CircuitFlags::RightOperandIsImm as usize);
+
+    let row_products: Vec<Rep3PrimeFieldShare<F>> = (0..trace_len)
+        .map(|t| {
+            let fb = flags_bits[t];
+            let left_shared = (fb & mask_left_rs1) != 0;
+            let right_shared = (fb & mask_right_rs2) != 0;
+            let left_is_pc = (fb & mask_left_pc) != 0;
+            let right_is_imm = (fb & mask_right_imm) != 0;
+
+            match (left_shared, right_shared) {
+                (true, true) => {
+                    let k = mul_map[t].expect("mul_map missing entry");
+                    mul_products[k]
+                }
+                (true, false) => {
+                    let r = if right_is_imm {
+                        F::from_i128(imm[t])
+                    } else {
+                        F::zero()
+                    };
+                    arithmetic::mul_public(rs1_field[t], r)
+                }
+                (false, true) => {
+                    let l = if left_is_pc {
+                        F::from_u64(unexpanded_pc[t])
+                    } else {
+                        F::zero()
+                    };
+                    arithmetic::mul_public(rs2_field[t], l)
+                }
+                (false, false) => {
+                    let l = if left_is_pc {
+                        F::from_u64(unexpanded_pc[t])
+                    } else {
+                        F::zero()
+                    };
+                    let r = if right_is_imm {
+                        F::from_i128(imm[t])
+                    } else {
+                        F::zero()
+                    };
+                    arithmetic::promote_to_trivial_share(party_id, l * r)
+                }
+            }
+        })
+        .collect();
 
     // Eq tables for r_cycle (same nested structure as vanilla)
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
-    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::<F>::evals(r2), || EqPolynomial::<F>::evals(r1));
+    let (eq_one, eq_two) = rayon::join(
+        || EqPolynomial::<F>::evals(r2),
+        || EqPolynomial::<F>::evals(r1),
+    );
 
     let n_inputs = ALL_R1CS_INPUTS.len();
     let mut acc_public: Vec<F> = vec![F::zero(); n_inputs];
@@ -264,6 +291,8 @@ where
             let eq2_val = eq_two[x2];
             let t = x1 * eq_two.len() + x2;
 
+            let row = cycle_witness.row(t);
+
             // Base always-present inputs
             inner_public[idx_pc] += F::from_u64(pc[t]) * eq2_val;
             inner_public[idx_unexp_pc] += F::from_u64(unexpanded_pc[t]) * eq2_val;
@@ -275,214 +304,53 @@ where
             } else {
                 0
             };
-            let next_pc = if t + 1 < trace_len { pc[t + 1] } else { 0 };
-            let next_is_noop = if t + 1 < trace_len {
-                (flags_bits[t + 1] & (1u32 << (CircuitFlags::IsNoop as usize))) != 0
-            } else {
-                true
-            };
+            let next_pc_val = if t + 1 < trace_len { pc[t + 1] } else { 0 };
+            let next_is_noop = row.next_is_noop();
             inner_public[idx_next_unexp] += F::from_u64(next_unexp) * eq2_val;
-            inner_public[idx_next_pc] += F::from_u64(next_pc) * eq2_val;
+            inner_public[idx_next_pc] += F::from_u64(next_pc_val) * eq2_val;
             inner_public[idx_next_is_noop] += F::from_bool(next_is_noop) * eq2_val;
 
-            inner_shared[idx_lookup_output] += arithmetic::mul_public(lookup_outputs[t], eq2_val);
+            // Shared per-cycle values
+            let lookup_output = row.to_lookup_output();
+            inner_shared[idx_lookup_output] += arithmetic::mul_public(lookup_output, eq2_val);
 
-            inner_shared[idx_rs1] += arithmetic::mul_public(rs1_field[t], eq2_val);
-            inner_shared[idx_rs2] += arithmetic::mul_public(rs2_field[t], eq2_val);
-            inner_shared[idx_rd_write] += arithmetic::mul_public(rd_write_field[t], eq2_val);
-            inner_shared[idx_ram_read] += arithmetic::mul_public(ram_read_field[t], eq2_val);
-            inner_shared[idx_ram_write] += arithmetic::mul_public(ram_write_field[t], eq2_val);
+            inner_shared[idx_rs1] += arithmetic::mul_public(row.rs1_value(), eq2_val);
+            inner_shared[idx_rs2] += arithmetic::mul_public(row.rs2_value(), eq2_val);
+            inner_shared[idx_rd_write] += arithmetic::mul_public(row.rd_write_value(), eq2_val);
+            inner_shared[idx_ram_read] += arithmetic::mul_public(row.ram_read_value(), eq2_val);
+            inner_shared[idx_ram_write] += arithmetic::mul_public(row.ram_write_value(), eq2_val);
 
-            // Per-row instruction inputs (for committed inputs, Product + lookup operands).
-            let fb = flags_bits[t];
-            let left_is_shared = (fb & mask_left_rs1) != 0;
-            let left_is_pc = (fb & mask_left_pc) != 0;
-            let right_is_shared = (fb & mask_right_rs2) != 0;
-            let right_is_imm = (fb & mask_right_imm) != 0;
+            // Instruction inputs, product, and lookup operands via new methods
+            let (left_input, right_input) = row.to_instruction_inputs(party_id);
+            let product = row_products[t];
+            let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
 
-            // LeftInstructionInput (committed)
-            if left_is_shared {
-                inner_shared[idx_left] += arithmetic::mul_public(rs1_field[t], eq2_val);
-            } else if left_is_pc {
-                inner_public[idx_left] += F::from_u64(unexpanded_pc[t]) * eq2_val;
-            }
-
-            // RightInstructionInput (committed)
-            if right_is_shared {
-                inner_shared[idx_right] += arithmetic::mul_public(rs2_field[t], eq2_val);
-            } else if right_is_imm {
-                inner_public[idx_right] += F::from_i128(imm[t]) * eq2_val;
-            }
+            inner_shared[idx_left] += arithmetic::mul_public(left_input, eq2_val);
+            inner_shared[idx_right] += arithmetic::mul_public(right_input, eq2_val);
+            inner_shared[idx_product] += arithmetic::mul_public(product, eq2_val);
+            inner_shared[idx_left_lookup] += arithmetic::mul_public(left_lookup, eq2_val);
+            inner_shared[idx_right_lookup] += arithmetic::mul_public(right_lookup, eq2_val);
 
             // WriteLookupOutputToRD (committed, public): rd * WriteLookupOutputToRD flag
-            let write_lookup = (fb & (1u32 << (CircuitFlags::WriteLookupOutputToRD as usize))) != 0;
-            if write_lookup {
+            let fb = flags_bits[t];
+            if row.flag(CircuitFlags::WriteLookupOutputToRD) {
                 inner_public[idx_write_lookup] += F::from_u64(rd_addr[t] as u64) * eq2_val;
             }
 
             // WritePCtoRD (committed, public): rd * Jump flag
-            let is_jump = (fb & (1u32 << (CircuitFlags::Jump as usize))) != 0;
+            let is_jump = row.flag(CircuitFlags::Jump);
             if is_jump {
                 inner_public[idx_write_pc] += F::from_u64(rd_addr[t] as u64) * eq2_val;
             }
 
             // ShouldBranch (committed, shared): lookup_output if Branch else 0
-            let is_branch = (fb & (1u32 << (CircuitFlags::Branch as usize))) != 0;
-            if is_branch {
-                inner_shared[idx_should_branch] += arithmetic::mul_public(lookup_outputs[t], eq2_val);
+            if row.flag(CircuitFlags::Branch) {
+                inner_shared[idx_should_branch] +=
+                    arithmetic::mul_public(lookup_output, eq2_val);
             }
 
             // ShouldJump (committed, public): Jump && !NextIsNoop
             inner_public[idx_should_jump] += F::from_bool(is_jump && !next_is_noop) * eq2_val;
-
-            // Product (mixed)
-            match (left_is_shared, right_is_shared) {
-                (true, true) => {
-                    let k = mul_map[t].expect("mul_map missing entry");
-                    inner_shared[idx_product] += arithmetic::mul_public(mul_products[k], eq2_val);
-                }
-                (true, false) => {
-                    let r = if right_is_imm {
-                        F::from_i128(imm[t])
-                    } else {
-                        F::zero()
-                    };
-                    let prod = arithmetic::mul_public(rs1_field[t], r);
-                    inner_shared[idx_product] += arithmetic::mul_public(prod, eq2_val);
-                }
-                (false, true) => {
-                    let l = if left_is_pc {
-                        F::from_u64(unexpanded_pc[t])
-                    } else {
-                        F::zero()
-                    };
-                    let prod = arithmetic::mul_public(rs2_field[t], l);
-                    inner_shared[idx_product] += arithmetic::mul_public(prod, eq2_val);
-                }
-                (false, false) => {
-                    let l = if left_is_pc {
-                        F::from_u64(unexpanded_pc[t])
-                    } else {
-                        F::zero()
-                    };
-                    let r = if right_is_imm {
-                        F::from_i128(imm[t])
-                    } else {
-                        F::zero()
-                    };
-                    inner_public[idx_product] += (l * r) * eq2_val;
-                }
-            }
-
-            // LeftLookupOperand = 0 if Add/Sub/Mul, else LeftInstructionInput
-            let is_add = (fb & mask_add) != 0;
-            let is_sub = (fb & mask_sub) != 0;
-            let is_mul = (fb & mask_mul) != 0;
-            if !(is_add || is_sub || is_mul) {
-                if left_is_shared {
-                    inner_shared[idx_left_lookup] += arithmetic::mul_public(rs1_field[t], eq2_val);
-                } else if left_is_pc {
-                    inner_public[idx_left_lookup] += F::from_u64(unexpanded_pc[t]) * eq2_val;
-                }
-            }
-
-            // RightLookupOperand
-            if is_add {
-                // left + right
-                match (left_is_shared, right_is_shared) {
-                    (false, false) => {
-                        let l = if left_is_pc {
-                            F::from_u64(unexpanded_pc[t])
-                        } else {
-                            F::zero()
-                        };
-                        let r = if right_is_imm {
-                            F::from_i128(imm[t])
-                        } else {
-                            F::zero()
-                        };
-                        inner_public[idx_right_lookup] += (l + r) * eq2_val;
-                    }
-                    _ => {
-                        // Build shared sum = left_share + right_share (+ public pieces)
-                        let mut sum = Rep3PrimeFieldShare::zero_share();
-                        if left_is_shared {
-                            sum += rs1_field[t];
-                        } else if left_is_pc {
-                            sum = arithmetic::add_public(sum, F::from_u64(unexpanded_pc[t]), party_id);
-                        }
-                        if right_is_shared {
-                            sum += rs2_field[t];
-                        } else if right_is_imm {
-                            sum = arithmetic::add_public(sum, F::from_i128(imm[t]), party_id);
-                        }
-                        inner_shared[idx_right_lookup] += arithmetic::mul_public(sum, eq2_val);
-                    }
-                }
-            } else if is_sub {
-                // left - right + 2^64
-                match (left_is_shared, right_is_shared) {
-                    (false, false) => {
-                        let l = if left_is_pc { F::from_u64(unexpanded_pc[t]) } else { F::zero() };
-                        let r = if right_is_imm { F::from_i128(imm[t]) } else { F::zero() };
-                        inner_public[idx_right_lookup] += (l - r + two_pow_64) * eq2_val;
-                    }
-                    _ => {
-                        let mut diff = Rep3PrimeFieldShare::zero_share();
-                        if left_is_shared {
-                            diff += rs1_field[t];
-                        } else if left_is_pc {
-                            diff = arithmetic::add_public(diff, F::from_u64(unexpanded_pc[t]), party_id);
-                        }
-                        if right_is_shared {
-                            diff -= rs2_field[t];
-                        } else if right_is_imm {
-                            diff = arithmetic::sub_shared_by_public(diff, F::from_i128(imm[t]), party_id);
-                        }
-                        diff = arithmetic::add_public(diff, two_pow_64, party_id);
-                        inner_shared[idx_right_lookup] += arithmetic::mul_public(diff, eq2_val);
-                    }
-                }
-            } else if is_mul {
-                // RightLookupOperand = Product
-                // Reuse Product contribution already accumulated in idx_product by adding again here.
-                // (This avoids recomputing per-row products.)
-                // We add the same term to RightLookupOperand.
-                match (left_is_shared, right_is_shared) {
-                    (true, true) => {
-                        let k = mul_map[t].expect("mul_map missing entry");
-                        inner_shared[idx_right_lookup] += arithmetic::mul_public(mul_products[k], eq2_val);
-                    }
-                    (true, false) => {
-                        let r = if right_is_imm { F::from_i128(imm[t]) } else { F::zero() };
-                        let prod = arithmetic::mul_public(rs1_field[t], r);
-                        inner_shared[idx_right_lookup] += arithmetic::mul_public(prod, eq2_val);
-                    }
-                    (false, true) => {
-                        let l = if left_is_pc {
-                            F::from_u64(unexpanded_pc[t])
-                        } else {
-                            F::zero()
-                        };
-                        let prod = arithmetic::mul_public(rs2_field[t], l);
-                        inner_shared[idx_right_lookup] += arithmetic::mul_public(prod, eq2_val);
-                    }
-                    (false, false) => {
-                        let l = if left_is_pc { F::from_u64(unexpanded_pc[t]) } else { F::zero() };
-                        let r = if right_is_imm { F::from_i128(imm[t]) } else { F::zero() };
-                        inner_public[idx_right_lookup] += (l * r) * eq2_val;
-                    }
-                }
-            } else if (fb & mask_advice) != 0 {
-                inner_public[idx_right_lookup] += F::from_u64(advice[t]) * eq2_val;
-            } else {
-                // Otherwise: RightInstructionInput
-                if right_is_shared {
-                    inner_shared[idx_right_lookup] += arithmetic::mul_public(rs2_field[t], eq2_val);
-                } else if right_is_imm {
-                    inner_public[idx_right_lookup] += F::from_i128(imm[t]) * eq2_val;
-                }
-            }
 
             // OpFlags
             for flag in CircuitFlags::iter() {
@@ -518,14 +386,16 @@ mod tests {
     use crate::utils::compute_ram_k;
     use crate::utils::test_utils::run_rep3_test;
     use crate::utils::tracing::init_tracing;
-    use crate::zkvm::instruction::Rep3Cycle;
     use crate::zkvm::instruction::populate_operands_casts;
+    use crate::zkvm::instruction::Rep3Cycle;
     use crate::zkvm::witness::generate_witness_batch_rep3;
     use jolt_core::host::Program;
     use jolt_core::poly::commitment::mock::MockCommitScheme;
     use jolt_core::zkvm::bytecode::BytecodePreprocessing;
     use jolt_core::zkvm::ram::RAMPreprocessing;
-    use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial};
+    use jolt_core::zkvm::witness::{
+        compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial,
+    };
     use jolt_core::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing};
     use tracer::instruction::Cycle;
 
@@ -536,7 +406,8 @@ mod tests {
     #[test]
     #[ignore = "requires QUIC network sockets (not available in sandboxed test env)"]
     fn r1cs_claimed_evals_correct() {
-        let _tracing_guard = init_tracing("r1cs_inputs_test.json", Path::new("/tmp/co-jolt2-traces"));
+        let _tracing_guard =
+            init_tracing("r1cs_inputs_test.json", Path::new("/tmp/co-jolt2-traces"));
 
         let mut program = Program::new("fibonacci-guest");
         let elf_path = "/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest";
@@ -573,8 +444,11 @@ mod tests {
         let log_t = padded_len.log_2();
         let r_cycle: Vec<Challenge> = (0..log_t).map(|_| Challenge::rand(&mut rng)).collect();
 
-        let vanilla_evals =
-            jolt_core::zkvm::r1cs::inputs::compute_claimed_witness_evals(&shared, &vanilla_trace, &r_cycle);
+        let vanilla_evals = jolt_core::zkvm::r1cs::inputs::compute_claimed_witness_evals(
+            &shared,
+            &vanilla_trace,
+            &r_cycle,
+        );
 
         let preprocessing_arc = Arc::new(preprocessing);
         let io_device_arc = Arc::new(io_device);
@@ -623,7 +497,11 @@ mod tests {
         assert_eq!(opened.len(), ALL_R1CS_INPUTS.len());
         assert_eq!(opened.len(), vanilla_evals.len());
         for (i, (mpc, van)) in opened.iter().zip(vanilla_evals.iter()).enumerate() {
-            assert_eq!(mpc, van, "mismatch at input index {i} ({:?})", ALL_R1CS_INPUTS[i]);
+            assert_eq!(
+                mpc, van,
+                "mismatch at input index {i} ({:?})",
+                ALL_R1CS_INPUTS[i]
+            );
         }
     }
 }
