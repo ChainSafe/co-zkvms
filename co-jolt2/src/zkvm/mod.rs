@@ -110,6 +110,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             final_memory_state,
             party_id,
             ram_K,
+            None,
         );
         Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx)
     }

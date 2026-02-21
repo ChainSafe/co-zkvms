@@ -197,13 +197,14 @@ fn stage1_correct() {
             let preprocessing_arc = Arc::clone(&preprocessing_arc_for_workers);
             let io_device_arc = Arc::clone(&io_device_arc_for_workers);
             move |party_idx| {
-                let (trace, memory, _io) = shares_arc[party_idx].clone();
+                let (trace, memory, advice_shares) = shares_arc[party_idx].clone();
                 (
                     trace,
                     memory,
                     Arc::clone(&io_device_arc),
                     Arc::clone(&preprocessing_arc),
                     ram_K,
+                    advice_shares,
                 )
             }
         },
@@ -219,7 +220,7 @@ fn stage1_correct() {
             }
         },
         move |input, io_ctx| {
-            let (trace, final_memory_state, program_io, preprocessing, ram_K) = input;
+            let (trace, final_memory_state, program_io, preprocessing, ram_K, advice_shares) = input;
             let mut io_ctx = io_ctx;
             let party_id = io_ctx.party_id();
             let state = StateManagerWorker::new(
@@ -229,6 +230,7 @@ fn stage1_correct() {
                 final_memory_state,
                 party_id,
                 ram_K,
+                Some(advice_shares),
             );
             Rep3JoltDAGWorker::prove_with_stop::<F, PCS, FS, _>(
                 state,
