@@ -159,12 +159,12 @@ impl Rep3JoltDAGWorker {
             ram_dag.set_stage2_init(ram_gamma, ram_input_claim, ram_r_address);
             let ram_instances = ram_dag.stage2_instances(&mut state);
 
-            // // 4) Lookups booleanity — receive (gamma_powers, r_address)
-            // let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
-            //     io_ctx.network().receive_request()?;
-            // let mut lookups_dag = Rep3LookupsDagWorker::new(instruction_one_hot_polys);
-            // lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
-            // let lookups_instances = lookups_dag.stage2_instances(&mut state);
+            // 4) Lookups booleanity — receive (gamma_powers, r_address)
+            let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
+                io_ctx.network().receive_request()?;
+            let mut lookups_dag = Rep3LookupsDagWorker::new(instruction_one_hot_polys);
+            lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
+            let lookups_instances = lookups_dag.stage2_instances(&mut state);
 
             // Collect all instances in vanilla order
             let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> = std::iter::empty()
@@ -173,7 +173,7 @@ impl Rep3JoltDAGWorker {
                 ))
                 .chain(registers_instances)
                 .chain(ram_instances)
-                // .chain(lookups_instances)
+                .chain(lookups_instances)
                 .collect();
 
             Rep3BatchedSumcheckWorker::prove(&mut instances, &mut state.accumulator, &mut io_ctx)?;

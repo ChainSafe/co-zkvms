@@ -176,22 +176,22 @@ impl Rep3JoltDAGCoordinator {
         let ram_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
             vec![Box::new(raf), Box::new(ram_rwc), Box::new(output)];
 
-        // // 4) Lookups booleanity — derives gamma + r_address from transcript.
-        // let log_T = state
-        //     .accumulator
-        //     .get_virtual_polynomial_opening(
-        //         VirtualPolynomial::LookupOutput,
-        //         SumcheckId::SpartanOuter,
-        //     )
-        //     .0
-        //     .r
-        //     .len();
-        // let booleanity = Rep3BooleanitySumcheck::<F>::new(&mut state.transcript, log_T);
-        // let lookups_gamma = booleanity.gamma();
-        // let lookups_r_address = booleanity.r_address().to_vec();
-        // network.broadcast_request((lookups_gamma, lookups_r_address))?;
-        // let lookups_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
-        //     vec![Box::new(booleanity)];
+        // 4) Lookups booleanity — derives gamma + r_address from transcript.
+        let log_T = state
+            .accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .len();
+        let booleanity = Rep3BooleanitySumcheck::<F>::new(&mut state.transcript, log_T);
+        let lookups_gamma = booleanity.gamma();
+        let lookups_r_address = booleanity.r_address().to_vec();
+        network.broadcast_request((lookups_gamma, lookups_r_address))?;
+        let lookups_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            vec![Box::new(booleanity)];
 
         // Collect all instances in vanilla order
         let stage2_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
@@ -199,7 +199,7 @@ impl Rep3JoltDAGCoordinator {
                 .chain(spartan_instances)
                 .chain(registers_instances)
                 .chain(ram_instances)
-                // .chain(lookups_instances)
+                .chain(lookups_instances)
                 .collect();
 
         Ok(stage2_instances)

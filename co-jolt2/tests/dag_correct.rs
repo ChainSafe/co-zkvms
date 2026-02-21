@@ -105,13 +105,13 @@ fn vanilla_up_to_stage2(
     // because constructors derive challenges from the transcript.
     let mut registers_dag = RegistersDag::default();
     let mut ram_dag = RamDag::new_prover::<F, FS, PCS>(&sm);
-    // let mut lookups_dag = LookupsDag::<F>::default();
+    let mut lookups_dag = LookupsDag::<F>::default();
 
     let mut stage2_instances: Vec<_> = std::iter::empty()
         .chain(spartan.stage2_prover_instances(&mut sm))
         .chain(registers_dag.stage2_prover_instances(&mut sm))
         .chain(ram_dag.stage2_prover_instances(&mut sm))
-        // .chain(lookups_dag.stage2_prover_instances(&mut sm))
+        .chain(lookups_dag.stage2_prover_instances(&mut sm))
         .collect();
     let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> =
         stage2_instances
