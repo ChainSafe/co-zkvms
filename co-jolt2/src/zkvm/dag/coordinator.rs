@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
+use crate::subprotocols::sumcheck::Rep3BatchedSumcheck;
 use crate::utils::types::MaybeShared;
-use crate::zkvm::dag::state_manager::StateManagerCoordinator;
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
 use crate::zkvm::dag::Rep3DagStop;
 use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -91,6 +92,23 @@ impl Rep3JoltDAGCoordinator {
         if stop != Rep3DagStop::AfterCommitments {
             Rep3SpartanDag::stage1_prove(&mut state, network)?;
         }
+
+        if stop != Rep3DagStop::AfterCommitments && stop != Rep3DagStop::AfterStage1 {
+            // Stage 2 (Spartan inner sumcheck)
+            let stage2_instances =
+                Rep3SpartanDag::stage2_instances(&mut state, network)?;
+            let (proof, _r_stage2) = Rep3BatchedSumcheck::prove(
+                &stage2_instances,
+                &mut state.accumulator,
+                &mut state.transcript,
+                network,
+            )?;
+            state.proofs.insert(
+                ProofKeys::Stage2Sumcheck,
+                ProofData::SumcheckProof(proof),
+            );
+        }
+
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {
             opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),

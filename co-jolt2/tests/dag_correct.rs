@@ -19,9 +19,12 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
+use jolt_core::subprotocols::sumcheck::BatchedSumcheck;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
-use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
+use jolt_core::zkvm::dag::state_manager::{
+    ProofData, ProofKeys, StateManager as VanillaStateManager,
+};
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::spartan::SpartanDag;
 use jolt_core::zkvm::witness::{
@@ -38,7 +41,7 @@ type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 type Challenge = <F as jolt_core::field::JoltField>::Challenge;
 
-fn vanilla_up_to_stage1(
+fn vanilla_up_to_stage2(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
@@ -94,6 +97,28 @@ fn vanilla_up_to_stage1(
     let mut spartan = SpartanDag::<F>::new::<FS>(padded_trace_length);
     spartan.stage1_prove(&mut sm).unwrap();
 
+    // Stage 2 (Spartan inner sumcheck + other subsystems).
+    // Only Spartan contributes stage2 instances for now.
+    let mut stage2_instances: Vec<_> = spartan
+        .stage2_prover_instances(&mut sm)
+        .into_iter()
+        .collect();
+    let stage2_instances_mut: Vec<&mut dyn jolt_core::subprotocols::sumcheck::SumcheckInstance<F, FS>> =
+        stage2_instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn jolt_core::subprotocols::sumcheck::SumcheckInstance<F, FS>)
+            .collect();
+    let accumulator = sm.get_prover_accumulator();
+    let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
+        stage2_instances_mut,
+        Some(accumulator.clone()),
+        &mut *transcript.borrow_mut(),
+    );
+    sm.proofs.borrow_mut().insert(
+        ProofKeys::Stage2Sumcheck,
+        ProofData::SumcheckProof(stage2_proof),
+    );
+
     (VanillaJoltProof::from_prover_state_manager(sm), tau)
 }
 
@@ -134,15 +159,15 @@ fn stage1_correct() {
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
-    // 4) Vanilla proof up to Stage1.
-    let (vanilla_proof, tau) = vanilla_up_to_stage1(
+    // 4) Vanilla proof up to Stage2.
+    let (vanilla_proof, tau) = vanilla_up_to_stage2(
         &preprocessing,
         vanilla_trace,
         io_device.clone(),
         vanilla_memory,
     );
 
-    // 5) Rep3 proof up to Stage1 (local MPC, no QUIC).
+    // 5) Rep3 proof up to Stage2 (local MPC, no QUIC).
     let preprocessing_arc = Arc::new(preprocessing);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
@@ -198,7 +223,7 @@ fn stage1_correct() {
             Rep3JoltDAGWorker::prove_with_stop::<F, PCS, FS, _>(
                 state,
                 io_ctx,
-                Rep3DagStop::AfterStage1,
+                Rep3DagStop::AfterStage2,
             )
         },
         move |input, net| {
@@ -223,7 +248,7 @@ fn stage1_correct() {
                 ram_K,
                 twist_sumcheck_switch_index,
             );
-            Rep3JoltDAGCoordinator::prove_with_stop(state, net, Rep3DagStop::AfterStage1)
+            Rep3JoltDAGCoordinator::prove_with_stop(state, net, Rep3DagStop::AfterStage2)
         },
     );
 
@@ -304,7 +329,32 @@ fn stage1_correct() {
         }
     }
 
-    // 8) Compare opening claims bytes (stage1 openings).
+    // 8) Compare Stage2 sumcheck proof bytes.
+    let rep3_stage2 = rep3_proof
+        .proofs
+        .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage2Sumcheck)
+        .expect("rep3 stage2 proof missing");
+    let vanilla_stage2 = vanilla_proof
+        .proofs
+        .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage2Sumcheck)
+        .expect("vanilla stage2 proof missing");
+
+    let rep3_stage2_bytes = {
+        let mut v = Vec::new();
+        rep3_stage2.serialize_uncompressed(&mut v).unwrap();
+        v
+    };
+    let vanilla_stage2_bytes = {
+        let mut v = Vec::new();
+        vanilla_stage2.serialize_uncompressed(&mut v).unwrap();
+        v
+    };
+    assert_eq!(
+        rep3_stage2_bytes, vanilla_stage2_bytes,
+        "Stage2 sumcheck proof mismatch"
+    );
+
+    // 9) Compare opening claims bytes (stage1+stage2 openings).
     let rep3_openings_bytes = {
         let mut v = Vec::new();
         rep3_proof
@@ -323,7 +373,7 @@ fn stage1_correct() {
     };
     assert_eq!(rep3_openings_bytes, vanilla_openings_bytes);
 
-    // 9) Metadata invariants.
+    // 10) Metadata invariants.
     assert_eq!(rep3_proof.trace_length, vanilla_proof.trace_length);
     assert_eq!(rep3_proof.ram_K, vanilla_proof.ram_K);
     assert_eq!(rep3_proof.bytecode_d, vanilla_proof.bytecode_d);

@@ -7,10 +7,11 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker;
+use crate::subprotocols::sumcheck::{Rep3BatchedSumcheckWorker, Rep3SumcheckInstanceWorker};
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use crate::zkvm::spartan::Rep3InnerSumcheckWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use crate::zkvm::{dag::Rep3DagStop, spartan::Rep3SpartanDagWorker};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -99,9 +100,27 @@ impl Rep3JoltDAGWorker {
         }
 
         // Stage 1 (Spartan outer sumcheck)
-        Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
+        let (outer_sumcheck_r, claimed_witness_evals) =
+            Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
 
-        // Future stages (sumcheck, opening proof) will go here...
+        if stop != Rep3DagStop::AfterStage1 {
+            // Stage 2 (Spartan inner sumcheck)
+            let (gamma, input_claim): (F, F) = io_ctx.network().receive_request()?;
+
+            let inner = Rep3InnerSumcheckWorker::new(
+                gamma,
+                input_claim,
+                &outer_sumcheck_r,
+                claimed_witness_evals,
+                padded_trace_length,
+                party_id,
+            );
+            let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> =
+                vec![Box::new(inner)];
+            Rep3BatchedSumcheckWorker::prove(&mut instances, &mut state.accumulator, &mut io_ctx)?;
+        }
+
+        // Future stages (opening proof, etc.) will go here...
         Ok(())
     }
 

@@ -10,7 +10,9 @@ use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 use crate::field::JoltField;
+use crate::subprotocols::sumcheck::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
+use crate::zkvm::spartan::inner::Rep3InnerSumcheck;
 
 pub struct Rep3SpartanDag;
 
@@ -80,9 +82,8 @@ impl Rep3SpartanDag {
         let mut outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
 
         // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
-        for v in [claim_az, claim_bz, claim_cz] {
-            state.transcript.append_scalar(&v);
-        }
+        // Vanilla uses append_scalars (with vector framing) for the outer sumcheck claims.
+        state.transcript.append_scalars(&[claim_az, claim_bz, claim_cz]);
 
         // Store Az/Bz/Cz virtual openings (append again via accumulator, matching vanilla).
         let opening_point = jolt_core::poly::opening_proof::OpeningPoint::new(outer_sumcheck_r.clone());
@@ -153,5 +154,24 @@ impl Rep3SpartanDag {
         }
 
         Ok(())
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3SpartanDag::stage2_instances")]
+    pub fn stage2_instances<F, ProofTranscript, PCS, N>(
+        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>>>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: jolt_core::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>,
+        N: Rep3NetworkCoordinator,
+    {
+        let inner = Rep3InnerSumcheck::new::<ProofTranscript, PCS>(state);
+
+        // Broadcast init bundle (gamma, input_claim) to workers
+        network.broadcast_request((inner.gamma(), inner.input_claim()))?;
+
+        Ok(vec![Box::new(inner)])
     }
 }

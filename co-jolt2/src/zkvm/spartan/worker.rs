@@ -21,7 +21,7 @@ impl Rep3SpartanDagWorker {
     pub fn stage1_prove<F, PCS, N>(
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-    ) -> eyre::Result<()>
+    ) -> eyre::Result<(Vec<F::Challenge>, Vec<Rep3PrimeFieldShare<F>>)>
     where
         F: JoltField,
         PCS: jolt_core::poly::commitment::commitment_scheme::CommitmentScheme<Field = F>,
@@ -104,12 +104,13 @@ impl Rep3SpartanDagWorker {
         let r_cycle = &r_reversed[..num_steps_bits];
 
         let claimed_witness_evals = compute_claimed_witness_evals_rep3(state, io_ctx, r_cycle)?;
+        // Keep Rep3 shares for stage 2; send additive copies to coordinator.
         let claimed_additive: Vec<AdditiveShare<F>> = claimed_witness_evals
-            .into_iter()
+            .iter()
             .map(|x| x.into_additive())
             .collect();
         io_ctx.network().send_response(claimed_additive)?;
 
-        Ok(())
+        Ok((r_reversed, claimed_witness_evals))
     }
 }

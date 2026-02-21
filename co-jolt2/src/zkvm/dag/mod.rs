@@ -7,4 +7,5 @@ pub mod worker;
 pub enum Rep3DagStop {
     AfterCommitments,
     AfterStage1,
+    AfterStage2,
 }
