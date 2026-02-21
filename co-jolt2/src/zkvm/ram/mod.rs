@@ -4,7 +4,8 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::remap_address;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
+use mpc_core::protocols::rep3_ring::casts::{binary_ring_to_field_many, ring_to_field_a2b_many};
+use mpc_core::protocols::rep3_ring::yao::ring_to_field_many;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -121,7 +122,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
             sm.prover_state.final_memory_state.data[..dram_convert_len].to_vec();
 
         let dram_field: Vec<Rep3PrimeFieldShare<F>> =
-            ring_to_field_a2b_many(&final_memory_ring, io_ctx.main())?;
+            binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
 
         // Build full K-length vector: start from initial state (PUBLIC→trivial), overlay DRAM
         let mut final_memory_field: Vec<Rep3PrimeFieldShare<F>> = initial_memory_state

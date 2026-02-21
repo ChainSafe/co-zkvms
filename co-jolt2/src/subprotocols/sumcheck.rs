@@ -130,20 +130,6 @@ impl Rep3BatchedSumcheck {
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
 
-        {
-            let per_instance: Vec<String> = instances
-                .iter()
-                .enumerate()
-                .map(|(i, s)| format!("i{}(rounds={}, raw_claim={:?}, scaled={:?})", i, s.num_rounds(), s.input_claim_public(), individual_claims[i]))
-                .collect();
-            eprintln!(
-                "[MPC-coord] batched_claim={:?}, max_rounds={}, coeffs[0]={:?}, instances=[{}]",
-                batched_claim, max_num_rounds,
-                batching_coeffs.first(),
-                per_instance.join(", "),
-            );
-        }
-
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 

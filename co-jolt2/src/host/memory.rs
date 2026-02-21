@@ -25,9 +25,6 @@ impl Rep3Memory {
     /// The resulting `data` vector contains exactly the DRAM words that map
     /// to indices `[dram_start_index .. ram_K)` in the K-length address space.
     /// `Rep3RamDagWorker::new` overlays these onto the initial memory state.
-    ///
-    /// Uses arithmetic (additive mod 2^64) sharing because `ring_to_field_a2b_many`
-    /// expects arithmetic ring shares as input (it performs a2b internally).
     pub fn generate_secret_shares<R: rand::Rng>(
         memory: Memory,
         memory_layout: &MemoryLayout,
@@ -44,7 +41,7 @@ impl Rep3Memory {
 
         let shares_per_word: Vec<Vec<Rep3RingShare<u64>>> = memory.data[..share_len]
             .iter()
-            .map(|&word| rep3_ring::arithmetic::generate_shares_rep3(word, rng))
+            .map(|&word| rep3_ring::binary::generate_shares_rep3(word, rng))
             .collect();
 
         let transposed = transpose(shares_per_word);
