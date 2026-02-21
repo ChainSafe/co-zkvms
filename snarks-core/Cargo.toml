@@ -21,4 +21,4 @@ merlin.workspace = true
 rand.workspace = true
 
 # Needed to provide `FieldExt` for the exact field types used by vanilla Jolt (path dep).
-jolt-core = { path = "/Users/timofey/repos/examples/jolt/jolt-core" }
+jolt-core = { path = "/home/ubuntu/jolt/jolt-core" }

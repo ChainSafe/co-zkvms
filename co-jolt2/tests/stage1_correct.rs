@@ -17,16 +17,11 @@ use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDAGCoordinator, dag::worker::Rep3
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::poly::multilinear_polynomial::BindingOrder;
-use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
-use jolt_core::utils::math::Math;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
-use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
-use jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::spartan::SpartanDag;
 use jolt_core::zkvm::witness::{
@@ -42,83 +37,6 @@ type F = Fr;
 type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 type Challenge = <F as jolt_core::field::JoltField>::Challenge;
-
-/// Compute vanilla per-constraint-pair t_inf contributions for round 0.
-/// Matches the MPC `[MPC-PAIR]` debug output.
-/// pair_idx = constraint_idx / 2, constraint_idx in 0..padded_num_constraints.
-/// t_inf for pair = sum_{step} E_out[x_out] * E_in[x_in] * (az1 - az0) * (bz1 - bz0)
-/// where az0=Az(row=step*padded+2*pair_idx), az1=Az(row=step*padded+2*pair_idx+1), etc.
-fn vanilla_per_pair_tinf(
-    preprocessing: &JoltProverPreprocessing<F, PCS>,
-    trace: &[Cycle],
-    tau: &[Challenge],
-) {
-    let padded_num_steps = trace.len(); // already padded to power of 2
-    let padded_num_constraints = {
-        let key = UniformSpartanKey::<F>::new(padded_num_steps);
-        key.padded_row_constraint_per_step()
-    };
-    let num_constraint_pairs = padded_num_constraints / 2;
-
-    // Build eq poly exactly as done in stage1_prove: LowToHigh, tau has num_rows_bits elements.
-    let eq_poly = GruenSplitEqPolynomial::<F>::new(tau, BindingOrder::LowToHigh);
-
-    let e_in_len = eq_poly.E_in_current_len();
-    let num_x_in_bits = if e_in_len > 0 { e_in_len.log_2() } else { 0 };
-    let x_in_mask = if num_x_in_bits > 0 {
-        (1usize << num_x_in_bits) - 1
-    } else {
-        0
-    };
-
-    let mut per_pair_tinf = vec![F::zero(); num_constraint_pairs];
-
-    for step in 0..padded_num_steps {
-        let row = R1CSCycleInputs::from_trace::<F>(&preprocessing.shared, trace, step);
-        for pair_idx in 0..num_constraint_pairs {
-            let idx0 = 2 * pair_idx;
-            if idx0 >= UNIFORM_R1CS.len() {
-                continue;
-            }
-            let c0 = &UNIFORM_R1CS[idx0];
-            let c1 = UNIFORM_R1CS.get(idx0 + 1);
-
-            let az0: F = c0.cons.a.evaluate_row_with::<F>(&row);
-            let bz0: F = c0.cons.b.evaluate_row_with::<F>(&row);
-            let az1: F = c1
-                .map(|c| c.cons.a.evaluate_row_with::<F>(&row))
-                .unwrap_or(F::zero());
-            let bz1: F = c1
-                .map(|c| c.cons.b.evaluate_row_with::<F>(&row))
-                .unwrap_or(F::zero());
-
-            let az_inf = az1 - az0;
-            let bz_inf = bz1 - bz0;
-            let ab_inf = az_inf * bz_inf;
-            if ab_inf.is_zero() {
-                continue;
-            }
-
-            // block = step * num_constraint_pairs + pair_idx (same layout as MPC)
-            let block = step * num_constraint_pairs + pair_idx;
-            let x_in = block & x_in_mask;
-            let x_out = block >> num_x_in_bits;
-            let weight = if eq_poly.E_in_current_len() == 0 {
-                eq_poly.E_out_current()[block]
-            } else {
-                eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out]
-            };
-
-            per_pair_tinf[pair_idx] += ab_inf * weight;
-        }
-    }
-
-    for (pair, val) in per_pair_tinf.iter().enumerate() {
-        eprintln!("[VAN-PAIR] constraint_pair={pair} t_inf={val:?}");
-    }
-    let total: F = per_pair_tinf.iter().sum();
-    eprintln!("[VAN-TOTAL] t_inf={total:?}");
-}
 
 fn vanilla_up_to_stage1(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
@@ -217,7 +135,6 @@ fn stage1_correct() {
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
     // 4) Vanilla proof up to Stage1.
-    let vanilla_trace_for_debug = vanilla_trace.clone();
     let (vanilla_proof, tau) = vanilla_up_to_stage1(
         &preprocessing,
         vanilla_trace,
@@ -227,9 +144,6 @@ fn stage1_correct() {
 
     // 5) Rep3 proof up to Stage1 (local MPC, no QUIC).
     let preprocessing_arc = Arc::new(preprocessing);
-
-    // DEBUG: compute per-pair vanilla t_inf using the same tau.
-    vanilla_per_pair_tinf(&*preprocessing_arc, &vanilla_trace_for_debug, &tau);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
     let shares_arc = Arc::new(shares);

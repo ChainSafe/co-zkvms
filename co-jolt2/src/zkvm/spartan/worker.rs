@@ -72,6 +72,7 @@ impl Rep3SpartanDagWorker {
             ));
         }
 
+
         let mut az_bz_cz_poly = Rep3SpartanInterleavedPolynomial::<F>::new(
             &key,
             &cycle_inputs,

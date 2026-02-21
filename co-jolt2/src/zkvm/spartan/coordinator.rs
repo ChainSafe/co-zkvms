@@ -36,6 +36,7 @@ impl Rep3SpartanDag {
             .challenge_vector_optimized::<F>(num_rounds_x);
         network.broadcast_request(tau.clone())?;
 
+
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
 
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
@@ -51,27 +52,6 @@ impl Rep3SpartanDag {
             let t_inf =
                 additive::combine_additive_share(round_shares.into_iter().map(|x| x.1).collect());
 
-            eprintln!("[COORD] round {_round}: t0={t0:?} t_inf={t_inf:?}");
-
-            // DEBUG: round 0 sends per-pair t_inf shares.
-            if _round == 0 {
-                let per_pair_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
-                // per_pair_shares[party][pair_idx]
-                let num_pairs = per_pair_shares[0].len();
-                for pair_idx in 0..num_pairs {
-                    let combined = additive::combine_additive_share(
-                        per_pair_shares.iter().map(|p| p[pair_idx]).collect(),
-                    );
-                    eprintln!("[MPC-PAIR] constraint_pair={pair_idx} t_inf={combined:?}");
-                }
-                let mut total = F::zero();
-                for i in 0..num_pairs {
-                    total += additive::combine_additive_share(
-                        per_pair_shares.iter().map(|p| p[i]).collect(),
-                    );
-                }
-                eprintln!("[MPC-TOTAL] t_inf={total:?}");
-            }
 
             let r_i = process_eq_sumcheck_round(
                 (t0, t_inf),

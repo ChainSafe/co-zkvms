@@ -166,26 +166,24 @@ where
     let rs1_field = &cycle_witness.rs1_value;
     let rs2_field = &cycle_witness.rs2_value;
 
-    // Batched shared×shared products: only needed for rows where both instruction
-    // inputs are shared AND the row is a MultiplyOperands instruction (the only
-    // R1CS constraint that references Product is gated by MultiplyOperands).
+    // Batched shared×shared products: needed for ALL rows where both instruction
+    // inputs are shared (vanilla computes Product = left * right unconditionally).
     let mask_left_rs1 = 1u32 << (CircuitFlags::LeftOperandIsRs1Value as usize);
     let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
-    let mask_mul = 1u32 << (CircuitFlags::MultiplyOperands as usize);
 
-    let mask_shared_mul = mask_mul | mask_left_rs1 | mask_right_rs2;
-    let mul_rows: Vec<usize> = (0..trace_len)
+    let mask_both_shared = mask_left_rs1 | mask_right_rs2;
+    let shared_mul_rows: Vec<usize> = (0..trace_len)
         .into_par_iter()
-        .filter(|&t| (flags_bits[t] & mask_shared_mul) == mask_shared_mul)
+        .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
         .collect();
     let mut mul_map = vec![None; trace_len];
-    for (k, &t) in mul_rows.iter().enumerate() {
+    for (k, &t) in shared_mul_rows.iter().enumerate() {
         mul_map[t] = Some(k);
     }
 
-    let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !mul_rows.is_empty() {
-        let lhs: Vec<_> = mul_rows.iter().map(|&t| rs1_field[t]).collect();
-        let rhs: Vec<_> = mul_rows.iter().map(|&t| rs2_field[t]).collect();
+    let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
+        let lhs: Vec<_> = shared_mul_rows.iter().map(|&t| rs1_field[t]).collect();
+        let rhs: Vec<_> = shared_mul_rows.iter().map(|&t| rs2_field[t]).collect();
         arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
     } else {
         vec![]
@@ -267,34 +265,30 @@ where
                     arithmetic::mul_public(row.ram_write_value(), eq2_val);
 
                 // Instruction inputs, product, and lookup operands.
-                // Product only constrained for MultiplyOperands (RightLookupEqProductIfMul).
+                // Vanilla computes Product = left * right for ALL rows unconditionally.
                 let (left_input, right_input) = row.to_instruction_inputs(party_id);
-                let product = if row.flag(CircuitFlags::MultiplyOperands) {
-                    match mul_map[t] {
-                        Some(k) => mul_products[k],
-                        None => {
-                            let fb = flags_bits[t];
-                            let left_shared = (fb & mask_left_rs1) != 0;
-                            let right_shared = (fb & mask_right_rs2) != 0;
-                            match (left_shared, right_shared) {
-                                (true, false) => arithmetic::mul_public(
-                                    rs1_field[t],
-                                    row.to_right_public_input(),
-                                ),
-                                (false, true) => {
-                                    arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
-                                }
-                                (false, false) => {
-                                    let l = row.to_left_public_input();
-                                    let r = row.to_right_public_input();
-                                    arithmetic::promote_to_trivial_share(party_id, l * r)
-                                }
-                                (true, true) => unreachable!("should be in mul_map"),
+                let product = match mul_map[t] {
+                    Some(k) => mul_products[k],
+                    None => {
+                        let fb = flags_bits[t];
+                        let left_shared = (fb & mask_left_rs1) != 0;
+                        let right_shared = (fb & mask_right_rs2) != 0;
+                        match (left_shared, right_shared) {
+                            (true, false) => arithmetic::mul_public(
+                                rs1_field[t],
+                                row.to_right_public_input(),
+                            ),
+                            (false, true) => {
+                                arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
                             }
+                            (false, false) => {
+                                let l = row.to_left_public_input();
+                                let r = row.to_right_public_input();
+                                arithmetic::promote_to_trivial_share(party_id, l * r)
+                            }
+                            (true, true) => unreachable!("should be in mul_map"),
                         }
                     }
-                } else {
-                    Rep3PrimeFieldShare::zero_share()
                 };
                 let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
 
