@@ -28,22 +28,20 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRAI> {
             }
 
             // Compute SRL entry
-            let mut coeff = RingElement(1u64);
-            let mut srl_shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(XLEN);
+            let num_ones = (bitmask as u64).count_ones();
+            let mut ones_seen = 0u32;
 
+            let mut srl_result = Rep3RingShare::default();
             for i in 0..XLEN {
                 let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1u128);
                 let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
 
                 if y_bits[i] {
-                    srl_shares.push(&x_i_u64 * coeff);
-                    coeff = coeff * RingElement(2u64);
+                    let weight = RingElement(1u64 << (num_ones - 1 - ones_seen));
+                    srl_result = srl_result + &x_i_u64 * weight;
+                    ones_seen += 1;
                 }
             }
-
-            let srl_result = srl_shares
-                .into_iter()
-                .fold(Rep3RingShare::default(), |acc, x| acc + x);
 
             // Sign extension: sum_{i=1..XLEN} (1 << i) * (1 - y_i)
             let mut sign_extension = 0u64;

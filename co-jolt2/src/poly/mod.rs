@@ -7,6 +7,7 @@ pub mod one_hot_polynomial;
 pub mod opening_proof;
 pub mod ra_poly;
 pub mod rlc_polynomial;
+pub mod spartan_interleaved_poly;
 
 pub use commitment::*;
 pub use compact_polynomial::*;

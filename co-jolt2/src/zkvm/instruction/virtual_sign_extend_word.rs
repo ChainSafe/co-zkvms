@@ -33,12 +33,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSignExte
             })
             .collect();
         let is_positive = rep3_ring::binary::is_zero_many(&sign_bits, io_ctx)?;
+        // Replicate the single condition bit to ALL 64 bit positions so that the
+        // binary cmux (which operates bitwise) selects correctly across the full word.
+        // 0 -> 0x0000000000000000, 1 -> 0xFFFFFFFFFFFFFFFF (via wrapping negate).
         let is_positive_u64: Vec<Rep3RingShare<u64>> = is_positive
             .iter()
             .map(|b| {
                 Rep3RingShare::new_ring(
-                    RingElement(u8::from(b.a.0) as u64),
-                    RingElement(u8::from(b.b.0) as u64),
+                    RingElement(0u64.wrapping_sub(u8::from(b.a.0) as u64)),
+                    RingElement(0u64.wrapping_sub(u8::from(b.b.0) as u64)),
                 )
             })
             .collect();

@@ -152,9 +152,9 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
     }
 
     pub fn next_is_noop(&self) -> bool {
-        // Match vanilla/witness semantics: treat the last cycle as if the next cycle is NoOp.
         if self.t + 1 >= self.w.len() {
-            true
+            // Vanilla `R1CSCycleInputs::from_trace` uses `false` for the last cycle.
+            false
         } else {
             let bit = 1u32 << (CircuitFlags::IsNoop as usize);
             (self.w.flags_bits[self.t + 1] & bit) != 0
@@ -235,23 +235,42 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
         party_id: PartyID,
         product: Rep3PrimeFieldShare<F>,
     ) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
-        let (left_input, right_input) = self.to_instruction_inputs(party_id);
+        // Lookup operands use XLEN-bit (u64) semantics, even when the underlying
+        // instruction input is an i128 immediate (see e.g. `ADDI::to_lookup_operands`).
+        let left_u64 = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
+            self.rs1_value()
+        } else if self.flag(CircuitFlags::LeftOperandIsPC) {
+            promote_to_trivial_share(party_id, F::from_u64(self.unexpanded_pc()))
+        } else {
+            Rep3PrimeFieldShare::zero_share()
+        };
+
+        let right_u64 = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
+            self.rs2_value()
+        } else if self.flag(CircuitFlags::RightOperandIsImm) {
+            // Two's-complement / truncation semantics: cast imm to u64.
+            promote_to_trivial_share(party_id, F::from_u64(self.imm() as u64))
+        } else {
+            Rep3PrimeFieldShare::zero_share()
+        };
+
         let zero = Rep3PrimeFieldShare::zero_share();
 
         if self.flag(CircuitFlags::AddOperands) {
-            (zero, left_input + right_input)
+            // (0, x + y_u64)
+            (zero, left_u64 + right_u64)
         } else if self.flag(CircuitFlags::SubtractOperands) {
+            // (0, x + (2^64 - y_u64)) == (0, x - y_u64 + 2^64)
             let two_pow_64 = promote_to_trivial_share(party_id, F::from_u128(1u128 << 64));
-            (zero, left_input - right_input + two_pow_64)
+            (zero, left_u64 - right_u64 + two_pow_64)
         } else if self.flag(CircuitFlags::MultiplyOperands) {
+            // (0, x * y_u64) as a u128 (represented in the field); provided by the caller.
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (
-                zero,
-                promote_to_trivial_share(party_id, F::from_u64(self.advice())),
-            )
+            (zero, promote_to_trivial_share(party_id, F::from_u64(self.advice())))
         } else {
-            (left_input, right_input)
+            // Default: operands are the instruction inputs interpreted as (x, y_u64).
+            (left_u64, right_u64)
         }
     }
 
@@ -262,11 +281,7 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
     }
 }
 
-pub struct StateManagerWorker<
-    'a,
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-> {
+pub struct StateManagerWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub party_id: PartyID,
     pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,

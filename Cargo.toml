@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "co-jolt2",
     "co-jolt2/examples/sha2-chain/guest",
+    "co-jolt2/examples/fibonacci/guest",
     # "co-jolt",
     # "co-noir-spartan/co-spartan",
     # "co-noir-spartan/co-noir",
@@ -119,6 +120,10 @@ debug = false
 
 [profile.release]
 debug = true
+
+[profile.test]
+opt-level = 3
+lto = "off"
 
 # [patch."https://github.com/nulltea/jolt.git"]
 # jolt-core = { path = "../jolt/jolt-core" }

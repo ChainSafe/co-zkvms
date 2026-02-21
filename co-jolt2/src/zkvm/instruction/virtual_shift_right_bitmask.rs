@@ -20,15 +20,17 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        // Shift amount is public, compute bitmask directly
+        // Shift amount is public, compute bitmask directly.
+        // Vanilla formula (XLEN=64): ones = (1u128 << (64-shift)) - 1; mask = (ones << shift) as u64
+        // Equivalent: mask has the lowest `shift` bits cleared and all higher bits set.
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
             let shift = l.as_public() % XLEN as u64;
-            // Bitmask: all 1s in positions >= shift
             let mask = if shift == 0 {
-                0u64
+                u64::MAX >> (64 - XLEN as u64)
             } else {
-                !((1u64 << (XLEN as u64 - shift)) - 1)
+                let ones = (1u128 << (XLEN as u128 - shift as u128)) - 1;
+                (ones << shift as u128) as u64
             };
             *out = FutureRep3Ring::Ready(
                 rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into(),
@@ -59,15 +61,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        // Shift amount is public, compute bitmask directly
+        // Same bitmask formula as VirtualShiftRightBitmask.
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
             let shift = l.as_public() % XLEN as u64;
-            // Bitmask: all 1s in positions >= shift
             let mask = if shift == 0 {
-                0u64
+                u64::MAX >> (64 - XLEN as u64)
             } else {
-                !((1u64 << (XLEN as u64 - shift)) - 1)
+                let ones = (1u128 << (XLEN as u128 - shift as u128)) - 1;
+                (ones << shift as u128) as u64
             };
             *out = FutureRep3Ring::Ready(
                 rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into(),

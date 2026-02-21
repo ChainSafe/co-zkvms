@@ -13,8 +13,8 @@ Building MPC version of Jolt zkVM by extending vanilla Jolt (`../../examples/jol
 This project is based on `../../examples/jolt` (refered to as "vanilla")
 The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jolt VM (different from "vanilla" Jolt VM!)
 
-- Summary of Jolt codebase wrt. Instructions `/Users/timofey/repos/examples/jolt/Instructions.md`
-- Summary of Jolt codebase wrt. Witness `/Users/timofey/repos/examples/jolt/Instructions.md`
+- Summary of Jolt codebase wrt. Instructions `/home/ubuntu/jolt/Instructions.md`
+- Summary of Jolt codebase wrt. Witness `/home/ubuntu/jolt/Instructions.md`
 - Summary of `co-jolt` (v1) and `mpc-types` crates wrt. MPC types and core methods `../co-jolt/MpcTypes.md`
 - Implementation docs:
   - Rep3 Dory commitment scheme `co-jolt2/docs/DORY.md`
