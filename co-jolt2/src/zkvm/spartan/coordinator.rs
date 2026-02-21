@@ -38,20 +38,6 @@ impl Rep3SpartanDag {
 
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
 
-        // DEBUG: Receive and print first 8 rows' Az/Bz cleartext values from workers.
-        {
-            let debug_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
-            let debug_vals = additive::combine_additive_vec(debug_shares);
-            let padded_constraints = key.padded_row_constraint_per_step();
-            for row in 0..std::cmp::min(8, debug_vals.len() / 2) {
-                let step = row / padded_constraints;
-                let ci = row % padded_constraints;
-                let az = debug_vals[2 * row];
-                let bz = debug_vals[2 * row + 1];
-                eprintln!("[MPC-AZ] row={row} step={step} ci={ci} az={az:?} bz={bz:?}");
-            }
-        }
-
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
         let mut polys = Vec::with_capacity(num_rounds_x);
         let mut claim = F::zero();
@@ -65,8 +51,26 @@ impl Rep3SpartanDag {
             let t_inf =
                 additive::combine_additive_share(round_shares.into_iter().map(|x| x.1).collect());
 
-            if _round < 3 {
-                eprintln!("[COORD] round {_round}: t0={t0:?} t_inf={t_inf:?}");
+            eprintln!("[COORD] round {_round}: t0={t0:?} t_inf={t_inf:?}");
+
+            // DEBUG: round 0 sends per-pair t_inf shares.
+            if _round == 0 {
+                let per_pair_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
+                // per_pair_shares[party][pair_idx]
+                let num_pairs = per_pair_shares[0].len();
+                for pair_idx in 0..num_pairs {
+                    let combined = additive::combine_additive_share(
+                        per_pair_shares.iter().map(|p| p[pair_idx]).collect(),
+                    );
+                    eprintln!("[MPC-PAIR] constraint_pair={pair_idx} t_inf={combined:?}");
+                }
+                let mut total = F::zero();
+                for i in 0..num_pairs {
+                    total += additive::combine_additive_share(
+                        per_pair_shares.iter().map(|p| p[i]).collect(),
+                    );
+                }
+                eprintln!("[MPC-TOTAL] t_inf={total:?}");
             }
 
             let r_i = process_eq_sumcheck_round(

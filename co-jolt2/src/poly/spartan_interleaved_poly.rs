@@ -136,8 +136,10 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let party_id = io_ctx.party_id();
         eyre::ensure!(!self.is_bound(), "expected unbound coefficients");
 
-        let (t0, t_inf) = quadratic_evals_from_unbound(&self.unbound_coeffs_shards, eq_poly, party_id);
+        let (t0, t_inf, per_pair_debug) = quadratic_evals_from_unbound(&self.unbound_coeffs_shards, eq_poly, party_id, self.padded_num_constraints);
         io_ctx.network().send_response((t0, t_inf))?;
+        // DEBUG: send per-pair t_inf shares to coordinator for combined printing.
+        io_ctx.network().send_response(per_pair_debug)?;
 
         let r_i: F::Challenge = io_ctx.network().receive_request()?;
         r.push(r_i);
@@ -201,7 +203,8 @@ fn quadratic_evals_from_unbound<F: JoltField>(
     shards: &[Vec<SparseCoefficient<Rep3Value<F>>>],
     eq_poly: &GruenSplitEqPolynomial<F>,
     party_id: PartyID,
-) -> (AdditiveShare<F>, AdditiveShare<F>) {
+    padded_num_constraints: usize,
+) -> (AdditiveShare<F>, AdditiveShare<F>, Vec<AdditiveShare<F>>) {
     let e_in_len = eq_poly.E_in_current_len();
     let num_x_in_bits = if e_in_len > 0 { e_in_len.log_2() } else { 0 };
     let x_in_mask = if num_x_in_bits > 0 {
@@ -210,11 +213,14 @@ fn quadratic_evals_from_unbound<F: JoltField>(
         0
     };
 
-    shards
+    let num_constraint_pairs = padded_num_constraints / 2;
+
+    let result = shards
         .par_iter()
         .map(|coeffs| {
             let mut t0 = AdditiveShare::<F>::zero();
             let mut t_inf = AdditiveShare::<F>::zero();
+            let mut per_pair = vec![AdditiveShare::<F>::zero(); num_constraint_pairs];
 
             let mut i = 0;
             while i < coeffs.len() {
@@ -256,14 +262,26 @@ fn quadratic_evals_from_unbound<F: JoltField>(
 
                 t0 += abc0 * weight;
                 t_inf += ab_inf * weight;
+
+                // DEBUG: Track per constraint-pair contribution.
+                let pair_idx = block % num_constraint_pairs;
+                per_pair[pair_idx] += ab_inf * weight;
             }
 
-            (t0, t_inf)
+            (t0, t_inf, per_pair)
         })
         .reduce(
-            || (AdditiveShare::<F>::zero(), AdditiveShare::<F>::zero()),
-            |a, b| (a.0 + b.0, a.1 + b.1),
-        )
+            || (AdditiveShare::<F>::zero(), AdditiveShare::<F>::zero(), vec![AdditiveShare::<F>::zero(); num_constraint_pairs]),
+            |a, b| {
+                let mut pp = a.2;
+                for (p, q) in pp.iter_mut().zip(b.2.iter()) {
+                    *p += *q;
+                }
+                (a.0 + b.0, a.1 + b.1, pp)
+            },
+        );
+
+    (result.0, result.1, result.2)
 }
 
 fn quadratic_evals_from_bound<F: JoltField>(
@@ -445,15 +463,6 @@ fn eval_lc_rep3<F: JoltField>(
         acc.add_public_assign(scalar, party_id);
     }
     acc
-}
-
-/// Debug version of eval_lc_rep3 that returns AdditiveShare for cleartext reconstruction.
-pub fn debug_eval_lc_rep3<F: JoltField>(
-    lc: LC,
-    inputs: &Rep3R1CSCycleInputs<F>,
-    party_id: PartyID,
-) -> AdditiveShare<F> {
-    eval_lc_rep3(lc, inputs, party_id).into_additive(party_id)
 }
 
 fn input_as_value<F: JoltField>(

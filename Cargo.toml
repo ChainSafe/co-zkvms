@@ -121,6 +121,9 @@ debug = false
 [profile.release]
 debug = true
 
+[profile.test]
+inherits = "release"
+
 # [patch."https://github.com/nulltea/jolt.git"]
 # jolt-core = { path = "../jolt/jolt-core" }
 # jolt-common = { path = "../jolt/common", package = "common" }

@@ -173,7 +173,7 @@ where
     let mut ram_read_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
     let mut ram_write_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
 
-    for cycle in trace.iter() {
+    for (t, cycle) in trace.iter().enumerate() {
         let norm = cycle.instruction().normalize();
         let circuit_flags = cycle.instruction().circuit_flags();
 
@@ -199,6 +199,13 @@ where
             }
         }
         flags_bits.push(mask);
+
+        // Advice value (only meaningful for VirtualAdvice).
+        if circuit_flags[CircuitFlags::Advice as usize] {
+            if let Rep3Cycle::VirtualAdvice(c) = cycle {
+                advice[t] = c.instruction.advice;
+            }
+        }
 
         rs1_ring.push(rs1_v.as_arithmetic_or_trivial(party_id));
         rs2_ring.push(rs2_v.as_arithmetic_or_trivial(party_id));

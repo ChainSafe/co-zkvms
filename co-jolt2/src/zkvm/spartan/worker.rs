@@ -4,9 +4,8 @@ use jolt_core::utils::math::Math;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::arithmetic as rep3_arithmetic;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::distributions::{Distribution, Standard};
-use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
@@ -42,46 +41,25 @@ impl Rep3SpartanDagWorker {
         );
 
         let key = UniformSpartanKey::<F>::new(num_steps);
-        let rows_per_step_padded = key.padded_row_constraint_per_step();
-        eyre::ensure!(
-            rows_per_step_padded >= UNIFORM_R1CS.len(),
-            "padded constraint rows too small"
-        );
 
-        // Precompute Product shares for MUL rows that need shared×shared multiplication.
-        let flags_bits = &cycle_witness.flags_bits;
-        let rs1_field = &cycle_witness.rs1_value;
-        let rs2_field = &cycle_witness.rs2_value;
-
-        let mask_left_rs1 = 1u32 << (jolt_core::zkvm::instruction::CircuitFlags::LeftOperandIsRs1Value as usize);
-        let mask_right_rs2 = 1u32 << (jolt_core::zkvm::instruction::CircuitFlags::RightOperandIsRs2Value as usize);
-        let mask_mul = 1u32 << (jolt_core::zkvm::instruction::CircuitFlags::MultiplyOperands as usize);
-        let mask_shared_mul = mask_mul | mask_left_rs1 | mask_right_rs2;
-
-        let mul_rows: Vec<usize> = (0..num_steps)
-            .into_par_iter()
-            .filter(|&t| (flags_bits[t] & mask_shared_mul) == mask_shared_mul)
-            .collect();
-        let mut mul_map = vec![None; num_steps];
-        for (k, &t) in mul_rows.iter().enumerate() {
-            mul_map[t] = Some(k);
-        }
-
-        let mul_products: Vec<Rep3PrimeFieldShare<F>> = if mul_rows.is_empty() {
-            vec![]
-        } else {
-            let lhs: Vec<_> = mul_rows.iter().map(|&t| rs1_field[t]).collect();
-            let rhs: Vec<_> = mul_rows.iter().map(|&t| rs2_field[t]).collect();
-            rep3_arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
-        };
-
-        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
+        // Precompute Product shares = left_input * right_input for ALL rows.
+        // Vanilla always computes Product = left_input * right_input regardless of instruction type.
+        // The R1CS constraint RightLookupEqProductIfMul (index 13) pairs with RightLookupSub (index 12)
+        // in the sparse interleaved polynomial, so Product must match vanilla for correct t_inf.
+        let lhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
             .map(|t| {
-                mul_map[t]
-                    .map(|k| mul_products[k])
-                    .unwrap_or_else(Rep3PrimeFieldShare::zero_share)
+                let row = cycle_witness.row(t);
+                row.to_instruction_inputs(party_id).0
             })
             .collect();
+        let rhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
+            .map(|t| {
+                let row = cycle_witness.row(t);
+                row.to_instruction_inputs(party_id).1
+            })
+            .collect();
+        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> =
+            rep3_arithmetic::mul_vec_par(&lhs_all, &rhs_all, io_ctx.main())?;
 
         // Materialize per-cycle R1CS inputs (cheap; uses cached cycle witness).
         let mut cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = Vec::with_capacity(num_steps);
@@ -101,44 +79,7 @@ impl Rep3SpartanDagWorker {
             party_id,
         )?;
 
-        // DEBUG: Send first 8 rows' Az/Bz cleartext values to coordinator for comparison.
-        {
-            use crate::poly::spartan_interleaved_poly::debug_eval_lc_rep3;
-            let mut debug_vals: Vec<AdditiveShare<F>> = Vec::new();
-            let num_debug_rows = std::cmp::min(8, num_steps * rows_per_step_padded);
-            for row in 0..num_debug_rows {
-                let step = row / rows_per_step_padded;
-                let ci = row % rows_per_step_padded;
-                if ci < UNIFORM_R1CS.len() {
-                    let inputs = &cycle_inputs[step];
-                    let az = debug_eval_lc_rep3(UNIFORM_R1CS[ci].cons.a, inputs, party_id);
-                    let bz = debug_eval_lc_rep3(UNIFORM_R1CS[ci].cons.b, inputs, party_id);
-                    debug_vals.push(az);
-                    debug_vals.push(bz);
-                } else {
-                    debug_vals.push(AdditiveShare::<F>::zero());
-                    debug_vals.push(AdditiveShare::<F>::zero());
-                }
-            }
-            io_ctx.network().send_response(debug_vals)?;
-        }
-
         let mut eq_poly = GruenSplitEqPolynomial::<F>::new(&tau, BindingOrder::LowToHigh);
-
-        // DEBUG: Print eq poly dimensions and first few values (same on all parties since eq is public).
-        if party_id == PartyID::ID0 {
-            eprintln!("[MPC-EQ] E_in_len={} E_out_len={} current_index={} current_scalar={:?}",
-                eq_poly.E_in_current_len(), eq_poly.E_out_current_len(),
-                eq_poly.current_index, eq_poly.current_scalar);
-            let e_in = eq_poly.E_in_current();
-            let e_out = eq_poly.E_out_current();
-            for i in 0..std::cmp::min(4, e_in.len()) {
-                eprintln!("[MPC-EQ] E_in[{i}]={:?}", e_in[i]);
-            }
-            for i in 0..std::cmp::min(4, e_out.len()) {
-                eprintln!("[MPC-EQ] E_out[{i}]={:?}", e_out[i]);
-            }
-        }
 
         let num_rounds_x = key.num_rows_bits();
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
