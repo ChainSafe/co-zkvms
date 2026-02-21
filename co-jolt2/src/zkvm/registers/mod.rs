@@ -3,8 +3,9 @@ use jolt_core::transcripts::Transcript;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
-    Rep3SumcheckInstance, Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator,
-    SumcheckStagesWorker,
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
+    Rep3SumcheckInstanceWorker,
+    SumcheckStagesCoordinator, SumcheckStagesWorker,
 };
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -54,25 +55,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let (gamma, input_claim) = self
             .stage2
             .take()
             .expect("Rep3RegistersDagWorker stage2 init not set");
         let rwc = Rep3RegistersReadWriteCheckingWorker::new(sm, gamma, input_claim);
-        vec![Box::new(rwc)]
+        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(rwc))]
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let val_claim = self
             .stage3
             .take()
             .expect("Rep3RegistersDagWorker stage3 init not set");
         let val_eval = Rep3ValEvaluationWorker::new(sm, val_claim);
-        vec![Box::new(val_eval)]
+        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval))]
     }
 }
 
@@ -88,16 +89,16 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let rwc = Rep3RegistersReadWriteChecking::new(sm);
-        vec![Box::new(rwc)]
+        vec![BatchedSumcheckInstance::Secret(Box::new(rwc))]
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let val_eval = Rep3ValEvaluation::new(sm);
-        vec![Box::new(val_eval)]
+        vec![BatchedSumcheckInstance::Secret(Box::new(val_eval))]
     }
 }

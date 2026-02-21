@@ -9,8 +9,9 @@ use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
-    Rep3SumcheckInstance, Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator,
-    SumcheckStagesWorker,
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
+    Rep3SumcheckInstanceWorker,
+    SumcheckStagesCoordinator, SumcheckStagesWorker,
 };
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -191,7 +192,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let (gamma, input_claim, r_address) = self
             .stage2
             .take()
@@ -207,23 +208,23 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
         );
 
         vec![
-            Box::new(raf_evaluation),
-            Box::new(read_write_checking),
-            Box::new(output_check),
+            BatchedSumcheckWorkerInstance::Secret(Box::new(raf_evaluation)),
+            BatchedSumcheckWorkerInstance::Secret(Box::new(read_write_checking)),
+            BatchedSumcheckWorkerInstance::Secret(Box::new(output_check)),
         ]
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let input_claim = self
             .stage3
             .take()
             .expect("Rep3RamDagWorker stage3 init not set");
         let val_final = Rep3ValFinalSumcheckWorker::new(sm, input_claim);
         // TODO: Add ValEvaluationSumcheck and HammingBooleanity when ported
-        vec![Box::new(val_final)]
+        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_final))]
     }
 }
 
@@ -239,24 +240,24 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let raf_evaluation = Rep3RafEvaluation::new(sm);
         let read_write_checking = Rep3RamReadWriteChecking::new(sm);
         let output_check = Rep3OutputSumcheck::new(sm);
 
         vec![
-            Box::new(raf_evaluation),
-            Box::new(read_write_checking),
-            Box::new(output_check),
+            BatchedSumcheckInstance::Secret(Box::new(raf_evaluation)),
+            BatchedSumcheckInstance::Secret(Box::new(read_write_checking)),
+            BatchedSumcheckInstance::Secret(Box::new(output_check)),
         ]
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let val_final = Rep3ValFinalSumcheck::new(sm);
         // TODO: Add ValEvaluationSumcheck and HammingBooleanity when ported
-        vec![Box::new(val_final)]
+        vec![BatchedSumcheckInstance::Secret(Box::new(val_final))]
     }
 }

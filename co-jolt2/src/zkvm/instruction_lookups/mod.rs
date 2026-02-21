@@ -11,8 +11,9 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::{compute_g_from_masked_indices, Rep3OneHotPolynomial};
 use crate::zkvm::dag::stage::{
-    Rep3SumcheckInstance, Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator,
-    SumcheckStagesWorker,
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
+    Rep3SumcheckInstanceWorker,
+    SumcheckStagesCoordinator, SumcheckStagesWorker,
 };
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -81,7 +82,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let (gamma, r_address) = self
             .stage2
             .take()
@@ -111,13 +112,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
             sm.party_id,
         );
 
-        vec![Box::new(booleanity)]
+        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))]
     }
 
     fn stage3_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         let G = self.G.take().unwrap();
         let gamma = self
             .stage3
@@ -125,7 +126,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
             .expect("Rep3LookupsDagWorker stage3 init not set");
         let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G, gamma);
 
-        vec![Box::new(hamming_weight)]
+        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(hamming_weight))]
     }
 }
 
@@ -157,7 +158,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let log_T = sm
             .accumulator
             .get_virtual_polynomial_opening(
@@ -170,15 +171,15 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let booleanity = Rep3BooleanitySumcheck::new(&mut sm.transcript, log_T);
 
-        vec![Box::new(booleanity)]
+        vec![BatchedSumcheckInstance::Secret(Box::new(booleanity))]
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         let hamming_weight = Rep3HammingWeightSumcheck::new(&mut sm.transcript);
 
-        vec![Box::new(hamming_weight)]
+        vec![BatchedSumcheckInstance::Secret(Box::new(hamming_weight))]
     }
 }

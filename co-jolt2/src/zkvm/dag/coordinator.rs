@@ -3,14 +3,27 @@ use std::collections::BTreeMap;
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::utils::types::MaybeShared;
+use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
 use crate::zkvm::dag::state_manager::StateManagerCoordinator;
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys};
 use crate::zkvm::dag::Rep3DagStop;
+use crate::zkvm::instruction_lookups::booleanity::Rep3BooleanitySumcheck;
+use crate::zkvm::instruction_lookups::hamming_weight::Rep3HammingWeightSumcheck;
+use crate::zkvm::ram::output_check::{Rep3OutputSumcheck, Rep3ValFinalSumcheck};
+use crate::zkvm::ram::raf_evaluation::Rep3RafEvaluation;
+use crate::zkvm::ram::read_write_checking::Rep3RamReadWriteChecking;
+use crate::zkvm::registers::read_write_checking::Rep3RegistersReadWriteChecking;
+use crate::zkvm::registers::val_evaluation::Rep3ValEvaluation;
 use crate::zkvm::spartan::Rep3SpartanDag;
+use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheck;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
+use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
+use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 /// Coordinator side of the MPC DAG prover.
@@ -32,7 +45,7 @@ impl Rep3JoltDAGCoordinator {
         PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
-        Self::prove_with_stop(state, network, Rep3DagStop::AfterStage1)
+        Self::prove_with_stop(state, network, Rep3DagStop::AfterStage3)
     }
 
     #[tracing::instrument(skip_all, name = "Rep3JoltDAGCoordinator::prove_with_stop")]
@@ -88,9 +101,140 @@ impl Rep3JoltDAGCoordinator {
                 .append_serializable(trusted_advice_commitment);
         }
 
-        if stop != Rep3DagStop::AfterCommitments {
-            Rep3SpartanDag::stage1_prove(&mut state, network)?;
+        if stop == Rep3DagStop::AfterCommitments {
+            // --- Construct stub JoltProof with real commitments, deferred stages ---
+            let proof = JoltProof {
+                opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
+                commitments: std::mem::take(&mut state.commitments),
+                proofs: std::mem::take(&mut state.proofs),
+                untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
+                trace_length,
+                ram_K: state.ram_K,
+                bytecode_d: state.preprocessing.shared.bytecode.d,
+                twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
+            };
+            return Ok(proof);
         }
+
+        Rep3SpartanDag::stage1_prove(&mut state, network)?;
+
+        if stop == Rep3DagStop::AfterStage1 {
+            // --- Construct stub JoltProof with real commitments, deferred stages ---
+            let proof = JoltProof {
+                opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
+                commitments: std::mem::take(&mut state.commitments),
+                proofs: std::mem::take(&mut state.proofs),
+                untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
+                trace_length,
+                ram_K: state.ram_K,
+                bytecode_d: state.preprocessing.shared.bytecode.d,
+                twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
+            };
+            return Ok(proof);
+        }
+
+        // -------------------------------------------------------------------
+        // Stage 2: batched sumcheck (secret instances only)
+        // -------------------------------------------------------------------
+
+        // Registers RWC
+        let registers_rwc = Rep3RegistersReadWriteChecking::<F>::new(&mut state);
+        network.broadcast_request((registers_rwc.gamma(), registers_rwc.input_claim()))?;
+
+        // RAM stage2
+        let ram_raf = Rep3RafEvaluation::<F>::new(&mut state);
+        let ram_rwc = Rep3RamReadWriteChecking::<F>::new(&mut state);
+        let ram_output = Rep3OutputSumcheck::<F>::new(&mut state);
+        network.broadcast_request((
+            ram_rwc.gamma(),
+            ram_rwc.input_claim(),
+            ram_output.r_address().to_vec(),
+        ))?;
+
+        // Lookups booleanity
+        let log_T = state
+            .accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .len();
+        let lookup_booleanity = Rep3BooleanitySumcheck::<F>::new(&mut state.transcript, log_T);
+        network.broadcast_request((lookup_booleanity.gamma(), lookup_booleanity.r_address().to_vec()))?;
+
+        let stage2_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = vec![
+            BatchedSumcheckInstance::Secret(Box::new(registers_rwc)),
+            BatchedSumcheckInstance::Secret(Box::new(ram_raf)),
+            BatchedSumcheckInstance::Secret(Box::new(ram_rwc)),
+            BatchedSumcheckInstance::Secret(Box::new(ram_output)),
+            BatchedSumcheckInstance::Secret(Box::new(lookup_booleanity)),
+        ];
+
+        let (stage2_proof, _r_stage2) =
+            HybridBatchedSumcheck::prove(&stage2_instances, &mut state.accumulator, &mut state.transcript, network)?;
+        state.proofs.insert(
+            ProofKeys::Stage2Sumcheck,
+            ProofData::SumcheckProof(stage2_proof),
+        );
+
+        // -------------------------------------------------------------------
+        // Stage 3: batched sumcheck (secret + public instances)
+        // -------------------------------------------------------------------
+
+        // Registers ValEvaluation
+        let registers_val = Rep3ValEvaluation::<F>::new(&mut state);
+        network.broadcast_request(registers_val.val_claim())?;
+
+        // RAM ValFinal
+        let ram_val_final = Rep3ValFinalSumcheck::<F>::new(&mut state);
+        network.broadcast_request(ram_val_final.input_claim())?;
+
+        // Lookups HammingWeight
+        let lookup_hamming = Rep3HammingWeightSumcheck::<F>::new(&mut state.transcript);
+        network.broadcast_request(lookup_hamming.gamma())?;
+
+        // Spartan PC (public) + ProductVirtualization (secret)
+        let gamma_pc: F = state.transcript.challenge_scalar();
+        let (r_cycle_point, next_pc_eval) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_unexpanded_pc_eval) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextUnexpandedPC,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_is_noop_eval) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::SpartanOuter,
+        );
+        let input_claim_pc =
+            next_unexpanded_pc_eval + gamma_pc * next_pc_eval + gamma_pc.square() * next_is_noop_eval;
+
+        let spartan_pc = PCSumcheck::<F>::new_verifier_from_openings(
+            input_claim_pc,
+            gamma_pc,
+            r_cycle_point.r.len(),
+        );
+        let spartan_product = Rep3ProductVirtualizationSumcheck::<F>::new(&mut state);
+        network.broadcast_request((gamma_pc, input_claim_pc, spartan_product.input_claim()))?;
+
+        let stage3_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = vec![
+            BatchedSumcheckInstance::Secret(Box::new(registers_val)),
+            BatchedSumcheckInstance::Secret(Box::new(ram_val_final)),
+            BatchedSumcheckInstance::Secret(Box::new(lookup_hamming)),
+            BatchedSumcheckInstance::Public(Box::new(spartan_pc)),
+            BatchedSumcheckInstance::Secret(Box::new(spartan_product)),
+        ];
+
+        let (stage3_proof, _r_stage3) =
+            HybridBatchedSumcheck::prove(&stage3_instances, &mut state.accumulator, &mut state.transcript, network)?;
+        state.proofs.insert(
+            ProofKeys::Stage3Sumcheck,
+            ProofData::SumcheckProof(stage3_proof),
+        );
+
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {
             opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),

@@ -1,6 +1,8 @@
+pub mod bytecode;
 pub mod dag;
 pub mod instruction;
 pub mod instruction_lookups;
+pub mod registers;
 pub mod r1cs;
 pub mod ram;
 pub mod spartan;

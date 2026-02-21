@@ -1,0 +1,183 @@
+use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+use jolt_core::poly::unipoly::UniPoly;
+use jolt_core::subprotocols::sumcheck::SumcheckInstance;
+use jolt_core::transcripts::{KeccakTranscript, Transcript};
+use jolt_core::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
+use jolt_core::zkvm::witness::CommittedPolynomial;
+use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID};
+
+use crate::field::JoltField;
+use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::subprotocols::sumcheck::{PublicSumcheckInstance, PublicSumcheckInstanceWorker};
+
+impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingWeightSumcheck<F> {
+    fn degree(&self) -> usize {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+    }
+
+    fn num_rounds(&self) -> usize {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+    }
+
+    fn input_claim_public(&self) -> F {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+    }
+
+    fn compute_prover_message_public(
+        &mut self,
+        round: usize,
+        previous_claim: F,
+        max_degree: usize,
+    ) -> Vec<F> {
+        let degree =
+            <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
+        let base =
+            <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
+                self,
+                round,
+                previous_claim,
+            );
+
+        debug_assert!(degree >= 1);
+        debug_assert!(base.len() >= degree);
+        debug_assert!(max_degree >= degree);
+
+        if max_degree == degree {
+            return base[..degree].to_vec();
+        }
+
+        // degree == 1: polynomial is linear, g(x) = base[0] + (previous_claim - base[0]) * x
+        let y0 = base[0];
+        let y1 = previous_claim - y0;
+
+        // Build full evals at {0, 1} then extrapolate via UniPoly.
+        let full_evals = vec![y0, y1];
+        let poly = UniPoly::<F>::from_evals(&full_evals);
+
+        let mut msg = vec![F::zero(); max_degree];
+        msg[0] = y0;
+        for k in 2..=max_degree {
+            let x: F::Challenge = (k as u128).into();
+            msg[k - 1] = poly.evaluate(&x);
+        }
+        msg
+    }
+
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(
+            self, r_j, round,
+        )
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
+            self,
+            opening_point,
+        )
+    }
+
+    fn cache_openings_public(
+        &self,
+        accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) -> Vec<F> {
+        let d = self.d();
+        let ra_claims: Vec<F> = self.ra_final_claims();
+
+        let r_cycle = accumulator
+            .get_virtual_polynomial_opening(
+                jolt_core::zkvm::witness::VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
+
+        let shares: Vec<_> = ra_claims
+            .iter()
+            .map(|&claim| rep3_arith::promote_to_trivial_share(PartyID::ID0, claim))
+            .collect();
+
+        accumulator.append_sparse(
+            (0..d).map(CommittedPolynomial::BytecodeRa).collect(),
+            SumcheckId::BytecodeHammingWeight,
+            &opening_point.r,
+            &r_cycle,
+            shares,
+        );
+
+        ra_claims
+    }
+}
+
+impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeightSumcheck<F> {
+    fn degree(&self) -> usize {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+    }
+
+    fn num_rounds(&self) -> usize {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+    }
+
+    fn input_claim_public(&self) -> F {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: &Rep3OpeningAccumulator<F>,
+        _r: &[F::Challenge],
+    ) -> F {
+        self.gamma_powers()
+            .iter()
+            .enumerate()
+            .map(|(i, gamma)| {
+                let ra = accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeRa(i),
+                        SumcheckId::BytecodeHammingWeight,
+                    )
+                    .1;
+                ra * gamma
+            })
+            .sum::<F>()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
+            self,
+            opening_point,
+        )
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut Rep3OpeningAccumulator<F>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claims: Vec<F>,
+    ) {
+        let r_cycle = accumulator
+            .get_virtual_polynomial_opening(
+                jolt_core::zkvm::witness::VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .clone();
+
+        accumulator.append_sparse(
+            transcript,
+            (0..self.d()).map(CommittedPolynomial::BytecodeRa).collect(),
+            SumcheckId::BytecodeHammingWeight,
+            &opening_point.r,
+            &r_cycle,
+            claims,
+        );
+    }
+}

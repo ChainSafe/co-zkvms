@@ -1,5 +1,6 @@
 use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
+use jolt_core::zkvm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 use jolt_core::utils::math::Math;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::arithmetic as rep3_arithmetic;
@@ -12,7 +13,9 @@ use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, Rep3R1CSCycleInputs};
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
+use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 pub struct Rep3SpartanDagWorker;
 
@@ -104,6 +107,39 @@ impl Rep3SpartanDagWorker {
         let r_cycle = &r_reversed[..num_steps_bits];
 
         let claimed_witness_evals = compute_claimed_witness_evals_rep3(state, io_ctx, r_cycle)?;
+
+        // Cache SpartanOuter openings in the worker accumulator for later stages.
+        let opening_point_cycle = OpeningPoint::<BIG_ENDIAN, F>::new(r_cycle.to_vec());
+
+        let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        let committed_claims: Vec<Rep3PrimeFieldShare<F>> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+        state.accumulator.append_dense(
+            committed_polys,
+            SumcheckId::SpartanOuter,
+            opening_point_cycle.r.clone(),
+            &committed_claims,
+        );
+
+        for input in ALL_R1CS_INPUTS.iter() {
+            if COMMITTED_R1CS_INPUTS.contains(input) {
+                continue;
+            }
+            let poly = VirtualPolynomial::try_from(input).ok().unwrap();
+            let eval = claimed_witness_evals[input.to_index()];
+            state.accumulator.append_virtual(
+                poly,
+                SumcheckId::SpartanOuter,
+                opening_point_cycle.clone(),
+                eval,
+            );
+        }
+
         let claimed_additive: Vec<AdditiveShare<F>> = claimed_witness_evals
             .into_iter()
             .map(|x| x.into_additive())

@@ -2,7 +2,10 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 
 use crate::field::JoltField;
-pub use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
+pub use crate::subprotocols::sumcheck::{
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, PublicSumcheckInstance,
+    PublicSumcheckInstanceWorker, Rep3SumcheckInstance, Rep3SumcheckInstanceWorker,
+};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
 // ---------------------------------------------------------------------------
@@ -24,21 +27,21 @@ pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     fn stage2_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         vec![]
     }
 
     fn stage3_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         vec![]
     }
 
     fn stage4_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
         vec![]
     }
 }
@@ -63,21 +66,21 @@ pub trait SumcheckStagesCoordinator<
     fn stage2_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         vec![]
     }
 
     fn stage3_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         vec![]
     }
 
     fn stage4_instances(
         &mut self,
         _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
         vec![]
     }
 }
