@@ -575,7 +575,7 @@ mod tests {
                         trace,
                         (*io_device).clone(),
                         memory,
-                        io_ctx,
+                        party,
                         ram_k,
                     );
 
@@ -583,6 +583,7 @@ mod tests {
                     let results = generate_witness_batch_rep3::<F, PCS, _>(
                         &polys,
                         &mut state,
+                        &mut io_ctx,
                     )?;
                     info!(
                         ?party,

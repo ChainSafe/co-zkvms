@@ -45,6 +45,8 @@ fn compute_ra_evals<F: JoltField>(
 // ---------------------------------------------------------------------------
 
 pub struct Rep3LookupsDagWorker<F: JoltField> {
+    stage2: Option<([F; D], Vec<F::Challenge>)>,
+    stage3: Option<[F; D]>,
     /// Shared G arrays computed in stage2, consumed in stage3.
     G: Option<[Vec<Rep3PrimeFieldShare<F>>; D]>,
     /// Public eq(r_cycle) evaluations.
@@ -56,10 +58,20 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
     pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D]) -> Self {
         Self {
+            stage2: None,
+            stage3: None,
             G: None,
             eq_r_cycle: None,
             one_hot_polys,
         }
+    }
+
+    pub fn set_stage2_init(&mut self, gamma: [F; D], r_address: Vec<F::Challenge>) {
+        self.stage2 = Some((gamma, r_address));
+    }
+
+    pub fn set_stage3_init(&mut self, gamma: [F; D]) {
+        self.stage3 = Some(gamma);
     }
 }
 
@@ -70,6 +82,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
+        let (gamma, r_address) = self
+            .stage2
+            .take()
+            .expect("Rep3LookupsDagWorker stage2 init not set");
         let r_cycle = sm
             .accumulator
             .get_virtual_polynomial_opening(
@@ -86,10 +102,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
         self.G = Some(G.clone());
 
         let booleanity = Rep3BooleanitySumcheckWorker::new(
+            gamma,
+            r_address,
             G,
             &self.one_hot_polys,
             &r_cycle,
-            sm.prover_state.trace.len(),
+            sm.prover_state.cycle_witness.len(),
             sm.party_id,
         );
 
@@ -101,7 +119,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
         _sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> {
         let G = self.G.take().unwrap();
-        let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G);
+        let gamma = self
+            .stage3
+            .take()
+            .expect("Rep3LookupsDagWorker stage3 init not set");
+        let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G, gamma);
 
         vec![Box::new(hamming_weight)]
     }

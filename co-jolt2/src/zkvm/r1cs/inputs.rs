@@ -454,13 +454,14 @@ mod tests {
             |input, mut io_ctx| {
                 let (mut trace, mem, io_device, preprocessing, ram_k, r_cycle) = input;
                 populate_operands_casts(&mut trace, io_ctx.main())?;
+                let party_id = io_ctx.party_id();
 
                 let mut state = StateManagerWorker::new(
                     &preprocessing,
                     trace,
                     (*io_device).clone(),
                     mem,
-                    io_ctx,
+                    party_id,
                     ram_k,
                 );
 
@@ -468,11 +469,11 @@ mod tests {
                 let poly_keys: Vec<CommittedPolynomial> =
                     AllCommittedPolynomials::iter().copied().collect();
                 let _witness_polys =
-                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state)?;
+                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx)?;
                 state.prover_state.trace.clear();
                 state.prover_state.trace.shrink_to_fit();
 
-                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &r_cycle)
+                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)
             },
         );
 

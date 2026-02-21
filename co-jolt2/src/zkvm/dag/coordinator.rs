@@ -4,6 +4,14 @@ use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::state_manager::StateManagerCoordinator;
+use crate::subprotocols::sumcheck::Rep3BatchedSumcheck;
+use crate::zkvm::instruction_lookups::booleanity::Rep3BooleanitySumcheck;
+use crate::zkvm::instruction_lookups::hamming_weight::Rep3HammingWeightSumcheck;
+use crate::zkvm::ram::output_check::{Rep3OutputSumcheck, Rep3ValFinalSumcheck};
+use crate::zkvm::ram::raf_evaluation::Rep3RafEvaluation;
+use crate::zkvm::ram::read_write_checking::Rep3RamReadWriteChecking;
+use crate::zkvm::registers::read_write_checking::Rep3RegistersReadWriteChecking;
+use crate::zkvm::registers::val_evaluation::Rep3ValEvaluation;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
@@ -37,6 +45,7 @@ impl Rep3JoltDAGCoordinator {
             trace_lengths.iter().all(|&t| t == trace_length),
             "trace_length mismatch across parties"
         );
+        state.trace_length = trace_length;
         let padded_trace_length = trace_length.next_power_of_two();
 
         // --- Fiat-Shamir preamble ---
@@ -69,6 +78,87 @@ impl Rep3JoltDAGCoordinator {
                 .transcript
                 .append_serializable(trusted_advice_commitment);
         }
+
+        // --- Stage 2 ---
+        // NOTE: Assumes Stage 1 (SpartanOuter) has already populated `state.accumulator`
+        // with the necessary virtual polynomial openings.
+        let log_T = state
+            .accumulator
+            .get_virtual_polynomial_opening(
+                jolt_core::zkvm::witness::VirtualPolynomial::LookupOutput,
+                jolt_core::poly::opening_proof::SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .len();
+
+        let registers_rwc = Rep3RegistersReadWriteChecking::new(&mut state);
+        let ram_raf = Rep3RafEvaluation::new(&mut state);
+        let ram_rwc = Rep3RamReadWriteChecking::new(&mut state);
+        let ram_output = Rep3OutputSumcheck::new(&mut state);
+        let lookups_booleanity = Rep3BooleanitySumcheck::new(&mut state.transcript, log_T);
+
+        let stage2_init = (
+            (
+                lookups_booleanity.gamma(),
+                lookups_booleanity.r_address().to_vec(),
+                registers_rwc.gamma(),
+                registers_rwc.input_claim(),
+                ram_rwc.gamma(),
+            ),
+            (ram_rwc.input_claim(), ram_output.r_address().to_vec()),
+        );
+        network.broadcast_request(stage2_init)?;
+
+        let mut stage2_instances: Vec<Box<dyn crate::subprotocols::sumcheck::Rep3SumcheckInstance<F, ProofTranscript>>> =
+            vec![
+                Box::new(registers_rwc),
+                Box::new(ram_raf),
+                Box::new(ram_rwc),
+                Box::new(ram_output),
+                Box::new(lookups_booleanity),
+            ];
+
+        let (stage2_proof, _r_stage2) = Rep3BatchedSumcheck::prove(
+            &stage2_instances,
+            &mut state.accumulator,
+            &mut state.transcript,
+            network,
+        )?;
+        state.proofs.insert(
+            jolt_core::zkvm::dag::state_manager::ProofKeys::Stage2Sumcheck,
+            jolt_core::zkvm::dag::state_manager::ProofData::SumcheckProof(stage2_proof),
+        );
+
+        // --- Stage 3 ---
+        let registers_val = Rep3ValEvaluation::new(&mut state);
+        let lookups_hamming = Rep3HammingWeightSumcheck::new(&mut state.transcript);
+        let ram_val_final = Rep3ValFinalSumcheck::new(&mut state);
+
+        let stage3_init = (
+            registers_val.val_claim(),
+            lookups_hamming.gamma(),
+            ram_val_final.input_claim(),
+        );
+        network.broadcast_request(stage3_init)?;
+
+        let mut stage3_instances: Vec<Box<dyn crate::subprotocols::sumcheck::Rep3SumcheckInstance<F, ProofTranscript>>> =
+            vec![
+                Box::new(registers_val),
+                Box::new(lookups_hamming),
+                Box::new(ram_val_final),
+            ];
+
+        let (stage3_proof, _r_stage3) = Rep3BatchedSumcheck::prove(
+            &stage3_instances,
+            &mut state.accumulator,
+            &mut state.transcript,
+            network,
+        )?;
+        state.proofs.insert(
+            jolt_core::zkvm::dag::state_manager::ProofKeys::Stage3Sumcheck,
+            jolt_core::zkvm::dag::state_manager::ProofData::SumcheckProof(stage3_proof),
+        );
 
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {

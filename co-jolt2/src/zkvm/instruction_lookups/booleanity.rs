@@ -51,21 +51,21 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
     /// Construct the worker. `gamma` and `r_address` are public challenges
     /// received from the coordinator.
     pub fn new(
+        gamma: [F; D],
+        r_address: Vec<F::Challenge>,
         G: [Vec<Rep3PrimeFieldShare<F>>; D],
         one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
         r_cycle: &[F::Challenge],
         trace_len: usize,
         party_id: PartyID,
     ) -> Self {
-        // gamma and r_address will be set by the coordinator broadcast.
-        // For now, initialize with defaults — they'll be set before first use.
         Self {
             party_id,
-            gamma: [F::one(); D],
-            r_address: vec![],
+            gamma,
+            r_address: r_address.clone(),
             log_T: trace_len.log_2(),
             state: BooleanityProverStateWorker {
-                eq_r_address: GruenSplitEqPolynomial::new(&[], BindingOrder::LowToHigh),
+                eq_r_address: GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh),
                 eq_r_cycle: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
                 G,
                 masked_H_indices: std::array::from_fn(|i| {
@@ -83,14 +83,6 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                 }),
             },
         }
-    }
-
-    /// Set the public challenges received from coordinator.
-    /// Must be called before the first sumcheck round.
-    pub fn set_challenges(&mut self, gamma: [F; D], r_address: Vec<F::Challenge>) {
-        self.gamma = gamma;
-        self.r_address = r_address.clone();
-        self.state.eq_r_address = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
     }
 
     /// Phase 1: address-variable rounds (0..LOG_K_CHUNK).
@@ -559,7 +551,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
 /// to extract public coefficients via basis vector calls, then applies them
 /// to the shared quadratic coefficients. Returns `[eval_0, eval_2, eval_3]`
 /// as `AdditiveShare`.
-fn gruen_evals_deg_3<F: JoltField>(
+pub(crate) fn gruen_evals_deg_3<F: JoltField>(
     eq: &GruenSplitEqPolynomial<F>,
     q0: Rep3Value<F>,
     q_inf: Rep3Value<F>,
@@ -592,7 +584,7 @@ fn gruen_evals_deg_3<F: JoltField>(
         .collect()
 }
 
-fn extend_degree_3_evals<F: JoltField>(
+pub(crate) fn extend_degree_3_evals<F: JoltField>(
     previous_claim: AdditiveShare<F>,
     base: &[AdditiveShare<F>],
     max_degree: usize,

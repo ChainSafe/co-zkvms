@@ -24,18 +24,11 @@ pub struct Rep3HammingWeightSumcheckWorker<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3HammingWeightSumcheckWorker<F> {
-    pub fn new(G: [Vec<Rep3PrimeFieldShare<F>>; D]) -> Self {
-        // gamma will be set by the coordinator broadcast via set_challenges().
+    pub fn new(G: [Vec<Rep3PrimeFieldShare<F>>; D], gamma: [F; D]) -> Self {
         Self {
-            gamma: [F::one(); D],
+            gamma,
             ra: G.map(Rep3DensePolynomial::new),
         }
-    }
-
-    /// Set the public challenges received from coordinator.
-    /// Must be called before the first sumcheck round.
-    pub fn set_challenges(&mut self, gamma: [F; D]) {
-        self.gamma = gamma;
     }
 }
 

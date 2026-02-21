@@ -4,14 +4,22 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
+use crate::poly::multilinear_polynomial::Rep3SharedPoly;
+use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
+use crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker;
 use crate::utils::types::MaybeShared;
+use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use crate::zkvm::instruction_lookups::Rep3LookupsDagWorker;
+use crate::zkvm::ram::Rep3RamDagWorker;
+use crate::zkvm::registers::Rep3RegistersDagWorker;
 use crate::zkvm::witness::generate_witness_batch_rep3;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
@@ -61,7 +69,8 @@ impl Rep3JoltDAGWorker {
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
         Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
 
-        let hint_map = Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
+        let (_hint_map, instruction_one_hot_polys) =
+            Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
             party_id,
             &mut state,
             &mut io_ctx,
@@ -70,7 +79,63 @@ impl Rep3JoltDAGWorker {
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
         Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
 
-        // Future stages (sumcheck, opening proof) will go here...
+        // --- Stage 2/3 sumchecks ---
+        let mut registers_dag = Rep3RegistersDagWorker::<F>::new();
+        let mut ram_dag = Rep3RamDagWorker::<F>::new(&mut state, &mut io_ctx)?;
+        let mut lookups_dag = Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys);
+
+        // Stage 2 init bundle (from coordinator)
+        let (
+            (
+                lookups_booleanity_gamma,
+                lookups_booleanity_r_address,
+                registers_rwc_gamma,
+                registers_rwc_input_claim,
+                ram_rwc_gamma,
+            ),
+            (ram_rwc_input_claim, ram_output_r_address),
+        ): (([F; D], Vec<F::Challenge>, F, F, F), (F, Vec<F::Challenge>)) =
+            io_ctx.network().receive_request()?;
+
+        registers_dag.set_stage2_init(registers_rwc_gamma, registers_rwc_input_claim);
+        ram_dag.set_stage2_init(ram_rwc_gamma, ram_rwc_input_claim, ram_output_r_address);
+        lookups_dag.set_stage2_init(lookups_booleanity_gamma, lookups_booleanity_r_address);
+
+        let mut stage2_instances: Vec<Box<dyn crate::subprotocols::sumcheck::Rep3SumcheckInstanceWorker<F>>> =
+            Vec::new();
+        stage2_instances.extend(registers_dag.stage2_instances(&mut state));
+        stage2_instances.extend(ram_dag.stage2_instances(&mut state));
+        stage2_instances.extend(lookups_dag.stage2_instances(&mut state));
+
+        let _r_stage2 = Rep3BatchedSumcheckWorker::prove(
+            &mut stage2_instances,
+            &mut state.accumulator,
+            &mut io_ctx,
+        )?;
+
+        // Stage 3 init bundle (from coordinator)
+        let (registers_val_claim, lookups_hamming_gamma, ram_val_final_input_claim): (
+            F,
+            [F; D],
+            F,
+        ) = io_ctx.network().receive_request()?;
+
+        registers_dag.set_stage3_init(registers_val_claim);
+        lookups_dag.set_stage3_init(lookups_hamming_gamma);
+        ram_dag.set_stage3_init(ram_val_final_input_claim);
+
+        let mut stage3_instances: Vec<Box<dyn crate::subprotocols::sumcheck::Rep3SumcheckInstanceWorker<F>>> =
+            Vec::new();
+        stage3_instances.extend(registers_dag.stage3_instances(&mut state));
+        stage3_instances.extend(lookups_dag.stage3_instances(&mut state));
+        stage3_instances.extend(ram_dag.stage3_instances(&mut state));
+
+        let _r_stage3 = Rep3BatchedSumcheckWorker::prove(
+            &mut stage3_instances,
+            &mut state.accumulator,
+            &mut io_ctx,
+        )?;
+
         Ok(())
     }
 
@@ -80,7 +145,10 @@ impl Rep3JoltDAGWorker {
         party_id: PartyID,
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-    ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>
+    ) -> eyre::Result<(
+        HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        [Rep3OneHotPolynomial<F>; D],
+    )>
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -93,6 +161,19 @@ impl Rep3JoltDAGWorker {
             AllCommittedPolynomials::iter().copied().collect();
 
         let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx)?;
+
+        let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
+            let key = CommittedPolynomial::InstructionRa(i);
+            let poly = witness_polys
+                .get(&key)
+                .unwrap_or_else(|| panic!("missing witness poly for {key:?}"));
+            match poly {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
+                    one_hot.clone()
+                }
+                _ => panic!("witness poly for {key:?} is not a shared OneHot polynomial"),
+            }
+        });
 
         // Collect polys in AllCommittedPolynomials order for alignment with coordinator.
         let commit_to_public = party_id == PartyID::ID0;
@@ -131,7 +212,7 @@ impl Rep3JoltDAGWorker {
         state.prover_state.trace.clear();
         state.prover_state.trace.shrink_to_fit();
 
-        Ok(hint_map)
+        Ok((hint_map, instruction_one_hot_polys))
     }
 
     /// Commit the untrusted advice polynomial (if non-empty).
