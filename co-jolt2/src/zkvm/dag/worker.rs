@@ -7,7 +7,8 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
-use crate::zkvm::witness::generate_witness_batch_rep3;
+use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
+use crate::zkvm::{dag::Rep3DagStop, spartan::Rep3SpartanDagWorker};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -34,6 +35,23 @@ impl Rep3JoltDAGWorker {
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS>,
         mut io_ctx: IoContextPool<N>,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
+        N: Rep3NetworkWorker,
+        Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
+    {
+        Self::prove_with_stop::<F, PCS, ProofTranscript, N>(state, io_ctx, Rep3DagStop::AfterStage1)
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3JoltDAGWorker::prove_with_stop")]
+    pub fn prove_with_stop<F, PCS, ProofTranscript, N>(
+        mut state: StateManagerWorker<'_, F, PCS>,
+        mut io_ctx: IoContextPool<N>,
+        stop: Rep3DagStop,
     ) -> eyre::Result<()>
     where
         F: JoltField,
@@ -70,6 +88,13 @@ impl Rep3JoltDAGWorker {
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
         Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
 
+        if stop == Rep3DagStop::AfterCommitments {
+            return Ok(());
+        }
+
+        // Stage 1 (Spartan outer sumcheck)
+        Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
+
         // Future stages (sumcheck, opening proof) will go here...
         Ok(())
     }
@@ -91,6 +116,9 @@ impl Rep3JoltDAGWorker {
     {
         let poly_keys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
+
+        // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
+        populate_cycle_witness_rep3(state, io_ctx)?;
 
         let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx)?;
 

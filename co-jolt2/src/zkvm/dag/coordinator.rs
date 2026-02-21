@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::utils::types::MaybeShared;
+use crate::zkvm::dag::Rep3DagStop;
 use crate::zkvm::dag::state_manager::StateManagerCoordinator;
+use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
@@ -30,6 +32,21 @@ impl Rep3JoltDAGCoordinator {
         PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
+        Self::prove_with_stop(state, network, Rep3DagStop::AfterStage1)
+    }
+
+    #[tracing::instrument(skip_all, name = "Rep3JoltDAGCoordinator::prove_with_stop")]
+    pub fn prove_with_stop<'a, F, ProofTranscript, PCS, N>(
+        mut state: StateManagerCoordinator<'a, F, ProofTranscript, PCS>,
+        network: &mut N,
+        stop: Rep3DagStop,
+    ) -> eyre::Result<JoltProof<F, PCS, ProofTranscript>>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        N: Rep3NetworkCoordinator,
+    {
         // --- Receive trace_length from workers ---
         let trace_lengths: Vec<usize> = network.receive_responses()?;
         let trace_length = trace_lengths[0];
@@ -37,6 +54,7 @@ impl Rep3JoltDAGCoordinator {
             trace_lengths.iter().all(|&t| t == trace_length),
             "trace_length mismatch across parties"
         );
+        state.trace_length = trace_length;
         let padded_trace_length = trace_length.next_power_of_two();
 
         // --- Fiat-Shamir preamble ---
@@ -70,9 +88,14 @@ impl Rep3JoltDAGCoordinator {
                 .append_serializable(trusted_advice_commitment);
         }
 
+        if stop != Rep3DagStop::AfterCommitments {
+            // Stage 1 (Spartan outer sumcheck)
+            Rep3SpartanDag::stage1_prove(&mut state, network)?;
+        }
+
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {
-            opening_claims: Claims(BTreeMap::new()),
+            opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
             commitments: std::mem::take(&mut state.commitments),
             proofs: std::mem::take(&mut state.proofs),
             untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
