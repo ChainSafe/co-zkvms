@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
-
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck::Rep3BatchedSumcheck;
 use crate::utils::types::MaybeShared;
+use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
 use crate::zkvm::dag::Rep3DagStop;
 use crate::zkvm::spartan::Rep3SpartanDag;
@@ -94,9 +93,12 @@ impl Rep3JoltDAGCoordinator {
         }
 
         if stop != Rep3DagStop::AfterCommitments && stop != Rep3DagStop::AfterStage1 {
-            // Stage 2 (Spartan inner sumcheck)
+            // Stage 2: collect instances from all subsystems (matching vanilla ordering).
+            // Each subsystem derives its init data from the transcript/accumulator,
+            // then we broadcast the init bundles to workers.
             let stage2_instances =
-                Rep3SpartanDag::stage2_instances(&mut state, network)?;
+                Self::stage2_collect_instances(&mut state, network)?;
+
             let (proof, _r_stage2) = Rep3BatchedSumcheck::prove(
                 &stage2_instances,
                 &mut state.accumulator,
@@ -121,6 +123,86 @@ impl Rep3JoltDAGCoordinator {
             twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
         };
         Ok(proof)
+    }
+
+    /// Collect all stage2 sumcheck instances from every subsystem.
+    ///
+    /// Creates coordinator-side instances (which derive transcript challenges in
+    /// the correct order), broadcasts init data to workers, and returns the
+    /// instances in vanilla ordering.
+    fn stage2_collect_instances<F, ProofTranscript, PCS, N>(
+        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>>>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        N: Rep3NetworkCoordinator,
+    {
+        use crate::zkvm::instruction_lookups::booleanity::Rep3BooleanitySumcheck;
+        use crate::zkvm::ram::output_check::Rep3OutputSumcheck as Rep3OutputSumcheckCoord;
+        use crate::zkvm::ram::raf_evaluation::Rep3RafEvaluation;
+        use crate::zkvm::ram::read_write_checking::Rep3RamReadWriteChecking;
+        use crate::zkvm::registers::read_write_checking::Rep3RegistersReadWriteChecking;
+        use jolt_core::poly::opening_proof::SumcheckId;
+        use jolt_core::zkvm::instruction_lookups::D;
+        use jolt_core::zkvm::witness::VirtualPolynomial;
+
+        // 1) Spartan inner sumcheck — derives gamma, input_claim from transcript;
+        //    broadcasts (gamma, input_claim) to workers internally.
+        let spartan_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            Rep3SpartanDag::stage2_instances(state, network)?;
+
+        // 2) Registers read-write checking — derives gamma from transcript.
+        //    Create concrete type, extract init data, broadcast, then box.
+        let reg_rwc = Rep3RegistersReadWriteChecking::<F>::new::<ProofTranscript, PCS>(state);
+        let reg_gamma = reg_rwc.gamma();
+        let reg_input_claim = reg_rwc.input_claim();
+        network.broadcast_request((reg_gamma, reg_input_claim))?;
+        let registers_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            vec![Box::new(reg_rwc)];
+
+        // 3) RAM (raf, read-write, output) — create each concrete type,
+        //    extract init data from RamRWC (gamma) and OutputSumcheck (r_address),
+        //    broadcast combined init bundle, then box all.
+        let raf = Rep3RafEvaluation::<F>::new::<ProofTranscript, PCS>(state);
+        let ram_rwc = Rep3RamReadWriteChecking::<F>::new::<ProofTranscript, PCS>(state);
+        let output = Rep3OutputSumcheckCoord::<F>::new::<ProofTranscript, PCS>(state);
+        let ram_gamma = ram_rwc.gamma();
+        let ram_input_claim = ram_rwc.input_claim();
+        let ram_r_address = output.r_address().to_vec();
+        network.broadcast_request((ram_gamma, ram_input_claim, ram_r_address))?;
+        let ram_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            vec![Box::new(raf), Box::new(ram_rwc), Box::new(output)];
+
+        // // 4) Lookups booleanity — derives gamma + r_address from transcript.
+        // let log_T = state
+        //     .accumulator
+        //     .get_virtual_polynomial_opening(
+        //         VirtualPolynomial::LookupOutput,
+        //         SumcheckId::SpartanOuter,
+        //     )
+        //     .0
+        //     .r
+        //     .len();
+        // let booleanity = Rep3BooleanitySumcheck::<F>::new(&mut state.transcript, log_T);
+        // let lookups_gamma = booleanity.gamma();
+        // let lookups_r_address = booleanity.r_address().to_vec();
+        // network.broadcast_request((lookups_gamma, lookups_r_address))?;
+        // let lookups_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+        //     vec![Box::new(booleanity)];
+
+        // Collect all instances in vanilla order
+        let stage2_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            std::iter::empty()
+                .chain(spartan_instances)
+                .chain(registers_instances)
+                .chain(ram_instances)
+                // .chain(lookups_instances)
+                .collect();
+
+        Ok(stage2_instances)
     }
 
     fn receive_commitments<F, PCS, ProofTranscript, N>(

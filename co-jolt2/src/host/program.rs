@@ -1,11 +1,15 @@
 use itertools::Itertools;
 use jolt_core::host::Program;
+use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+use jolt_core::zkvm::ram::RAMPreprocessing;
+use jolt_core::zkvm::JoltSharedPreprocessing;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use rand::RngCore;
 use rayon::prelude::*;
 
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::host::memory::Rep3Memory;
+use crate::utils::compute_ram_k;
 use crate::zkvm::instruction::{Rep3Cycle, Rep3Operand};
 
 pub trait Rep3Program {
@@ -26,10 +30,21 @@ impl Rep3Program for Program {
         trusted_advice: &[u8],
         rng: &mut R,
     ) -> [(Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput); 3] {
+        let (bytecode, memory_init, _) = self.decode();
         let (trace, memory, program_io) = self.trace(inputs, untrusted_advice, trusted_advice);
 
+        // Build shared preprocessing to compute ram_K, used to trim the memory
+        // shares to only the DRAM words within the K-length address space.
+        let shared = JoltSharedPreprocessing {
+            memory_layout: program_io.memory_layout.clone(),
+            bytecode: BytecodePreprocessing::preprocess(bytecode),
+            ram: RAMPreprocessing::preprocess(memory_init),
+        };
+        let ram_K = compute_ram_k(&trace, &shared);
+
         let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
-        let memory_shares = Rep3Memory::generate_secret_shares(memory, rng);
+        let memory_shares =
+            Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_K, rng);
 
         let trace_shares = share_trace(trace, rng);
 

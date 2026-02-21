@@ -102,18 +102,22 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3InnerSumcheckWorker<F> 
         let half_len = self.poly_abc_small.len() / 2;
         let party_id = self.party_id;
 
+        // The product abc*z is degree 2, but when batched with degree-3 instances
+        // we need evaluations at {0, 2, 3} (max_degree points). We achieve this by
+        // evaluating each linear factor at max_degree points and multiplying.
+        let eval_degree = max_degree.max(2);
         let mut evals = vec![AdditiveShare::<F>::zero(); max_degree];
 
         for i in 0..half_len {
             let abc_evals =
                 self.poly_abc_small
-                    .sumcheck_evals(i, 2, BindingOrder::HighToLow, party_id);
+                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
             let z_evals =
                 self.poly_z
-                    .sumcheck_evals(i, 2, BindingOrder::HighToLow, party_id);
+                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
 
-            // eval at 0 and eval at 2 (degree=2 means we get [eval@0, eval@2])
-            for j in 0..2 {
+            // evals at {0, 2, 3, ..., eval_degree}
+            for j in 0..max_degree {
                 evals[j] += abc_evals[j].mul(&z_evals[j]).into_additive(party_id);
             }
         }

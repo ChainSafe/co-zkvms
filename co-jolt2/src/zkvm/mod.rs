@@ -3,6 +3,7 @@ pub mod instruction;
 pub mod instruction_lookups;
 pub mod r1cs;
 pub mod ram;
+pub mod registers;
 pub mod spartan;
 pub mod witness;
 

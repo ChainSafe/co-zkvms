@@ -19,13 +19,16 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
-use jolt_core::subprotocols::sumcheck::BatchedSumcheck;
+use jolt_core::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
 use jolt_core::zkvm::dag::state_manager::{
     ProofData, ProofKeys, StateManager as VanillaStateManager,
 };
+use jolt_core::zkvm::instruction_lookups::LookupsDag;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
+use jolt_core::zkvm::ram::RamDag;
+use jolt_core::zkvm::registers::RegistersDag;
 use jolt_core::zkvm::spartan::SpartanDag;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
@@ -97,16 +100,23 @@ fn vanilla_up_to_stage2(
     let mut spartan = SpartanDag::<F>::new::<FS>(padded_trace_length);
     spartan.stage1_prove(&mut sm).unwrap();
 
-    // Stage 2 (Spartan inner sumcheck + other subsystems).
-    // Only Spartan contributes stage2 instances for now.
-    let mut stage2_instances: Vec<_> = spartan
-        .stage2_prover_instances(&mut sm)
-        .into_iter()
+    // Stage 2 (incremental testing — uncomment subsystems one-by-one).
+    // IMPORTANT: Instances must be created in vanilla order (spartan → registers → ram → lookups)
+    // because constructors derive challenges from the transcript.
+    let mut registers_dag = RegistersDag::default();
+    let mut ram_dag = RamDag::new_prover::<F, FS, PCS>(&sm);
+    // let mut lookups_dag = LookupsDag::<F>::default();
+
+    let mut stage2_instances: Vec<_> = std::iter::empty()
+        .chain(spartan.stage2_prover_instances(&mut sm))
+        .chain(registers_dag.stage2_prover_instances(&mut sm))
+        .chain(ram_dag.stage2_prover_instances(&mut sm))
+        // .chain(lookups_dag.stage2_prover_instances(&mut sm))
         .collect();
-    let stage2_instances_mut: Vec<&mut dyn jolt_core::subprotocols::sumcheck::SumcheckInstance<F, FS>> =
+    let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> =
         stage2_instances
             .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn jolt_core::subprotocols::sumcheck::SumcheckInstance<F, FS>)
+            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, FS>)
             .collect();
     let accumulator = sm.get_prover_accumulator();
     let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
@@ -136,6 +146,7 @@ fn stage1_correct() {
 
     // Pad traces to next power of 2 (+1 termination cycle).
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
+    eprintln!("raw_trace_len={}, padded_len={}", vanilla_trace.len(), padded_len);
     vanilla_trace.resize(padded_len, Cycle::NoOp);
     for (trace, _, _) in shares.iter_mut() {
         trace.resize(padded_len, Rep3Cycle::NoOp);
@@ -158,6 +169,74 @@ fn stage1_correct() {
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
+    eprintln!("ram_K={ram_K}, log_K={}", ram_K.ilog2());
+
+    // 3.5) Verify that the secret-shared memory reconstructs to the vanilla memory.
+    {
+        use jolt_core::zkvm::ram::remap_address;
+        use jolt2_common::constants::RAM_START_ADDRESS;
+        use mpc_core::protocols::rep3_ring;
+
+        let memory_layout = &io_device.memory_layout;
+        let dram_start_index =
+            remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
+        let dram_words_needed = ram_K.saturating_sub(dram_start_index);
+
+        // Reconstruct the Rep3 ring shares
+        let mem0 = &shares[0].1;
+        let mem1 = &shares[1].1;
+        let mem2 = &shares[2].1;
+        let share_len = mem0.data.len();
+        eprintln!(
+            "Memory share check: share_len={}, dram_start={}, dram_needed={}",
+            share_len, dram_start_index, dram_words_needed,
+        );
+
+        let mut mismatches = 0usize;
+        let mut first_mismatches: Vec<(usize, u64, u64)> = Vec::new();
+        for i in 0..share_len {
+            // Arithmetic Rep3 ring share: value = a0 + a1 + a2 (wrapping u64 addition)
+            // party0=(a0, a2), party1=(a1, a0), party2=(a2, a1)
+            let a0 = mem0.data[i].a.0;
+            let a1 = mem1.data[i].a.0;
+            let a2 = mem2.data[i].a.0;
+            let reconstructed = a0.wrapping_add(a1).wrapping_add(a2);
+            let vanilla_val = vanilla_memory.data[i];
+            if reconstructed != vanilla_val {
+                mismatches += 1;
+                if first_mismatches.len() < 10 {
+                    first_mismatches.push((i, vanilla_val, reconstructed));
+                }
+            }
+        }
+        eprintln!(
+            "Memory reconstruction: checked={}, mismatches={}, first_mismatches={:?}",
+            share_len, mismatches, first_mismatches,
+        );
+
+        // Also check: what does vanilla_memory have at paired DRAM positions?
+        let io_start = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+        let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
+        let half = ram_K / 2;
+        let mut paired_nonzero = 0usize;
+        let mut first_paired: Vec<(usize, u64)> = Vec::new();
+        for k in io_start..io_end.min(half) {
+            let paired_dram_index = k + half - dram_start_index;
+            if paired_dram_index < vanilla_memory.data.len() {
+                let val = vanilla_memory.data[paired_dram_index];
+                if val != 0 {
+                    paired_nonzero += 1;
+                    if first_paired.len() < 10 {
+                        first_paired.push((k + half, val));
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "Vanilla memory at paired DRAM positions (io_start={}..io_end={}, half={}): nonzero={}, first={:?}",
+            io_start, io_end, half, paired_nonzero, first_paired,
+        );
+    }
 
     // 4) Vanilla proof up to Stage2.
     let (vanilla_proof, tau) = vanilla_up_to_stage2(
@@ -250,6 +329,17 @@ fn stage1_correct() {
             );
             Rep3JoltDAGCoordinator::prove_with_stop(state, net, Rep3DagStop::AfterStage2)
         },
+    );
+
+    // 5.5) Print metadata for debugging
+    eprintln!(
+        "trace_length: rep3={} vanilla={}",
+        rep3_proof.trace_length, vanilla_proof.trace_length
+    );
+    eprintln!(
+        "twist_sumcheck_switch_index: rep3={} vanilla={}",
+        rep3_proof.twist_sumcheck_switch_index,
+        vanilla_proof.twist_sumcheck_switch_index
     );
 
     // 6) Compare commitments.
@@ -349,10 +439,53 @@ fn stage1_correct() {
         vanilla_stage2.serialize_uncompressed(&mut v).unwrap();
         v
     };
-    assert_eq!(
-        rep3_stage2_bytes, vanilla_stage2_bytes,
-        "Stage2 sumcheck proof mismatch"
-    );
+    if rep3_stage2_bytes != vanilla_stage2_bytes {
+        use jolt_core::zkvm::dag::state_manager::ProofData;
+
+        let (rep3_sc, vanilla_sc) = match (rep3_stage2, vanilla_stage2) {
+            (ProofData::SumcheckProof(a), ProofData::SumcheckProof(b)) => (a, b),
+            _ => panic!("unexpected proof data variants for stage2 sumcheck"),
+        };
+
+        eprintln!(
+            "Stage2 sumcheck: rep3 has {} polys, vanilla has {} polys",
+            rep3_sc.compressed_polys.len(),
+            vanilla_sc.compressed_polys.len()
+        );
+
+        let mut first_diff_idx = None;
+        for (i, (a, b)) in rep3_sc
+            .compressed_polys
+            .iter()
+            .zip(vanilla_sc.compressed_polys.iter())
+            .enumerate()
+        {
+            let mut a_bytes = Vec::new();
+            let mut b_bytes = Vec::new();
+            a.serialize_uncompressed(&mut a_bytes).unwrap();
+            b.serialize_uncompressed(&mut b_bytes).unwrap();
+            if a_bytes != b_bytes {
+                first_diff_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(i) = first_diff_idx {
+            panic!(
+                "Stage2 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
+                rep3_sc.compressed_polys[i],
+                vanilla_sc.compressed_polys[i],
+            );
+        } else if rep3_sc.compressed_polys.len() != vanilla_sc.compressed_polys.len() {
+            panic!(
+                "Stage2 sumcheck proof poly count mismatch: rep3={} vanilla={}",
+                rep3_sc.compressed_polys.len(),
+                vanilla_sc.compressed_polys.len()
+            );
+        } else {
+            panic!("Stage2 sumcheck proof bytes differ but individual polys match");
+        }
+    }
 
     // 9) Compare opening claims bytes (stage1+stage2 openings).
     let rep3_openings_bytes = {
@@ -374,6 +507,15 @@ fn stage1_correct() {
     assert_eq!(rep3_openings_bytes, vanilla_openings_bytes);
 
     // 10) Metadata invariants.
+    eprintln!(
+        "trace_length: rep3={} vanilla={}",
+        rep3_proof.trace_length, vanilla_proof.trace_length
+    );
+    eprintln!(
+        "twist_sumcheck_switch_index: rep3={} vanilla={}",
+        rep3_proof.twist_sumcheck_switch_index,
+        vanilla_proof.twist_sumcheck_switch_index
+    );
     assert_eq!(rep3_proof.trace_length, vanilla_proof.trace_length);
     assert_eq!(rep3_proof.ram_K, vanilla_proof.ram_K);
     assert_eq!(rep3_proof.bytecode_d, vanilla_proof.bytecode_d);
