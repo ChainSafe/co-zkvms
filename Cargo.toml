@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "co-jolt2",
     "co-jolt2/examples/sha2-chain/guest",
+    "co-jolt2/examples/fibonacci/guest",
     # "co-jolt",
     # "co-noir-spartan/co-spartan",
     # "co-noir-spartan/co-noir",

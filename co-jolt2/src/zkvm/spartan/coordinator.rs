@@ -38,6 +38,20 @@ impl Rep3SpartanDag {
 
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
 
+        // DEBUG: Receive and print first 8 rows' Az/Bz cleartext values from workers.
+        {
+            let debug_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
+            let debug_vals = additive::combine_additive_vec(debug_shares);
+            let padded_constraints = key.padded_row_constraint_per_step();
+            for row in 0..std::cmp::min(8, debug_vals.len() / 2) {
+                let step = row / padded_constraints;
+                let ci = row % padded_constraints;
+                let az = debug_vals[2 * row];
+                let bz = debug_vals[2 * row + 1];
+                eprintln!("[MPC-AZ] row={row} step={step} ci={ci} az={az:?} bz={bz:?}");
+            }
+        }
+
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
         let mut polys = Vec::with_capacity(num_rounds_x);
         let mut claim = F::zero();
@@ -50,6 +64,10 @@ impl Rep3SpartanDag {
             let t0 = additive::combine_additive_share(round_shares.iter().map(|x| x.0).collect());
             let t_inf =
                 additive::combine_additive_share(round_shares.into_iter().map(|x| x.1).collect());
+
+            if _round < 3 {
+                eprintln!("[COORD] round {_round}: t0={t0:?} t_inf={t_inf:?}");
+            }
 
             let r_i = process_eq_sumcheck_round(
                 (t0, t_inf),

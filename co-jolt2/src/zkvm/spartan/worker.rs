@@ -1,6 +1,6 @@
-use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
+use jolt_core::utils::math::Math;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::arithmetic as rep3_arithmetic;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
@@ -12,6 +12,8 @@ use crate::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, Rep3R1CSCycleInputs};
+use jolt_core::poly::multilinear_polynomial::BindingOrder;
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 pub struct Rep3SpartanDagWorker;
 
@@ -93,25 +95,64 @@ impl Rep3SpartanDagWorker {
         }
 
         let mut az_bz_cz_poly = Rep3SpartanInterleavedPolynomial::<F>::new(
-            party_id,
             &key,
-            &tau,
             &cycle_inputs,
+            &UNIFORM_R1CS,
+            party_id,
         )?;
+
+        // DEBUG: Send first 8 rows' Az/Bz cleartext values to coordinator for comparison.
+        {
+            use crate::poly::spartan_interleaved_poly::debug_eval_lc_rep3;
+            let mut debug_vals: Vec<AdditiveShare<F>> = Vec::new();
+            let num_debug_rows = std::cmp::min(8, num_steps * rows_per_step_padded);
+            for row in 0..num_debug_rows {
+                let step = row / rows_per_step_padded;
+                let ci = row % rows_per_step_padded;
+                if ci < UNIFORM_R1CS.len() {
+                    let inputs = &cycle_inputs[step];
+                    let az = debug_eval_lc_rep3(UNIFORM_R1CS[ci].cons.a, inputs, party_id);
+                    let bz = debug_eval_lc_rep3(UNIFORM_R1CS[ci].cons.b, inputs, party_id);
+                    debug_vals.push(az);
+                    debug_vals.push(bz);
+                } else {
+                    debug_vals.push(AdditiveShare::<F>::zero());
+                    debug_vals.push(AdditiveShare::<F>::zero());
+                }
+            }
+            io_ctx.network().send_response(debug_vals)?;
+        }
+
+        let mut eq_poly = GruenSplitEqPolynomial::<F>::new(&tau, BindingOrder::LowToHigh);
+
+        // DEBUG: Print eq poly dimensions and first few values (same on all parties since eq is public).
+        if party_id == PartyID::ID0 {
+            eprintln!("[MPC-EQ] E_in_len={} E_out_len={} current_index={} current_scalar={:?}",
+                eq_poly.E_in_current_len(), eq_poly.E_out_current_len(),
+                eq_poly.current_index, eq_poly.current_scalar);
+            let e_in = eq_poly.E_in_current();
+            let e_out = eq_poly.E_out_current();
+            for i in 0..std::cmp::min(4, e_in.len()) {
+                eprintln!("[MPC-EQ] E_in[{i}]={:?}", e_in[i]);
+            }
+            for i in 0..std::cmp::min(4, e_out.len()) {
+                eprintln!("[MPC-EQ] E_out[{i}]={:?}", e_out[i]);
+            }
+        }
 
         let num_rounds_x = key.num_rows_bits();
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
 
-        for _round in 0..num_rounds_x {
-            let (t0, t_inf) = az_bz_cz_poly.quadratic_evals(io_ctx.main())?;
-            io_ctx.network().send_response((t0, t_inf))?;
-            let r_i: F::Challenge = io_ctx.network().receive_request()?;
-            r.push(r_i);
-            az_bz_cz_poly.bind(party_id, r_i);
+        for round in 0..num_rounds_x {
+            if round == 0 {
+                az_bz_cz_poly.streaming_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
+            } else {
+                az_bz_cz_poly.remaining_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
+            }
         }
 
         // Send final Az,Bz,Cz eval shares at the full sumcheck point.
-        let final_evals: [AdditiveShare<F>; 3] = az_bz_cz_poly.final_evals_additive();
+        let final_evals: [AdditiveShare<F>; 3] = az_bz_cz_poly.final_evals_additive(party_id);
         io_ctx.network().send_response(final_evals.to_vec())?;
 
         // Send claimed witness eval shares at r_cycle (outer sumcheck point restricted to step vars).

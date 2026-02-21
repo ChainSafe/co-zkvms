@@ -1,7 +1,7 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use ark_bn254::Fr;
+use ark_ff::{One, Zero};
 use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
 
@@ -17,11 +17,16 @@ use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDAGCoordinator, dag::worker::Rep3
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
+use jolt_core::poly::multilinear_polynomial::BindingOrder;
+use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
+use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
+use jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs;
+use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::spartan::SpartanDag;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
@@ -33,13 +38,14 @@ use tracer::emulator::memory::Memory;
 type F = Fr;
 type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
+type Challenge = <F as jolt_core::field::JoltField>::Challenge;
 
 fn vanilla_up_to_stage1(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
     final_memory_state: Memory,
-) -> VanillaJoltProof<F, PCS, FS> {
+) -> (VanillaJoltProof<F, PCS, FS>, Vec<Challenge>) {
     let mut sm = VanillaStateManager::<F, FS, PCS>::new_prover(
         preprocessing,
         trace,
@@ -78,19 +84,26 @@ fn vanilla_up_to_stage1(
         transcript.borrow_mut().append_serializable(commitment);
     }
 
+    // Capture tau exactly as stage1 will derive it (without perturbing the live transcript).
+    let key = UniformSpartanKey::<F>::new(padded_trace_length);
+    let num_rounds_x = key.num_rows_bits();
+    let tau: Vec<Challenge> = {
+        let mut tr = transcript.borrow().clone();
+        tr.challenge_vector_optimized::<F>(num_rounds_x)
+    };
+
     // Stage 1 (Spartan outer sumcheck).
     let mut spartan = SpartanDag::<F>::new::<FS>(padded_trace_length);
     spartan.stage1_prove(&mut sm).unwrap();
 
-    VanillaJoltProof::from_prover_state_manager(sm)
+    (VanillaJoltProof::from_prover_state_manager(sm), tau)
 }
 
 #[test]
 fn stage1_correct() {
     // 1) Build and trace the fibonacci program (reuse witness_batch_rep3 setup).
     let mut program = Program::new("fibonacci-guest");
-    let elf_path = "/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest";
-    program.elf = Some(PathBuf::from(elf_path));
+    program.set_memory_size(10240);
     let inputs = postcard::to_stdvec(&9u32).unwrap();
     let (bytecode, memory_init, _) = program.decode();
 
@@ -124,7 +137,8 @@ fn stage1_correct() {
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
     // 4) Vanilla proof up to Stage1.
-    let vanilla_proof = vanilla_up_to_stage1(
+    let vanilla_trace_for_debug = vanilla_trace.clone();
+    let (vanilla_proof, tau) = vanilla_up_to_stage1(
         &preprocessing,
         vanilla_trace,
         io_device.clone(),
@@ -235,6 +249,20 @@ fn stage1_correct() {
             _ => panic!("unexpected proof data variants for stage1 sumcheck"),
         };
 
+        // Derive implied (t0, tInf) for round 0 from the compressed cubic, using tau.
+        let implied_quadratic = |poly: &jolt_core::poly::unipoly::CompressedUniPoly<F>| -> (F, F) {
+            let uni = poly.decompress(&F::zero());
+            let w_i: F = tau[tau.len() - 1].into();
+            let a = F::one() - w_i;
+            let b = w_i + w_i - F::one();
+            let t0 = uni.coeffs[0] / a;
+            let t_inf = uni.coeffs[3] / b;
+            (t0, t_inf)
+        };
+
+        let (rep3_t0, rep3_tinf) = implied_quadratic(&rep3_sc.compressed_polys[0]);
+        let (van_t0, van_tinf) = implied_quadratic(&vanilla_sc.compressed_polys[0]);
+
         let mut first_diff_idx = None;
         for (i, (a, b)) in rep3_sc
             .compressed_polys
@@ -254,8 +282,9 @@ fn stage1_correct() {
 
         if let Some(i) = first_diff_idx {
             panic!(
-                "stage1 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
-                rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i]
+                "stage1 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?} (implied round0 t0/tInf: rep3=({rep3_t0:?},{rep3_tinf:?}) vanilla=({van_t0:?},{van_tinf:?}))",
+                rep3_sc.compressed_polys[i],
+                vanilla_sc.compressed_polys[i],
             );
         } else {
             panic!(
