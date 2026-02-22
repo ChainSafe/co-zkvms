@@ -120,11 +120,6 @@ impl Rep3SpartanDag {
             "claimed witness eval len mismatch"
         );
 
-        eprintln!(
-            "[MPC-coord stage1] claim_az={:?}, claim_bz={:?}, claim_cz={:?}, witness[0..3]={:?}",
-            claim_az, claim_bz, claim_cz,
-            &claimed_witness_evals[..3.min(claimed_witness_evals.len())],
-        );
 
         // Append committed openings (PCS).
         let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS

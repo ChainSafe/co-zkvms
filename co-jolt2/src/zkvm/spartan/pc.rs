@@ -60,8 +60,8 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
             msg[1] = full_evals[2]; // y2
         }
         for k in 3..=max_degree {
-            let x: F::Challenge = (k as u128).into();
-            msg[k - 1] = poly.evaluate(&x);
+            let x = F::from_u64(k as u64);
+            msg[k - 1] = poly.evaluate::<F>(&x);
         }
         msg
     }

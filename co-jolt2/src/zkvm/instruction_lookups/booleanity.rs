@@ -571,7 +571,7 @@ pub(crate) fn gruen_evals_deg_3<F: JoltField>(
     let c_plus_d = eq.gruen_evals_deg_3(F::zero(), F::zero(), F::one());
 
     let prev = Rep3Value::Additive(previous_claim);
-    (0..3)
+    let result: Vec<AdditiveShare<F>> = (0..3)
         .map(|i| {
             let a_i = a_plus_d[i] - d[i];
             let b_i = b_plus_d[i] - d[i];
@@ -581,7 +581,9 @@ pub(crate) fn gruen_evals_deg_3<F: JoltField>(
             let t = t.add(&prev.mul_public(c_i), party_id);
             t.add_public(d[i], party_id).into_additive(party_id)
         })
-        .collect()
+        .collect();
+
+    result
 }
 
 pub(crate) fn extend_degree_3_evals<F: JoltField>(

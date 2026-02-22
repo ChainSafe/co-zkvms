@@ -178,6 +178,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
     ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        // Draw and discard the ReadRaf gamma challenge to keep the transcript
+        // in sync with vanilla (which creates ReadRafSumcheck before HammingWeight).
+        // TODO: replace with a real Rep3ReadRafSumcheck when ported.
+        let _read_raf_gamma: F = sm.transcript.challenge_scalar();
+
         let hamming_weight = Rep3HammingWeightSumcheck::new(&mut sm.transcript);
 
         vec![BatchedSumcheckInstance::Secret(Box::new(hamming_weight))]

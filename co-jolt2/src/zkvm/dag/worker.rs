@@ -20,7 +20,7 @@ use crate::zkvm::registers::Rep3RegistersDagWorker;
 use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
 use crate::zkvm::spartan::Rep3InnerSumcheckWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
-use crate::zkvm::{dag::Rep3DagStop, spartan::Rep3SpartanDagWorker};
+use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
@@ -62,23 +62,6 @@ impl Rep3JoltDAGWorker {
         N: Rep3NetworkWorker,
         Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
     {
-        Self::prove_with_stop::<F, PCS, ProofTranscript, N>(state, io_ctx, Rep3DagStop::AfterStage3)
-    }
-
-    #[tracing::instrument(skip_all, name = "Rep3JoltDAGWorker::prove_with_stop")]
-    pub fn prove_with_stop<F, PCS, ProofTranscript, N>(
-        mut state: StateManagerWorker<'_, F, PCS>,
-        mut io_ctx: IoContextPool<N>,
-        stop: Rep3DagStop,
-    ) -> eyre::Result<()>
-    where
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
-        PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
-        N: Rep3NetworkWorker,
-        Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
-    {
         let trace_length = state.prover_state.trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         let party_id = io_ctx.party_id();
@@ -107,10 +90,6 @@ impl Rep3JoltDAGWorker {
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
         Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
 
-        if stop == Rep3DagStop::AfterCommitments {
-            return Ok(());
-        }
-
         // Stage 1 (Spartan outer sumcheck)
         let (outer_sumcheck_r, claimed_witness_evals) =
             Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
@@ -137,11 +116,6 @@ impl Rep3JoltDAGWorker {
         //         }
         //     }
         // }
-
-        // Future stages (opening proof, etc.) will go here...
-        if stop == Rep3DagStop::AfterStage1 {
-            return Ok(());
-        }
 
         // --- Prepare RAM worker (ring→field conversion requires MPC communication) ---
         let mut ram_dag = Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
@@ -221,88 +195,100 @@ impl Rep3JoltDAGWorker {
         //     &mut io_ctx,
         // )?;
 
-        // // -------------------------------------------------------------------
-        // // Stage 3: batched sumcheck (secret + public instances)
-        // // -------------------------------------------------------------------
+        // -------------------------------------------------------------------
+        // Stage 3: batched sumcheck (secret + public instances)
+        // -------------------------------------------------------------------
 
-        // let registers_val_claim: F = io_ctx.network().receive_request()?;
-        // registers.set_stage3_init(registers_val_claim);
+        // Receive stage3 init data from coordinator (two messages).
+        let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
+            io_ctx.network().receive_request()?;
+        let (registers_val_claim, lookups_gamma_vec, ram_val_final_input_claim): (F, Vec<F>, F) =
+            io_ctx.network().receive_request()?;
+        let lookups_gamma: [F; D] = lookups_gamma_vec
+            .try_into()
+            .map_err(|_| eyre::eyre!("lookups gamma vec has wrong length"))?;
 
-        // let ram_stage3_input_claim: F = io_ctx.network().receive_request()?;
-        // ram.set_stage3_init(ram_stage3_input_claim);
+        // 1) Spartan: PCSumcheck (public) + ProductVirtualization (secret)
+        let log_T = state
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
+            .0
+            .r
+            .len();
 
-        // let lookup_stage3_gamma: [F; D] = io_ctx.network().receive_request()?;
-        // lookups.set_stage3_init(lookup_stage3_gamma);
+        let pc_sumcheck = if party_id == PartyID::ID0 {
+            let cycle_witness = &state.prover_state.cycle_witness;
+            let unexpanded_pc_poly: MultilinearPolynomial<F> =
+                cycle_witness.unexpanded_pc.clone().into();
+            let pc_poly: MultilinearPolynomial<F> = cycle_witness.pc.clone().into();
 
-        // let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
-        //     io_ctx.network().receive_request()?;
+            let mask = 1u32 << (CircuitFlags::IsNoop as usize);
+            let is_noop: Vec<u8> = cycle_witness
+                .flags_bits
+                .iter()
+                .map(|bits| ((bits & mask) != 0) as u8)
+                .collect();
+            let is_noop_poly: MultilinearPolynomial<F> = is_noop.into();
 
-        // let party_id = io_ctx.party_id();
-        // let log_T = state
-        //     .accumulator
-        //     .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
-        //     .0
-        //     .r
-        //     .len();
+            let r_cycle = state
+                .accumulator
+                .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
+                .0
+                .r;
+            let (_, eq_plus_one_evals) = EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
+            let eq_plus_one_poly = MultilinearPolynomial::from(eq_plus_one_evals);
 
-        // let pc_sumcheck = if party_id == PartyID::ID0 {
-        //     let cycle_witness = &state.prover_state.cycle_witness;
-        //     let unexpanded_pc_poly: MultilinearPolynomial<F> =
-        //         cycle_witness.unexpanded_pc.clone().into();
-        //     let pc_poly: MultilinearPolynomial<F> = cycle_witness.pc.clone().into();
+            PCSumcheck::<F>::new_prover_from_polys(
+                input_claim_pc,
+                gamma_pc,
+                log_T,
+                unexpanded_pc_poly,
+                pc_poly,
+                is_noop_poly,
+                eq_plus_one_poly,
+            )
+        } else {
+            PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, log_T)
+        };
 
-        //     let mask = 1u32 << (CircuitFlags::IsNoop as usize);
-        //     let is_noop: Vec<u8> = cycle_witness
-        //         .flags_bits
-        //         .iter()
-        //         .map(|bits| ((bits & mask) != 0) as u8)
-        //         .collect();
-        //     let is_noop_poly: MultilinearPolynomial<F> = is_noop.into();
+        let product_sumcheck =
+            Rep3ProductVirtualizationSumcheckWorker::<F>::new(&mut state, input_claim_product);
 
-        //     let r_cycle = state
-        //         .accumulator
-        //         .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
-        //         .0
-        //         .r;
-        //     let (_, eq_plus_one_evals) = EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
-        //     let eq_plus_one_poly = MultilinearPolynomial::from(eq_plus_one_evals);
+        // 2) Registers: ValEvaluation (secret)
+        registers_dag.set_stage3_init(registers_val_claim);
+        let registers_stage3 = registers_dag.stage3_instances(&mut state);
 
-        //     PCSumcheck::<F>::new_prover_from_polys(
-        //         input_claim_pc,
-        //         gamma_pc,
-        //         log_T,
-        //         unexpanded_pc_poly,
-        //         pc_poly,
-        //         is_noop_poly,
-        //         eq_plus_one_poly,
-        //     )
-        // } else {
-        //     PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, log_T)
-        // };
+        // 3) Lookups: HammingWeight (secret)
+        // The coordinator drew ReadRaf phantom gamma + HammingWeight gamma from transcript
+        // and broadcasts the resulting gamma_powers to workers.
+        lookups_dag.set_stage3_init(lookups_gamma);
+        let lookups_stage3 = lookups_dag.stage3_instances(&mut state);
 
-        // let product_sumcheck =
-        //     Rep3ProductVirtualizationSumcheckWorker::<F>::new(&mut state, input_claim_product);
+        // 4) RAM: ValFinal (secret)
+        ram_dag.set_stage3_init(ram_val_final_input_claim);
+        let ram_stage3 = ram_dag.stage3_instances(&mut state);
 
-        // let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
-        // stage3_instances.extend(registers.stage3_instances(&mut state));
-        // stage3_instances.extend(ram.stage3_instances(&mut state));
-        // stage3_instances.extend(lookups.stage3_instances(&mut state));
-        // stage3_instances.push(BatchedSumcheckWorkerInstance::Public(Box::new(pc_sumcheck)));
-        // stage3_instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(
-        //     product_sumcheck,
-        // )));
+        // Collect all instances in vanilla ordering:
+        // spartan(PC, Product) → registers(Val) → lookups(HammingWeight) → ram(ValFinal)
+        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = std::iter::empty()
+            .chain(std::iter::once(BatchedSumcheckWorkerInstance::Public(
+                Box::new(pc_sumcheck),
+            )))
+            .chain(std::iter::once(BatchedSumcheckWorkerInstance::Secret(
+                Box::new(product_sumcheck),
+            )))
+            .chain(registers_stage3)
+            .chain(lookups_stage3)
+            .chain(ram_stage3)
+            .collect();
 
-        // HybridBatchedSumcheckWorker::prove(
-        //     &mut stage3_instances,
-        //     &mut state.accumulator,
-        //     &mut io_ctx,
-        // )?;
+        HybridBatchedSumcheckWorker::prove(
+            &mut stage3_instances,
+            &mut state.accumulator,
+            &mut io_ctx,
+        )?;
 
-        // if stop == Rep3DagStop::AfterStage3 {
-        //     return Ok(());
-        // }
-
-        // Future stages (opening proof) will go here...
+        // Future stages (opening proof, etc.) will go here...
         Ok(())
     }
 

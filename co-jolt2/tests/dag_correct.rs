@@ -9,7 +9,6 @@ use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
 use co_jolt2::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
-use co_jolt2::zkvm::dag::Rep3DagStop;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::Rep3JoltWorker;
 use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDAGCoordinator, dag::worker::Rep3JoltDAGWorker};
@@ -44,7 +43,7 @@ type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 type Challenge = <F as jolt_core::field::JoltField>::Challenge;
 
-fn vanilla_up_to_stage2(
+fn vanilla_up_to_stage3(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
@@ -100,9 +99,7 @@ fn vanilla_up_to_stage2(
     let mut spartan = SpartanDag::<F>::new::<FS>(padded_trace_length);
     spartan.stage1_prove(&mut sm).unwrap();
 
-    // Stage 2 (incremental testing — uncomment subsystems one-by-one).
-    // IMPORTANT: Instances must be created in vanilla order (spartan → registers → ram → lookups)
-    // because constructors derive challenges from the transcript.
+    // Stage 2: all subsystems in vanilla order.
     let mut registers_dag = RegistersDag::default();
     let mut ram_dag = RamDag::new_prover::<F, FS, PCS>(&sm);
     let mut lookups_dag = LookupsDag::<F>::default();
@@ -126,6 +123,54 @@ fn vanilla_up_to_stage2(
     sm.proofs.borrow_mut().insert(
         ProofKeys::Stage2Sumcheck,
         ProofData::SumcheckProof(stage2_proof),
+    );
+
+    // Stage 3: create all vanilla instances (for correct transcript draws),
+    // but only include the subset that MPC implements.
+    //
+    // Vanilla stage 3 ordering:
+    //   1. PCSumcheck (Spartan)           — included
+    //   2. ProductVirtualization (Spartan) — included
+    //   3. ValEvaluation (Registers)      — included
+    //   4. ReadRafSumcheck (Lookups)      — SKIP (not ported to MPC)
+    //   5. HammingWeightSumcheck (Lookups)— included
+    //   6. ValEvaluation (RAM)            — SKIP (not ported to MPC)
+    //   7. ValFinalSumcheck (RAM)         — included
+    //   8. HammingBooleanity (RAM)        — SKIP (not ported to MPC)
+    //
+    // Create all instances via subsystem methods (transcript draws happen inside).
+    let spartan_stage3 = spartan.stage3_prover_instances(&mut sm);
+    let registers_stage3 = registers_dag.stage3_prover_instances(&mut sm);
+    let lookups_stage3 = lookups_dag.stage3_prover_instances(&mut sm);
+    let ram_stage3 = ram_dag.stage3_prover_instances(&mut sm);
+
+    // Filter to only the instances that MPC implements:
+    // spartan: both (indices 0,1)
+    // registers: val evaluation (index 0)
+    // lookups: skip ReadRaf (index 0), keep HammingWeight (index 1)
+    // ram: skip ValEvaluation (index 0), keep ValFinal (index 1), skip HammingBooleanity (index 2)
+    let mut stage3_instances: Vec<Box<dyn SumcheckInstance<F, FS>>> = Vec::new();
+    stage3_instances.extend(spartan_stage3);               // PC + Product
+    stage3_instances.extend(registers_stage3);             // Val
+    if lookups_stage3.len() > 1 {
+        stage3_instances.extend(lookups_stage3.into_iter().skip(1));
+    }
+    if ram_stage3.len() > 1 {
+        stage3_instances.extend(ram_stage3.into_iter().skip(1).take(1));
+    }
+
+    let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage3_instances
+        .iter_mut()
+        .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, FS>)
+        .collect();
+    let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
+        stage3_instances_mut,
+        Some(accumulator.clone()),
+        &mut *transcript.borrow_mut(),
+    );
+    sm.proofs.borrow_mut().insert(
+        ProofKeys::Stage3Sumcheck,
+        ProofData::SumcheckProof(stage3_proof),
     );
 
     (VanillaJoltProof::from_prover_state_manager(sm), tau)
@@ -168,15 +213,15 @@ fn dag_correct() {
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
-    // 4) Vanilla proof up to Stage2.
-    let (vanilla_proof, tau) = vanilla_up_to_stage2(
+    // 4) Vanilla proof up to Stage3.
+    let (vanilla_proof, tau) = vanilla_up_to_stage3(
         &preprocessing,
         vanilla_trace,
         io_device.clone(),
         vanilla_memory,
     );
 
-    // 5) Rep3 proof up to Stage2 (local MPC, no QUIC).
+    // 5) Rep3 proof up to Stage3 (local MPC, no QUIC).
     let preprocessing_arc = Arc::new(preprocessing);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
@@ -232,11 +277,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove_with_stop::<F, PCS, FS, _>(
-                state,
-                io_ctx,
-                Rep3DagStop::AfterStage2,
-            )
+            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, io_ctx)
         },
         move |input, net| {
             let (verifier_preprocessing, program_io, ram_K) = input;
@@ -260,7 +301,7 @@ fn dag_correct() {
                 ram_K,
                 twist_sumcheck_switch_index,
             );
-            Rep3JoltDAGCoordinator::prove_with_stop(state, net, Rep3DagStop::AfterStage2)
+            Rep3JoltDAGCoordinator::prove(state, net)
         },
     );
 
@@ -408,7 +449,74 @@ fn dag_correct() {
         }
     }
 
-    // 9) Compare opening claims bytes (stage1+stage2 openings).
+    // 9) Compare Stage3 sumcheck proof bytes.
+    let rep3_stage3 = rep3_proof
+        .proofs
+        .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage3Sumcheck)
+        .expect("rep3 stage3 proof missing");
+    let vanilla_stage3 = vanilla_proof
+        .proofs
+        .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage3Sumcheck)
+        .expect("vanilla stage3 proof missing");
+
+    let rep3_stage3_bytes = {
+        let mut v = Vec::new();
+        rep3_stage3.serialize_uncompressed(&mut v).unwrap();
+        v
+    };
+    let vanilla_stage3_bytes = {
+        let mut v = Vec::new();
+        vanilla_stage3.serialize_uncompressed(&mut v).unwrap();
+        v
+    };
+    if rep3_stage3_bytes != vanilla_stage3_bytes {
+        use jolt_core::zkvm::dag::state_manager::ProofData;
+
+        let (rep3_sc, vanilla_sc) = match (rep3_stage3, vanilla_stage3) {
+            (ProofData::SumcheckProof(a), ProofData::SumcheckProof(b)) => (a, b),
+            _ => panic!("unexpected proof data variants for stage3 sumcheck"),
+        };
+
+        eprintln!(
+            "Stage3 sumcheck: rep3 has {} polys, vanilla has {} polys",
+            rep3_sc.compressed_polys.len(),
+            vanilla_sc.compressed_polys.len()
+        );
+
+        let mut first_diff_idx = None;
+        for (i, (a, b)) in rep3_sc
+            .compressed_polys
+            .iter()
+            .zip(vanilla_sc.compressed_polys.iter())
+            .enumerate()
+        {
+            let mut a_bytes = Vec::new();
+            let mut b_bytes = Vec::new();
+            a.serialize_uncompressed(&mut a_bytes).unwrap();
+            b.serialize_uncompressed(&mut b_bytes).unwrap();
+            if a_bytes != b_bytes {
+                first_diff_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(i) = first_diff_idx {
+            panic!(
+                "Stage3 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
+                rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i],
+            );
+        } else if rep3_sc.compressed_polys.len() != vanilla_sc.compressed_polys.len() {
+            panic!(
+                "Stage3 sumcheck proof poly count mismatch: rep3={} vanilla={}",
+                rep3_sc.compressed_polys.len(),
+                vanilla_sc.compressed_polys.len()
+            );
+        } else {
+            panic!("Stage3 sumcheck proof bytes differ but individual polys match");
+        }
+    }
+
+    // 10) Compare opening claims bytes (stage1+stage2+stage3 openings).
     let rep3_openings_bytes = {
         let mut v = Vec::new();
         rep3_proof

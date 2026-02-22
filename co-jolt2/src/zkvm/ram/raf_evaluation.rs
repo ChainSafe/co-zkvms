@@ -99,15 +99,6 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
         let unmap =
             UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
 
-        eprintln!(
-            "[RafWorker p{}] input_claim={:?}, K={}, T={}, r_cycle[0]={:?}",
-            party_id as u8,
-            input_claim,
-            K,
-            T,
-            r_cycle_point.r.first(),
-        );
-
         Self {
             party_id,
             input_claim,

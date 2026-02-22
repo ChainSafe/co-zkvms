@@ -158,6 +158,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ProductVirtualizationSu
             previous_claim,
             self.party_id,
         );
+
         extend_degree_3_evals(previous_claim, &base, max_degree)
     }
 
