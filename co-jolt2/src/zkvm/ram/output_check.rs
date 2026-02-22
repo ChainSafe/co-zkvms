@@ -36,8 +36,8 @@ const DEGREE_VAL_FINAL: usize = 2;
 pub struct Rep3OutputSumcheckWorker<F: JoltField> {
     party_id: PartyID,
     K: usize,
-    /// val_init (PUBLIC) — initial RAM state as MLE
-    val_init: MultilinearPolynomial<F>,
+    /// val_init (SHARED) — initial RAM state as shared MLE
+    val_init: Rep3DensePolynomial<F>,
     /// val_final (SHARED) — final RAM state in field
     val_final: Rep3DensePolynomial<F>,
     /// val_io (PUBLIC) — I/O-masked final state MLE
@@ -50,7 +50,7 @@ pub struct Rep3OutputSumcheckWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     pub fn new<PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: Vec<u64>,
+        initial_ram_state: Vec<Rep3PrimeFieldShare<F>>,
         final_ram_field: Vec<Rep3PrimeFieldShare<F>>,
         r_address: Vec<F::Challenge>,
         sm: &mut StateManagerWorker<'_, F, PCS>,
@@ -60,7 +60,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
         let memory_layout = &sm.program_io.memory_layout;
 
         let val_final = Rep3DensePolynomial::new(final_ram_field);
-        let val_init: MultilinearPolynomial<F> = initial_ram_state.into();
+        let val_init = Rep3DensePolynomial::new(initial_ram_state);
 
         // Build val_io (PUBLIC) from program_io — for correct execution this
         // matches val_final at I/O addresses and is 0 elsewhere.
@@ -188,7 +188,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
     }
 
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        self.val_init.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.val_init.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_final.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_io.bind_parallel(r_j, BindingOrder::HighToLow);
         self.eq_poly.bind_parallel(r_j, BindingOrder::HighToLow);
@@ -216,15 +216,14 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
             opening_point.clone(),
             val_final_claim,
         );
-        accumulator.append_virtual_public(
+        accumulator.append_virtual(
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
             opening_point,
             val_init_claim,
-            self.party_id,
         );
 
-        vec![val_final_claim]
+        vec![val_final_claim, val_init_claim]
     }
 }
 
@@ -236,7 +235,6 @@ pub struct Rep3OutputSumcheck<F: JoltField> {
     K: usize,
     r_address: Vec<F::Challenge>,
     program_io: JoltDevice,
-    val_init: MultilinearPolynomial<F>,
 }
 
 impl<F: JoltField> Rep3OutputSumcheck<F> {
@@ -245,13 +243,10 @@ impl<F: JoltField> Rep3OutputSumcheck<F> {
     ) -> Self {
         let K = sm.ram_K;
         let r_address = sm.transcript.challenge_vector_optimized::<F>(K.log_2());
-        let initial_memory_state = super::build_initial_memory_state(&sm.preprocessing.shared.ram, &sm.program_io, K);
-        let val_init = MultilinearPolynomial::<F>::from(initial_memory_state);
         Self {
             K,
             r_address,
             program_io: sm.program_io.clone(),
-            val_init,
         }
     }
 
@@ -317,7 +312,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3OutputSumch
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     ) {
-        // claims: [val_final]
+        // claims: [val_final, val_init]
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamValFinal,
@@ -325,13 +320,12 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3OutputSumch
             opening_point.clone(),
             claims[0],
         );
-        let val_init_claim = self.val_init.evaluate(&opening_point.r);
         accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
             opening_point,
-            val_init_claim,
+            claims[1],
         );
     }
 }

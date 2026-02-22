@@ -54,7 +54,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
     fn initialize<PCS: CommitmentScheme<Field = F>>(
-        initial_memory_state: &[u64],
+        initial_memory_state: &[Rep3PrimeFieldShare<F>],
         K: usize,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Self {
@@ -101,16 +101,10 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             })
             .collect();
 
-        // Compute checkpoints: val_checkpoints = initial_memory_state (PUBLIC→trivial)
+        // Compute checkpoints: val_checkpoints = initial_memory_state (shared)
         // + accumulated deltas (SHARED).
-        let party_id = sm.party_id;
         let mut checkpoints: Vec<Vec<Rep3PrimeFieldShare<F>>> = Vec::with_capacity(num_chunks);
-        checkpoints.push(
-            initial_memory_state
-                .par_iter()
-                .map(|&x| rep3_arith::promote_to_trivial_share(party_id, F::from_u64(x)))
-                .collect(),
-        );
+        checkpoints.push(initial_memory_state.to_vec());
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
             let next: Vec<Rep3PrimeFieldShare<F>> = checkpoints[chunk_index]
@@ -196,7 +190,7 @@ pub struct Rep3RamReadWriteCheckingWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
     pub fn new<PCS: CommitmentScheme<Field = F>>(
-        initial_memory_state: &[u64],
+        initial_memory_state: &[Rep3PrimeFieldShare<F>],
         sm: &mut StateManagerWorker<'_, F, PCS>,
         gamma: F,
         input_claim: F,

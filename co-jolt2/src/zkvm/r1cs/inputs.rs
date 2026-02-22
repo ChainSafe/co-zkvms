@@ -450,7 +450,7 @@ mod tests {
                     mem,
                     io_ctx.party_id(),
                     ram_k,
-                    todo!(),
+                    None,
                 );
 
                 // Populate lookup cache via witness generation

@@ -1,6 +1,5 @@
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::subprotocols::sumcheck::Rep3BatchedSumcheck;
 use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
@@ -123,8 +122,13 @@ impl Rep3JoltDAGCoordinator {
 
         let stage2_instances = Self::stage2_collect_instances(&mut state, network)?;
 
-        let (proof, _r_stage2) = Rep3BatchedSumcheck::prove(
-            &stage2_instances,
+        let stage2_hybrid: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = stage2_instances
+            .into_iter()
+            .map(BatchedSumcheckInstance::Secret)
+            .collect();
+
+        let (proof, _r_stage2) = HybridBatchedSumcheck::prove(
+            &stage2_hybrid,
             &mut state.accumulator,
             &mut state.transcript,
             network,
