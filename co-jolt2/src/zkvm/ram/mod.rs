@@ -11,8 +11,7 @@ use crate::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
-    Rep3SumcheckInstanceWorker,
-    SumcheckStagesCoordinator, SumcheckStagesWorker,
+    Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
 };
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -22,6 +21,7 @@ use self::output_check::{
 use self::raf_evaluation::{Rep3RafEvaluation, Rep3RafEvaluationWorker};
 use self::read_write_checking::{Rep3RamReadWriteChecking, Rep3RamReadWriteCheckingWorker};
 
+pub mod hamming_booleanity;
 pub mod output_check;
 pub mod raf_evaluation;
 pub mod read_write_checking;

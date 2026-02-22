@@ -51,6 +51,7 @@ where
         final_memory_state: Rep3Memory,
         io_ctx: IoContextPool<N>,
         ram_K: usize,
+        advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
     ) -> eyre::Result<()>;
 }
 
@@ -102,6 +103,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         final_memory_state: Rep3Memory,
         io_ctx: IoContextPool<N>,
         ram_K: usize,
+        advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
@@ -111,7 +113,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             final_memory_state,
             party_id,
             ram_K,
-            None,
+            advice_shares,
         );
         Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx)
     }
@@ -256,10 +258,10 @@ mod tests {
             base_port,
             4,
             |party_idx| {
-                let (trace, memory, _io) = shares[party_idx].clone();
+                let (trace, memory, advice) = shares[party_idx].clone();
                 let preprocessing = Arc::clone(&preprocessing_arc);
                 let io_device = (*io_device_arc).clone();
-                (trace, memory, preprocessing, io_device, ram_K)
+                (trace, memory, preprocessing, io_device, ram_K, advice)
             },
             || {
                 let verifier_preprocessing = verifier_preprocessing.clone();
@@ -267,7 +269,7 @@ mod tests {
                 (verifier_preprocessing, io_device, ram_K, padded_len)
             },
             |input, mut io_ctx| {
-                let (mut trace, memory, preprocessing, io_device, ram_K) = input;
+                let (mut trace, memory, preprocessing, io_device, ram_K, advice) = input;
 
                 let party = io_ctx.party_id();
                 let _span = info_span!("populate_operands_casts", ?party).entered();
@@ -281,6 +283,7 @@ mod tests {
                     memory,
                     io_ctx,
                     ram_K,
+                    Some(advice),
                 )?;
                 Ok(())
             },

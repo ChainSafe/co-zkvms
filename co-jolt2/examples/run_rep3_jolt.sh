@@ -27,7 +27,7 @@ cd ../co-jolt2
 
 # Fix cert/key paths in generated configs: data/ -> .artifacts/
 for f in "$ARTIFACT_DIR"/config_*.toml; do
-  sed -i '' 's|"data/|".artifacts/|g' "$f"
+  sed -i 's|"data/|".artifacts/|g' "$f"
 done
 
 # # Export RUST_LOG=trace for chrome tracing
