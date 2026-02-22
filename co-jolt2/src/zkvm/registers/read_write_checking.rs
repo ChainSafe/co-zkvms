@@ -621,11 +621,18 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
         let gamma_sqr = self.gamma_sqr;
 
         // eq_r_prime(PUB), rs1_ra/rs2_ra/rd_wa(PUB), inc_cycle(SHARED), val(SHARED)
+        //
+        // sumcheck_evals with DEGREE=3 returns evaluations at {0, 2, 3} (skipping 1).
+        // The manual interpolation for public polys must match these evaluation points.
+        // For a linear poly with values (v0, v1) at (0, 1), the evals at {0, 2, 3} are:
+        //   f(0) = v0,  f(2) = 2*v1 - v0,  f(3) = 3*v1 - 2*v0
+        const EVAL_POINTS: [u64; DEGREE] = [0, 2, 3];
         let evals: Vec<AdditiveShare<F>> = (0..eq_r_prime.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let eq_0 = eq_r_prime.get_bound_coeff(j);
                 let eq_1 = eq_r_prime.get_bound_coeff(j + eq_r_prime.len() / 2);
+                let eq_m = eq_1 - eq_0;
 
                 let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
                 // Inner sum over K registers
@@ -633,29 +640,18 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
                 for k in 0..K {
                     let index = j * K + k;
                     let rs1_0 = rs1_ra.get_bound_coeff(index);
-                    let rs1_1 = rs1_ra.get_bound_coeff(index + rs1_ra.len() / 2);
+                    let rs1_m = rs1_ra.get_bound_coeff(index + rs1_ra.len() / 2) - rs1_0;
                     let rs2_0 = rs2_ra.get_bound_coeff(index);
-                    let rs2_1 = rs2_ra.get_bound_coeff(index + rs2_ra.len() / 2);
+                    let rs2_m = rs2_ra.get_bound_coeff(index + rs2_ra.len() / 2) - rs2_0;
                     let wa_0 = rd_wa.get_bound_coeff(index);
-                    let wa_1 = rd_wa.get_bound_coeff(index + rd_wa.len() / 2);
+                    let wa_m = rd_wa.get_bound_coeff(index + rd_wa.len() / 2) - wa_0;
                     let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
 
                     for d in 0..DEGREE {
-                        let rs1_e = if d == 0 {
-                            rs1_0
-                        } else {
-                            rs1_0 + (rs1_1 - rs1_0) * F::from_u64(d as u64 + 1 - 1)
-                        };
-                        let rs2_e = if d == 0 {
-                            rs2_0
-                        } else {
-                            rs2_0 + (rs2_1 - rs2_0) * F::from_u64(d as u64 + 1 - 1)
-                        };
-                        let wa_e = if d == 0 {
-                            wa_0
-                        } else {
-                            wa_0 + (wa_1 - wa_0) * F::from_u64(d as u64 + 1 - 1)
-                        };
+                        let x = F::from_u64(EVAL_POINTS[d]);
+                        let rs1_e = rs1_0 + rs1_m * x;
+                        let rs2_e = rs2_0 + rs2_m * x;
+                        let wa_e = wa_0 + wa_m * x;
                         // wa(PUB) * (inc(SHARED) + val(SHARED)) + gamma * rs1(PUB) * val(SHARED) + gamma^2 * rs2(PUB) * val(SHARED)
                         inner[d] += rep3_arith::mul_public(inc_evals[d] + val_evals[d], wa_e)
                             + rep3_arith::mul_public(val_evals[d], gamma * rs1_e)
@@ -666,11 +662,8 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
                 // eq_r_prime(PUB) * inner(SHARED) → AdditiveShare
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE];
                 for d in 0..DEGREE {
-                    let eq_e = if d == 0 {
-                        eq_0
-                    } else {
-                        eq_0 + (eq_1 - eq_0) * F::from_u64(d as u64 + 1 - 1)
-                    };
+                    let x = F::from_u64(EVAL_POINTS[d]);
+                    let eq_e = eq_0 + eq_m * x;
                     // PUB * SHARED → SHARED → AdditiveShare
                     let prod = rep3_arith::mul_public(inner[d], eq_e);
                     result[d] = prod.into_additive();
@@ -713,50 +706,30 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
         let gamma = self.gamma;
         let gamma_sqr = self.gamma_sqr;
 
+        // sumcheck_evals returns evaluations at {0, 2, 3}; match these for public polys.
+        const EVAL_POINTS: [u64; DEGREE] = [0, 2, 3];
+
         let evals: [AdditiveShare<F>; DEGREE] = (0..rs1_ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let rs1_evals: Vec<F> = (0..DEGREE)
-                    .map(|d| {
-                        let v0 = rs1_ra.get_bound_coeff(k);
-                        let v1 = rs1_ra.get_bound_coeff(k + rs1_ra.len() / 2);
-                        if d == 0 {
-                            v0
-                        } else {
-                            v0 + (v1 - v0) * F::from_u64(d as u64)
-                        }
-                    })
-                    .collect();
-                let rs2_evals: Vec<F> = (0..DEGREE)
-                    .map(|d| {
-                        let v0 = rs2_ra.get_bound_coeff(k);
-                        let v1 = rs2_ra.get_bound_coeff(k + rs2_ra.len() / 2);
-                        if d == 0 {
-                            v0
-                        } else {
-                            v0 + (v1 - v0) * F::from_u64(d as u64)
-                        }
-                    })
-                    .collect();
-                let wa_evals: Vec<F> = (0..DEGREE)
-                    .map(|d| {
-                        let v0 = rd_wa.get_bound_coeff(k);
-                        let v1 = rd_wa.get_bound_coeff(k + rd_wa.len() / 2);
-                        if d == 0 {
-                            v0
-                        } else {
-                            v0 + (v1 - v0) * F::from_u64(d as u64)
-                        }
-                    })
-                    .collect();
+                let rs1_0 = rs1_ra.get_bound_coeff(k);
+                let rs1_m = rs1_ra.get_bound_coeff(k + rs1_ra.len() / 2) - rs1_0;
+                let rs2_0 = rs2_ra.get_bound_coeff(k);
+                let rs2_m = rs2_ra.get_bound_coeff(k + rs2_ra.len() / 2) - rs2_0;
+                let wa_0 = rd_wa.get_bound_coeff(k);
+                let wa_m = rd_wa.get_bound_coeff(k + rd_wa.len() / 2) - wa_0;
                 let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
 
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE];
                 for d in 0..DEGREE {
+                    let x = F::from_u64(EVAL_POINTS[d]);
+                    let rs1_e = rs1_0 + rs1_m * x;
+                    let rs2_e = rs2_0 + rs2_m * x;
+                    let wa_e = wa_0 + wa_m * x;
                     // wa(PUB) * (inc(SHARED) + val(SHARED))
-                    let term = rep3_arith::mul_public(inc_eval + val_evals[d], wa_evals[d])
-                        + rep3_arith::mul_public(val_evals[d], gamma * rs1_evals[d])
-                        + rep3_arith::mul_public(val_evals[d], gamma_sqr * rs2_evals[d]);
+                    let term = rep3_arith::mul_public(inc_eval + val_evals[d], wa_e)
+                        + rep3_arith::mul_public(val_evals[d], gamma * rs1_e)
+                        + rep3_arith::mul_public(val_evals[d], gamma_sqr * rs2_e);
                     result[d] = term.into_additive();
                 }
                 result

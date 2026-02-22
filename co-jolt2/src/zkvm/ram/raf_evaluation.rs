@@ -99,6 +99,15 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
         let unmap =
             UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
 
+        eprintln!(
+            "[RafWorker p{}] input_claim={:?}, K={}, T={}, r_cycle[0]={:?}",
+            party_id as u8,
+            input_claim,
+            K,
+            T,
+            r_cycle_point.r.first(),
+        );
+
         Self {
             party_id,
             input_claim,
@@ -130,34 +139,40 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3RafEvaluationWorker<F> 
         max_degree: usize,
     ) -> Vec<AdditiveShare<F>> {
         // All PUBLIC — compute plain evaluations.
+        // Evaluate each linear factor at max_degree points so the degree-2
+        // product is correctly represented when batched with higher-degree instances.
+        let eval_degree = max_degree.max(DEGREE);
+
         let evals: Vec<F> = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals = self
+                let ra_evals: Vec<F> = self
                     .ra
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let unmap_evals = self
+                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
+                let unmap_evals: Vec<F> = self
                     .unmap
-                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
-                [
-                    ra_evals[0].mul_unreduced::<9>(unmap_evals[0]),
-                    ra_evals[1].mul_unreduced::<9>(unmap_evals[1]),
-                ]
+                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
+                let mut result = vec![F::zero(); max_degree];
+                for d in 0..max_degree {
+                    result[d] = ra_evals[d] * unmap_evals[d];
+                }
+                result
             })
             .reduce(
-                || [F::Unreduced::zero(); DEGREE],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            )
-            .into_iter()
-            .map(F::from_montgomery_reduce)
-            .collect();
+                || vec![F::zero(); max_degree],
+                |mut running, new| {
+                    for d in 0..max_degree {
+                        running[d] = running[d] + new[d];
+                    }
+                    running
+                },
+            );
 
         // Promote to trivial additive shares so that sum across 3 parties = eval.
-        let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
-        for (i, &e) in evals.iter().enumerate() {
-            result[i] = additive::promote_to_trivial_share(e, self.party_id);
-        }
-        result
+        evals
+            .into_iter()
+            .map(|e| additive::promote_to_trivial_share(e, self.party_id))
+            .collect()
     }
 
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {

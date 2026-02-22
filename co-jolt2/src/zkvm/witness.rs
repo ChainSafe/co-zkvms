@@ -721,6 +721,7 @@ mod tests {
                         memory,
                         io_ctx.party_id(),
                         ram_k,
+                        None,
                     );
 
                     info!(?party, "generate_witness_batch_rep3 start");

@@ -7,30 +7,33 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker;
-use crate::subprotocols::sumcheck::{BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker};
+use crate::subprotocols::sumcheck::{
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker,
+};
+use crate::subprotocols::sumcheck::{Rep3BatchedSumcheckWorker, Rep3SumcheckInstanceWorker};
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction_lookups::Rep3LookupsDagWorker;
 use crate::zkvm::ram::Rep3RamDagWorker;
 use crate::zkvm::registers::Rep3RegistersDagWorker;
+use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
+use crate::zkvm::spartan::Rep3InnerSumcheckWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use crate::zkvm::{dag::Rep3DagStop, spartan::Rep3SpartanDagWorker};
-use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
-use jolt_core::zkvm::instruction::CircuitFlags;
+use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::instruction_lookups::D;
+use jolt_core::zkvm::spartan::pc::PCSumcheck;
+use jolt_core::zkvm::witness::VirtualPolynomial;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
-use jolt_core::zkvm::spartan::pc::PCSumcheck;
-use jolt_core::zkvm::witness::VirtualPolynomial;
-use jolt_core::poly::opening_proof::SumcheckId;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use rand::distributions::{Distribution, Standard};
@@ -94,12 +97,12 @@ impl Rep3JoltDAGWorker {
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
         Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
 
-        let (_hint_map, instruction_one_hot_polys) =
-            Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
-            party_id,
-            &mut state,
-            &mut io_ctx,
-        )?;
+        let (_hint_map, instruction_one_hot_polys) = Self::generate_and_commit_polynomials::<
+            F,
+            PCS,
+            ProofTranscript,
+            N,
+        >(party_id, &mut state, &mut io_ctx)?;
 
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
         Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
@@ -109,112 +112,195 @@ impl Rep3JoltDAGWorker {
         }
 
         // Stage 1 (Spartan outer sumcheck)
-        Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
+        let (outer_sumcheck_r, claimed_witness_evals) =
+            Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
 
+        // // Cache outer sumcheck openings in the worker accumulator so downstream
+        // // subsystems (registers, RAM, lookups) can read r_cycle and claims.
+        // {
+        //     use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId};
+        //     use jolt_core::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
+        //     use jolt_core::zkvm::witness::VirtualPolynomial;
+
+        //     let num_steps_bits = padded_trace_length.ilog2() as usize;
+        //     let r_cycle = &outer_sumcheck_r[..num_steps_bits];
+        //     let r_cycle_point = OpeningPoint::new(r_cycle.to_vec());
+
+        //     for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
+        //         if let Ok(poly) = VirtualPolynomial::try_from(input) {
+        //             state.accumulator.append_virtual(
+        //                 poly,
+        //                 SumcheckId::SpartanOuter,
+        //                 r_cycle_point.clone(),
+        //                 *eval,
+        //             );
+        //         }
+        //     }
+        // }
+
+        // Future stages (opening proof, etc.) will go here...
         if stop == Rep3DagStop::AfterStage1 {
             return Ok(());
         }
 
-        // -------------------------------------------------------------------
-        // Stage 2: batched sumcheck (secret instances only)
-        // -------------------------------------------------------------------
+        // --- Prepare RAM worker (ring→field conversion requires MPC communication) ---
+        let mut ram_dag = Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
 
-        let mut registers = Rep3RegistersDagWorker::<F>::new();
-        let mut ram = Rep3RamDagWorker::<F>::new(&mut state, &mut io_ctx)?;
-        let mut lookups = Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys);
+        // Stage 2: collect instances from all subsystems in vanilla ordering.
 
-        let (registers_gamma, registers_input_claim): (F, F) = io_ctx.network().receive_request()?;
-        registers.set_stage2_init(registers_gamma, registers_input_claim);
+        // 1) Spartan inner sumcheck — receive (gamma, input_claim) from coordinator
+        let (spartan_gamma, spartan_input_claim): (F, F) = io_ctx.network().receive_request()?;
+        let inner = Rep3InnerSumcheckWorker::new(
+            spartan_gamma,
+            spartan_input_claim,
+            &outer_sumcheck_r,
+            claimed_witness_evals,
+            padded_trace_length,
+            party_id,
+        );
 
+        // 2) Registers read-write checking — receive (gamma, input_claim)
+        let (reg_gamma, reg_input_claim): (F, F) = io_ctx.network().receive_request()?;
+        let mut registers_dag = Rep3RegistersDagWorker::new();
+        registers_dag.set_stage2_init(reg_gamma, reg_input_claim);
+        let registers_instances = registers_dag.stage2_instances(&mut state);
+
+        // 3) RAM — receive (gamma, input_claim, r_address)
         let (ram_gamma, ram_input_claim, ram_r_address): (F, F, Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
-        ram.set_stage2_init(ram_gamma, ram_input_claim, ram_r_address);
+        ram_dag.set_stage2_init(ram_gamma, ram_input_claim, ram_r_address);
+        let ram_instances = ram_dag.stage2_instances(&mut state);
 
-        let (lookup_gamma, lookup_r_address): ([F; D], Vec<F::Challenge>) =
+        // 4) Lookups booleanity — receive (gamma_powers, r_address)
+        let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
-        lookups.set_stage2_init(lookup_gamma, lookup_r_address);
+        let mut lookups_dag = Rep3LookupsDagWorker::new(instruction_one_hot_polys);
+        lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
+        let lookups_instances = lookups_dag.stage2_instances(&mut state);
 
-        let mut stage2_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
-        stage2_instances.extend(registers.stage2_instances(&mut state));
-        stage2_instances.extend(ram.stage2_instances(&mut state));
-        stage2_instances.extend(lookups.stage2_instances(&mut state));
+        // Collect all instances in vanilla order
+        let mut instances: Vec<BatchedSumcheckWorkerInstance<F>> = std::iter::empty()
+            .chain(std::iter::once(BatchedSumcheckWorkerInstance::Secret(
+                Box::new(inner),
+            )))
+            .chain(registers_instances)
+            .chain(ram_instances)
+            .chain(lookups_instances)
+            .collect();
 
-        HybridBatchedSumcheckWorker::prove(&mut stage2_instances, &mut state.accumulator, &mut io_ctx)?;
+        HybridBatchedSumcheckWorker::prove(&mut instances, &mut state.accumulator, &mut io_ctx)?;
 
-        // -------------------------------------------------------------------
-        // Stage 3: batched sumcheck (secret + public instances)
-        // -------------------------------------------------------------------
+        // // -------------------------------------------------------------------
+        // // Stage 2: batched sumcheck (secret instances only)
+        // // -------------------------------------------------------------------
 
-        let registers_val_claim: F = io_ctx.network().receive_request()?;
-        registers.set_stage3_init(registers_val_claim);
+        // let mut registers = Rep3RegistersDagWorker::<F>::new();
+        // let mut ram = Rep3RamDagWorker::<F>::new(&mut state, &mut io_ctx)?;
+        // let mut lookups = Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys);
 
-        let ram_stage3_input_claim: F = io_ctx.network().receive_request()?;
-        ram.set_stage3_init(ram_stage3_input_claim);
+        // let (registers_gamma, registers_input_claim): (F, F) =
+        //     io_ctx.network().receive_request()?;
+        // registers.set_stage2_init(registers_gamma, registers_input_claim);
 
-        let lookup_stage3_gamma: [F; D] = io_ctx.network().receive_request()?;
-        lookups.set_stage3_init(lookup_stage3_gamma);
+        // let (ram_gamma, ram_input_claim, ram_r_address): (F, F, Vec<F::Challenge>) =
+        //     io_ctx.network().receive_request()?;
+        // ram.set_stage2_init(ram_gamma, ram_input_claim, ram_r_address);
 
-        let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
-            io_ctx.network().receive_request()?;
+        // let (lookup_gamma, lookup_r_address): ([F; D], Vec<F::Challenge>) =
+        //     io_ctx.network().receive_request()?;
+        // lookups.set_stage2_init(lookup_gamma, lookup_r_address);
 
-        let party_id = io_ctx.party_id();
-        let log_T = state
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
-            .0
-            .r
-            .len();
+        // let mut stage2_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
+        // stage2_instances.extend(registers.stage2_instances(&mut state));
+        // stage2_instances.extend(ram.stage2_instances(&mut state));
+        // stage2_instances.extend(lookups.stage2_instances(&mut state));
 
-        let pc_sumcheck = if party_id == PartyID::ID0 {
-            let cycle_witness = &state.prover_state.cycle_witness;
-            let unexpanded_pc_poly: MultilinearPolynomial<F> =
-                cycle_witness.unexpanded_pc.clone().into();
-            let pc_poly: MultilinearPolynomial<F> = cycle_witness.pc.clone().into();
+        // HybridBatchedSumcheckWorker::prove(
+        //     &mut stage2_instances,
+        //     &mut state.accumulator,
+        //     &mut io_ctx,
+        // )?;
 
-            let mask = 1u32 << (CircuitFlags::IsNoop as usize);
-            let is_noop: Vec<u8> = cycle_witness
-                .flags_bits
-                .iter()
-                .map(|bits| ((bits & mask) != 0) as u8)
-                .collect();
-            let is_noop_poly: MultilinearPolynomial<F> = is_noop.into();
+        // // -------------------------------------------------------------------
+        // // Stage 3: batched sumcheck (secret + public instances)
+        // // -------------------------------------------------------------------
 
-            let r_cycle = state
-                .accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
-                .0
-                .r;
-            let (_, eq_plus_one_evals) = EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
-            let eq_plus_one_poly = MultilinearPolynomial::from(eq_plus_one_evals);
+        // let registers_val_claim: F = io_ctx.network().receive_request()?;
+        // registers.set_stage3_init(registers_val_claim);
 
-            PCSumcheck::<F>::new_prover_from_polys(
-                input_claim_pc,
-                gamma_pc,
-                log_T,
-                unexpanded_pc_poly,
-                pc_poly,
-                is_noop_poly,
-                eq_plus_one_poly,
-            )
-        } else {
-            PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, log_T)
-        };
+        // let ram_stage3_input_claim: F = io_ctx.network().receive_request()?;
+        // ram.set_stage3_init(ram_stage3_input_claim);
 
-        let product_sumcheck =
-            Rep3ProductVirtualizationSumcheckWorker::<F>::new(&mut state, input_claim_product);
+        // let lookup_stage3_gamma: [F; D] = io_ctx.network().receive_request()?;
+        // lookups.set_stage3_init(lookup_stage3_gamma);
 
-        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
-        stage3_instances.extend(registers.stage3_instances(&mut state));
-        stage3_instances.extend(ram.stage3_instances(&mut state));
-        stage3_instances.extend(lookups.stage3_instances(&mut state));
-        stage3_instances.push(BatchedSumcheckWorkerInstance::Public(Box::new(pc_sumcheck)));
-        stage3_instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(product_sumcheck)));
+        // let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
+        //     io_ctx.network().receive_request()?;
 
-        HybridBatchedSumcheckWorker::prove(&mut stage3_instances, &mut state.accumulator, &mut io_ctx)?;
+        // let party_id = io_ctx.party_id();
+        // let log_T = state
+        //     .accumulator
+        //     .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
+        //     .0
+        //     .r
+        //     .len();
 
-        if stop == Rep3DagStop::AfterStage3 {
-            return Ok(());
-        }
+        // let pc_sumcheck = if party_id == PartyID::ID0 {
+        //     let cycle_witness = &state.prover_state.cycle_witness;
+        //     let unexpanded_pc_poly: MultilinearPolynomial<F> =
+        //         cycle_witness.unexpanded_pc.clone().into();
+        //     let pc_poly: MultilinearPolynomial<F> = cycle_witness.pc.clone().into();
+
+        //     let mask = 1u32 << (CircuitFlags::IsNoop as usize);
+        //     let is_noop: Vec<u8> = cycle_witness
+        //         .flags_bits
+        //         .iter()
+        //         .map(|bits| ((bits & mask) != 0) as u8)
+        //         .collect();
+        //     let is_noop_poly: MultilinearPolynomial<F> = is_noop.into();
+
+        //     let r_cycle = state
+        //         .accumulator
+        //         .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
+        //         .0
+        //         .r;
+        //     let (_, eq_plus_one_evals) = EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
+        //     let eq_plus_one_poly = MultilinearPolynomial::from(eq_plus_one_evals);
+
+        //     PCSumcheck::<F>::new_prover_from_polys(
+        //         input_claim_pc,
+        //         gamma_pc,
+        //         log_T,
+        //         unexpanded_pc_poly,
+        //         pc_poly,
+        //         is_noop_poly,
+        //         eq_plus_one_poly,
+        //     )
+        // } else {
+        //     PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, log_T)
+        // };
+
+        // let product_sumcheck =
+        //     Rep3ProductVirtualizationSumcheckWorker::<F>::new(&mut state, input_claim_product);
+
+        // let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
+        // stage3_instances.extend(registers.stage3_instances(&mut state));
+        // stage3_instances.extend(ram.stage3_instances(&mut state));
+        // stage3_instances.extend(lookups.stage3_instances(&mut state));
+        // stage3_instances.push(BatchedSumcheckWorkerInstance::Public(Box::new(pc_sumcheck)));
+        // stage3_instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(
+        //     product_sumcheck,
+        // )));
+
+        // HybridBatchedSumcheckWorker::prove(
+        //     &mut stage3_instances,
+        //     &mut state.accumulator,
+        //     &mut io_ctx,
+        // )?;
+
+        // if stop == Rep3DagStop::AfterStage3 {
+        //     return Ok(());
+        // }
 
         // Future stages (opening proof) will go here...
         Ok(())

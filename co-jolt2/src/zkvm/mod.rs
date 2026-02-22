@@ -2,9 +2,9 @@ pub mod bytecode;
 pub mod dag;
 pub mod instruction;
 pub mod instruction_lookups;
-pub mod registers;
 pub mod r1cs;
 pub mod ram;
+pub mod registers;
 pub mod spartan;
 pub mod witness;
 
@@ -111,6 +111,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             final_memory_state,
             party_id,
             ram_K,
+            None,
         );
         Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx)
     }

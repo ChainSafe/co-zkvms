@@ -274,10 +274,9 @@ where
                         let left_shared = (fb & mask_left_rs1) != 0;
                         let right_shared = (fb & mask_right_rs2) != 0;
                         match (left_shared, right_shared) {
-                            (true, false) => arithmetic::mul_public(
-                                rs1_field[t],
-                                row.to_right_public_input(),
-                            ),
+                            (true, false) => {
+                                arithmetic::mul_public(rs1_field[t], row.to_right_public_input())
+                            }
                             (false, true) => {
                                 arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
                             }
@@ -451,6 +450,7 @@ mod tests {
                     mem,
                     io_ctx.party_id(),
                     ram_k,
+                    todo!(),
                 );
 
                 // Populate lookup cache via witness generation

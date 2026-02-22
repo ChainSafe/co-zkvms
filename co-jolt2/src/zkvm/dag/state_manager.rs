@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::field::JoltField;
+use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::host::memory::Rep3Memory;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
@@ -288,6 +289,7 @@ pub struct StateManagerWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
+    pub advice_shares: Option<Rep3ProgramIOInput>,
     pub prover_state: ProverStateWorker<'a, F, PCS>,
     pub accumulator: Rep3OpeningAccumulatorWorker<F>,
 }
@@ -304,6 +306,7 @@ where
         final_memory_state: Rep3Memory,
         party_id: PartyID,
         ram_K: usize,
+        advice_shares: Option<Rep3ProgramIOInput>,
     ) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -321,6 +324,7 @@ where
             ram_K,
             twist_sumcheck_switch_index,
             program_io,
+            advice_shares,
             prover_state: ProverStateWorker {
                 preprocessing,
                 trace,

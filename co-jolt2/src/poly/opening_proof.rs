@@ -182,7 +182,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         claims: Vec<F>,
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        claims.iter().for_each(|claim| transcript.append_scalar(claim));
+        transcript.append_scalars(&claims);
 
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());

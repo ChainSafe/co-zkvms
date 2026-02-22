@@ -292,7 +292,7 @@ impl Rep3BatchedSumcheck {
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
-        for _round in 0..max_num_rounds {
+        for round in 0..max_num_rounds {
             let round_evals = receive_batched_round_evals::<F, N>(network)?;
             eyre::ensure!(
                 round_evals.len() == max_degree,

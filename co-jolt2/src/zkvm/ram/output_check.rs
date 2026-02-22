@@ -11,7 +11,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::additive::AdditiveShare;
+use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 use tracer::JoltDevice;
@@ -40,25 +40,87 @@ pub struct Rep3OutputSumcheckWorker<F: JoltField> {
     val_init: MultilinearPolynomial<F>,
     /// val_final (SHARED) — final RAM state in field
     val_final: Rep3DensePolynomial<F>,
+    /// val_io (PUBLIC) — I/O-masked final state MLE
+    val_io: MultilinearPolynomial<F>,
+    /// eq_poly (PUBLIC) — EQ(r_address, ·)
+    eq_poly: MultilinearPolynomial<F>,
+    /// io_mask (PUBLIC) — range mask for I/O region
+    io_mask: MultilinearPolynomial<F>,
 }
 
 impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     pub fn new<PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: Vec<u64>,
         final_ram_field: Vec<Rep3PrimeFieldShare<F>>,
-        _r_address: Vec<F::Challenge>,
+        r_address: Vec<F::Challenge>,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Self {
         let party_id = sm.party_id;
         let K = final_ram_field.len();
+        let memory_layout = &sm.program_io.memory_layout;
+
         let val_final = Rep3DensePolynomial::new(final_ram_field);
         let val_init: MultilinearPolynomial<F> = initial_ram_state.into();
+
+        // Build val_io (PUBLIC) from program_io — for correct execution this
+        // matches val_final at I/O addresses and is 0 elsewhere.
+        let io_start =
+            remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+        let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
+
+        let mut val_io_evals = vec![0u64; K];
+        let program_io = &sm.program_io;
+        // Populate input words
+        let mut input_index = io_start;
+        for chunk in program_io.inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            val_io_evals[input_index] = u64::from_le_bytes(word);
+            input_index += 1;
+        }
+        // Populate output words
+        let mut output_index =
+            remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
+        for chunk in program_io.outputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            val_io_evals[output_index] = u64::from_le_bytes(word);
+            output_index += 1;
+        }
+        // Panic bit
+        let panic_index =
+            remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
+        val_io_evals[panic_index] = program_io.panic as u64;
+        // Termination bit
+        if !program_io.panic {
+            let termination_index =
+                remap_address(memory_layout.termination, memory_layout).unwrap() as usize;
+            val_io_evals[termination_index] = 1;
+        }
+        let val_io: MultilinearPolynomial<F> = val_io_evals.into();
+
+        // io_mask (PUBLIC): 1 for I/O addresses, 0 elsewhere
+        let mut io_mask_evals = vec![0u8; K];
+        for k in io_start..io_end {
+            io_mask_evals[k] = 1;
+        }
+        let io_mask: MultilinearPolynomial<F> = io_mask_evals.into();
+
+        // eq_poly (PUBLIC): EQ(r_address, ·)
+        let eq_poly: MultilinearPolynomial<F> = EqPolynomial::<F>::evals(&r_address).into();
 
         Self {
             party_id,
             K,
             val_init,
             val_final,
+            val_io,
+            eq_poly,
+            io_mask,
         }
     }
 }
@@ -82,15 +144,55 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
     ) -> Vec<AdditiveShare<F>> {
-        // Output sumcheck is a zero-check with input claim 0; for honest provers
-        // the round message is identically zero. We still bind val_init/val_final
-        // so the correct opening claims are cached at the end.
-        vec![AdditiveShare::<F>::zero(); max_degree]
+        // P(k) = eq(k) * io_mask(k) * (val_final(k) - val_io(k))
+        //      = eq(k) * io_mask(k) * val_final(k) - eq(k) * io_mask(k) * val_io(k)
+        //        ^^^^^^^^^^^^^^^^^^^^^ SHARED ^^^^    ^^^^^^^^^^^^ PUBLIC ^^^^^^^^^^^
+        let party_id = self.party_id;
+        let half_len = self.eq_poly.len() / 2;
+
+        let evals: Vec<AdditiveShare<F>> = (0..half_len)
+            .into_par_iter()
+            .map(|i| {
+                let eq_evals: Vec<F> =
+                    self.eq_poly.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                let mask_evals: Vec<F> =
+                    self.io_mask.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                let vf_evals: Vec<Rep3PrimeFieldShare<F>> =
+                    self.val_final.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                let vio_evals: Vec<F> =
+                    self.val_io.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+
+                let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
+                for d in 0..DEGREE_OUTPUT.min(max_degree) {
+                    let eq_mask = eq_evals[d] * mask_evals[d]; // PUBLIC
+                    // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
+                    let shared_term =
+                        rep3_arith::mul_public(vf_evals[d], eq_mask).into_additive();
+                    let public_term = eq_mask * vio_evals[d]; // PUBLIC
+                    result[d] =
+                        shared_term - additive::promote_to_trivial_share(public_term, party_id);
+                }
+                result
+            })
+            .reduce(
+                || vec![AdditiveShare::<F>::zero(); max_degree],
+                |mut running, new| {
+                    for d in 0..max_degree {
+                        running[d] += new[d];
+                    }
+                    running
+                },
+            );
+
+        evals
     }
 
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         self.val_init.bind_parallel(r_j, BindingOrder::HighToLow);
         self.val_final.bind(r_j.into(), BindingOrder::HighToLow);
+        self.val_io.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.eq_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.io_mask.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
     fn normalize_opening_point(
@@ -319,33 +421,35 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValFinalSumcheckWorker<
         max_degree: usize,
     ) -> Vec<AdditiveShare<F>> {
         // inc(SHARED) * wa(PUBLIC) → SHARED → AdditiveShare
-        let evals: [AdditiveShare<F>; DEGREE_VAL_FINAL] = (0..self.inc.len() / 2)
+        let eval_degree = max_degree.max(DEGREE_VAL_FINAL);
+        let evals: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let inc_evals =
                     self.inc
-                        .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
-                let wa_evals: [F; DEGREE_VAL_FINAL] = self
+                        .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
+                let wa_evals: Vec<F> = self
                     .wa
-                    .sumcheck_evals_array::<DEGREE_VAL_FINAL>(j, BindingOrder::HighToLow);
+                    .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
 
-                [
-                    rep3_arith::mul_public(inc_evals[0], wa_evals[0]).into_additive(),
-                    rep3_arith::mul_public(inc_evals[1], wa_evals[1]).into_additive(),
-                ]
+                let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
+                for d in 0..max_degree {
+                    result[d] =
+                        rep3_arith::mul_public(inc_evals[d], wa_evals[d]).into_additive();
+                }
+                result
             })
             .reduce(
-                || [AdditiveShare::<F>::zero(); DEGREE_VAL_FINAL],
-                |r, n| [r[0] + n[0], r[1] + n[1]],
+                || vec![AdditiveShare::<F>::zero(); max_degree],
+                |mut r, n| {
+                    for d in 0..max_degree {
+                        r[d] += n[d];
+                    }
+                    r
+                },
             );
 
-        let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
-        for (i, &e) in evals.iter().enumerate() {
-            if i < max_degree {
-                result[i] = e;
-            }
-        }
-        result
+        evals
     }
 
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {

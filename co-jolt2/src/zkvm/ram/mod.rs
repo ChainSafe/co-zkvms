@@ -4,7 +4,8 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::remap_address;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
+use mpc_core::protocols::rep3_ring::casts::{binary_ring_to_field_many, ring_to_field_a2b_many};
+use mpc_core::protocols::rep3_ring::yao::ring_to_field_many;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -108,20 +109,21 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
 
         // --- Convert final memory: Rep3Memory (binary ring shares) → field shares ---
         // This requires MPC communication (a2b conversion).
-        // Clone so we can use `io_ctx.main()` without borrowing `sm`.
-        let final_memory_ring = sm.prover_state.final_memory_state.data.clone();
-
-        // The final memory from Rep3Memory may be shorter than K (only covers DRAM region).
-        // Build the full K-length final memory field vector.
-        // Start with initial_memory_state promoted to trivial shares, then overwrite DRAM region.
         let party_id = sm.party_id;
 
-        // Convert the DRAM portion via a2b
-        let dram_start_index =
-            remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
+        // Only convert the portion of DRAM that fits within the K-length address space.
+        // The full Rep3Memory may be much larger (e.g. 16M words for 128MB emulator capacity)
+        // but ram_K only covers actual memory accesses.
+        let dram_start_index = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
+        let dram_words_needed = K.saturating_sub(dram_start_index);
+        let dram_words_available = sm.prover_state.final_memory_state.data.len();
+        let dram_convert_len = dram_words_needed.min(dram_words_available);
+
+        let final_memory_ring: Vec<_> =
+            sm.prover_state.final_memory_state.data[..dram_convert_len].to_vec();
 
         let dram_field: Vec<Rep3PrimeFieldShare<F>> =
-            ring_to_field_a2b_many(&final_memory_ring, io_ctx.main())?;
+            binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
 
         // Build full K-length vector: start from initial state (PUBLIC→trivial), overlay DRAM
         let mut final_memory_field: Vec<Rep3PrimeFieldShare<F>> = initial_memory_state
@@ -131,18 +133,11 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
 
         // Overlay DRAM region with SHARED final memory values
         for (i, share) in dram_field.into_iter().enumerate() {
-            let idx = dram_start_index + i;
-            if idx < K {
-                final_memory_field[idx] = share;
-            }
+            final_memory_field[dram_start_index + i] = share;
         }
 
         // Overlay outputs (PUBLIC) — the verifier knows the expected outputs
-        let mut index = remap_address(
-            memory_layout.output_start,
-            memory_layout,
-        )
-        .unwrap() as usize;
+        let mut index = remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
         for chunk in sm.program_io.outputs.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
@@ -155,16 +150,12 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         }
 
         // Copy panic bit to final state
-        let panic_index = remap_address(memory_layout.panic, memory_layout)
-            .unwrap() as usize;
+        let panic_index = remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
         final_memory_field[panic_index] =
             rep3_arith::promote_to_trivial_share(party_id, F::from_u64(sm.program_io.panic as u64));
         if !sm.program_io.panic {
-            let termination_index = remap_address(
-                memory_layout.termination,
-                memory_layout,
-            )
-            .unwrap() as usize;
+            let termination_index =
+                remap_address(memory_layout.termination, memory_layout).unwrap() as usize;
             final_memory_field[termination_index] =
                 rep3_arith::promote_to_trivial_share(party_id, F::one());
         }

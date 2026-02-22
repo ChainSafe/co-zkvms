@@ -4,8 +4,7 @@ use jolt_core::transcripts::Transcript;
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
-    Rep3SumcheckInstanceWorker,
-    SumcheckStagesCoordinator, SumcheckStagesWorker,
+    Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
 };
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
