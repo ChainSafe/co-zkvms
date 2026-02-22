@@ -218,7 +218,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let WorkerPayload {
         mut trace,
         memory,
-        program_io_share: _program_io_share,
+        program_io_share,
         io_device,
         bytecode,
         memory_init,
@@ -255,13 +255,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     populate_operands_casts(&mut trace, io_ctx.main())?;
 
     // Prove
-    let hint_map = <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+    <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
         &preprocessing,
         trace,
         io_device,
         memory,
         io_ctx,
         ram_k,
+        Some(program_io_share),
     )?;
 
     Ok(())
