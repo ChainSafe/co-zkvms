@@ -3,6 +3,7 @@ use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
 use crate::utils::types::MaybeShared;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::PartyID;
 use std::borrow::Borrow;
 
 pub use jolt_core::poly::commitment::commitment_scheme;
@@ -48,9 +49,10 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         Network: Rep3NetworkCoordinator;
 
     fn prove_rep3<Network>(
-        poly: &Rep3DensePolynomial<F>,
+        poly: &Rep3MultilinearPolynomial<F>,
         setup: &Self::ProverSetup,
         opening_point: &[<F as jolt_core::field::JoltField>::Challenge],
+        opening_hint: Option<Self::OpeningProofHint>,
         network: &mut Network,
     ) -> eyre::Result<()>
     where
@@ -60,6 +62,17 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
 
     fn combine_hint_shares(
         hints: &[&MaybeShared<Self::OpeningProofHint>],
+    ) -> Self::OpeningProofHint;
+
+    /// Homomorphically combine per-polynomial hint shares using public RLC coefficients.
+    ///
+    /// Each `MaybeShared::Shared(hint_share)` is this party's additive share of a polynomial's
+    /// row commitments. Returns the combined hint share: `combined[row] = Σ coeff_i * hint_i[row]`.
+    /// For `MaybeShared::Public(Some(hint))`, only party ID0 adds (trivial share promotion).
+    fn combine_hints_rep3(
+        hints: Vec<MaybeShared<Self::OpeningProofHint>>,
+        coeffs: &[F],
+        party_id: PartyID,
     ) -> Self::OpeningProofHint;
 
     fn concat_commitments(_a: &Self::Commitment, _b: &Self::Commitment) -> Self::Commitment {

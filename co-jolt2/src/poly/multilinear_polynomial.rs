@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
+use crate::poly::rlc_polynomial::Rep3RLCPolynomial;
 use crate::utils::types::Rep3Value;
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -19,6 +20,7 @@ use rayon::prelude::*;
 pub enum Rep3SharedPoly<F: JoltField> {
     Dense(Rep3DensePolynomial<F>),
     OneHot(Rep3OneHotPolynomial<F>),
+    RLC(Rep3RLCPolynomial<F>),
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +119,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Self::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: to_full_poly not applicable")
             }
+            Self::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: to_full_poly not applicable")
+            }
         }
     }
 
@@ -139,6 +144,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: dot_product_with_public")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: dot_product_with_public not applicable")
+            }
         }
     }
 
@@ -150,6 +158,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_coeff")
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: get_coeff not applicable")
             }
         }
     }
@@ -163,6 +174,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_bound_coeff")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: get_bound_coeff not applicable")
+            }
         }
     }
 
@@ -173,6 +187,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
 
@@ -185,6 +200,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
 
@@ -195,6 +211,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
 
@@ -203,6 +220,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Public(poly) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => poly.get_num_vars(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
+                rlc.dense_rlc.len().next_power_of_two().trailing_zeros() as usize
+            }
         }
     }
 
@@ -216,6 +236,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: is_bound")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: is_bound not applicable")
+            }
         }
     }
 
@@ -228,6 +251,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.bind(r, order),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: bind handled by Rep3OneHotPolynomialProverOpening")
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: bind not applicable")
             }
         }
     }
@@ -251,6 +277,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: sumcheck_evals_into_share not applicable")
+            }
         }
     }
 
@@ -265,6 +294,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                     todo!("OneHot: batch_evaluate_at_chi")
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                    unreachable!("RLC: batch_evaluate_at_chi not applicable")
                 }
             })
             .collect();
@@ -287,6 +319,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                     todo!("OneHot: batch_evaluate")
                 }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                    unreachable!("RLC: batch_evaluate not applicable")
+                }
             })
             .collect();
         (evals, eq)
@@ -305,6 +340,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: evaluate")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: evaluate not applicable")
+            }
         }
     }
 
@@ -319,6 +357,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: final_sumcheck_claim")
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: final_sumcheck_claim not applicable")
             }
         }
     }
@@ -342,6 +383,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
             }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: sumcheck_evals not applicable")
+            }
         }
     }
 }
@@ -362,6 +406,9 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 .collect(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_bound_coeffs")
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                unreachable!("RLC: get_bound_coeffs not applicable")
             }
         }
     }

@@ -46,6 +46,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                 !matches!(
                     p.as_ref(),
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_))
+                        | Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_))
                 )
             })
             .map(|(i, _)| i)
@@ -127,6 +128,9 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                                 unreachable!("OneHot polynomials excluded from dense_indices")
                             }
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                                unreachable!("RLC polynomials excluded from dense_indices")
+                            }
                         }
                     }
                     acc
@@ -193,6 +197,44 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
         }
 
         Ok(row_commitments)
+    }
+
+    /// Computes this party's additive share of the Dory v_vec (vector-matrix product).
+    ///
+    /// `v_vec[col] = Σ_row l_vec[row] * poly[row * ncols + col]`
+    ///
+    /// Mirrors vanilla `RLCPolynomial::vector_matrix_product`, but operates on the `.a` component
+    /// of rep3 shares. The dense part iterates over `dense_rlc`, and the one-hot part delegates
+    /// to each one-hot polynomial's `compute_v_vec_share`.
+    #[tracing::instrument(skip_all, name = "Rep3RLCPolynomial::compute_v_vec_share")]
+    pub fn compute_v_vec_share(&self, l_vec: &[F]) -> Vec<F> {
+        let num_columns = DoryGlobals::get_num_columns();
+
+        // Dense part: v_vec[col] += dense_rlc[row*ncols+col].a * l_vec[row]
+        let mut v_vec: Vec<F> = (0..num_columns)
+            .into_par_iter()
+            .map(|col| {
+                self.dense_rlc
+                    .iter()
+                    .skip(col)
+                    .step_by(num_columns)
+                    .zip(l_vec.iter())
+                    .map(|(s, l)| s.a * *l)
+                    .sum()
+            })
+            .collect();
+
+        // One-hot part: delegate to each one-hot polynomial's v_vec contribution.
+        for (coeff, poly) in &self.one_hot_rlc {
+            match poly.as_ref() {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
+                    one_hot.compute_v_vec_share(*coeff, l_vec, &mut v_vec);
+                }
+                _ => unreachable!("Expected Shared(OneHot) polynomial in one_hot_rlc"),
+            }
+        }
+
+        v_vec
     }
 }
 

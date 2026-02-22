@@ -379,7 +379,7 @@ fn rep3_batched_sumcheck_mixed_degree_front_loaded_correct() {
                 Box::new(ToyCubicProductWorker::new(party_id, a, b, c)),
             ];
 
-            let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new();
+            let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
             let _r = Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
             Ok(())
         },
@@ -459,7 +459,7 @@ fn rep3_batched_sumcheck_degree3_smoke_correct() {
             let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<Fr>>> =
                 vec![Box::new(ToyCubicProductWorker::new(party_id, a, b, c))];
 
-            let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new();
+            let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
             let _r = Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
             Ok(())
         },

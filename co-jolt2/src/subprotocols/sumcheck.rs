@@ -1359,7 +1359,7 @@ mod tests {
             || (),
             move |(), mut io_ctx| {
                 let party_id = io_ctx.party_id();
-                let mut acc = Rep3OpeningAccumulatorWorker::<Fr>::new();
+                let mut acc = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
                 let mut instances: Vec<BatchedSumcheckWorkerInstance<Fr>> = vec![
                     BatchedSumcheckWorkerInstance::Secret(Box::new(ConstSecretWorker {
                         input_claim: secret_claim,

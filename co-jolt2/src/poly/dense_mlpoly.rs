@@ -441,7 +441,13 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
     /// Warning: returns the additive share.
     pub fn final_sumcheck_claim(&self) -> Rep3PrimeFieldShare<F> {
         assert_eq!(self.len, 1);
-        self.bound_coeffs[0]
+        // When the polynomial was created at length 1 (e.g. from RaPolynomialRound3::bind),
+        // bound_coeffs is empty and the value lives in coeffs[0].
+        if self.bound_coeffs.is_empty() {
+            self.coeffs[0]
+        } else {
+            self.bound_coeffs[0]
+        }
     }
 }
 

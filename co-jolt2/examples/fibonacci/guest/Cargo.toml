@@ -7,4 +7,4 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "/home/ubuntu/jolt/jolt-sdk" }
+jolt = { package = "jolt-sdk", path = "/Users/timofey/repos/examples/jolt/jolt-sdk" }

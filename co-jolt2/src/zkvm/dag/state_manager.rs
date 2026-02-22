@@ -333,7 +333,7 @@ where
                 trusted_advice_polynomial: None,
                 cycle_witness: Rep3CycleWitnesses::default(),
             },
-            accumulator: Rep3OpeningAccumulatorWorker::new(),
+            accumulator: Rep3OpeningAccumulatorWorker::new(party_id),
         }
     }
 

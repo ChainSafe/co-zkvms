@@ -9,6 +9,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::one_hot_polynomial::EqAddressState;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
@@ -20,7 +21,10 @@ use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 
 #[inline]
 fn fwht_field_in_place<F: JoltField>(a: &mut [F]) {
-    debug_assert!(a.len().is_power_of_two(), "FWHT input length must be power-of-two");
+    debug_assert!(
+        a.len().is_power_of_two(),
+        "FWHT input length must be power-of-two"
+    );
     let n = a.len();
     let mut len = 1usize;
     while len < n {
@@ -39,7 +43,10 @@ fn fwht_field_in_place<F: JoltField>(a: &mut [F]) {
 
 #[inline]
 fn fwht_group_in_place<F: JoltField, G: CurveGroup<ScalarField = F>>(a: &mut [G]) {
-    debug_assert!(a.len().is_power_of_two(), "FWHT input length must be power-of-two");
+    debug_assert!(
+        a.len().is_power_of_two(),
+        "FWHT input length must be power-of-two"
+    );
     let n = a.len();
     let mut len = 1usize;
     while len < n {
@@ -145,6 +152,21 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         })
     }
 
+    /// Build a `Rep3OneHotPolynomial` from pre-computed parts (useful for tests).
+    #[cfg(feature = "test-utils")]
+    pub fn from_parts(
+        K: usize,
+        masked_indices_c: Arc<Vec<Option<u8>>>,
+        rand_ohv_e_field: Arc<Vec<Rep3PrimeFieldShare<F>>>,
+    ) -> Self {
+        Self {
+            K,
+            masked_indices_c,
+            rand_ohv_e_field,
+            ..Default::default()
+        }
+    }
+
     /// Reconstruct the plaintext `nonzero_indices` from 3 parties' Rep3OneHotPolynomial shares.
     ///
     /// Recovery: `k(j) = c[j] XOR r` where `r = s0.r_share.a XOR s1.r_share.a XOR s2.r_share.a`.
@@ -235,7 +257,9 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
             let mut g_hat = g;
             fwht_field_in_place(&mut g_hat);
-            let inv_k = F::from(self.K as u64).inverse().expect("K invertible in field");
+            let inv_k = F::from(self.K as u64)
+                .inverse()
+                .expect("K invertible in field");
 
             let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
@@ -356,6 +380,78 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             acc += self.rand_ohv_e_field[idx as usize] * table_i;
         }
         acc
+    }
+
+    /// Computes this party's additive share of the one-hot polynomial's contribution to the
+    /// Dory v_vec (vector-matrix product), scaled by `coeff`.
+    ///
+    /// For each cycle `t` with `masked_indices_c[t] = Some(c)`, and for each `k` in `0..K`:
+    ///   global_index = k * T + t
+    ///   row = global_index / ncols
+    ///   col = global_index % ncols
+    ///   v_vec[col] += coeff * E_field[k XOR c].a * l_vec[row]
+    ///
+    /// Mirrors vanilla `OneHotPolynomial::vector_matrix_product` but operates on `.a` shares.
+    pub fn compute_v_vec_share(&self, coeff: F, l_vec: &[F], v_vec: &mut [F]) {
+        use rayon::prelude::*;
+
+        let t = self.masked_indices_c.len();
+        let num_columns = DoryGlobals::get_num_columns();
+        let row_len = num_columns;
+
+        if t >= row_len {
+            // Typical case: T >= row_len
+            let rows_per_k = t / row_len;
+            v_vec
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(col_index, dest)| {
+                    let mut col_dot_product = F::zero();
+                    for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
+                        if let Some(c) = self.masked_indices_c[t_idx] {
+                            // Sum over all k: E_field[k XOR c].a * l_vec[k * rows_per_k + row_offset]
+                            for k in 0..self.K {
+                                let e_idx = k ^ (c as usize);
+                                let row_index = k * rows_per_k + row_offset;
+                                if row_index < l_vec.len() {
+                                    col_dot_product +=
+                                        self.rand_ohv_e_field[e_idx].a * l_vec[row_index];
+                                }
+                            }
+                        }
+                    }
+                    *dest += coeff * col_dot_product;
+                });
+        } else {
+            // T < row_len case
+            let num_chunks = rayon::current_num_threads().next_power_of_two();
+            let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+
+            v_vec
+                .par_chunks_mut(chunk_size)
+                .enumerate()
+                .for_each(|(chunk_index, chunk)| {
+                    let min_col_index = chunk_index * chunk_size;
+                    let max_col_index = min_col_index + chunk_size;
+                    for (t_idx, opt_c) in self.masked_indices_c.iter().enumerate() {
+                        if let Some(c) = opt_c {
+                            for k in 0..self.K {
+                                let global_index = k as u128 * t as u128 + t_idx as u128;
+                                let col_index = (global_index % row_len as u128) as usize;
+                                if col_index >= min_col_index && col_index < max_col_index {
+                                    let row_index = (global_index / row_len as u128) as usize;
+                                    let e_idx = k ^ (*c as usize);
+                                    if row_index < l_vec.len() {
+                                        chunk[col_index % chunk_size] += coeff
+                                            * self.rand_ohv_e_field[e_idx].a
+                                            * l_vec[row_index];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+        }
     }
 
     /// Evaluates the true MLE value:
@@ -561,6 +657,90 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
             let inv_eq1 = eq_eval_1.inverse().unwrap();
             let q1 = eval1 * inv_eq1;
             let q2 = (q1 + q1) - q0;
+            let eval2 = q2 * eq_eval_2;
+
+            [eval0 * eq_r_address_claim, eval2 * eq_r_address_claim]
+        }
+    }
+
+    /// Like `compute_prover_message`, but with an `AdditiveShare<F>` previous_claim.
+    /// Used in the batched opening proof reduction where per-instance claims are additive shares.
+    pub fn compute_prover_message_shared(
+        &mut self,
+        round: usize,
+        previous_claim: AdditiveShare<F>,
+    ) -> [AdditiveShare<F>; 2] {
+        use rayon::prelude::*;
+
+        let log_k = self.polynomial.K.log_2();
+
+        if round < log_k {
+            // Address-variable rounds: previous_claim is not used.
+            // Compute the same as compute_prover_message but convert to additive.
+            let [eval0, eval2] = self.compute_prover_message(round, F::zero());
+            [eval0.into_additive(), eval2.into_additive()]
+        } else {
+            // Cycle-variable rounds: adapt Gruen computation for AdditiveShare previous_claim.
+            let B = &self.eq_address_state.B;
+            let eq_r_address_claim = B.final_sumcheck_claim();
+
+            let d_gruen = &self.eq_cycle_state.D;
+            let h_guard = self.polynomial.H.read().unwrap();
+            let H = &*h_guard;
+
+            let q0 = if d_gruen.E_in_current_len() == 1 {
+                let e_out = d_gruen.E_out_current();
+                (0..(d_gruen.len() / 2))
+                    .into_par_iter()
+                    .fold(Rep3PrimeFieldShare::zero_share, |mut acc, j| {
+                        acc += H.get_bound_coeff(j) * e_out[j];
+                        acc
+                    })
+                    .reduce(Rep3PrimeFieldShare::zero_share, |mut a, b| {
+                        a += b;
+                        a
+                    })
+            } else {
+                let d_e_in = d_gruen.E_in_current();
+                let d_e_out = d_gruen.E_out_current();
+                let num_x_in = d_gruen.E_in_current_len();
+                let num_x_out = d_gruen.E_out_current_len();
+                let num_x_out_bits = num_x_out.log_2();
+
+                (0..num_x_in)
+                    .into_par_iter()
+                    .fold(Rep3PrimeFieldShare::zero_share, |mut acc, x_in| {
+                        let mut inner = Rep3PrimeFieldShare::zero_share();
+                        for x_out in 0..num_x_out {
+                            let j = (x_in << num_x_out_bits) | x_out;
+                            inner += H.get_bound_coeff(j) * d_e_out[x_out];
+                        }
+                        acc += inner * d_e_in[x_in];
+                        acc
+                    })
+                    .reduce(Rep3PrimeFieldShare::zero_share, |mut a, b| {
+                        a += b;
+                        a
+                    })
+            };
+
+            // previous_claim is AdditiveShare<F>; eq_r_address_claim is public F.
+            let inv_eq_r = eq_r_address_claim.inverse().unwrap();
+            let previous_norm = previous_claim * inv_eq_r;
+
+            let current_scalar = self.eq_cycle_state.D.get_current_scalar();
+            let wi: F = self.eq_cycle_state.w[self.eq_cycle_state.num_variables_bound].into();
+            let eq_eval_1 = current_scalar * wi;
+            let eq_eval_0 = current_scalar - eq_eval_1;
+            let eq_m = eq_eval_1 - eq_eval_0;
+            let eq_eval_2 = eq_eval_1 + eq_m;
+
+            let eval0_rep3 = q0 * eq_eval_0;
+            let eval0 = eval0_rep3.into_additive();
+            let eval1 = previous_norm - eval0;
+            let inv_eq1 = eq_eval_1.inverse().unwrap();
+            let q1 = eval1 * inv_eq1;
+            let q2 = q1 + q1 - q0.into_additive();
             let eval2 = q2 * eq_eval_2;
 
             [eval0 * eq_r_address_claim, eval2 * eq_r_address_claim]

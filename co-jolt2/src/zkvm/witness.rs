@@ -777,6 +777,9 @@ mod tests {
                         &format!("{poly_key:?} (shared dense)"),
                     );
                 }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                    unreachable!("RLC variant should not appear in witness polynomials");
+                }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                     let ohps: Vec<&Rep3OneHotPolynomial<F>> = share_polys
                         .iter()

@@ -80,6 +80,9 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                             .expect("OneHot commit_rows preconditions met");
                         (poly.get_num_vars(), rows)
                     }
+                    Rep3SharedPoly::RLC(_) => {
+                        unreachable!("RLC polynomials should not be committed directly")
+                    }
                 };
 
                 let sigma = DoryGlobals::get_num_columns().log_2();
@@ -134,9 +137,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
     }
 
     fn prove_rep3<Network>(
-        poly: &Rep3DensePolynomial<Fr>,
+        poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
         opening_point: &[<Fr as jolt_core::field::JoltField>::Challenge],
+        opening_hint: Option<Self::OpeningProofHint>,
         network: &mut Network,
     ) -> eyre::Result<()>
     where
@@ -161,11 +165,50 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
         let r_vec: Vec<Fr> = r_vec_w.iter().map(|x| x.0).collect();
 
-        // 1) send (num_vars, row_commit_shares) as tuple
-        let row_commit_shares_affine = compute_row_commitment_shares_a(poly, setup, nu)
-            .into_iter()
+        // 1) Compute row commitment shares — dispatch based on variant + hint
+        let num_rows_target = 1usize << nu;
+        let row_commit_shares: Vec<G1Projective> = if let Some(hint) = opening_hint {
+            // Pre-combined hint: use directly (already the correct additive shares)
+            let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
+            rows.resize(num_rows_target, G1Projective::zero());
+            rows
+        } else {
+            match poly {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                    let mut rows = compute_row_commitment_shares_a(dense, setup, nu);
+                    rows.resize(num_rows_target, G1Projective::zero());
+                    rows
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
+                    let num_columns = DoryGlobals::get_num_columns();
+                    let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
+                        .iter()
+                        .map(|g| g.0.into_affine())
+                        .collect();
+                    let mut rows = one_hot.commit_rows::<G1Projective>(&bases)?;
+                    rows.resize(num_rows_target, G1Projective::zero());
+                    rows
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
+                    let num_columns = DoryGlobals::get_num_columns();
+                    let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
+                        .iter()
+                        .map(|g| g.0.into_affine())
+                        .collect();
+                    let mut rows = rlc.commit_rows::<G1Projective>(&bases)?;
+                    rows.resize(num_rows_target, G1Projective::zero());
+                    rows
+                }
+                Rep3MultilinearPolynomial::Public(_) => {
+                    return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
+                }
+            }
+        };
+
+        let row_commit_shares_affine: Vec<G1Affine> = row_commit_shares
+            .iter()
             .map(|p| p.into_affine())
-            .collect::<Vec<G1Affine>>();
+            .collect();
 
         network.send_response((num_vars, row_commit_shares_affine))?;
 
@@ -176,19 +219,34 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             .map(|a| a.into_group())
             .collect();
 
-        // 3) compute v_vec share and v2 share
+        // 3) compute v_vec share — dispatch based on variant
         let num_columns = 1usize << sigma;
-        let mut v_vec_share = vec![<Fr as ark_ff::Zero>::zero(); num_columns];
-        let (global_offset, local_coeffs) = rep3_local_coeffs_a(poly);
-
-        for (k, coeff) in local_coeffs.iter().enumerate() {
-            let idx = global_offset + k;
-            let row = idx / num_columns;
-            let col = idx % num_columns;
-            if row < l_vec.len() {
-                v_vec_share[col] += *coeff * l_vec[row];
+        let v_vec_share: Vec<Fr> = match poly {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                let mut v = vec![<Fr as ark_ff::Zero>::zero(); num_columns];
+                let (global_offset, local_coeffs) = rep3_local_coeffs_a(dense);
+                for (k, coeff) in local_coeffs.iter().enumerate() {
+                    let idx = global_offset + k;
+                    let row = idx / num_columns;
+                    let col = idx % num_columns;
+                    if row < l_vec.len() {
+                        v[col] += *coeff * l_vec[row];
+                    }
+                }
+                v
             }
-        }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
+                rlc.compute_v_vec_share(&l_vec)
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
+                let mut v = vec![<Fr as ark_ff::Zero>::zero(); num_columns];
+                one_hot.compute_v_vec_share(Fr::from(1u64), &l_vec, &mut v);
+                v
+            }
+            Rep3MultilinearPolynomial::Public(_) => {
+                return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
+            }
+        };
 
         // c_share = e(msm(row_commitments, v_vec_share), g_fin)
         let t_vec_v = msm_g1(&row_commitments, &v_vec_share);
@@ -614,6 +672,45 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             }
             _ => unreachable!(),
         }
+    }
+
+    fn combine_hints_rep3(
+        hints: Vec<MaybeShared<Self::OpeningProofHint>>,
+        coeffs: &[Fr],
+        party_id: PartyID,
+    ) -> Self::OpeningProofHint {
+        debug_assert_eq!(hints.len(), coeffs.len());
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let mut combined = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
+
+        for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
+            match hint {
+                MaybeShared::Shared(shares) => {
+                    for (i, row) in shares.iter().enumerate() {
+                        if i >= num_rows {
+                            break;
+                        }
+                        combined[i].0 += row.0 * coeff;
+                    }
+                }
+                MaybeShared::Public(Some(hint)) => {
+                    // Public hint: only party ID0 adds (trivial share promotion)
+                    if party_id == PartyID::ID0 {
+                        for (i, row) in hint.iter().enumerate() {
+                            if i >= num_rows {
+                                break;
+                            }
+                            combined[i].0 += row.0 * coeff;
+                        }
+                    }
+                }
+                MaybeShared::Public(None) => {
+                    // Not committed, skip
+                }
+            }
+        }
+
+        combined
     }
 }
 
