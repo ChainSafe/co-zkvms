@@ -16,6 +16,7 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -110,8 +111,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValEvaluationWorker<F> 
         self.num_rounds
     }
 
-    fn input_claim_public(&self) -> F {
-        self.input_claim
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(self.input_claim)
     }
 
     fn compute_prover_message_share(
@@ -168,7 +169,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValEvaluationWorker<F> 
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {

@@ -13,6 +13,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Rep3Value;
 
 // ---------------------------------------------------------------------------
 // Sumcheck instance traits (per-instance interface)
@@ -24,11 +25,12 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField>: Send {
     fn degree(&self) -> usize;
     fn num_rounds(&self) -> usize;
 
-    /// The public input claim for this sumcheck instance.
+    /// The input claim for this sumcheck instance.
     ///
-    /// NOTE: This must be public for `Rep3BatchedSumcheckWorker` to deterministically
-    /// initialize per-instance claim shares without extra communication.
-    fn input_claim_public(&self) -> F;
+    /// Returns `Rep3Value::Public(F)` for instances where the input claim is publicly
+    /// known (initialized via `promote_to_trivial_share`), or `Rep3Value::Shared(share)`
+    /// for instances with secret-shared input claims (initialized via `into_additive()`).
+    fn input_claim(&self) -> Rep3Value<F>;
 
     /// Compute the worker's share of the round polynomial evaluations.
     ///
@@ -53,7 +55,7 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField>: Send {
     /// After the sumcheck completes, cache polynomial openings in the accumulator and
     /// return the claim shares that were appended (in a stable, deterministic order).
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>>;
@@ -187,10 +189,10 @@ impl<F: JoltField> BatchedSumcheckWorkerInstance<F> {
             BatchedSumcheckWorkerInstance::Public(s) => s.num_rounds(),
         }
     }
-    fn input_claim_public(&self) -> F {
+    fn input_claim(&self) -> Rep3Value<F> {
         match self {
-            BatchedSumcheckWorkerInstance::Secret(s) => s.input_claim_public(),
-            BatchedSumcheckWorkerInstance::Public(s) => s.input_claim_public(),
+            BatchedSumcheckWorkerInstance::Secret(s) => s.input_claim(),
+            BatchedSumcheckWorkerInstance::Public(s) => Rep3Value::Public(s.input_claim_public()),
         }
     }
 }
@@ -382,17 +384,28 @@ impl Rep3BatchedSumcheckWorker {
 
         let inv2 = F::TWO_INV;
 
-        // Per-instance additive claim shares, initialized from public input claims with
-        // front-loaded scaling (vanilla batching semantics). This is equivalent to starting
-        // with the unscaled input claim and applying the inactive-round `claim := claim/2`
-        // update for the first `(max_num_rounds - num_rounds_i)` rounds.
+        // Per-instance additive claim shares, initialized with front-loaded scaling
+        // (vanilla batching semantics). Public claims are promoted to trivial shares;
+        // secret-shared claims are converted to additive shares directly.
         let mut individual_claims: Vec<AdditiveShare<F>> = instances
             .iter()
             .map(|instance| {
-                let scaled = instance
-                    .input_claim_public()
-                    .mul_pow_2(max_num_rounds - instance.num_rounds());
-                additive::promote_to_trivial_share(scaled, party_id)
+                let padding = max_num_rounds - instance.num_rounds();
+                match instance.input_claim() {
+                    Rep3Value::Public(f) => {
+                        additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
+                    }
+                    Rep3Value::Shared(share) => {
+                        Rep3PrimeFieldShare::new(
+                            share.a.mul_pow_2(padding),
+                            share.b.mul_pow_2(padding),
+                        )
+                        .into_additive()
+                    }
+                    Rep3Value::Additive(a) => {
+                        AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
+                    }
+                }
             })
             .collect();
 
@@ -471,7 +484,7 @@ impl Rep3BatchedSumcheckWorker {
         // Cache openings and send opening-claim shares to coordinator.
         let mut opening_claims_by_instance: Vec<Vec<AdditiveShare<F>>> =
             Vec::with_capacity(instances.len());
-        for instance in instances.iter() {
+        for instance in instances.iter_mut() {
             let num_rounds = instance.num_rounds();
             let r_slice = &r_sumcheck[max_num_rounds - num_rounds..];
             let opening_point = instance.normalize_opening_point(r_slice);
@@ -641,10 +654,23 @@ impl HybridBatchedSumcheckWorker {
         for instance in instances.iter() {
             match instance {
                 BatchedSumcheckWorkerInstance::Secret(s) => {
-                    let scaled = s
-                        .input_claim_public()
-                        .mul_pow_2(max_num_rounds - s.num_rounds());
-                    secret_claims.push(Some(additive::promote_to_trivial_share(scaled, party_id)));
+                    let padding = max_num_rounds - s.num_rounds();
+                    let claim = match s.input_claim() {
+                        Rep3Value::Public(f) => {
+                            additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
+                        }
+                        Rep3Value::Shared(share) => {
+                            Rep3PrimeFieldShare::new(
+                                share.a.mul_pow_2(padding),
+                                share.b.mul_pow_2(padding),
+                            )
+                            .into_additive()
+                        }
+                        Rep3Value::Additive(a) => {
+                            AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
+                        }
+                    };
+                    secret_claims.push(Some(claim));
                     public_claims.push(None);
                 }
                 BatchedSumcheckWorkerInstance::Public(s) => {
@@ -793,7 +819,7 @@ impl HybridBatchedSumcheckWorker {
         }
 
         let mut openings_by_instance: HybridOpeningsMsg<F> = Vec::with_capacity(instances.len());
-        for (i, instance) in instances.iter().enumerate() {
+        for (i, instance) in instances.iter_mut().enumerate() {
             let num_rounds = instance.num_rounds();
             let r_slice = &r_sumcheck[max_num_rounds - num_rounds..];
 
@@ -1145,8 +1171,8 @@ mod tests {
         fn num_rounds(&self) -> usize {
             self.rounds
         }
-        fn input_claim_public(&self) -> Fr {
-            self.input_claim
+        fn input_claim(&self) -> Rep3Value<Fr> {
+            Rep3Value::Public(self.input_claim)
         }
 
         fn compute_prover_message_share(
@@ -1169,7 +1195,7 @@ mod tests {
         }
 
         fn cache_openings_worker(
-            &self,
+            &mut self,
             _accumulator: &mut Rep3OpeningAccumulatorWorker<Fr>,
             _opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
         ) -> Vec<Rep3PrimeFieldShare<Fr>> {

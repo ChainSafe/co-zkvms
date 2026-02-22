@@ -1,6 +1,7 @@
 use co_jolt2::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use co_jolt2::subprotocols::sumcheck::{Rep3BatchedSumcheck, Rep3BatchedSumcheckWorker};
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
+use co_jolt2::utils::types::Rep3Value;
 use co_jolt2::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 
 use ark_bn254::Fr;
@@ -46,8 +47,8 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyLinearWorker {
         Self::num_rounds_from_len(self.coeffs.len())
     }
 
-    fn input_claim_public(&self) -> Fr {
-        self.coeffs.iter().copied().sum()
+    fn input_claim(&self) -> Rep3Value<Fr> {
+        Rep3Value::Public(self.coeffs.iter().copied().sum())
     }
 
     fn compute_prover_message_share(
@@ -92,7 +93,7 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyLinearWorker {
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         _accumulator: &mut Rep3OpeningAccumulatorWorker<Fr>,
         _opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
     ) -> Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<Fr>> {
@@ -230,13 +231,13 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyCubicProductWorker {
         self.num_rounds()
     }
 
-    fn input_claim_public(&self) -> Fr {
-        self.a
+    fn input_claim(&self) -> Rep3Value<Fr> {
+        Rep3Value::Public(self.a
             .iter()
             .zip(self.b.iter())
             .zip(self.c.iter())
             .map(|((&a, &b), &c)| a * b * c)
-            .sum()
+            .sum())
     }
 
     fn compute_prover_message_share(
@@ -268,7 +269,7 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyCubicProductWorker {
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         _accumulator: &mut Rep3OpeningAccumulatorWorker<Fr>,
         _opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
     ) -> Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<Fr>> {

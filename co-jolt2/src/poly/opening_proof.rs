@@ -9,7 +9,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
-use jolt_core::transcripts::{AppendToTranscript, Transcript};
+use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
@@ -18,7 +18,8 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomialProverOpening;
-use crate::utils::types::MaybeShared;
+use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
+use crate::utils::types::{MaybeShared, Rep3Value};
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -170,8 +171,8 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
     ///
     /// Protocol:
     /// 1. Receive gammas from coordinator, prepare sumcheck instances
-    /// 2. Receive rho powers, run batched opening reduction sumcheck
-    /// 3. Send final claims, receive gamma for joint polynomial RLC
+    /// 2. Delegate batched sumcheck to `Rep3BatchedSumcheckWorker::prove`
+    /// 3. Receive gamma for joint polynomial RLC
     /// 4. Build joint polynomial and combined hint, call PCS::prove_rep3
     #[tracing::instrument(skip_all, name = "Rep3OpeningAccumulatorWorker::reduce_and_prove")]
     pub fn reduce_and_prove<PCS, ProofTranscript, N>(
@@ -179,7 +180,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         polynomials: &HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>>,
         mut opening_hints: HashMap<CommittedPolynomial, MaybeShared<PCS::OpeningProofHint>>,
         pcs_setup: &PCS::ProverSetup,
-        network: &mut N,
+        io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
     ) -> eyre::Result<()>
     where
         PCS: crate::poly::commitment::Rep3CommitmentScheme<F, ProofTranscript>,
@@ -187,7 +188,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         N: mpc_core::protocols::rep3::network::Rep3NetworkWorker,
     {
         // a. Receive gammas from coordinator
-        let all_gammas: Vec<F> = network.receive_request()?;
+        let all_gammas: Vec<F> = io_ctx.network().receive_request()?;
 
         // b. Prepare sumchecks
         let mut gamma_offsets = vec![0usize];
@@ -206,31 +207,41 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             sumcheck.prepare_sumcheck(polynomials, &all_gammas[offset..offset + num_gammas]);
         }
 
-        // c. Receive rho powers from coordinator
-        let coeffs: Vec<F> = network.receive_request()?;
-
-        // d. Run batched opening reduction sumcheck
-        let (r_sumcheck, _claims) = self.prove_batch_opening_reduction(&coeffs, network)?;
-
-        // e. Send sumcheck claims to coordinator
-        let claim_shares: Vec<AdditiveShare<F>> = self
+        // c. Save rlc_coeffs + polynomials before draining into boxed instances
+        let saved_meta: Vec<(Vec<F>, Vec<CommittedPolynomial>)> = self
             .sumchecks
             .iter()
-            .map(|s| s.sumcheck_claim().into_additive())
+            .map(|s| (s.rlc_coeffs.clone(), s.polynomials.clone()))
             .collect();
-        network.send_response(claim_shares)?;
+        let num_sumchecks = self.sumchecks.len();
+
+        // d. Drain sumchecks into boxed trait objects
+        let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> = self
+            .sumchecks
+            .drain(..)
+            .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstanceWorker<F>>)
+            .collect();
+
+        // e. Run batched sumcheck via framework
+        let r_sumcheck = crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker::prove(
+            &mut instances,
+            self,
+            io_ctx,
+        )?;
 
         // f. Receive gamma for joint poly RLC from coordinator
-        let gamma: F = network.receive_request()?;
+        let gamma: F = io_ctx.network().receive_request()?;
         let mut gamma_powers = vec![F::one()];
-        for i in 1..self.sumchecks.len() {
+        for i in 1..num_sumchecks {
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        // g. Compute per-polynomial RLC coefficients
+        // g. Compute per-polynomial RLC coefficients (using saved metadata)
         let mut rlc_map: BTreeMap<CommittedPolynomial, F> = BTreeMap::new();
-        for (gamma_power, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-            for (coeff, polynomial) in sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter()) {
+        for (gamma_power, (rlc_coeffs, poly_labels)) in
+            gamma_powers.iter().zip(saved_meta.iter())
+        {
+            for (coeff, polynomial) in rlc_coeffs.iter().zip(poly_labels.iter()) {
                 *rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
             }
         }
@@ -260,122 +271,10 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             pcs_setup,
             &r_sumcheck,
             Some(combined_hint),
-            network,
+            io_ctx.network(),
         )?;
 
         Ok(())
-    }
-
-    /// Run the batched sumcheck that reduces many openings to one.
-    /// Returns the sumcheck point and per-instance final claims.
-    #[tracing::instrument(
-        skip_all,
-        name = "Rep3OpeningAccumulatorWorker::prove_batch_opening_reduction"
-    )]
-    fn prove_batch_opening_reduction<N>(
-        &mut self,
-        coeffs: &[F],
-        network: &mut N,
-    ) -> eyre::Result<(Vec<F::Challenge>, Vec<Rep3PrimeFieldShare<F>>)>
-    where
-        N: mpc_core::protocols::rep3::network::Rep3NetworkWorker,
-    {
-        let max_num_rounds = self
-            .sumchecks
-            .iter()
-            .map(|s| s.num_rounds())
-            .max()
-            .unwrap_or(0);
-
-        // Per-instance claims as additive shares, scaled by 2^(max - num_rounds)
-        // to match vanilla's BatchedSumcheck::prove initialization.
-        let mut individual_claims: Vec<AdditiveShare<F>> = self
-            .sumchecks
-            .iter()
-            .map(|s| {
-                let scale = max_num_rounds - s.num_rounds();
-                let claim = s.input_claim();
-                // mul_pow_2 on Rep3PrimeFieldShare: scale both components
-                let scaled =
-                    Rep3PrimeFieldShare::new(claim.a.mul_pow_2(scale), claim.b.mul_pow_2(scale));
-                scaled.into_additive()
-            })
-            .collect();
-
-        let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
-        let two_inv = F::TWO_INV;
-
-        for round in 0..max_num_rounds {
-            let remaining_rounds = max_num_rounds - round;
-
-            let mut batched_e0 = AdditiveShare::<F>::zero();
-            let mut batched_e2 = AdditiveShare::<F>::zero();
-            let mut per_instance_e0: Vec<AdditiveShare<F>> =
-                Vec::with_capacity(self.sumchecks.len());
-            let mut per_instance_e2: Vec<AdditiveShare<F>> =
-                Vec::with_capacity(self.sumchecks.len());
-
-            for (i, sumcheck) in self.sumchecks.iter_mut().enumerate() {
-                let num_rounds = sumcheck.num_rounds();
-                if remaining_rounds > num_rounds {
-                    // Inactive: constant polynomial = individual_claims[i] / 2
-                    let e = individual_claims[i] * two_inv;
-                    per_instance_e0.push(e);
-                    per_instance_e2.push(e);
-                    batched_e0 += e * coeffs[i];
-                    batched_e2 += e * coeffs[i];
-                } else {
-                    // Active: compute from polynomial
-                    let inst_round = round - (max_num_rounds - num_rounds);
-                    let [e0, e2] =
-                        sumcheck.compute_prover_message(inst_round, individual_claims[i]);
-                    per_instance_e0.push(e0);
-                    per_instance_e2.push(e2);
-                    batched_e0 += e0 * coeffs[i];
-                    batched_e2 += e2 * coeffs[i];
-                }
-            }
-
-            // Send batched eval shares to coordinator
-            network.send_response((batched_e0, batched_e2))?;
-
-            // Receive challenge from coordinator
-            let r_j: F::Challenge = network.receive_request()?;
-            r_sumcheck.push(r_j);
-            let r: F = r_j.into();
-
-            // Update per-instance claims and bind active instances
-            for (i, sumcheck) in self.sumchecks.iter_mut().enumerate() {
-                let num_rounds = sumcheck.num_rounds();
-                if remaining_rounds > num_rounds {
-                    // Inactive: claim = constant (just halves)
-                    individual_claims[i] = per_instance_e0[i]; // constant value
-                } else {
-                    let inst_round = round - (max_num_rounds - num_rounds);
-
-                    // Interpolate degree-2 univariate at r_j to get new claim
-                    let e0 = per_instance_e0[i];
-                    let e2 = per_instance_e2[i];
-                    let e1 = individual_claims[i] - e0;
-                    // Lagrange basis at {0, 1, 2}
-                    let l0 = (r - F::one()) * (r - F::from_u64(2)) * two_inv;
-                    let l1 = r * (F::from_u64(2) - r);
-                    let l2 = r * (r - F::one()) * two_inv;
-                    individual_claims[i] = e0 * l0 + e1 * l1 + e2 * l2;
-
-                    sumcheck.bind(r_j, inst_round);
-                }
-            }
-        }
-
-        // Collect final claims from each instance's bound polynomial
-        for sumcheck in self.sumchecks.iter_mut() {
-            sumcheck.cache_sumcheck_claim();
-        }
-        let claims: Vec<Rep3PrimeFieldShare<F>> =
-            self.sumchecks.iter().map(|s| s.sumcheck_claim()).collect();
-
-        Ok((r_sumcheck, claims))
     }
 }
 
@@ -396,6 +295,9 @@ impl<F: JoltField> Default for Rep3OpeningAccumulatorWorker<F> {
 pub struct Rep3OpeningAccumulator<F: JoltField> {
     pub openings: BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>,
     pub sumchecks: Vec<Rep3CoordinatorReductionSumcheck<F>>,
+    /// Sumcheck claims from opening proof reduction, populated by `cache_openings`
+    /// during `Rep3BatchedSumcheck::prove`.
+    pub opening_proof_reduction_claims: Vec<F>,
 }
 
 impl<F: JoltField> Rep3OpeningAccumulator<F> {
@@ -403,6 +305,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         Self {
             openings: BTreeMap::new(),
             sumchecks: Vec::new(),
+            opening_proof_reduction_claims: Vec::new(),
         }
     }
 
@@ -513,8 +416,8 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
 
     /// Reduce all accumulated openings into a single PCS opening proof.
     ///
-    /// Coordinator drives the Fiat-Shamir transcript and reconstructs
-    /// additive shares from workers to build round polynomials.
+    /// Coordinator drives the Fiat-Shamir transcript. After preparing sumcheck
+    /// entries, delegates the batched sumcheck to `Rep3BatchedSumcheck::prove`.
     #[tracing::instrument(skip_all, name = "Rep3OpeningAccumulator::reduce_and_prove")]
     pub fn reduce_and_prove<PCS, ProofTranscript, N>(
         &mut self,
@@ -559,85 +462,51 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             sumcheck.prepare_sumcheck(&all_gammas[offset..offset + num_gammas]);
         }
 
-        // c. Sample batching coefficients (independent, matching vanilla's challenge_vector)
-        let coeffs: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
-        network.broadcast_request(coeffs.clone())?;
-
-        // d. Compute combined_claim
-        let max_num_rounds = self
+        // c. Save rlc_coeffs + polynomials before draining into boxed instances
+        let saved_meta: Vec<(Vec<F>, Vec<CommittedPolynomial>)> = self
             .sumchecks
             .iter()
-            .map(|s| s.num_rounds())
-            .max()
-            .unwrap_or(0);
+            .map(|s| (s.rlc_coeffs.clone(), s.polynomials.clone()))
+            .collect();
+        let num_sumchecks = self.sumchecks.len();
 
-        // Append input claims to transcript and scale by 2^(max - num_rounds)
-        // (matches vanilla's BatchedSumcheck::prove transcript sequence)
-        let mut combined_claim: F = F::zero();
-        for (i, sumcheck) in self.sumchecks.iter().enumerate() {
-            let input_claim = sumcheck.input_claim();
-            transcript.append_scalar(&input_claim);
-            let scaled = input_claim.mul_pow_2(max_num_rounds - sumcheck.num_rounds());
-            combined_claim += coeffs[i] * scaled;
-        }
+        // d. Drain sumchecks into boxed trait objects
+        let instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> = self
+            .sumchecks
+            .drain(..)
+            .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>)
+            .collect();
 
-        // e. Round-by-round sumcheck (forward iteration, matching vanilla)
-        let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
-        let mut polys: Vec<jolt_core::poly::unipoly::CompressedUniPoly<F>> =
-            Vec::with_capacity(max_num_rounds);
+        // e. Run batched sumcheck via framework
+        //    (internally: samples batching_coeffs, runs rounds, receives claims,
+        //     calls cache_openings → appends to transcript + opening_proof_reduction_claims)
+        let (sumcheck_proof, r_sumcheck) =
+            crate::subprotocols::sumcheck::Rep3BatchedSumcheck::prove(
+                &instances,
+                self,
+                transcript,
+                network,
+            )?;
 
-        for _round in 0..max_num_rounds {
-            // Receive batched eval shares from workers
-            let round_shares: Vec<(AdditiveShare<F>, AdditiveShare<F>)> =
-                network.receive_responses()?;
-            eyre::ensure!(round_shares.len() == 3, "expected 3 parties");
-
-            let eval_0 = mpc_core::protocols::additive::combine_additive_share(
-                round_shares.iter().map(|x| x.0).collect(),
-            );
-            let eval_2 = mpc_core::protocols::additive::combine_additive_share(
-                round_shares.into_iter().map(|x| x.1).collect(),
-            );
-
-            // eval_1 = combined_claim - eval_0
-            let eval_1 = combined_claim - eval_0;
-
-            // Build UniPoly from evals, compress, append to transcript
-            let uni_poly = jolt_core::poly::unipoly::UniPoly::from_evals(&[eval_0, eval_1, eval_2]);
-            let compressed = uni_poly.compress();
-            compressed.append_to_transcript(transcript);
-            polys.push(compressed);
-
-            // Challenge for this round
-            let r_j: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-            network.broadcast_request(r_j)?;
-            r_sumcheck.push(r_j);
-
-            // Update combined claim
-            combined_claim = uni_poly.evaluate(&r_j);
-        }
-
-        let sumcheck_proof = jolt_core::subprotocols::sumcheck::SumcheckInstanceProof::new(polys);
-
-        // f. Receive final claims from workers, reconstruct
-        let claim_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
-        let sumcheck_claims: Vec<F> =
-            mpc_core::protocols::additive::combine_additive_vec(claim_shares);
-        transcript.append_scalars(&sumcheck_claims);
+        // f. Read sumcheck_claims from accumulator (populated by cache_openings)
+        let sumcheck_claims = std::mem::take(&mut self.opening_proof_reduction_claims);
+        assert_eq!(sumcheck_claims.len(), num_sumchecks);
 
         // g. Sample gamma for joint polynomial RLC, broadcast
         let gamma: F = transcript.challenge_scalar();
         network.broadcast_request(gamma)?;
 
         let mut gamma_powers = vec![F::one()];
-        for i in 1..self.sumchecks.len() {
+        for i in 1..num_sumchecks {
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
         // h. Compute joint_commitment = RLC of commitments
         let mut rlc_map: BTreeMap<CommittedPolynomial, F> = BTreeMap::new();
-        for (gamma_power, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-            for (coeff, polynomial) in sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter()) {
+        for (gamma_power, (rlc_coeffs, poly_labels)) in
+            gamma_powers.iter().zip(saved_meta.iter())
+        {
+            for (coeff, polynomial) in rlc_coeffs.iter().zip(poly_labels.iter()) {
                 *rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
             }
         }
@@ -966,7 +835,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
         self.opening_point.len()
     }
 
-    pub fn input_claim(&self) -> Rep3PrimeFieldShare<F> {
+    pub fn input_claim_rep3(&self) -> Rep3PrimeFieldShare<F> {
         assert_eq!(
             self.input_claims.len(),
             1,
@@ -997,6 +866,55 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
 
     pub fn sumcheck_claim(&self) -> Rep3PrimeFieldShare<F> {
         self.sumcheck_claim.unwrap()
+    }
+}
+
+impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OpeningProofReductionSumcheck<F> {
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.opening_point.len()
+    }
+
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Shared(self.input_claim_rep3())
+    }
+
+    fn compute_prover_message_share(
+        &mut self,
+        round: usize,
+        previous_claim: AdditiveShare<F>,
+        max_degree: usize,
+    ) -> Vec<AdditiveShare<F>> {
+        let [e0, e2] = self.compute_prover_message(round, previous_claim);
+        let mut result = vec![AdditiveShare::zero(); max_degree];
+        result[0] = e0;
+        if max_degree > 1 {
+            result[1] = e2;
+        }
+        result
+    }
+
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+        self.prover_state.as_mut().unwrap().bind(r_j, round);
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.iter().rev().copied().collect())
+    }
+
+    fn cache_openings_worker(
+        &mut self,
+        _accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) -> Vec<Rep3PrimeFieldShare<F>> {
+        self.cache_sumcheck_claim();
+        vec![self.sumcheck_claim()]
     }
 }
 
@@ -1074,5 +992,48 @@ impl<F: JoltField> Rep3CoordinatorReductionSumcheck<F> {
     pub fn input_claim(&self) -> F {
         assert_eq!(self.claims.len(), 1, "Claims should have been reduced");
         self.claims[0]
+    }
+}
+
+impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T>
+    for Rep3CoordinatorReductionSumcheck<F>
+{
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.opening_point.len()
+    }
+
+    fn input_claim_public(&self) -> F {
+        self.input_claim()
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+        _r: &[F::Challenge],
+    ) -> F {
+        unimplemented!("not used in prove path")
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(opening_point.iter().rev().copied().collect())
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut Rep3OpeningAccumulator<F>,
+        transcript: &mut T,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claims: Vec<F>,
+    ) {
+        assert_eq!(claims.len(), 1);
+        transcript.append_scalar(&claims[0]);
+        accumulator.opening_proof_reduction_claims.push(claims[0]);
     }
 }

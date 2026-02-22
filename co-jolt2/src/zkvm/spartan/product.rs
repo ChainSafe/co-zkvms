@@ -79,8 +79,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ProductVirtualizationSu
         self.log_T
     }
 
-    fn input_claim_public(&self) -> F {
-        self.input_claim
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(self.input_claim)
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::compute_prover_message_share")]
@@ -180,7 +180,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ProductVirtualizationSu
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> {

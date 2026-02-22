@@ -400,8 +400,54 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         let row_len = num_columns;
 
         if t >= row_len {
-            // Typical case: T >= row_len
+            // Typical case: T >= row_len.
+            //
+            // The naive inner loop computes, for each active (col_index, row_offset, c):
+            //   Σ_k E_field[k XOR c].a * l_vec[k * rows_per_k + row_offset]
+            //
+            // This is an XOR-convolution evaluated at index c. We precompute the
+            // full convolution per row_offset via FWHT, turning O(T·K) into
+            // O(rows_per_k · K log K + T).
             let rows_per_k = t / row_len;
+
+            debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
+
+            // FWHT of the E_field .a shares (computed once, reused for all row_offsets).
+            let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
+            let mut g_hat = g;
+            fwht_field_in_place(&mut g_hat);
+            let inv_k = F::from(self.K as u64)
+                .inverse()
+                .expect("K invertible in field");
+
+            // For each row_offset, compute conv[c] = Σ_k g[k XOR c] * l_vec[k * rows_per_k + row_offset]
+            // via FWHT XOR-convolution: conv = IFWHT(FWHT(g) · FWHT(h)) / K
+            let convolutions: Vec<Vec<F>> = (0..rows_per_k)
+                .into_par_iter()
+                .map(|row_offset| {
+                    let mut h: Vec<F> = (0..self.K)
+                        .map(|k| {
+                            let row_index = k * rows_per_k + row_offset;
+                            if row_index < l_vec.len() {
+                                l_vec[row_index]
+                            } else {
+                                F::zero()
+                            }
+                        })
+                        .collect();
+                    fwht_field_in_place(&mut h);
+                    for (hi, &gi) in h.iter_mut().zip(g_hat.iter()) {
+                        *hi *= gi;
+                    }
+                    fwht_field_in_place(&mut h);
+                    for hi in h.iter_mut() {
+                        *hi *= inv_k;
+                    }
+                    h
+                })
+                .collect();
+
+            // Accumulate into v_vec using precomputed convolution lookups.
             v_vec
                 .par_iter_mut()
                 .enumerate()
@@ -409,15 +455,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                     let mut col_dot_product = F::zero();
                     for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
                         if let Some(c) = self.masked_indices_c[t_idx] {
-                            // Sum over all k: E_field[k XOR c].a * l_vec[k * rows_per_k + row_offset]
-                            for k in 0..self.K {
-                                let e_idx = k ^ (c as usize);
-                                let row_index = k * rows_per_k + row_offset;
-                                if row_index < l_vec.len() {
-                                    col_dot_product +=
-                                        self.rand_ohv_e_field[e_idx].a * l_vec[row_index];
-                                }
-                            }
+                            col_dot_product += convolutions[row_offset][c as usize];
                         }
                     }
                     *dest += coeff * col_dot_product;

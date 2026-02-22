@@ -277,7 +277,7 @@ fn test_dense_only() {
                 &input.polys,
                 input.hints,
                 &input.setup,
-                io_ctx.network(),
+                &mut io_ctx,
             )?;
 
             Ok(())
@@ -654,7 +654,7 @@ fn test_mixed_dense_one_hot() {
                 &input.polys,
                 input.hints,
                 &input.setup,
-                io_ctx.network(),
+                &mut io_ctx,
             )?;
 
             Ok(())

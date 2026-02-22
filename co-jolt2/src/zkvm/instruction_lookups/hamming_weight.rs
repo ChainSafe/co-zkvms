@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 
 const DEGREE: usize = 1;
@@ -41,8 +42,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3HammingWeightSumcheckWo
         LOG_K_CHUNK
     }
 
-    fn input_claim_public(&self) -> F {
-        self.gamma.iter().copied().sum()
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(self.gamma.iter().copied().sum())
     }
 
     fn compute_prover_message_share(
@@ -92,7 +93,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3HammingWeightSumcheckWo
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {

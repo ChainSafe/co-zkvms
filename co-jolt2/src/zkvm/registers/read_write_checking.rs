@@ -927,8 +927,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3RegistersReadWriteCheck
         K.log_2() + self.T.log_2()
     }
 
-    fn input_claim_public(&self) -> F {
-        self.input_claim
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(self.input_claim)
     }
 
     fn compute_prover_message_share(
@@ -981,7 +981,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3RegistersReadWriteCheck
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {

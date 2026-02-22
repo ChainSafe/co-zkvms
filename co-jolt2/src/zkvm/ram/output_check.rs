@@ -19,6 +19,7 @@ use tracer::JoltDevice;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -134,8 +135,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
         self.K.log_2()
     }
 
-    fn input_claim_public(&self) -> F {
-        F::zero() // Zero-check
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(F::zero()) // Zero-check
     }
 
     fn compute_prover_message_share(
@@ -203,7 +204,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
@@ -404,8 +405,8 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValFinalSumcheckWorker<
     fn num_rounds(&self) -> usize {
         self.T.log_2()
     }
-    fn input_claim_public(&self) -> F {
-        self.input_claim
+    fn input_claim(&self) -> Rep3Value<F> {
+        Rep3Value::Public(self.input_claim)
     }
 
     fn compute_prover_message_share(
@@ -461,7 +462,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValFinalSumcheckWorker<
     }
 
     fn cache_openings_worker(
-        &self,
+        &mut self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
