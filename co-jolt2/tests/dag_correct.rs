@@ -8,6 +8,7 @@ use ark_std::test_rng;
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
+use co_jolt2::utils::tracing::init_tracing;
 use co_jolt2::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::Rep3JoltWorker;
@@ -176,6 +177,8 @@ fn vanilla_up_to_stage3(
 
 #[test]
 fn dag_correct() {
+    let _tracing_guard = init_tracing("dag_correct.json", std::path::Path::new("traces"));
+
     // 1) Build and trace the fibonacci program (reuse witness_batch_rep3 setup).
     let mut program = Program::new("fibonacci-guest");
     program.set_memory_size(10240);
@@ -480,15 +483,6 @@ fn dag_correct() {
             rep3_sc.compressed_polys.len(),
             vanilla_sc.compressed_polys.len()
         );
-
-        // Debug: show first few compressed polys from both sides
-        for idx in 0..3.min(rep3_sc.compressed_polys.len()).min(vanilla_sc.compressed_polys.len()) {
-            eprintln!(
-                "  round {idx}: rep3={:?}\n            vanilla={:?}",
-                rep3_sc.compressed_polys[idx],
-                vanilla_sc.compressed_polys[idx],
-            );
-        }
 
         let mut first_diff_idx = None;
         for (i, (a, b)) in rep3_sc

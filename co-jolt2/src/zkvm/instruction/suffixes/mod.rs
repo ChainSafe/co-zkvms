@@ -85,6 +85,7 @@ fn a2b_and_uninterleave<N: Rep3Network>(
 /// representing the low `suffix_len` bits of cycle j's lookup index.
 ///
 /// Returns `Vec<Rep3PrimeFieldShare<F>>` of length `suffix_bits_arith.len()`.
+#[tracing::instrument(skip_all, name = "evaluate_suffix_mle_batched")]
 pub fn evaluate_suffix_mle_batched<F: JoltField, N: Rep3Network>(
     suffix: &Suffixes,
     suffix_bits_arith: &[Rep3RingShare<u128>],
@@ -777,6 +778,7 @@ pub struct OperandQSuffixEvals<F: JoltField> {
 ///   - left_operand[j] = u64::from(uninterleave(suffix_bits_j).0) as field
 ///   - right_operand[j] = u64::from(uninterleave(suffix_bits_j).1) as field
 ///   - identity[j] = suffix_bits_j as field
+#[tracing::instrument(skip_all, name = "compute_operand_q_suffix_evals", fields(phase))]
 pub fn compute_operand_q_suffix_evals<F: JoltField, N: Rep3Network>(
     phase: usize,
     lookup_indices: &[Rep3RingShare<u128>],

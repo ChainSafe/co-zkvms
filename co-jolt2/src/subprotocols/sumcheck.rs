@@ -576,12 +576,6 @@ impl HybridBatchedSumcheck {
                 round_evals.len()
             );
 
-            if _round < 3 {
-                eprintln!(
-                    "[HybridCoord] round={_round} batched_claim={batched_claim:?} round_evals={round_evals:?}"
-                );
-            }
-
             // Convert {0,2,3,...,D} to {0,1,2,...,D}.
             let mut full_evals = Vec::with_capacity(max_degree + 1);
             full_evals.push(round_evals[0]);

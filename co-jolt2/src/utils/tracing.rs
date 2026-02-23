@@ -55,7 +55,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
     let env_filter = EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
-        .add_directive("jolt_core=info".parse().unwrap())
+        .add_directive("jolt_core=off".parse().unwrap())
         .add_directive("co_jolt2=info".parse().unwrap())
         .add_directive("mpc_net=info".parse().unwrap())
         .add_directive("quinn=off".parse().unwrap());

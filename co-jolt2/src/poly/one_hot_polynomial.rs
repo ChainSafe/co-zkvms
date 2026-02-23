@@ -215,7 +215,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     where
         G: CurveGroup<ScalarField = F> + VariableBaseMSM + Send + Sync,
     {
-        let _guard = tracing::info_span!(
+        let _guard = tracing::trace_span!(
             "Rep3OneHotPolynomial::commit_rows",
             K = %self.K,
             T = %self.masked_indices_c.len()

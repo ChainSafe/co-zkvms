@@ -230,6 +230,7 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
     /// - `io_ctx`: a forked IoContext for MPC operations during phase transitions
     /// - `party_id`: this party's ID
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(skip_all, name = "ReadRafWorker::new")]
     pub fn new(
         gamma: F,
         rv_claim: F,
@@ -382,6 +383,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// Initialize a new phase. Computes Ehat16, builds suffix polys and Q polys.
     ///
     /// For phase > 0, also does the condensation update on u_evals.
+    #[tracing::instrument(skip_all, name = "ReadRaf::init_phase", fields(phase))]
     fn init_phase<N: Rep3Network>(
         &mut self,
         phase: usize,
@@ -420,6 +422,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         // -- Step F: compute Ehat16 via tensor product --
+        let _ehat_span = tracing::info_span!("ehat16_tensor_product").entered();
         let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
             self.one_hot_polys[hi].rand_ohv_e_field.as_ref().clone();
         let mut ehat8_lo: Vec<Rep3PrimeFieldShare<F>> =
@@ -443,8 +446,10 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         let ehat16 = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx)?;
         self.ehat16 = Some(ehat16);
+        drop(_ehat_span);
 
         // -- Condensation (phase > 0): u_evals *= eq_shifted[c16_prev] --
+        let _cond_span = tracing::info_span!("condensation").entered();
         if phase > 0 {
             eyre::ensure!(
                 self.r.len() >= phase * LOG_M,
@@ -523,6 +528,8 @@ impl<F: JoltField> ReadRafProverState<F> {
             self.ra_acc = ra_products;
         }
 
+        drop(_cond_span);
+
         // -- Build suffix polynomials --
         self.init_suffix_polys(phase, io_ctx)?;
 
@@ -556,6 +563,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// In MPC, the suffix evaluation `suffix_mle(suffix_bits_j)` is a shared value
     /// computed from the one-hot polynomials of future chunks (via `compute_suffix_evals`).
     /// The histogram is built in masked domain and unmasked via FWHT with Ehat16.
+    #[tracing::instrument(skip_all, name = "ReadRaf::init_suffix_polys", fields(phase))]
     fn init_suffix_polys<N: Rep3Network>(
         &mut self,
         phase: usize,
@@ -611,6 +619,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                         table_cycles.iter().map(|&j| all_bits[j]).collect();
 
                     // Evaluate suffix MLE in MPC
+                    let _eval_span = tracing::trace_span!("suffix_mle_eval").entered();
                     let suffix_evals: Vec<Rep3PrimeFieldShare<F>> = evaluate_suffix_mle_batched(
                         suffix,
                         &table_suffix_bits,
@@ -618,11 +627,14 @@ impl<F: JoltField> ReadRafProverState<F> {
                         io_ctx,
                         self.party_id,
                     )?;
+                    drop(_eval_span);
 
                     // Multiply u_evals * suffix_evals (shared × shared)
+                    let _mul_span = tracing::trace_span!("u_times_suffix").entered();
                     let u_for_table: Vec<Rep3PrimeFieldShare<F>> =
                         table_cycles.iter().map(|&j| self.u_evals[j]).collect();
                     let weighted = rep3_arith::mul_vec(&u_for_table, &suffix_evals, io_ctx)?;
+                    drop(_mul_span);
 
                     // Scatter into masked histogram
                     for (idx_in_table, &j) in table_cycles.iter().enumerate() {
@@ -633,12 +645,15 @@ impl<F: JoltField> ReadRafProverState<F> {
                 }
 
                 // Unmask: H = FWHT^{-1}( FWHT(H_c) ⊙ Ehat16 ) / M
+                let _unmask_span = tracing::info_span!("fwht_unmask").entered();
+                tracing::info!("h_c {} ehat16 {}", h_c.len(), ehat16.len());
                 fwht_rep3_in_place(&mut h_c);
                 let mut h = rep3_arith::mul_vec(&h_c, ehat16, io_ctx)?;
                 fwht_rep3_in_place(&mut h);
                 for v in h.iter_mut() {
                     *v = *v * inv_m;
                 }
+                drop(_unmask_span);
 
                 self.suffix_polys[table_idx][suffix_idx] = Rep3DensePolynomial::new(h);
             }
@@ -666,12 +681,15 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For suffix_len == 0 (final phase), all are public constants.
     /// For suffix_len > 0, the secret operand/identity values are computed via
     /// FWHT-shifted table lookups on the future one-hot chunks.
+    #[tracing::instrument(skip_all, name = "ReadRaf::init_operand_q_polys", fields(phase))]
     fn init_operand_q_polys<N: Rep3Network>(
         &mut self,
         phase: usize,
         io_ctx: &mut IoContext<N>,
     ) -> eyre::Result<()> {
-        use crate::zkvm::instruction::suffixes::{compute_operand_q_suffix_evals, OperandQSuffixEvals};
+        use crate::zkvm::instruction::suffixes::{
+            compute_operand_q_suffix_evals, OperandQSuffixEvals,
+        };
 
         let ehat16 = self.ehat16.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -843,6 +861,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// Initialize the final log_T rounds.
+    #[tracing::instrument(skip_all, name = "ReadRaf::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_squared: F) {
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
@@ -906,6 +925,7 @@ impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
         Rep3Value::Public(self.rv_claim + self.gamma * self.raf_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "ReadRaf::prover_msg", fields(round))]
     fn compute_prover_message_share(
         &mut self,
         round: usize,
@@ -979,6 +999,7 @@ impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ReadRaf::bind", fields(round))]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = &mut self.state;
         ps.r.push(r_j);
@@ -1119,16 +1140,6 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
     fn compute_prefix_suffix_prover_message(&self, round: usize) -> [AdditiveShare<F>; 2] {
         let read_checking = self.prover_msg_read_checking(round);
         let raf = self.prover_msg_raf();
-
-        if round == 0 {
-            eprintln!(
-                "[ReadRaf worker] round=0 read_checking=[{:?}, {:?}] raf=[{:?}, {:?}]",
-                read_checking[0].into_fe(),
-                read_checking[1].into_fe(),
-                raf[0].into_fe(),
-                raf[1].into_fe(),
-            );
-        }
 
         [read_checking[0] + raf[0], read_checking[1] + raf[1]]
     }
