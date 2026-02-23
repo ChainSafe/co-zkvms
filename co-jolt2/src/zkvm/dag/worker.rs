@@ -14,13 +14,14 @@ use crate::subprotocols::sumcheck::{Rep3BatchedSumcheckWorker, Rep3SumcheckInsta
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use crate::zkvm::instruction_lookups::read_raf_checking::ReadRafCycleData;
 use crate::zkvm::instruction_lookups::Rep3LookupsDagWorker;
 use crate::zkvm::ram::Rep3RamDagWorker;
 use crate::zkvm::registers::Rep3RegistersDagWorker;
 use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
 use crate::zkvm::spartan::Rep3InnerSumcheckWorker;
-use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
+use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
@@ -79,6 +80,9 @@ impl Rep3JoltDAGWorker {
 
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
         Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
+
+        // Extract public per-cycle data for ReadRaf before the trace is cleared.
+        let read_raf_cycle_data = ReadRafCycleData::from_rep3_trace(&state.prover_state.trace);
 
         let (_hint_map, instruction_one_hot_polys) = Self::generate_and_commit_polynomials::<
             F,
@@ -148,7 +152,8 @@ impl Rep3JoltDAGWorker {
         // 4) Lookups booleanity — receive (gamma_powers, r_address)
         let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
-        let mut lookups_dag = Rep3LookupsDagWorker::new(instruction_one_hot_polys);
+        let mut lookups_dag =
+            Rep3LookupsDagWorker::<F, N>::new(instruction_one_hot_polys, read_raf_cycle_data);
         lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
         let lookups_instances = lookups_dag.stage2_instances(&mut state);
 
@@ -199,7 +204,7 @@ impl Rep3JoltDAGWorker {
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
-        // Receive stage3 init data from coordinator (two messages).
+        // Receive stage3 init data from coordinator (three messages).
         let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
             io_ctx.network().receive_request()?;
         let (registers_val_claim, lookups_gamma_vec, ram_val_final_input_claim): (F, Vec<F>, F) =
@@ -207,6 +212,8 @@ impl Rep3JoltDAGWorker {
         let lookups_gamma: [F; D] = lookups_gamma_vec
             .try_into()
             .map_err(|_| eyre::eyre!("lookups gamma vec has wrong length"))?;
+        let (read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim): (F, F, F) =
+            io_ctx.network().receive_request()?;
 
         // 1) Spartan: PCSumcheck (public) + ProductVirtualization (secret)
         let log_T = state
@@ -258,10 +265,15 @@ impl Rep3JoltDAGWorker {
         registers_dag.set_stage3_init(registers_val_claim);
         let registers_stage3 = registers_dag.stage3_instances(&mut state);
 
-        // 3) Lookups: HammingWeight (secret)
-        // The coordinator drew ReadRaf phantom gamma + HammingWeight gamma from transcript
-        // and broadcasts the resulting gamma_powers to workers.
-        lookups_dag.set_stage3_init(lookups_gamma);
+        // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
+        let read_raf_io_ctx = io_ctx.fork()?;
+        lookups_dag.set_stage3_init(
+            lookups_gamma,
+            read_raf_gamma,
+            read_raf_rv_claim,
+            read_raf_raf_claim,
+            read_raf_io_ctx,
+        );
         let lookups_stage3 = lookups_dag.stage3_instances(&mut state);
 
         // 4) RAM: ValFinal (secret)
@@ -269,7 +281,7 @@ impl Rep3JoltDAGWorker {
         let ram_stage3 = ram_dag.stage3_instances(&mut state);
 
         // Collect all instances in vanilla ordering:
-        // spartan(PC, Product) → registers(Val) → lookups(HammingWeight) → ram(ValFinal)
+        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal)
         let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = std::iter::empty()
             .chain(std::iter::once(BatchedSumcheckWorkerInstance::Public(
                 Box::new(pc_sumcheck),

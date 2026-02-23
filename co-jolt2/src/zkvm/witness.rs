@@ -416,6 +416,9 @@ where
             }
         });
 
+    // Persist lookup indices for ReadRaf suffix evaluation
+    state.prover_state.cycle_witness.lookup_indices = indices;
+
     let mut batch = Arc::try_unwrap(batch_cell)
         .ok()
         .expect("Arc should have single owner")

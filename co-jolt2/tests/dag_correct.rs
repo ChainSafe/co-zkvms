@@ -132,7 +132,7 @@ fn vanilla_up_to_stage3(
     //   1. PCSumcheck (Spartan)           — included
     //   2. ProductVirtualization (Spartan) — included
     //   3. ValEvaluation (Registers)      — included
-    //   4. ReadRafSumcheck (Lookups)      — SKIP (not ported to MPC)
+    //   4. ReadRafSumcheck (Lookups)      — included
     //   5. HammingWeightSumcheck (Lookups)— included
     //   6. ValEvaluation (RAM)            — SKIP (not ported to MPC)
     //   7. ValFinalSumcheck (RAM)         — included
@@ -147,14 +147,12 @@ fn vanilla_up_to_stage3(
     // Filter to only the instances that MPC implements:
     // spartan: both (indices 0,1)
     // registers: val evaluation (index 0)
-    // lookups: skip ReadRaf (index 0), keep HammingWeight (index 1)
+    // lookups: ReadRaf (index 0) + HammingWeight (index 1) — both ported to MPC
     // ram: skip ValEvaluation (index 0), keep ValFinal (index 1), skip HammingBooleanity (index 2)
     let mut stage3_instances: Vec<Box<dyn SumcheckInstance<F, FS>>> = Vec::new();
     stage3_instances.extend(spartan_stage3);               // PC + Product
     stage3_instances.extend(registers_stage3);             // Val
-    if lookups_stage3.len() > 1 {
-        stage3_instances.extend(lookups_stage3.into_iter().skip(1));
-    }
+    stage3_instances.extend(lookups_stage3);               // ReadRaf + HammingWeight
     if ram_stage3.len() > 1 {
         stage3_instances.extend(ram_stage3.into_iter().skip(1).take(1));
     }
@@ -482,6 +480,15 @@ fn dag_correct() {
             rep3_sc.compressed_polys.len(),
             vanilla_sc.compressed_polys.len()
         );
+
+        // Debug: show first few compressed polys from both sides
+        for idx in 0..3.min(rep3_sc.compressed_polys.len()).min(vanilla_sc.compressed_polys.len()) {
+            eprintln!(
+                "  round {idx}: rep3={:?}\n            vanilla={:?}",
+                rep3_sc.compressed_polys[idx],
+                vanilla_sc.compressed_polys[idx],
+            );
+        }
 
         let mut first_diff_idx = None;
         for (i, (a, b)) in rep3_sc

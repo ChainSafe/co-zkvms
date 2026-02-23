@@ -308,7 +308,16 @@ impl Rep3BatchedSumcheck {
             full_evals.push(batched_claim - round_evals[0]); // eval at 1
             full_evals.extend(round_evals.into_iter().skip(1));
 
-            let round_poly = UniPoly::<F>::from_evals(&full_evals);
+            let mut round_poly = UniPoly::<F>::from_evals(&full_evals);
+            // Trim trailing zero coefficients so the polynomial degree matches
+            // vanilla's per-round adaptive degree (vanilla produces variable-degree
+            // polys because each instance contributes its own degree, while MPC
+            // always pads to max_degree).
+            while round_poly.coeffs.len() > 1
+                && round_poly.coeffs.last() == Some(&F::zero())
+            {
+                round_poly.coeffs.pop();
+            }
             let compressed_poly = round_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
@@ -567,13 +576,28 @@ impl HybridBatchedSumcheck {
                 round_evals.len()
             );
 
+            if _round < 3 {
+                eprintln!(
+                    "[HybridCoord] round={_round} batched_claim={batched_claim:?} round_evals={round_evals:?}"
+                );
+            }
+
             // Convert {0,2,3,...,D} to {0,1,2,...,D}.
             let mut full_evals = Vec::with_capacity(max_degree + 1);
             full_evals.push(round_evals[0]);
             full_evals.push(batched_claim - round_evals[0]); // eval at 1
             full_evals.extend(round_evals.into_iter().skip(1));
 
-            let round_poly = UniPoly::<F>::from_evals(&full_evals);
+            let mut round_poly = UniPoly::<F>::from_evals(&full_evals);
+            // Trim trailing zero coefficients so the polynomial degree matches
+            // vanilla's per-round adaptive degree (vanilla produces variable-degree
+            // polys because each instance contributes its own degree, while MPC
+            // always pads to max_degree).
+            while round_poly.coeffs.len() > 1
+                && round_poly.coeffs.last() == Some(&F::zero())
+            {
+                round_poly.coeffs.pop();
+            }
             let compressed_poly = round_poly.compress();
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);

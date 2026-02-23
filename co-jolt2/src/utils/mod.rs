@@ -1,3 +1,4 @@
+pub mod fwht;
 pub mod future;
 pub mod future_ring;
 pub mod instruction_utils;

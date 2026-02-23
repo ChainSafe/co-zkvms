@@ -6,6 +6,7 @@ use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
 use crate::zkvm::instruction_lookups::booleanity::Rep3BooleanitySumcheck;
 use crate::zkvm::instruction_lookups::hamming_weight::Rep3HammingWeightSumcheck;
+use crate::zkvm::instruction_lookups::read_raf_checking::Rep3ReadRafSumcheck;
 use crate::zkvm::ram::output_check::{Rep3OutputSumcheck, Rep3ValFinalSumcheck};
 use crate::zkvm::ram::raf_evaluation::Rep3RafEvaluation;
 use crate::zkvm::ram::read_write_checking::Rep3RamReadWriteChecking;
@@ -110,8 +111,7 @@ impl Rep3JoltDAGCoordinator {
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
-        let stage3_instances =
-            Self::stage3_collect_instances(&mut state, network)?;
+        let stage3_instances = Self::stage3_collect_instances(&mut state, network)?;
 
         let (stage3_proof, _r_stage3) = HybridBatchedSumcheck::prove(
             &stage3_instances,
@@ -290,9 +290,39 @@ impl Rep3JoltDAGCoordinator {
         // === 2) Registers: ValEvaluation (secret) — no transcript draw ===
         let registers_val = Rep3ValEvaluation::<F>::new(state);
 
-        // === 3) Lookups: [ReadRaf phantom draw] + HammingWeight (secret) ===
-        // Draw and discard ReadRaf gamma to stay in sync with vanilla transcript.
-        let _read_raf_gamma: F = state.transcript.challenge_scalar();
+        // === 3) Lookups: ReadRaf (secret) + HammingWeight (secret) ===
+        // ReadRaf draws gamma from transcript. Must be created before HammingWeight.
+        let (_, rv_claim) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, left_operand_claim) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_operand_claim) = state.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        let log_T = state
+            .accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .len();
+        let lookup_read_raf = Rep3ReadRafSumcheck::<F>::new(
+            &mut state.transcript,
+            rv_claim,
+            left_operand_claim,
+            right_operand_claim,
+            log_T,
+        );
+        let read_raf_gamma = lookup_read_raf.gamma();
+        let read_raf_rv_claim = lookup_read_raf.rv_claim();
+        let read_raf_raf_claim = lookup_read_raf.raf_claim();
         // HammingWeight draws its own gamma from transcript.
         let lookup_hamming = Rep3HammingWeightSumcheck::<F>::new(&mut state.transcript);
         let lookups_gamma: [F; D] = lookup_hamming.gamma();
@@ -300,26 +330,25 @@ impl Rep3JoltDAGCoordinator {
         // === 4) RAM: ValFinal (secret) — no transcript draw ===
         let ram_val_final = Rep3ValFinalSumcheck::<F>::new(state);
 
-        // Broadcast stage3 init data to workers in two messages
+        // Broadcast stage3 init data to workers in three messages
         // (ark-serialize tuple impls only go up to small arities).
-        network.broadcast_request((
-            gamma_pc,
-            input_claim_pc,
-            product_input_claim,
-        ))?;
+        network.broadcast_request((gamma_pc, input_claim_pc, product_input_claim))?;
         let lookups_gamma_vec: Vec<F> = lookups_gamma.to_vec();
         network.broadcast_request((
             registers_val_claim,
             lookups_gamma_vec,
             ram_val_final_input_claim,
         ))?;
+        // ReadRaf init data: gamma, rv_claim, raf_claim
+        network.broadcast_request((read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim))?;
 
         // Collect all instances in vanilla ordering:
-        // spartan(PC, Product) → registers(Val) → lookups(HammingWeight) → ram(ValFinal)
+        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal)
         let stage3_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = vec![
             BatchedSumcheckInstance::Public(Box::new(spartan_pc)),
             BatchedSumcheckInstance::Secret(Box::new(spartan_product)),
             BatchedSumcheckInstance::Secret(Box::new(registers_val)),
+            BatchedSumcheckInstance::Secret(Box::new(lookup_read_raf)),
             BatchedSumcheckInstance::Secret(Box::new(lookup_hamming)),
             BatchedSumcheckInstance::Secret(Box::new(ram_val_final)),
         ];

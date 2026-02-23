@@ -13,6 +13,7 @@ use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use tracer::JoltDevice;
 
 // Re-export vanilla DAG types
@@ -57,6 +58,10 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     pub rd_write_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_read_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_write_value: Vec<Rep3PrimeFieldShare<F>>,
+
+    /// Full 128-bit lookup indices per cycle (ring-shared).
+    /// Persisted from witness gen for use in ReadRaf suffix evaluation.
+    pub lookup_indices: Vec<Rep3RingShare<u128>>,
 
     /// RdInc polynomial (post - pre for register writes). Stored as
     /// `Option<Rep3DensePolynomial>` so provers can `.take()` ownership.
