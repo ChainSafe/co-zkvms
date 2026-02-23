@@ -6,7 +6,7 @@ use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use crate::field::JoltField;
@@ -48,7 +48,7 @@ fn compute_ra_evals<F: JoltField>(
 // ---------------------------------------------------------------------------
 
 /// Stage3 init data for the ReadRaf + HammingWeight sumchecks.
-struct LookupStage3Init<F: JoltField, N: Rep3Network> {
+struct LookupStage3Init<F: JoltField, N: Rep3NetworkWorker> {
     /// HammingWeight gamma powers (drawn from transcript by coordinator).
     hamming_gamma: [F; D],
     /// ReadRaf gamma (drawn from transcript by coordinator).
@@ -57,11 +57,11 @@ struct LookupStage3Init<F: JoltField, N: Rep3Network> {
     rv_claim: F,
     /// raf_claim = left_operand_claim + read_raf_gamma * right_operand_claim.
     raf_claim: F,
-    /// Forked IoContext for ReadRaf's MPC phase-transition multiplications.
-    io_ctx: IoContext<N>,
+    /// IoContextPool for ReadRaf's MPC parallel phase-transition multiplications.
+    io_ctx: IoContextPool<N>,
 }
 
-pub struct Rep3LookupsDagWorker<F: JoltField, N: Rep3Network> {
+pub struct Rep3LookupsDagWorker<F: JoltField, N: Rep3NetworkWorker> {
     stage2: Option<([F; D], Vec<F::Challenge>)>,
     stage3: Option<LookupStage3Init<F, N>>,
     /// Shared G arrays computed in stage2, consumed in stage3.
@@ -74,7 +74,7 @@ pub struct Rep3LookupsDagWorker<F: JoltField, N: Rep3Network> {
     cycle_data: Option<ReadRafCycleData>,
 }
 
-impl<F: JoltField, N: Rep3Network> Rep3LookupsDagWorker<F, N> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3LookupsDagWorker<F, N> {
     pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D], cycle_data: ReadRafCycleData) -> Self {
         Self {
             stage2: None,
@@ -97,7 +97,7 @@ impl<F: JoltField, N: Rep3Network> Rep3LookupsDagWorker<F, N> {
         read_raf_gamma: F,
         rv_claim: F,
         raf_claim: F,
-        io_ctx: IoContext<N>,
+        io_ctx: IoContextPool<N>,
     ) {
         self.stage3 = Some(LookupStage3Init {
             hamming_gamma,
@@ -109,7 +109,7 @@ impl<F: JoltField, N: Rep3Network> Rep3LookupsDagWorker<F, N> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3Network + 'static>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     SumcheckStagesWorker<F, PCS> for Rep3LookupsDagWorker<F, N>
 {
     fn stage2_instances(

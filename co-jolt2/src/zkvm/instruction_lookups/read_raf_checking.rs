@@ -2,7 +2,7 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::utils::fwht::{fwht_rep3_in_place, shift_eq_table_with_mask};
+use crate::utils::fwht::{fwht_additive_in_place, fwht_rep3_in_place, shift_eq_table_with_mask};
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::instruction::Rep3Cycle;
@@ -18,7 +18,6 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::expanding_table::ExpandingTable;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
-use jolt_core::utils::thread::unsafe_allocate_zero_vec;
 use jolt_core::zkvm::instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker};
 use jolt_core::zkvm::instruction_lookups::{D, LOG_M};
 use jolt_core::zkvm::lookup_table::prefixes::{PrefixCheckpoint, PrefixEval, Prefixes};
@@ -26,12 +25,81 @@ use jolt_core::zkvm::lookup_table::suffixes::{SuffixEval, Suffixes};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
-use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
+
+// ---------------------------------------------------------------------------
+// Additive dense polynomial — lightweight wrapper for suffix/Q polys
+// ---------------------------------------------------------------------------
+
+/// A dense multilinear polynomial stored as additive shares.
+///
+/// Used for suffix polys and operand Q polys where all downstream operations
+/// are linear (bind with public challenge, read coefficients, scalar mult).
+/// This avoids the `mul_vec` reshare cost — the FWHT pointwise product
+/// `Rep3 * Rep3 → Additive` is computed locally with zero communication.
+#[derive(Clone)]
+struct AdditiveDensePoly<F: JoltField> {
+    coeffs: Vec<AdditiveShare<F>>,
+    /// After first bind, subsequent binds work on bound_coeffs.
+    bound: Vec<AdditiveShare<F>>,
+    /// Current logical length (halves on each bind).
+    current_len: usize,
+    is_bound: bool,
+}
+
+impl<F: JoltField> AdditiveDensePoly<F> {
+    fn new(coeffs: Vec<AdditiveShare<F>>) -> Self {
+        let len = coeffs.len();
+        let n = len / 2;
+        Self {
+            coeffs,
+            bound: vec![AdditiveShare::zero(); n],
+            current_len: len,
+            is_bound: false,
+        }
+    }
+
+    fn zeros(len: usize) -> Self {
+        Self::new(vec![AdditiveShare::zero(); len])
+    }
+
+    fn len(&self) -> usize {
+        self.current_len
+    }
+
+    fn get_coeff(&self, index: usize) -> AdditiveShare<F> {
+        if self.is_bound {
+            self.bound[index]
+        } else {
+            self.coeffs[index]
+        }
+    }
+
+    /// Bind the high variable with a public challenge (HighToLow order).
+    /// Halves the polynomial: new[i] = left[i] + r * (right[i] - left[i]).
+    fn bind(&mut self, r: F) {
+        let n = self.current_len / 2;
+        if self.is_bound {
+            for i in 0..n {
+                let left = self.bound[i];
+                let right = self.bound[i + n];
+                self.bound[i] = left + (right - left) * r;
+            }
+        } else {
+            for i in 0..n {
+                let left = self.coeffs[i];
+                let right = self.coeffs[i + n];
+                self.bound[i] = left + (right - left) * r;
+            }
+            self.is_bound = true;
+        }
+        self.current_len = n;
+    }
+}
 
 const LOG_K: usize = XLEN * 2; // 128
 
@@ -68,15 +136,15 @@ impl ReadRafCycleData {
 ///
 /// The vanilla `combine(prefixes, suffixes) -> F` is linear in suffixes.
 /// We extract per-suffix weights by probing with unit vectors, then apply
-/// those weights (public F) to the shared suffix values.
+/// those weights (public F) to the additive suffix shares.
 fn combine_shared<F: JoltField>(
     table: &LookupTables<XLEN>,
     prefixes: &[PrefixEval<F>],
-    shared_suffixes: &[Rep3PrimeFieldShare<F>],
-) -> Rep3PrimeFieldShare<F> {
+    shared_suffixes: &[AdditiveShare<F>],
+) -> AdditiveShare<F> {
     let n = shared_suffixes.len();
     // Extract weight for each suffix by evaluating combine with unit vector e_i
-    let mut result = Rep3PrimeFieldShare::<F>::zero_share();
+    let mut result = AdditiveShare::<F>::zero();
     for i in 0..n {
         let mut unit: Vec<SuffixEval<F>> = vec![F::zero(); n];
         unit[i] = F::one();
@@ -92,8 +160,7 @@ const DEGREE: usize = 3;
 /// MPC version of `PrefixSuffixDecomposition::sumcheck_evals`.
 ///
 /// Given public P polynomial (from PrefixRegistry, ORDER=2: P[0] = Some(poly), P[1] = None)
-/// and shared Q arrays (our `Rep3DensePolynomial`), compute (eval_0, eval_2) at the
-/// given sumcheck index.
+/// and additive Q arrays, compute (eval_0, eval_2) at the given sumcheck index.
 ///
 /// For P[i] = Some(prefix_poly): p_evals = (p[index], 2*p[index+len/2] - p[index])
 /// For P[i] = None:              p_evals = (1, 1)
@@ -101,13 +168,13 @@ fn psd_sumcheck_evals_shared<F: JoltField>(
     p_poly: Option<
         &std::sync::Arc<std::sync::RwLock<jolt_core::poly::prefix_suffix::CachedPolynomial<F>>>,
     >,
-    q: &[Rep3DensePolynomial<F>; 2],
+    q: &[AdditiveDensePoly<F>; 2],
     index: usize,
     len: usize,
-) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
-    let mut eval_0 = Rep3PrimeFieldShare::<F>::zero_share();
-    let mut eval_2_left = Rep3PrimeFieldShare::<F>::zero_share();
-    let mut eval_2_right = Rep3PrimeFieldShare::<F>::zero_share();
+) -> (AdditiveShare<F>, AdditiveShare<F>) {
+    let mut eval_0 = AdditiveShare::<F>::zero();
+    let mut eval_2_left = AdditiveShare::<F>::zero();
+    let mut eval_2_right = AdditiveShare::<F>::zero();
 
     // P[0] = p_poly (may be Some), P[1] = None (constant 1)
     let p_polys: [Option<
@@ -124,8 +191,8 @@ fn psd_sumcheck_evals_shared<F: JoltField>(
             (F::one(), F::one())
         };
 
-        let q_left = q[i].get_bound_coeff(index);
-        let q_right = q[i].get_bound_coeff(index + len / 2);
+        let q_left = q[i].get_coeff(index);
+        let q_right = q[i].get_coeff(index + len / 2);
 
         eval_0 = eval_0 + q_left * p_0;
         eval_2_left = eval_2_left + q_left * p_2;
@@ -168,13 +235,13 @@ struct ReadRafProverState<F: JoltField> {
     ra: Option<Rep3DensePolynomial<F>>,
 
     // -- Phase polynomials (length M = 65536) --
-    /// Per-table suffix polynomials: suffix_polys[table][suffix_idx] has length M (shared).
-    suffix_polys: Vec<Vec<Rep3DensePolynomial<F>>>,
-    /// Shared Q arrays for operand prefix-suffix decompositions.
-    /// Built via FWHT unmasking in init_operand_q_polys.
-    left_operand_q: [Rep3DensePolynomial<F>; 2],
-    right_operand_q: [Rep3DensePolynomial<F>; 2],
-    identity_q: [Rep3DensePolynomial<F>; 2],
+    /// Per-table suffix polynomials stored as additive shares (no reshare needed).
+    /// Built via local `Rep3 * Rep3 → Additive` in FWHT unmasking.
+    suffix_polys: Vec<Vec<AdditiveDensePoly<F>>>,
+    /// Additive Q arrays for operand prefix-suffix decompositions.
+    left_operand_q: [AdditiveDensePoly<F>; 2],
+    right_operand_q: [AdditiveDensePoly<F>; 2],
+    identity_q: [AdditiveDensePoly<F>; 2],
     /// Public prefix-suffix decompositions — used only for P polynomial management.
     /// Their internal Q arrays are unused (we use our shared Q arrays above).
     right_operand_ps: PrefixSuffixDecomposition<F, 2>,
@@ -208,17 +275,17 @@ struct ReadRafProverState<F: JoltField> {
     party_id: PartyID,
 }
 
-pub struct Rep3ReadRafSumcheckWorker<F: JoltField, N: Rep3Network> {
+pub struct Rep3ReadRafSumcheckWorker<F: JoltField, N: Rep3NetworkWorker> {
     gamma: F,
     gamma_squared: F,
     rv_claim: F,
     raf_claim: F,
     log_T: usize,
     state: ReadRafProverState<F>,
-    io_ctx: IoContext<N>,
+    io_ctx: IoContextPool<N>,
 }
 
-impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// Construct the ReadRaf worker.
     ///
     /// # Arguments
@@ -239,7 +306,7 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
         eq_r_cycle_public: &[F],
         cycle_data: ReadRafCycleData,
         lookup_indices: Vec<Rep3RingShare<u128>>,
-        mut io_ctx: IoContext<N>,
+        mut io_ctx: IoContextPool<N>,
         party_id: PartyID,
     ) -> eyre::Result<Self> {
         let num_cycles = cycle_data.lookup_tables.len();
@@ -305,12 +372,12 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
             vec![promote_to_trivial_share(F::one(), party_id); num_cycles];
 
         // -- Initialize suffix polynomials (empty, filled in init_phase) --
-        let suffix_polys: Vec<Vec<Rep3DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
+        let suffix_polys: Vec<Vec<AdditiveDensePoly<F>>> = LookupTables::<XLEN>::iter()
             .map(|table| {
                 table
                     .suffixes()
                     .iter()
-                    .map(|_| Rep3DensePolynomial::new(vec![Rep3PrimeFieldShare::zero_share(); M]))
+                    .map(|_| AdditiveDensePoly::zeros(M))
                     .collect()
             })
             .collect();
@@ -329,7 +396,7 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
         let identity_ps =
             PrefixSuffixDecomposition::new(Box::new(IdentityPolynomial::new(LOG_K)), LOG_M, LOG_K);
 
-        let empty_q = || Rep3DensePolynomial::new(vec![Rep3PrimeFieldShare::zero_share(); M]);
+        let empty_q = || AdditiveDensePoly::zeros(M);
         let mut state = ReadRafProverState {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
@@ -384,10 +451,10 @@ impl<F: JoltField> ReadRafProverState<F> {
     ///
     /// For phase > 0, also does the condensation update on u_evals.
     #[tracing::instrument(skip_all, name = "ReadRaf::init_phase", fields(phase))]
-    fn init_phase<N: Rep3Network>(
+    fn init_phase<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         eyre::ensure!(phase < PHASES, "phase out of range: {phase}");
         let hi = 2 * phase;
@@ -444,7 +511,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             }
         }
 
-        let ehat16 = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx)?;
+        let ehat16 = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx.main())?;
         self.ehat16 = Some(ehat16);
         drop(_ehat_span);
 
@@ -484,7 +551,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     b_exp.push(ehat8_prev_lo[b_idx]);
                 }
             }
-            let ehat16_prev = rep3_arith::mul_vec(&a_exp, &b_exp, io_ctx)?;
+            let ehat16_prev = rep3_arith::mul_vec(&a_exp, &b_exp, io_ctx.main())?;
 
             // Build public EQ table from the 16 challenges of the previous phase
             let prev_start = (phase - 1) * LOG_M;
@@ -519,8 +586,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                 })
                 .collect();
 
-            let u_products = rep3_arith::mul_vec(&self.u_evals, &vals_to_mul, io_ctx)?;
-            let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx)?;
+            let u_products = rep3_arith::mul_vec(&self.u_evals, &vals_to_mul, io_ctx.main())?;
+            let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx.main())?;
 
             // For inactive cycles (None), u_evals stays zero (mul by zero share).
             // For active cycles, update in place.
@@ -560,18 +627,17 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For each table and each suffix, computes:
     ///   S[bucket] = Σ_{j ∈ table_cycles} u_evals[j] * suffix_mle(suffix_bits_j) * δ(prefix(k_j), bucket)
     ///
-    /// In MPC, the suffix evaluation `suffix_mle(suffix_bits_j)` is a shared value
-    /// computed from the one-hot polynomials of future chunks (via `compute_suffix_evals`).
-    /// The histogram is built in masked domain and unmasked via FWHT with Ehat16.
+    /// The (table, suffix) pairs are processed in parallel via `io_ctx.par_chunks`,
+    /// with each chunk getting its own forked IoContext for MPC communication.
+    /// The FWHT unmask is fully local (Rep3 × Rep3 → Additive, no communication).
     #[tracing::instrument(skip_all, name = "ReadRaf::init_suffix_polys", fields(phase))]
-    fn init_suffix_polys<N: Rep3Network>(
+    fn init_suffix_polys<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         use crate::zkvm::instruction::suffixes::evaluate_suffix_mle_batched;
 
-        let suffix_len = (PHASES - 1 - phase) * LOG_M;
         let ehat16 = self
             .ehat16
             .as_ref()
@@ -580,6 +646,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         // Pre-extract suffix bits for all cycles (shared, arithmetic domain).
         // suffix_bits[j] = lookup_indices[j] & ((1 << suffix_len) - 1)
+        let suffix_len = (PHASES - 1 - phase) * LOG_M;
         let all_suffix_bits: Option<Vec<Rep3RingShare<u128>>> = if suffix_len > 0 {
             let mask = RingElement((1u128 << suffix_len) - 1);
             Some(self.lookup_indices.iter().map(|idx| *idx & mask).collect())
@@ -624,7 +691,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                         suffix,
                         &table_suffix_bits,
                         suffix_len,
-                        io_ctx,
+                        io_ctx.main(),
                         self.party_id,
                     )?;
                     drop(_eval_span);
@@ -633,7 +700,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let _mul_span = tracing::trace_span!("u_times_suffix").entered();
                     let u_for_table: Vec<Rep3PrimeFieldShare<F>> =
                         table_cycles.iter().map(|&j| self.u_evals[j]).collect();
-                    let weighted = rep3_arith::mul_vec(&u_for_table, &suffix_evals, io_ctx)?;
+                    let weighted = rep3_arith::mul_vec(&u_for_table, &suffix_evals, io_ctx.main())?;
                     drop(_mul_span);
 
                     // Scatter into masked histogram
@@ -645,17 +712,21 @@ impl<F: JoltField> ReadRafProverState<F> {
                 }
 
                 // Unmask: H = FWHT^{-1}( FWHT(H_c) ⊙ Ehat16 ) / M
-                let _unmask_span = tracing::info_span!("fwht_unmask").entered();
-                tracing::info!("h_c {} ehat16 {}", h_c.len(), ehat16.len());
+                // Pointwise product is local: Rep3 * Rep3 → Additive (no communication).
+                let _unmask_span = tracing::trace_span!("fwht_unmask").entered();
                 fwht_rep3_in_place(&mut h_c);
-                let mut h = rep3_arith::mul_vec(&h_c, ehat16, io_ctx)?;
-                fwht_rep3_in_place(&mut h);
+                let mut h: Vec<AdditiveShare<F>> = h_c
+                    .iter()
+                    .zip(ehat16.iter())
+                    .map(|(&a, &b)| a * b)
+                    .collect();
+                fwht_additive_in_place(&mut h);
                 for v in h.iter_mut() {
                     *v = *v * inv_m;
                 }
                 drop(_unmask_span);
 
-                self.suffix_polys[table_idx][suffix_idx] = Rep3DensePolynomial::new(h);
+                self.suffix_polys[table_idx][suffix_idx] = AdditiveDensePoly::new(h);
             }
         }
 
@@ -682,10 +753,10 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For suffix_len > 0, the secret operand/identity values are computed via
     /// FWHT-shifted table lookups on the future one-hot chunks.
     #[tracing::instrument(skip_all, name = "ReadRaf::init_operand_q_polys", fields(phase))]
-    fn init_operand_q_polys<N: Rep3Network>(
+    fn init_operand_q_polys<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         use crate::zkvm::instruction::suffixes::{
             compute_operand_q_suffix_evals, OperandQSuffixEvals,
@@ -705,7 +776,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             phase,
             &self.lookup_indices,
             num_cycles,
-            io_ctx,
+            io_ctx.main(),
             self.party_id,
         )?;
 
@@ -769,9 +840,9 @@ impl<F: JoltField> ReadRafProverState<F> {
             // For the secret suffixes (order 1), we need mul_vec.
 
             // Batch: compute u_evals * left_operand, u_evals * right_operand, u_evals * identity
-            let weighted_left = rep3_arith::mul_vec(&self.u_evals, &left_operand, io_ctx)?;
-            let weighted_right = rep3_arith::mul_vec(&self.u_evals, &right_operand, io_ctx)?;
-            let weighted_identity = rep3_arith::mul_vec(&self.u_evals, &identity, io_ctx)?;
+            let weighted_left = rep3_arith::mul_vec(&self.u_evals, &left_operand, io_ctx.main())?;
+            let weighted_right = rep3_arith::mul_vec(&self.u_evals, &right_operand, io_ctx.main())?;
+            let weighted_identity = rep3_arith::mul_vec(&self.u_evals, &identity, io_ctx.main())?;
 
             for &j in &self.interleaved_cycles {
                 if let Some(c) = self.c16[j] {
@@ -792,48 +863,39 @@ impl<F: JoltField> ReadRafProverState<F> {
             }
         }
 
-        // FWHT + batch pointwise multiply with Ehat16 + inverse FWHT
-        for h in histograms.iter_mut() {
-            fwht_rep3_in_place(h);
-        }
-
-        let total_len = 6 * M;
-        let mut flat_h: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(total_len);
-        let mut flat_e: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(total_len);
-        for h in &histograms {
-            flat_h.extend_from_slice(h);
-            flat_e.extend_from_slice(ehat16);
-        }
-
-        let flat_products = rep3_arith::mul_vec(&flat_h, &flat_e, io_ctx)?;
-
+        // FWHT + local pointwise multiply with Ehat16 + inverse FWHT
+        // Rep3 * Rep3 → Additive (no communication)
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
-        for (i, chunk) in flat_products.chunks(M).enumerate() {
-            let mut h_k = chunk.to_vec();
-            fwht_rep3_in_place(&mut h_k);
-            for v in h_k.iter_mut() {
-                *v = *v * inv_m;
-            }
-            let poly = Rep3DensePolynomial::new(h_k);
-            match i {
-                0 => self.left_operand_q[0] = poly,
-                1 => self.left_operand_q[1] = poly,
-                2 => self.right_operand_q[0] = poly,
-                3 => self.right_operand_q[1] = poly,
-                4 => self.identity_q[0] = poly,
-                5 => self.identity_q[1] = poly,
-                _ => unreachable!(),
-            }
-        }
+        let q_polys: Vec<AdditiveDensePoly<F>> = histograms
+            .iter_mut()
+            .map(|h| {
+                fwht_rep3_in_place(h);
+                let mut h_k: Vec<AdditiveShare<F>> =
+                    h.iter().zip(ehat16.iter()).map(|(&a, &b)| a * b).collect();
+                fwht_additive_in_place(&mut h_k);
+                for v in h_k.iter_mut() {
+                    *v = *v * inv_m;
+                }
+                AdditiveDensePoly::new(h_k)
+            })
+            .collect();
+
+        let mut q_iter = q_polys.into_iter();
+        self.left_operand_q[0] = q_iter.next().unwrap();
+        self.left_operand_q[1] = q_iter.next().unwrap();
+        self.right_operand_q[0] = q_iter.next().unwrap();
+        self.right_operand_q[1] = q_iter.next().unwrap();
+        self.identity_q[0] = q_iter.next().unwrap();
+        self.identity_q[1] = q_iter.next().unwrap();
 
         Ok(())
     }
 
     /// Cache the phase after all LOG_M rounds are bound: update ra_acc.
-    fn cache_phase<N: Rep3Network>(
+    fn cache_phase<N: Rep3NetworkWorker>(
         &mut self,
         _phase: usize,
-        io_ctx: &mut IoContext<N>,
+        io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
         // ra_acc[j] *= v[bucket] where bucket = prefix(k_j) % M for the current phase.
         // In masked domain: bucket = (c16[j] ^ r16) % M = c16[j] ^ r16 (since M = 2^16).
@@ -853,7 +915,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             })
             .collect();
 
-        let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx)?;
+        let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx.main())?;
         self.ra_acc = ra_products;
 
         self.prefix_registry.update_checkpoints();
@@ -910,7 +972,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F>
     for Rep3ReadRafSumcheckWorker<F, N>
 {
     fn degree(&self) -> usize {
@@ -925,7 +987,6 @@ impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
         Rep3Value::Public(self.rv_claim + self.gamma * self.raf_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "ReadRaf::prover_msg", fields(round))]
     fn compute_prover_message_share(
         &mut self,
         round: usize,
@@ -999,32 +1060,31 @@ impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
         }
     }
 
-    #[tracing::instrument(skip_all, name = "ReadRaf::bind", fields(round))]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = &mut self.state;
         ps.r.push(r_j);
 
         if round < LOG_K {
-            // Bind suffix polynomials
+            // Bind suffix polynomials (additive)
+            let r: F = r_j.into();
             for polys in ps.suffix_polys.iter_mut() {
                 for poly in polys.iter_mut() {
-                    poly.bind(r_j.into(), BindingOrder::HighToLow);
+                    poly.bind(r);
                 }
             }
 
-            // Bind prefix-suffix decompositions (public P via PSD, shared Q arrays)
+            // Bind prefix-suffix decompositions (public P via PSD, additive Q arrays)
             ps.identity_ps.bind(r_j);
             ps.right_operand_ps.bind(r_j);
             ps.left_operand_ps.bind(r_j);
-            let r: F = r_j.into();
             for q in ps.left_operand_q.iter_mut() {
-                q.bind(r, BindingOrder::HighToLow);
+                q.bind(r);
             }
             for q in ps.right_operand_q.iter_mut() {
-                q.bind(r, BindingOrder::HighToLow);
+                q.bind(r);
             }
             for q in ps.identity_q.iter_mut() {
-                q.bind(r, BindingOrder::HighToLow);
+                q.bind(r);
             }
             ps.v.update(r_j);
 
@@ -1135,11 +1195,18 @@ impl<F: JoltField, N: Rep3Network + 'static> Rep3SumcheckInstanceWorker<F>
     }
 }
 
-impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// Compute the prefix-suffix prover message for address rounds.
     fn compute_prefix_suffix_prover_message(&self, round: usize) -> [AdditiveShare<F>; 2] {
         let read_checking = self.prover_msg_read_checking(round);
         let raf = self.prover_msg_raf();
+
+        if round == 0 {
+            eprintln!(
+                "[MPC party={:?}] round 0: read_checking=({:?},{:?}) raf=({:?},{:?})",
+                self.state.party_id, read_checking[0], read_checking[1], raf[0], raf[1]
+            );
+        }
 
         [read_checking[0] + raf[0], read_checking[1] + raf[1]]
     }
@@ -1188,23 +1255,21 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
                 .collect();
 
             for (table, suffixes) in lookup_tables.iter().zip(ps.suffix_polys.iter()) {
-                // suffix_left[s] = suffix_polys[table][s][b] (shared)
-                // suffix_right[s] = suffix_polys[table][s][b + len/2] (shared)
-                let suffixes_left: Vec<Rep3PrimeFieldShare<F>> =
-                    suffixes.iter().map(|s| s.get_bound_coeff(b)).collect();
-                let suffixes_right: Vec<Rep3PrimeFieldShare<F>> = suffixes
-                    .iter()
-                    .map(|s| s.get_bound_coeff(b + len / 2))
-                    .collect();
+                // suffix_left[s] = suffix_polys[table][s][b] (additive)
+                // suffix_right[s] = suffix_polys[table][s][b + len/2] (additive)
+                let suffixes_left: Vec<AdditiveShare<F>> =
+                    suffixes.iter().map(|s| s.get_coeff(b)).collect();
+                let suffixes_right: Vec<AdditiveShare<F>> =
+                    suffixes.iter().map(|s| s.get_coeff(b + len / 2)).collect();
 
-                // combine: public prefixes × shared suffixes → shared
+                // combine: public prefixes × additive suffixes → additive
                 let combined_c0 = combine_shared(table, &prefixes_c0, &suffixes_left);
                 let combined_c2_left = combine_shared(table, &prefixes_c2, &suffixes_left);
                 let combined_c2_right = combine_shared(table, &prefixes_c2, &suffixes_right);
 
-                eval_0 += combined_c0.into_additive();
-                eval_2_left += combined_c2_left.into_additive();
-                eval_2_right += combined_c2_right.into_additive();
+                eval_0 += combined_c0;
+                eval_2_left += combined_c2_left;
+                eval_2_right += combined_c2_right;
             }
         }
 
@@ -1257,10 +1322,10 @@ impl<F: JoltField, N: Rep3Network> Rep3ReadRafSumcheckWorker<F, N> {
                 len,
             );
 
-            left_0 += l0.into_additive();
-            left_2 += l2.into_additive();
-            right_0 += (i0 + r0).into_additive();
-            right_2 += (i2 + r2).into_additive();
+            left_0 += l0;
+            left_2 += l2;
+            right_0 += i0 + r0;
+            right_2 += i2 + r2;
         }
 
         [

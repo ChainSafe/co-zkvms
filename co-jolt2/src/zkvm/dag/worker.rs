@@ -266,7 +266,7 @@ impl Rep3JoltDAGWorker {
         let registers_stage3 = registers_dag.stage3_instances(&mut state);
 
         // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
-        let read_raf_io_ctx = io_ctx.fork()?;
+        let read_raf_io_ctx = io_ctx.fork_pool(io_ctx.num_workers())?;
         lookups_dag.set_stage3_init(
             lookups_gamma,
             read_raf_gamma,

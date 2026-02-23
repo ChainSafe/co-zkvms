@@ -1,3 +1,4 @@
+use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use crate::field::JoltField;
@@ -10,6 +11,32 @@ use crate::field::JoltField;
 /// Precondition: `a.len()` must be a power of two.
 #[inline]
 pub fn fwht_rep3_in_place<F: JoltField>(a: &mut [Rep3PrimeFieldShare<F>]) {
+    debug_assert!(
+        a.len().is_power_of_two(),
+        "FWHT input length must be power-of-two, got {}",
+        a.len()
+    );
+    let n = a.len();
+    let mut len = 1usize;
+    while len < n {
+        let step = len * 2;
+        for i in (0..n).step_by(step) {
+            for j in 0..len {
+                let u = a[i + j];
+                let v = a[i + j + len];
+                a[i + j] = u + v;
+                a[i + j + len] = u - v;
+            }
+        }
+        len = step;
+    }
+}
+
+/// Fast Walsh-Hadamard Transform in-place on additive shares.
+///
+/// Purely local — only additions and subtractions.
+#[inline]
+pub fn fwht_additive_in_place<F: JoltField>(a: &mut [AdditiveShare<F>]) {
     debug_assert!(
         a.len().is_power_of_two(),
         "FWHT input length must be power-of-two, got {}",

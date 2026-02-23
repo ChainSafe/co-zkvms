@@ -511,6 +511,21 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         self.main.fork().context("while forking io context")
     }
 
+    /// Create a sub-pool by forking a new main context and `num_forks` children.
+    pub fn fork_pool(&mut self, num_forks: usize) -> eyre::Result<Self> {
+        let main = self.main.fork().context("while forking pool main")?;
+        let forks = iter::repeat_with(|| main.fork())
+            .take(num_forks)
+            .collect::<Result<Vec<_>, _>>()
+            .context("while forking pool children")?;
+        Ok(Self {
+            worker_id: self.worker_id,
+            main,
+            forks,
+            num_workers: self.num_workers,
+        })
+    }
+
     pub fn log_num_workers(&self) -> usize {
         self.main.network.log_num_workers()
     }
