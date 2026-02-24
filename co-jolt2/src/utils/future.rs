@@ -1,9 +1,12 @@
 use crate::field::JoltField;
 use itertools::Itertools;
-use mpc_core::protocols::rep3::{
-    self,
-    network::{IoContext, Rep3Network},
-    Rep3BigUintShare, Rep3PrimeFieldShare,
+use mpc_core::protocols::{
+    additive::AdditiveShare,
+    rep3::{
+        self,
+        network::{IoContext, Rep3Network},
+        Rep3BigUintShare, Rep3PrimeFieldShare,
+    },
 };
 
 use rayon::prelude::*;
@@ -16,6 +19,7 @@ pub enum FutureRep3<F: JoltField, T, Args = ()> {
 
 #[derive(Debug, Clone)]
 pub enum FutureOp<F: JoltField> {
+    Reshare(AdditiveShare<F>),
     // Out: Rep3PrimeFieldShare<F>
     Mul(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>),
     Cmux(
@@ -94,6 +98,7 @@ where
         MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
     {
         let mut fufilled = vec![T::default(); self.len()];
+        let (mut reshare, mut fut_reshare, mut args_reshare) = (Vec::new(), Vec::new(), Vec::new());
         let (mut mul_x, mut mul_y, mut fut_muls, mut args_mul) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut b2a_x, mut fut_b2a, mut b2a_args) = (Vec::new(), Vec::new(), Vec::new());
@@ -103,6 +108,17 @@ where
         self.into_iter()
             .zip_eq(fufilled.iter_mut())
             .for_each(|(f, fufilled)| match f {
+                FutureRep3::Pending(FutureOp::Reshare(x), args) => {
+                    reshare.push(x);
+                    fut_reshare.push(fufilled);
+                    args_reshare.push(args);
+                }
+                FutureRep3::Pending(FutureOp::Mul(a, b), args) => {
+                    mul_x.push(a);
+                    mul_y.push(b);
+                    fut_muls.push(fufilled);
+                    args_mul.push(args);
+                }
                 FutureRep3::Pending(FutureOp::Mul(a, b), args) => {
                     mul_x.push(a);
                     mul_y.push(b);
@@ -126,6 +142,22 @@ where
                 }
                 _ => unimplemented!(),
             });
+        // Multiply
+        {
+            let c = if !reshare.is_empty() {
+                rep3::arithmetic::reshare_vec(AdditiveShare::into_fe_vec(reshare), io_ctx)?
+            } else {
+                vec![]
+            };
+
+            fut_reshare
+                .into_par_iter()
+                .zip_eq(c.into_par_iter())
+                .zip_eq(args_reshare)
+                .for_each(|((f, c), args)| {
+                    *f = map(c, args);
+                });
+        }
         // Multiply
         {
             let c = if !mul_x.is_empty() && !mul_y.is_empty() {

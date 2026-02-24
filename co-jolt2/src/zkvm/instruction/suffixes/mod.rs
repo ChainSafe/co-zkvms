@@ -3,75 +3,82 @@
 //! Each vanilla `Suffixes` variant evaluates `suffix_mle(LookupBits) -> u64`.
 //! This module provides the MPC equivalent: given a batch of secret
 //! `Rep3RingShare<u128>` suffix bits (one per cycle), produce a batch of
-//! `Rep3PrimeFieldShare<F>` suffix values.
+//! `FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>` suffix futures.
 //!
-//! Suffix bits are extracted from the full 128-bit lookup index per phase:
-//!   `suffix_bits = lookup_index & ((1 << suffix_len) - 1)`
-//! This is a local operation (public AND on arithmetic shares).
+//! Lookup indices from witness gen are already in the **binary (XOR) domain**
+//! (fulfilled via `RingA2B`). All local operations (mask, shift, XOR, uninterleave)
+//! preserve the binary domain. Interactive operations (AND, OR, is_zero, ge)
+//! also operate in binary domain. Field conversion is deferred via `FutureRep3Ring`
+//! and batched by the caller using `fulfill_batched`.
 
 use crate::field::JoltField;
+use crate::utils::future_ring::{FutureOp, FutureRep3Ring};
 use jolt2_common::constants::XLEN;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::casts::downcast;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::{self as rep3_ring, Rep3RingShare};
-use mpc_core::protocols::rep3_ring::casts::downcast;
+
+/// Suffix evaluation future: deferred ring→field conversion.
+pub type SuffixFuture<F> = FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>;
 
 // ---------------------------------------------------------------------------
-// uninterleave on binary Rep3RingShare<u128>
+// Helpers
 // ---------------------------------------------------------------------------
+
+/// Zero-extend a binary `Rep3RingShare<u32>` to `Rep3RingShare<u64>`.
+/// Local operation (no communication).
+fn zext32(s: Rep3RingShare<u32>) -> Rep3RingShare<u64> {
+    Rep3RingShare {
+        a: RingElement(s.a.0 as u64),
+        b: RingElement(s.b.0 as u64),
+    }
+}
 
 /// MPC version of `uninterleave_bits(val: u128) -> (u64, u64)`.
 ///
 /// Input must be in **binary** (XOR) domain.
-/// Uses `&` (AND with public mask), `>>` (right shift by constant), and `^` (XOR)
-/// which are all local on binary rep3 shares. The `|` from vanilla is replaced
-/// with `^` since bit positions are non-overlapping at each compaction step.
+///
+/// Extracts bits one-by-one: x[i] = bit at position (2i+1), y[i] = bit at position (2i).
+/// Each extraction uses `>> constant` then `& 1` (both local on binary shares),
+/// then `<< i` to place the bit at the correct output position. Since different `i`
+/// target different bit positions, the XOR-sum (`^`) to combine them is correct
+/// even on share components.
 ///
 /// Zero MPC communication.
 fn uninterleave_bin(s: Rep3RingShare<u128>) -> (Rep3RingShare<u64>, Rep3RingShare<u64>) {
-    let mask_1 = RingElement(0x5555_5555_5555_5555_5555_5555_5555_5555u128);
-    let mask_2 = RingElement(0x3333_3333_3333_3333_3333_3333_3333_3333u128);
-    let mask_4 = RingElement(0x0F0F_0F0F_0F0F_0F0F_0F0F_0F0F_0F0Fu128);
-    let mask_8 = RingElement(0x00FF_00FF_00FF_00FF_00FF_00FF_00FF_00FFu128);
-    let mask_16 = RingElement(0x0000_FFFF_0000_FFFF_0000_FFFF_0000_FFFFu128);
-    let mask_32 = RingElement(0x0000_0000_FFFF_FFFF_0000_0000_FFFF_FFFFu128);
-    let mask_64 = RingElement(0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFFu128);
+    let one = RingElement(1u128);
+    let mut x = Rep3RingShare {
+        a: RingElement(0u64),
+        b: RingElement(0u64),
+    };
+    let mut y = Rep3RingShare {
+        a: RingElement(0u64),
+        b: RingElement(0u64),
+    };
+    for i in 0..64 {
+        // x[i] = (s >> (2*i + 1)) & 1, placed at bit position i
+        let x_bit = (s >> (2 * i + 1)) & one; // u128 share with only bit 0
+        x.a.0 |= (x_bit.a.0 as u64) << i;
+        x.b.0 |= (x_bit.b.0 as u64) << i;
 
-    // Extract odd bits (x) and even bits (y)
-    let mut x_bits = (s >> 1) & mask_1;
-    let mut y_bits = s & mask_1;
-
-    // Compact using XOR instead of OR (bits are non-overlapping)
-    x_bits = (x_bits ^ (x_bits >> 1)) & mask_2;
-    x_bits = (x_bits ^ (x_bits >> 2)) & mask_4;
-    x_bits = (x_bits ^ (x_bits >> 4)) & mask_8;
-    x_bits = (x_bits ^ (x_bits >> 8)) & mask_16;
-    x_bits = (x_bits ^ (x_bits >> 16)) & mask_32;
-    x_bits = (x_bits ^ (x_bits >> 32)) & mask_64;
-
-    y_bits = (y_bits ^ (y_bits >> 1)) & mask_2;
-    y_bits = (y_bits ^ (y_bits >> 2)) & mask_4;
-    y_bits = (y_bits ^ (y_bits >> 4)) & mask_8;
-    y_bits = (y_bits ^ (y_bits >> 8)) & mask_16;
-    y_bits = (y_bits ^ (y_bits >> 16)) & mask_32;
-    y_bits = (y_bits ^ (y_bits >> 32)) & mask_64;
-
-    (downcast(x_bits), downcast(y_bits))
+        // y[i] = (s >> (2*i)) & 1, placed at bit position i
+        let y_bit = (s >> (2 * i)) & one; // u128 share with only bit 0
+        y.a.0 |= (y_bit.a.0 as u64) << i;
+        y.b.0 |= (y_bit.b.0 as u64) << i;
+    }
+    (x, y)
 }
 
-/// Convert arithmetic suffix bits to binary and uninterleave.
-/// Returns binary-domain (x, y) pairs.
-fn a2b_and_uninterleave<N: Rep3Network>(
-    bits_arith: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<(Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>)> {
-    let bits_bin = rep3_ring::conversion::a2b_many(bits_arith, io_ctx)?;
-    let (xs, ys): (Vec<_>, Vec<_>) = bits_bin.iter().map(|b| uninterleave_bin(*b)).unzip();
-    Ok((xs, ys))
+/// Batch uninterleave: local, no communication.
+fn uninterleave_batch(
+    bits: &[Rep3RingShare<u128>],
+) -> (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) {
+    bits.iter().map(|b| uninterleave_bin(*b)).unzip()
 }
 
 // ---------------------------------------------------------------------------
@@ -79,90 +86,99 @@ fn a2b_and_uninterleave<N: Rep3Network>(
 // ---------------------------------------------------------------------------
 
 /// Evaluate a suffix MLE on a batch of secret suffix bits, producing
-/// per-cycle field shares.
+/// per-cycle suffix futures (deferred field conversion).
 ///
-/// `suffix_bits_arith[j]` is the arithmetic-domain `Rep3RingShare<u128>`
-/// representing the low `suffix_len` bits of cycle j's lookup index.
+/// `bits[j]` is a **binary-domain** `Rep3RingShare<u128>` representing the low
+/// `suffix_len` bits of cycle j's lookup index.
 ///
-/// Returns `Vec<Rep3PrimeFieldShare<F>>` of length `suffix_bits_arith.len()`.
-#[tracing::instrument(skip_all, name = "evaluate_suffix_mle_batched")]
+/// Returns `Vec<SuffixFuture<F>>` — callers must call `fulfill_batched` to
+/// convert to `Vec<Rep3PrimeFieldShare<F>>`.
+// #[tracing::instrument(skip_all, name = "evaluate_suffix_mle_batched")]
 pub fn evaluate_suffix_mle_batched<F: JoltField, N: Rep3Network>(
     suffix: &Suffixes,
-    suffix_bits_arith: &[Rep3RingShare<u128>],
+    bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let n = suffix_bits_arith.len();
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let n = bits.len();
 
     // suffix_len == 0 is handled by caller (constant value).
     debug_assert!(suffix_len > 0);
 
     match suffix {
         Suffixes::One => Ok(vec![
-            Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
+            SuffixFuture::Ready(
+                Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id,)
+            );
             n
         ]),
 
         // --- Simple bitwise (uninterleave + local bitwise op) ---
-        Suffixes::And => eval_and(suffix_bits_arith, io_ctx),
-        Suffixes::NotAnd => eval_notand(suffix_bits_arith, io_ctx),
-        Suffixes::Xor => eval_xor(suffix_bits_arith, io_ctx),
-        Suffixes::Or => eval_or(suffix_bits_arith, io_ctx),
+        Suffixes::And => eval_and(bits, io_ctx),
+        Suffixes::NotAnd => eval_notand(bits, io_ctx),
+        Suffixes::Xor => eval_xor(bits),
+        Suffixes::Or => eval_or(bits, io_ctx),
 
         // --- Value extraction ---
-        Suffixes::RightOperand => eval_right_operand(suffix_bits_arith, io_ctx),
-        Suffixes::RightOperandW => eval_right_operand_w(suffix_bits_arith, io_ctx),
-        Suffixes::UpperWord => eval_upper_word(suffix_bits_arith, io_ctx),
-        Suffixes::LowerWord => eval_lower_word(suffix_bits_arith, io_ctx),
-        Suffixes::LowerHalfWord => eval_lower_half_word(suffix_bits_arith, io_ctx),
-        Suffixes::Lsb => eval_lsb(suffix_bits_arith, io_ctx),
-        Suffixes::TwoLsb => eval_two_lsb(suffix_bits_arith, io_ctx),
+        Suffixes::RightOperand => Ok(eval_right_operand(bits)),
+        Suffixes::RightOperandW => Ok(eval_right_operand_w(bits)),
+        Suffixes::UpperWord => Ok(eval_upper_word(bits)),
+        Suffixes::LowerWord => Ok(eval_lower_word(bits)),
+        Suffixes::LowerHalfWord => Ok(eval_lower_half_word(bits)),
+        Suffixes::Lsb => Ok(eval_lsb(bits)),
+        Suffixes::TwoLsb => eval_two_lsb(bits, io_ctx),
 
         // --- Comparisons ---
-        Suffixes::LessThan => eval_less_than(suffix_bits_arith, io_ctx),
-        Suffixes::GreaterThan => eval_greater_than(suffix_bits_arith, io_ctx),
-        Suffixes::Eq => eval_eq(suffix_bits_arith, io_ctx),
-        Suffixes::LeftOperandIsZero => eval_left_is_zero(suffix_bits_arith, io_ctx),
-        Suffixes::RightOperandIsZero => eval_right_is_zero(suffix_bits_arith, io_ctx),
-        Suffixes::DivByZero => eval_div_by_zero(suffix_bits_arith, suffix_len, io_ctx, party_id),
-        Suffixes::OverflowBitsZero => eval_overflow_bits_zero(suffix_bits_arith, io_ctx),
+        Suffixes::LessThan => eval_less_than(bits, io_ctx),
+        Suffixes::GreaterThan => eval_greater_than(bits, io_ctx),
+        Suffixes::Eq => eval_eq(bits, io_ctx),
+        Suffixes::LeftOperandIsZero => eval_left_is_zero(bits, io_ctx),
+        Suffixes::RightOperandIsZero => eval_right_is_zero(bits, io_ctx),
+        Suffixes::DivByZero => eval_div_by_zero(bits, suffix_len, io_ctx, party_id),
+        Suffixes::OverflowBitsZero => eval_overflow_bits_zero(bits, io_ctx),
 
         // --- Change divisor ---
-        Suffixes::ChangeDivisor => eval_change_divisor(suffix_bits_arith, suffix_len, io_ctx, party_id),
-        Suffixes::ChangeDivisorW => eval_change_divisor_w(suffix_bits_arith, suffix_len, io_ctx, party_id),
+        Suffixes::ChangeDivisor => eval_change_divisor(bits, suffix_len, io_ctx, party_id),
+        Suffixes::ChangeDivisorW => eval_change_divisor_w(bits, suffix_len, io_ctx, party_id),
 
         // --- Pow2 ---
-        Suffixes::Pow2 => eval_pow2(suffix_bits_arith, suffix_len, io_ctx, party_id),
-        Suffixes::Pow2W => eval_pow2_w(suffix_bits_arith, suffix_len, io_ctx, party_id),
+        Suffixes::Pow2 => eval_pow2(bits, suffix_len, io_ctx, party_id),
+        Suffixes::Pow2W => eval_pow2_w(bits, suffix_len, io_ctx, party_id),
 
         // --- Sign extension ---
-        Suffixes::SignExtension => eval_sign_extension(suffix_bits_arith, suffix_len, io_ctx, party_id),
-        Suffixes::SignExtensionUpperHalf => eval_sign_extension_upper_half(suffix_bits_arith, suffix_len, io_ctx, party_id),
-        Suffixes::SignExtensionRightOperand => eval_sign_extension_right_operand(suffix_bits_arith, suffix_len, io_ctx, party_id),
+        Suffixes::SignExtension => eval_sign_extension(bits, suffix_len, io_ctx, party_id),
+        Suffixes::SignExtensionUpperHalf => {
+            eval_sign_extension_upper_half(bits, suffix_len, io_ctx, party_id)
+        }
+        Suffixes::SignExtensionRightOperand => {
+            eval_sign_extension_right_operand(bits, suffix_len, io_ctx, party_id)
+        }
 
         // --- Right shift / left shift (bitmask-based) ---
-        Suffixes::RightShift => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::RightShiftHelper => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::RightShiftPadding => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::LeftShift => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::RightShiftW => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::RightShiftWHelper => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::LeftShiftWHelper => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
-        Suffixes::LeftShiftW => eval_with_vanilla_open(suffix_bits_arith, suffix_len, suffix, io_ctx, party_id),
+        Suffixes::RightShift
+        | Suffixes::RightShiftHelper
+        | Suffixes::RightShiftPadding
+        | Suffixes::LeftShift
+        | Suffixes::RightShiftW
+        | Suffixes::RightShiftWHelper
+        | Suffixes::LeftShiftWHelper
+        | Suffixes::LeftShiftW => {
+            eval_with_vanilla_open(bits, suffix_len, suffix, io_ctx, party_id)
+        }
 
         // --- XOR-rotate ---
-        Suffixes::XorRot16 => eval_xor_rot::<16, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRot24 => eval_xor_rot::<24, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRot32 => eval_xor_rot::<32, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRot63 => eval_xor_rot::<63, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRotW7 => eval_xor_rot_w::<7, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRotW8 => eval_xor_rot_w::<8, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRotW12 => eval_xor_rot_w::<12, F, N>(suffix_bits_arith, io_ctx),
-        Suffixes::XorRotW16 => eval_xor_rot_w::<16, F, N>(suffix_bits_arith, io_ctx),
+        Suffixes::XorRot16 => Ok(eval_xor_rot::<16, F>(bits)),
+        Suffixes::XorRot24 => Ok(eval_xor_rot::<24, F>(bits)),
+        Suffixes::XorRot32 => Ok(eval_xor_rot::<32, F>(bits)),
+        Suffixes::XorRot63 => Ok(eval_xor_rot::<63, F>(bits)),
+        Suffixes::XorRotW7 => Ok(eval_xor_rot_w::<7, F>(bits)),
+        Suffixes::XorRotW8 => Ok(eval_xor_rot_w::<8, F>(bits)),
+        Suffixes::XorRotW12 => Ok(eval_xor_rot_w::<12, F>(bits)),
+        Suffixes::XorRotW16 => Ok(eval_xor_rot_w::<16, F>(bits)),
 
         // --- Rev8W ---
-        Suffixes::Rev8W => eval_rev8w(suffix_bits_arith, io_ctx),
+        Suffixes::Rev8W => Ok(eval_rev8w(bits)),
     }
 }
 
@@ -170,285 +186,299 @@ pub fn evaluate_suffix_mle_batched<F: JoltField, N: Rep3Network>(
 // Bitwise suffixes
 // ---------------------------------------------------------------------------
 
-/// AND: uninterleave → x & y (binary domain)
+/// AND: uninterleave → x & y (binary domain, interactive)
 fn eval_and<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let result = rep3_ring::binary::and_many(&xs_bin, &ys_bin, io_ctx)?;
-    let field = rep3_ring::casts::binary_ring_to_field_many(&result, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let result = rep3_ring::binary::and_many(&xs, &ys, io_ctx)?;
+    Ok(result
+        .into_iter()
+        .map(|r| SuffixFuture::cast_to_field_b2a(r))
+        .collect())
 }
 
-/// NotAnd: x & !y
+/// NotAnd: x & !y (interactive AND)
 fn eval_notand<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let not_ys: Vec<_> = ys_bin.iter().map(|y| !y).collect();
-    let result = rep3_ring::binary::and_many(&xs_bin, &not_ys, io_ctx)?;
-    let field = rep3_ring::casts::binary_ring_to_field_many(&result, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let not_ys: Vec<_> = ys.iter().map(|y| !y).collect();
+    let result = rep3_ring::binary::and_many(&xs, &not_ys, io_ctx)?;
+    Ok(result
+        .into_iter()
+        .map(|r| SuffixFuture::cast_to_field_b2a(r))
+        .collect())
 }
 
-/// XOR: x ^ y (local in binary domain)
-fn eval_xor<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let result: Vec<_> = xs_bin.iter().zip(ys_bin.iter()).map(|(x, y)| *x ^ *y).collect();
-    let field = rep3_ring::casts::binary_ring_to_field_many(&result, io_ctx)?;
-    Ok(field)
+/// XOR: x ^ y (local in binary domain, no communication)
+fn eval_xor<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    Ok(xs
+        .iter()
+        .zip(ys.iter())
+        .map(|(x, y)| SuffixFuture::cast_to_field_b2a(*x ^ *y))
+        .collect())
 }
 
-/// OR: x | y
+/// OR: x | y (interactive)
 fn eval_or<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let result = rep3_ring::binary::or_many(&xs_bin, &ys_bin, io_ctx)?;
-    let field = rep3_ring::casts::binary_ring_to_field_many(&result, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let result = rep3_ring::binary::or_many(&xs, &ys, io_ctx)?;
+    Ok(result
+        .into_iter()
+        .map(|r| SuffixFuture::cast_to_field_b2a(r))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
-// Value extraction suffixes
+// Value extraction suffixes (all local — no communication)
 // ---------------------------------------------------------------------------
 
-/// RightOperand: extract y from uninterleave, cast to field.
-/// Needs A2B for uninterleave, then B2A for field conversion.
-fn eval_right_operand<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (_, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let field = rep3_ring::casts::binary_ring_to_field_many(&ys_bin, io_ctx)?;
-    Ok(field)
+/// RightOperand: extract y from uninterleave → B2A deferred
+fn eval_right_operand<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
+    let (_, ys) = uninterleave_batch(bits);
+    ys.into_iter()
+        .map(|y| SuffixFuture::cast_to_field_b2a(y))
+        .collect()
 }
 
-/// RightOperandW: extract y, truncate to u32, cast to field
-fn eval_right_operand_w<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (_, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let ys32: Vec<Rep3RingShare<u32>> = ys_bin.iter().map(|y| downcast::<u64, u32>(*y)).collect();
-    let field = rep3_ring::casts::binary_ring_to_field_many(&ys32, io_ctx)?;
-    Ok(field)
+/// RightOperandW: extract y, truncate to u32 → zero-extend to u64 → B2A deferred
+fn eval_right_operand_w<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
+    let (_, ys) = uninterleave_batch(bits);
+    ys.into_iter()
+        .map(|y| SuffixFuture::cast_to_field_b2a(zext32(downcast::<u64, u32>(y))))
+        .collect()
 }
 
-/// UpperWord: u128 >> XLEN, cast to field as u64.
-/// This is a simple mask+shift on arithmetic shares — no uninterleave needed.
-fn eval_upper_word<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    // shift by constant on arithmetic shares: both components get shifted
-    // This gives us the upper bits as an arithmetic share
-    let vals: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b >> XLEN)).collect();
-    let field = rep3_ring::casts::ring_to_field_many_selector(&vals, io_ctx)?;
-    Ok(field)
+/// UpperWord: bits >> XLEN (binary shift), downcast to u64 → B2A deferred
+fn eval_upper_word<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
+    bits.iter()
+        .map(|b| SuffixFuture::cast_to_field_b2a(downcast(*b >> XLEN)))
+        .collect()
 }
 
-/// LowerWord: u128 % (1 << XLEN), cast to field as u64.
-/// Public AND on arithmetic shares is correct.
-fn eval_lower_word<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+/// LowerWord: bits & ((1 << XLEN) - 1) → B2A deferred
+fn eval_lower_word<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
     let mask = RingElement((1u128 << XLEN) - 1);
-    let vals: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b & mask)).collect();
-    let field = rep3_ring::casts::ring_to_field_many_selector(&vals, io_ctx)?;
-    Ok(field)
+    bits.iter()
+        .map(|b| SuffixFuture::cast_to_field_b2a(downcast(*b & mask)))
+        .collect()
 }
 
-/// LowerHalfWord: u128 % (1 << (XLEN/2))
-fn eval_lower_half_word<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+/// LowerHalfWord: bits & ((1 << (XLEN/2)) - 1) → B2A deferred
+fn eval_lower_half_word<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
     let half = XLEN / 2;
     let mask = if half >= 128 {
         RingElement(u128::MAX)
     } else {
         RingElement((1u128 << half) - 1)
     };
-    let vals: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b & mask)).collect();
-    let field = rep3_ring::casts::ring_to_field_many_selector(&vals, io_ctx)?;
-    Ok(field)
+    bits.iter()
+        .map(|b| SuffixFuture::cast_to_field_b2a(downcast(*b & mask)))
+        .collect()
 }
 
-/// Lsb: least significant bit.
-/// `& 1` on arithmetic shares is correct (public AND).
-fn eval_lsb<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let mask = RingElement(1u128);
-    let vals: Vec<Rep3RingShare<u128>> = bits.iter().map(|b| *b & mask).collect();
-    let field = rep3_ring::casts::ring_to_field_many_selector(&vals, io_ctx)?;
-    Ok(field)
+/// Lsb: least significant bit → B2A deferred
+fn eval_lsb<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
+    bits.iter()
+        .map(|b| {
+            let bit: Rep3RingShare<u64> = Rep3RingShare {
+                a: RingElement((b.a.0 & 1) as u64),
+                b: RingElement((b.b.0 & 1) as u64),
+            };
+            SuffixFuture::cast_to_field_b2a(bit)
+        })
+        .collect()
 }
 
-/// TwoLsb: 1 if the two LSBs are 0, else 0.
+/// TwoLsb: 1 if the two LSBs are both 0, else 0.
+/// Binary domain: extract 2 LSBs, check if zero via is_zero_many.
 fn eval_two_lsb<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     let mask = RingElement(0b11u128);
     let lsbs: Vec<Rep3RingShare<u128>> = bits.iter().map(|b| *b & mask).collect();
-    let zeros = vec![Rep3RingShare::default(); lsbs.len()];
-    let result: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::eq_many(&lsbs, &zeros, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&result, io_ctx)?;
-    Ok(field)
+    // In binary domain, use is_zero_many (works on binary shares)
+    let lsbs_downcast: Vec<Rep3RingShare<u64>> = lsbs.iter().map(|v| downcast(*v)).collect();
+    let result = rep3_ring::binary::is_zero_many(&lsbs_downcast, io_ctx)?;
+    Ok(result
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
 // Comparison suffixes
 // ---------------------------------------------------------------------------
 
-/// LessThan: x < y (unsigned comparison on uninterleaved operands)
+/// LessThan: x < y (unsigned comparison on uninterleaved binary operands)
 fn eval_less_than<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    // A2B + uninterleave gives binary shares; ge_many expects binary shares.
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    // x < y ≡ !(x >= y)
-    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many(&xs_bin, &ys_bin, io_ctx)?;
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    // x < y ≡ !(x >= y); ge_many expects binary shares
+    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many(&xs, &ys, io_ctx)?;
     let lt_bits: Vec<Rep3RingShare<Bit>> = ge_bits.iter().map(|b| !b).collect();
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&lt_bits, io_ctx)?;
-    Ok(field)
+    Ok(lt_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 /// GreaterThan: x > y ≡ y < x ≡ !(y >= x)
 fn eval_greater_than<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many(&ys_bin, &xs_bin, io_ctx)?;
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many(&ys, &xs, io_ctx)?;
     let gt_bits: Vec<Rep3RingShare<Bit>> = ge_bits.iter().map(|b| !b).collect();
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&gt_bits, io_ctx)?;
-    Ok(field)
+    Ok(gt_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
-/// Eq: x == y. eq_many does A2B internally — but we need uninterleaved operands.
-/// So we A2B + uninterleave to get binary x,y, then use binary is_zero on x^y.
+/// Eq: x == y iff (x ^ y) == 0 in binary domain
 fn eval_eq<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    // x == y iff (x ^ y) == 0 in binary domain
-    let diff: Vec<Rep3RingShare<u64>> = xs_bin.iter().zip(ys_bin.iter()).map(|(x, y)| *x ^ *y).collect();
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let diff: Vec<Rep3RingShare<u64>> = xs.iter().zip(ys.iter()).map(|(x, y)| *x ^ *y).collect();
     let eq_bits = rep3_ring::binary::is_zero_many(&diff, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&eq_bits, io_ctx)?;
-    Ok(field)
+    Ok(eq_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 /// LeftIsZero: x == 0
 fn eval_left_is_zero<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, _) = a2b_and_uninterleave(bits, io_ctx)?;
-    let eq_bits = rep3_ring::binary::is_zero_many(&xs_bin, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&eq_bits, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, _) = uninterleave_batch(bits);
+    let eq_bits = rep3_ring::binary::is_zero_many(&xs, io_ctx)?;
+    Ok(eq_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 /// RightIsZero: y == 0
 fn eval_right_is_zero<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (_, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let eq_bits = rep3_ring::binary::is_zero_many(&ys_bin, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&eq_bits, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (_, ys) = uninterleave_batch(bits);
+    let eq_bits = rep3_ring::binary::is_zero_many(&ys, io_ctx)?;
+    Ok(eq_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 /// DivByZero: divisor==0 AND quotient==all_ones.
-/// Uses binary domain for both checks.
+/// All in binary domain.
 fn eval_div_by_zero<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (divisors_bin, quotients_bin) = a2b_and_uninterleave(bits, io_ctx)?;
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (divisors, quotients) = uninterleave_batch(bits);
     let quotient_bits = suffix_len / 2;
-    // quotient == all_ones iff quotient ^ all_ones == 0
-    let all_ones_mask = RingElement(if quotient_bits >= 64 { u64::MAX } else { (1u64 << quotient_bits) - 1 });
-    let q_xor: Vec<Rep3RingShare<u64>> = quotients_bin
+    let all_ones_mask = RingElement(if quotient_bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << quotient_bits) - 1
+    });
+    let q_xor: Vec<Rep3RingShare<u64>> = quotients
         .iter()
         .map(|q| rep3_ring::binary::xor_public(q, &all_ones_mask, party_id))
         .collect();
 
-    let divisor_zero = rep3_ring::binary::is_zero_many(&divisors_bin, io_ctx)?;
+    let divisor_zero = rep3_ring::binary::is_zero_many(&divisors, io_ctx)?;
     let quotient_all_ones = rep3_ring::binary::is_zero_many(&q_xor, io_ctx)?;
     let result = rep3_ring::binary::and_many(&divisor_zero, &quotient_all_ones, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&result, io_ctx)?;
-    Ok(field)
+    Ok(result
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 /// OverflowBitsZero: upper (128 - XLEN) bits are all zero.
-/// Arithmetic domain: (val >> XLEN) == 0.
+/// Binary domain: shift right by XLEN, check is_zero.
 fn eval_overflow_bits_zero<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let upper: Vec<Rep3RingShare<u128>> = bits.iter().map(|b| *b >> XLEN).collect();
-    let zeros = vec![Rep3RingShare::default(); bits.len()];
-    let eq_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::eq_many(&upper, &zeros, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&eq_bits, io_ctx)?;
-    Ok(field)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let upper: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b >> XLEN)).collect();
+    let eq_bits = rep3_ring::binary::is_zero_many(&upper, io_ctx)?;
+    Ok(eq_bits
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
 // Change divisor
 // ---------------------------------------------------------------------------
 
-/// ChangeDivisor: (y == all_ones) AND (x == 0)
+/// ChangeDivisor: (y == all_ones) AND (x == 0). Binary domain.
 fn eval_change_divisor<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
     let y_len = suffix_len / 2;
-    let all_ones_mask = RingElement(if y_len >= 64 { u64::MAX } else { (1u64 << y_len) - 1 });
-    let y_xor: Vec<Rep3RingShare<u64>> = ys_bin
+    let all_ones_mask = RingElement(if y_len >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << y_len) - 1
+    });
+    let y_xor: Vec<Rep3RingShare<u64>> = ys
         .iter()
         .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
         .collect();
 
     let y_eq_all_ones = rep3_ring::binary::is_zero_many(&y_xor, io_ctx)?;
-    let x_eq_zero = rep3_ring::binary::is_zero_many(&xs_bin, io_ctx)?;
+    let x_eq_zero = rep3_ring::binary::is_zero_many(&xs, io_ctx)?;
     let result = rep3_ring::binary::and_many(&y_eq_all_ones, &x_eq_zero, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&result, io_ctx)?;
-    Ok(field)
+    Ok(result
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
-/// ChangeDivisorW: same but with W-variant (truncate to XLEN/2 bits)
+/// ChangeDivisorW: same but with W-variant (truncate to 32 bits)
 fn eval_change_divisor_w<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let xs32: Vec<Rep3RingShare<u32>> = xs_bin.iter().map(|x| downcast::<u64, u32>(*x)).collect();
-    let ys32: Vec<Rep3RingShare<u32>> = ys_bin.iter().map(|y| downcast::<u64, u32>(*y)).collect();
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    let xs32: Vec<Rep3RingShare<u32>> = xs.iter().map(|x| downcast::<u64, u32>(*x)).collect();
+    let ys32: Vec<Rep3RingShare<u32>> = ys.iter().map(|y| downcast::<u64, u32>(*y)).collect();
 
     let y_len = (suffix_len / 2).min(XLEN / 2);
-    let all_ones_mask = RingElement(if y_len >= 32 { u32::MAX } else { (1u32 << y_len) - 1 });
+    let all_ones_mask = RingElement(if y_len >= 32 {
+        u32::MAX
+    } else {
+        (1u32 << y_len) - 1
+    });
     let y_xor: Vec<Rep3RingShare<u32>> = ys32
         .iter()
         .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
@@ -457,8 +487,10 @@ fn eval_change_divisor_w<F: JoltField, N: Rep3Network>(
     let y_eq_all_ones = rep3_ring::binary::is_zero_many(&y_xor, io_ctx)?;
     let x_eq_zero = rep3_ring::binary::is_zero_many(&xs32, io_ctx)?;
     let result = rep3_ring::binary::and_many(&y_eq_all_ones, &x_eq_zero, io_ctx)?;
-    let field = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&result, io_ctx)?;
-    Ok(field)
+    Ok(result
+        .into_iter()
+        .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -466,16 +498,19 @@ fn eval_change_divisor_w<F: JoltField, N: Rep3Network>(
 // ---------------------------------------------------------------------------
 
 /// Pow2: 1 << shift where shift = low log2(XLEN) bits of the suffix.
+/// Input is binary domain. Shift bits extracted via binary mask.
+/// Uses table lookup with eq_many on binary shares (via is_zero on XOR).
 fn eval_pow2<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     let log_xlen = XLEN.log_2();
-    let shift_mask = RingElement((1u128 << log_xlen.min(suffix_len)) - 1);
-    let shifts: Vec<_> = bits.iter().map(|b| *b & shift_mask).collect();
-    eval_pow2_from_shift_bits(&shifts, log_xlen.min(suffix_len), io_ctx, party_id)
+    let num_bits = log_xlen.min(suffix_len);
+    let shift_mask = RingElement((1u128 << num_bits) - 1);
+    let shifts: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b & shift_mask)).collect();
+    eval_pow2_from_shift_bits(&shifts, num_bits, io_ctx, party_id)
 }
 
 /// Pow2W: same but shift = low 5 bits (modulo 32)
@@ -484,40 +519,37 @@ fn eval_pow2_w<F: JoltField, N: Rep3Network>(
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let shift_bits = 5usize.min(suffix_len);
-    let shift_mask = RingElement((1u128 << shift_bits) - 1);
-    let shifts: Vec<_> = bits.iter().map(|b| *b & shift_mask).collect();
-    eval_pow2_from_shift_bits(&shifts, shift_bits, io_ctx, party_id)
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let num_bits = 5usize.min(suffix_len);
+    let shift_mask = RingElement((1u128 << num_bits) - 1);
+    let shifts: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast(*b & shift_mask)).collect();
+    eval_pow2_from_shift_bits(&shifts, num_bits, io_ctx, party_id)
 }
 
-/// Compute `1 << shift` where shift is a secret arithmetic value with at most `num_bits` bits.
-/// Uses table lookup: for each possible shift value s in [0, 2^num_bits),
-/// compute eq(shift, s) * (1 << s) and sum.
+/// Compute `1 << shift` where shift is a secret binary value with at most `num_bits` bits.
+/// Uses binary-domain equality: for each possible s, check (shift ^ s) == 0,
+/// then accumulate: result[j] = Σ_s indicator(shift[j] == s) * F::from(1 << s).
+///
+/// Returns Ready futures since the accumulation produces field shares directly.
 fn eval_pow2_from_shift_bits<F: JoltField, N: Rep3Network>(
-    shift_vals: &[Rep3RingShare<u128>],
+    shift_vals: &[Rep3RingShare<u64>],
     num_bits: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     let table_size = 1usize << num_bits;
     let n = shift_vals.len();
 
-    // Batch all equality checks
-    let mut all_shifts = Vec::with_capacity(n * table_size);
-    let mut all_targets = Vec::with_capacity(n * table_size);
+    // For each (shift, s) pair, compute shift ^ s (local), then batch is_zero
+    let mut xored = Vec::with_capacity(n * table_size);
     for shift in shift_vals {
         for s in 0..table_size {
-            all_shifts.push(*shift);
-            all_targets.push(rep3_ring::arithmetic::promote_to_trivial_share(
-                party_id,
-                RingElement(s as u128),
-            ));
+            let target = RingElement(s as u64);
+            xored.push(rep3_ring::binary::xor_public(shift, &target, party_id));
         }
     }
 
-    let eq_bits: Vec<Rep3RingShare<Bit>> =
-        rep3_ring::arithmetic::eq_many(&all_shifts, &all_targets, io_ctx)?;
+    let eq_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::binary::is_zero_many(&xored, io_ctx)?;
     let eq_field: Vec<Rep3PrimeFieldShare<F>> =
         rep3_ring::conversion::bit_inject_from_bits_to_field_many(&eq_bits, io_ctx)?;
 
@@ -529,7 +561,7 @@ fn eval_pow2_from_shift_bits<F: JoltField, N: Rep3Network>(
             let weight = F::from_u128(1u128 << s);
             acc = acc + eq_field[j * table_size + s] * weight;
         }
-        result.push(acc);
+        result.push(SuffixFuture::Ready(acc));
     }
     Ok(result)
 }
@@ -542,13 +574,14 @@ fn eval_pow2_from_shift_bits<F: JoltField, N: Rep3Network>(
 /// where padding_len = min(y.trailing_zeros(), y.len()).
 ///
 /// Uses binary domain bit extraction + sequential AND for trailing zeros.
+/// Returns Ready futures since the accumulation produces field shares directly.
 fn eval_sign_extension<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (_, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
+    let (_, ys) = uninterleave_batch(bits);
     let y_len = suffix_len / 2;
     let n = bits.len();
     let mut result = vec![Rep3PrimeFieldShare::<F>::zero_share(); n];
@@ -556,10 +589,8 @@ fn eval_sign_extension<F: JoltField, N: Rep3Network>(
     // Extract individual bit shares (binary domain)
     let mut bit_shares: Vec<Vec<Rep3RingShare<Bit>>> = Vec::with_capacity(y_len);
     for i in 0..y_len {
-        let bits_i: Vec<Rep3RingShare<Bit>> = ys_bin
-            .iter()
-            .map(|y| downcast::<u64, Bit>(*y >> i))
-            .collect();
+        let bits_i: Vec<Rep3RingShare<Bit>> =
+            ys.iter().map(|y| downcast::<u64, Bit>(*y >> i)).collect();
         bit_shares.push(bits_i);
     }
 
@@ -569,10 +600,8 @@ fn eval_sign_extension<F: JoltField, N: Rep3Network>(
         .collect();
 
     // running[j] = product of (bit_i == 0) for i < p
-    let mut running = vec![
-        rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(Bit::one()));
-        n
-    ];
+    let mut running =
+        vec![rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(Bit::one())); n];
 
     for p in 0..y_len {
         // indicator[p] = running AND bit_p
@@ -606,131 +635,139 @@ fn eval_sign_extension<F: JoltField, N: Rep3Network>(
         }
     }
 
-    Ok(result)
+    Ok(result.into_iter().map(SuffixFuture::Ready).collect())
 }
 
-/// SignExtensionUpperHalf: if suffix_len >= XLEN/2, check sign bit at position XLEN/2-1.
-/// Uses arithmetic domain: extract single bit via mask+shift, convert to field, multiply by weight.
+/// SignExtensionUpperHalf: if suffix_len >= XLEN/2, extract sign bit at position (XLEN/2 - 1)
+/// in the interleaved representation (bit position 2*(XLEN/2 - 1) + 1 = XLEN - 1 in the
+/// interleaved u128), then multiply by weight.
+///
+/// Binary domain: mask + shift → single bit → B2A deferred with weight.
 fn eval_sign_extension_upper_half<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     let half = XLEN / 2;
     if suffix_len < half {
         return Ok(vec![
-            Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
+            SuffixFuture::Ready(
+                Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id,)
+            );
             bits.len()
         ]);
     }
 
-    // Extract sign bit at position half-1 (arithmetic: mask + shift)
-    let sign_bit_mask = RingElement(1u128 << (half - 1));
-    let sign_bits: Vec<Rep3RingShare<u128>> = bits.iter().map(|b| (*b & sign_bit_mask) >> (half - 1)).collect();
+    // Extract sign bit from the y operand at position (half - 1).
+    // In the uninterleaved binary domain, this is straightforward.
+    let (_, ys) = uninterleave_batch(bits);
+    let sign_bits: Vec<Rep3RingShare<Bit>> = ys
+        .iter()
+        .map(|y| downcast::<u64, Bit>(*y >> (half - 1)))
+        .collect();
     let weight = F::from_u128(((1u64 << half) - 1) as u128 * (1u128 << half));
+    // Bit inject then multiply by weight → we do this eagerly since weight is public
     let sign_field: Vec<Rep3PrimeFieldShare<F>> =
-        rep3_ring::casts::ring_to_field_many_selector(&sign_bits, io_ctx)?;
-    let result: Vec<_> = sign_field.iter().map(|s| *s * weight).collect();
-    Ok(result)
+        rep3_ring::conversion::bit_inject_from_bits_to_field_many(&sign_bits, io_ctx)?;
+    Ok(sign_field
+        .into_iter()
+        .map(|s| SuffixFuture::Ready(s * weight))
+        .collect())
 }
 
-/// SignExtensionRightOperand: if suffix_len >= XLEN, check sign bit at XLEN-2.
+/// SignExtensionRightOperand: if suffix_len >= XLEN, extract sign bit at position (XLEN - 2)
+/// in the y operand (uninterleaved), multiply by weight.
 fn eval_sign_extension_right_operand<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     if suffix_len < XLEN {
         return Ok(vec![
-            Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
+            SuffixFuture::Ready(
+                Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id,)
+            );
             bits.len()
         ]);
     }
 
-    let sign_bit_pos = XLEN - 2;
-    let sign_bit_mask = RingElement(1u128 << sign_bit_pos);
-    let sign_bits: Vec<Rep3RingShare<u128>> = bits.iter().map(|b| (*b & sign_bit_mask) >> sign_bit_pos).collect();
+    // In uninterleaved y operand, the sign bit is at position (XLEN/2 - 1)
+    // because the interleaved position XLEN-2 maps to y-bit at (XLEN-2)/2 = XLEN/2-1
+    let sign_bit_pos = XLEN / 2 - 1;
+    let (_, ys) = uninterleave_batch(bits);
+    let sign_bits: Vec<Rep3RingShare<Bit>> = ys
+        .iter()
+        .map(|y| downcast::<u64, Bit>(*y >> sign_bit_pos))
+        .collect();
     let weight = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2)));
     let sign_field: Vec<Rep3PrimeFieldShare<F>> =
-        rep3_ring::casts::ring_to_field_many_selector(&sign_bits, io_ctx)?;
-    let result: Vec<_> = sign_field.iter().map(|s| *s * weight).collect();
-    Ok(result)
+        rep3_ring::conversion::bit_inject_from_bits_to_field_many(&sign_bits, io_ctx)?;
+    Ok(sign_field
+        .into_iter()
+        .map(|s| SuffixFuture::Ready(s * weight))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
-// XOR-rotate suffixes
+// XOR-rotate suffixes (all local — no communication)
 // ---------------------------------------------------------------------------
 
 /// XorRot: uninterleave → x^y → rotate_right(result, ROTATION).
 /// All ops in binary domain. Rotate by constant is local.
-fn eval_xor_rot<const ROTATION: u32, F: JoltField, N: Rep3Network>(
+fn eval_xor_rot<const ROTATION: u32, F: JoltField>(
     bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let xor_results: Vec<Rep3RingShare<u64>> = xs_bin
-        .iter()
-        .zip(ys_bin.iter())
-        .map(|(x, y)| *x ^ *y)
-        .collect();
-    // rotate_right = (val >> ROT) ^ (val << (64 - ROT)) — XOR since bit positions are disjoint
-    let rotated: Vec<Rep3RingShare<u64>> = xor_results
-        .iter()
-        .map(|v| (*v >> (ROTATION as usize)) ^ (*v << (64 - ROTATION as usize)))
-        .collect();
-    let field = rep3_ring::casts::binary_ring_to_field_many(&rotated, io_ctx)?;
-    Ok(field)
+) -> Vec<SuffixFuture<F>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    xs.iter()
+        .zip(ys.iter())
+        .map(|(x, y)| {
+            let xored = *x ^ *y;
+            let rotated = (xored >> (ROTATION as usize)) ^ (xored << (64 - ROTATION as usize));
+            SuffixFuture::cast_to_field_b2a(rotated)
+        })
+        .collect()
 }
 
-/// XorRotW: same but truncate to u32 first
-fn eval_xor_rot_w<const ROTATION: u32, F: JoltField, N: Rep3Network>(
+/// XorRotW: same but truncate to u32 first, then zero-extend back to u64
+fn eval_xor_rot_w<const ROTATION: u32, F: JoltField>(
     bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(bits, io_ctx)?;
-    let xs32: Vec<Rep3RingShare<u32>> = xs_bin.iter().map(|x| downcast::<u64, u32>(*x)).collect();
-    let ys32: Vec<Rep3RingShare<u32>> = ys_bin.iter().map(|y| downcast::<u64, u32>(*y)).collect();
-    let xor_results: Vec<Rep3RingShare<u32>> = xs32
-        .iter()
-        .zip(ys32.iter())
-        .map(|(x, y)| *x ^ *y)
-        .collect();
-    let rotated: Vec<Rep3RingShare<u32>> = xor_results
-        .iter()
-        .map(|v| (*v >> (ROTATION as usize)) ^ (*v << (32 - ROTATION as usize)))
-        .collect();
-    let field = rep3_ring::casts::binary_ring_to_field_many(&rotated, io_ctx)?;
-    Ok(field)
+) -> Vec<SuffixFuture<F>> {
+    let (xs, ys) = uninterleave_batch(bits);
+    xs.iter()
+        .zip(ys.iter())
+        .map(|(x, y)| {
+            let x32 = downcast::<u64, u32>(*x);
+            let y32 = downcast::<u64, u32>(*y);
+            let xored = x32 ^ y32;
+            let rotated = (xored >> (ROTATION as usize)) ^ (xored << (32 - ROTATION as usize));
+            SuffixFuture::cast_to_field_b2a(zext32(rotated))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
-// Rev8W
+// Rev8W (local — no communication)
 // ---------------------------------------------------------------------------
 
 /// Rev8W: byte reversal of lower 32 bits.
 /// Binary domain: extract bytes via mask+shift, recombine with XOR.
-fn eval_rev8w<F: JoltField, N: Rep3Network>(
-    bits: &[Rep3RingShare<u128>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let vals: Vec<Rep3RingShare<u64>> = bits.iter().map(|b| downcast::<u128, u64>(*b)).collect();
-    let vals_bin = rep3_ring::conversion::a2b_many(&vals, io_ctx)?;
+/// Input is already binary — no A2B needed.
+fn eval_rev8w<F: JoltField>(bits: &[Rep3RingShare<u128>]) -> Vec<SuffixFuture<F>> {
     let mask_byte = RingElement(0xFFu64);
-    let reversed: Vec<Rep3RingShare<u64>> = vals_bin
-        .iter()
-        .map(|v| {
-            let byte0 = *v & mask_byte;
-            let byte1 = (*v >> 8) & mask_byte;
-            let byte2 = (*v >> 16) & mask_byte;
-            let byte3 = (*v >> 24) & mask_byte;
+    bits.iter()
+        .map(|b| {
+            let v: Rep3RingShare<u64> = downcast::<u128, u64>(*b);
+            let byte0 = v & mask_byte;
+            let byte1 = (v >> 8) & mask_byte;
+            let byte2 = (v >> 16) & mask_byte;
+            let byte3 = (v >> 24) & mask_byte;
             // Non-overlapping positions → XOR == OR
-            (byte0 << 24) ^ (byte1 << 16) ^ (byte2 << 8) ^ byte3
+            let reversed = (byte0 << 24) ^ (byte1 << 16) ^ (byte2 << 8) ^ byte3;
+            SuffixFuture::cast_to_field_b2a(reversed)
         })
-        .collect();
-    let field = rep3_ring::casts::binary_ring_to_field_many(&reversed, io_ctx)?;
-    Ok(field)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -745,16 +782,22 @@ fn eval_with_vanilla_open<F: JoltField, N: Rep3Network>(
     suffix: &Suffixes,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+) -> eyre::Result<Vec<SuffixFuture<F>>> {
     use jolt_core::utils::lookup_bits::LookupBits;
 
-    let opened = rep3_ring::arithmetic::open_vec(bits, io_ctx)?;
-    let result: Vec<Rep3PrimeFieldShare<F>> = opened
+    // Open binary shares: reshare b-component, then reconstruct via XOR.
+    let bs: Vec<RingElement<u128>> = bits.iter().map(|s| s.b).collect();
+    let cs: Vec<RingElement<u128>> = io_ctx.network.reshare_many(&bs)?;
+    let result: Vec<SuffixFuture<F>> = bits
         .iter()
-        .map(|val| {
-            let plain = val.0;
+        .zip(cs.iter())
+        .map(|(s, c)| {
+            let plain = (s.a ^ s.b ^ *c).0;
             let eval = suffix.suffix_mle::<XLEN>(LookupBits::new(plain, suffix_len));
-            Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(eval), party_id)
+            SuffixFuture::Ready(Rep3PrimeFieldShare::promote_from_trivial(
+                &F::from_u64(eval),
+                party_id,
+            ))
         })
         .collect();
     Ok(result)
@@ -778,6 +821,8 @@ pub struct OperandQSuffixEvals<F: JoltField> {
 ///   - left_operand[j] = u64::from(uninterleave(suffix_bits_j).0) as field
 ///   - right_operand[j] = u64::from(uninterleave(suffix_bits_j).1) as field
 ///   - identity[j] = suffix_bits_j as field
+///
+/// Input `lookup_indices` are in **binary (XOR) domain**.
 #[tracing::instrument(skip_all, name = "compute_operand_q_suffix_evals", fields(phase))]
 pub fn compute_operand_q_suffix_evals<F: JoltField, N: Rep3Network>(
     phase: usize,
@@ -799,24 +844,81 @@ pub fn compute_operand_q_suffix_evals<F: JoltField, N: Rep3Network>(
         });
     }
 
-    // Extract suffix bits (arithmetic domain)
+    // Extract suffix bits (binary domain)
     let suffix_mask = RingElement((1u128 << suffix_len) - 1);
     let suffix_bits: Vec<Rep3RingShare<u128>> = lookup_indices
         .iter()
         .map(|idx| *idx & suffix_mask)
         .collect();
 
-    // Identity: suffix_bits as field (arithmetic domain → field)
-    let identity = rep3_ring::casts::ring_to_field_many_selector(&suffix_bits, io_ctx)?;
+    // Identity: suffix_bits as field (binary domain → field via B2A)
+    let suffix_u64: Vec<Rep3RingShare<u64>> = suffix_bits.iter().map(|b| downcast(*b)).collect();
+    let identity = rep3_ring::casts::binary_ring_to_field_many(&suffix_u64, io_ctx)?;
 
-    // A2B + uninterleave for left/right operands
-    let (xs_bin, ys_bin) = a2b_and_uninterleave(&suffix_bits, io_ctx)?;
-    let left_operand = rep3_ring::casts::binary_ring_to_field_many(&xs_bin, io_ctx)?;
-    let right_operand = rep3_ring::casts::binary_ring_to_field_many(&ys_bin, io_ctx)?;
+    // Uninterleave (local) for left/right operands, then B2A
+    let (xs, ys) = uninterleave_batch(&suffix_bits);
+    let left_operand = rep3_ring::casts::binary_ring_to_field_many(&xs, io_ctx)?;
+    let right_operand = rep3_ring::casts::binary_ring_to_field_many(&ys, io_ctx)?;
 
     Ok(OperandQSuffixEvals {
         left_operand,
         right_operand,
         identity,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_core::utils::uninterleave_bits;
+
+    #[test]
+    fn test_uninterleave_bin_correctness() {
+        let test_vals: Vec<u128> = vec![
+            0b1010,
+            0b1111,
+            0b01_10_01_10,
+            0xDEAD_BEEF_CAFE_BABE_1234_5678_9ABC_DEF0u128,
+            0,
+            u128::MAX,
+            1,
+            0x5555_5555_5555_5555_5555_5555_5555_5555u128,
+            0xAAAA_AAAA_AAAA_AAAA_AAAA_AAAA_AAAA_AAAAu128,
+        ];
+
+        for &val in &test_vals {
+            let (vx, vy) = uninterleave_bits(val);
+
+            // 3-party XOR sharing: a ^ b ^ c = val
+            let a: u128 = 0x1234_5678_ABCD_EF01_2345_6789_ABCD_EF01u128;
+            let b: u128 = 0xFEDC_BA98_7654_3210_FEDC_BA98_7654_3210u128;
+            let c: u128 = val ^ a ^ b;
+
+            // Party 0: (a, b), Party 1: (b, c), Party 2: (c, a)
+            let share0 = Rep3RingShare { a: RingElement(a), b: RingElement(b) };
+            let share1 = Rep3RingShare { a: RingElement(b), b: RingElement(c) };
+            let share2 = Rep3RingShare { a: RingElement(c), b: RingElement(a) };
+
+            let (x0, y0) = uninterleave_bin(share0);
+            let (x1, y1) = uninterleave_bin(share1);
+            let (x2, y2) = uninterleave_bin(share2);
+
+            // Reconstruct: piece_0 ^ piece_1 ^ piece_2
+            let rx = x0.a.0 ^ x1.a.0 ^ x2.a.0;
+            let ry = y0.a.0 ^ y1.a.0 ^ y2.a.0;
+
+            assert_eq!(rx, vx, "x mismatch for val=0x{:032X}", val);
+            assert_eq!(ry, vy, "y mismatch for val=0x{:032X}", val);
+
+            // Share consistency: party_i.b == party_{i-1 mod 3}.a
+            // In rep3 binary: party0=(a,b), party1=(b,c), party2=(c,a)
+            // So: party0.b = b = party1.a ✓, party1.b = c = party2.a ✓, party2.b = a = party0.a ✓
+            assert_eq!(x0.b.0, x1.a.0, "x share consistency: p0.b == p1.a");
+            assert_eq!(x1.b.0, x2.a.0, "x share consistency: p1.b == p2.a");
+            assert_eq!(x2.b.0, x0.a.0, "x share consistency: p2.b == p0.a");
+            assert_eq!(y0.b.0, y1.a.0, "y share consistency: p0.b == p1.a");
+            assert_eq!(y1.b.0, y2.a.0, "y share consistency: p1.b == p2.a");
+            assert_eq!(y2.b.0, y0.a.0, "y share consistency: p2.b == p0.a");
+        }
+    }
 }

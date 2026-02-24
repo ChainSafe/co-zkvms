@@ -30,6 +30,7 @@ use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFiel
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use strum::{EnumCount, IntoEnumIterator};
+use tracing::info_span;
 
 // ---------------------------------------------------------------------------
 // Additive dense polynomial — lightweight wrapper for suffix/Q polys
@@ -627,16 +628,22 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For each table and each suffix, computes:
     ///   S[bucket] = Σ_{j ∈ table_cycles} u_evals[j] * suffix_mle(suffix_bits_j) * δ(prefix(k_j), bucket)
     ///
-    /// The (table, suffix) pairs are processed in parallel via `io_ctx.par_chunks`,
-    /// with each chunk getting its own forked IoContext for MPC communication.
-    /// The FWHT unmask is fully local (Rep3 × Rep3 → Additive, no communication).
+    /// Optimizations vs naive per-(table,suffix) approach:
+    /// 1. **Batch by suffix type**: evaluate each unique suffix MLE once over ALL cycles,
+    ///    then each (table, suffix) pair picks its subset. Removes redundant MPC evaluations.
+    /// 2. **Local multiply + histogram reshare**: instead of `mul_vec(u, t)` per table (O(N)
+    ///    communication), do local `Rep3 × Rep3 → Additive` multiply, scatter into additive
+    ///    histogram, then `reshare_additive_many` the histogram (O(M) communication).
+    ///    Since M=65536 ≪ N (trace length), this is much cheaper.
     #[tracing::instrument(skip_all, name = "ReadRaf::init_suffix_polys", fields(phase))]
     fn init_suffix_polys<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
-        use crate::zkvm::instruction::suffixes::evaluate_suffix_mle_batched;
+        use crate::utils::future_ring::Rep3RingFutureExt;
+        use crate::zkvm::instruction::suffixes::{evaluate_suffix_mle_batched, SuffixFuture};
+        use rayon::prelude::*;
 
         let ehat16 = self
             .ehat16
@@ -644,76 +651,238 @@ impl<F: JoltField> ReadRafProverState<F> {
             .ok_or_else(|| eyre::eyre!("ehat16 missing in init_suffix_polys"))?;
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
 
-        // Pre-extract suffix bits for all cycles (shared, arithmetic domain).
-        // suffix_bits[j] = lookup_indices[j] & ((1 << suffix_len) - 1)
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
         let all_suffix_bits: Option<Vec<Rep3RingShare<u128>>> = if suffix_len > 0 {
             let mask = RingElement((1u128 << suffix_len) - 1);
-            Some(self.lookup_indices.iter().map(|idx| *idx & mask).collect())
+            Some(
+                self.lookup_indices
+                    .par_iter()
+                    .map(|idx| *idx & mask)
+                    .collect(),
+            )
         } else {
             None
         };
 
-        for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
-            let table_cycles = &self.lookup_indices_by_table[table_idx];
-            for (suffix_idx, suffix) in table.suffixes().iter().enumerate() {
-                // Build masked histogram H_c[bucket] = Σ_j u_evals[j] * suffix_eval(j),
-                // where `bucket = c16[j]` (public masked 16-bit).
-                let mut h_c = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        // -- Step 1: Collect unique suffix types needed across all tables --
+        let mut needed_suffixes: Vec<Suffixes> = Vec::new();
+        for table in LookupTables::<XLEN>::iter() {
+            for suffix in table.suffixes() {
+                if !matches!(suffix, Suffixes::One)
+                    && suffix_len > 0
+                    && !needed_suffixes.contains(&suffix)
+                {
+                    needed_suffixes.push(suffix);
+                }
+            }
+        }
 
+        // -- Step 2: Batch-evaluate each unique suffix over ALL cycles --
+        // Each suffix returns Vec<SuffixFuture<F>> with deferred ring→field conversion.
+        // We flatten all futures and fulfill_batched once.
+        let _span = info_span!("suffix_mle", n_suffixes = needed_suffixes.len()).entered();
+        let mut suffix_futures_map: std::collections::HashMap<u8, Vec<SuffixFuture<F>>> =
+            std::collections::HashMap::new();
+        if let Some(ref all_bits) = all_suffix_bits {
+            for &suffix in &needed_suffixes {
+                // let _inner =
+                //     info_span!("eval_suffix", suffix = ?suffix).entered();
+                let futures = evaluate_suffix_mle_batched(
+                    &suffix,
+                    all_bits,
+                    suffix_len,
+                    io_ctx.main(),
+                    self.party_id,
+                )?;
+                suffix_futures_map.insert(suffix as u8, futures);
+            }
+        }
+        drop(_span);
+
+        // Flatten all futures, fulfill_batched, then split back.
+        let _span = info_span!("suffix_fulfill").entered();
+        let num_cycles = self.lookup_indices.len();
+        let suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
+        let mut all_futures: Vec<SuffixFuture<F>> =
+            Vec::with_capacity(suffix_keys.len() * num_cycles);
+        for &key in &suffix_keys {
+            all_futures.extend(suffix_futures_map.remove(&key).unwrap());
+        }
+        let all_field: Vec<Rep3PrimeFieldShare<F>> =
+            all_futures.fulfill_batched(io_ctx, |share, ()| share)?;
+        // Split back into per-suffix chunks (zero-copy via slicing)
+        let suffix_eval_cache: std::collections::HashMap<u8, &[Rep3PrimeFieldShare<F>]> =
+            suffix_keys
+                .iter()
+                .enumerate()
+                .map(|(i, &key)| (key, &all_field[i * num_cycles..(i + 1) * num_cycles]))
+                .collect();
+        drop(_span);
+
+        // --- Debug: verify a few suffix evals by opening ---
+        #[cfg(debug_assertions)]
+        if suffix_len > 0 && !suffix_eval_cache.is_empty() {
+            let check_count = 3.min(num_cycles);
+            // Open lookup_indices[0..check_count] to get plaintext
+            let idx_bs: Vec<RingElement<u128>> =
+                self.lookup_indices[..check_count].iter().map(|s| s.b).collect();
+            let idx_cs: Vec<RingElement<u128>> =
+                io_ctx.main().network.reshare_many(&idx_bs).unwrap();
+            let suffix_mask_u128 = (1u128 << suffix_len) - 1;
+
+            for &suffix in &needed_suffixes {
+                let cache_entry = suffix_eval_cache.get(&(suffix as u8)).unwrap();
+                for j in 0..check_count {
+                    // Open suffix eval
+                    let eval_share = cache_entry[j];
+                    let opened_eval = rep3_arith::open(eval_share, io_ctx.main()).unwrap();
+
+                    // Compute vanilla
+                    let idx_plain =
+                        (self.lookup_indices[j].a ^ self.lookup_indices[j].b ^ idx_cs[j]).0;
+                    let suffix_bits_plain = idx_plain & suffix_mask_u128;
+                    let vanilla_u64 = suffix
+                        .suffix_mle::<XLEN>(LookupBits::new(suffix_bits_plain, suffix_len));
+                    let vanilla_f = F::from_u64(vanilla_u64);
+
+                    if opened_eval != vanilla_f {
+                        tracing::error!(
+                            "Suffix {:?} eval mismatch at cycle {}: mpc={:?} vanilla={:?} (suffix_bits=0x{:x}, suffix_len={})",
+                            suffix, j, opened_eval, vanilla_f, suffix_bits_plain, suffix_len
+                        );
+                    }
+                }
+            }
+        }
+
+        // -- Step 3: Build histograms in parallel --
+        // Collect all (table_idx, suffix_idx, table, suffix) work items.
+        let _span = info_span!("build_histograms").entered();
+
+        // Enumerate all (table_idx, suffix_idx) pairs into a flat work list.
+        struct WorkItem {
+            table_idx: usize,
+            suffix_idx: usize,
+            suffix: Suffixes,
+        }
+        let mut work_items: Vec<WorkItem> = Vec::new();
+        for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
+            for (suffix_idx, suffix) in table.suffixes().into_iter().enumerate() {
+                work_items.push(WorkItem {
+                    table_idx,
+                    suffix_idx,
+                    suffix,
+                });
+            }
+        }
+
+        // Build histograms in parallel. Each work item produces either:
+        //   - Rep3 histogram (constant suffix) → ready for FWHT
+        //   - Additive histogram (secret suffix) → needs reshare
+        enum HistResult<F: JoltField> {
+            Rep3(usize, usize, Vec<Rep3PrimeFieldShare<F>>),
+            Additive(usize, usize, Vec<AdditiveShare<F>>),
+            ZeroPoly(usize, usize),
+        }
+
+        let u_evals = &self.u_evals;
+        let c16 = &self.c16; // TODO: likely need to get c16 for current phase?
+        let lookup_indices_by_table = &self.lookup_indices_by_table;
+
+        let hist_results: Vec<HistResult<F>> = work_items
+            .par_iter()
+            .map(|item| {
+                let table_cycles = &lookup_indices_by_table[item.table_idx];
+                // Tables with no cycles: zero histogram, skip FWHT unmask.
+                // Still emit a Rep3 entry so the poly gets reset to size M.
+                if table_cycles.is_empty() {
+                    return HistResult::ZeroPoly(item.table_idx, item.suffix_idx);
+                }
                 if suffix_len == 0 {
-                    // Final phase: suffix MLE is a public constant because the suffix bitvector is empty.
-                    let constant_u64 = suffix.suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
+                    let mut h_c = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                    let constant_u64 = item
+                        .suffix
+                        .suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
                     if constant_u64 != 0 {
                         let constant_f = F::from_u128(constant_u64 as u128);
                         for &j in table_cycles {
-                            if let Some(c) = self.c16[j] {
-                                h_c[c as usize] += self.u_evals[j] * constant_f;
+                            if let Some(c) = c16[j] {
+                                h_c[c as usize] += u_evals[j] * constant_f;
                             }
                         }
                     }
-                } else if matches!(suffix, Suffixes::One) {
-                    // One suffix is constant 1 for any suffix_len.
+                    HistResult::Rep3(item.table_idx, item.suffix_idx, h_c)
+                } else if matches!(item.suffix, Suffixes::One) {
+                    let mut h_c = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
                     for &j in table_cycles {
-                        if let Some(c) = self.c16[j] {
-                            h_c[c as usize] += self.u_evals[j];
+                        if let Some(c) = c16[j] {
+                            h_c[c as usize] += u_evals[j];
                         }
                     }
+                    HistResult::Rep3(item.table_idx, item.suffix_idx, h_c)
                 } else {
-                    // Extract suffix bits for this table's cycles
-                    let all_bits = all_suffix_bits.as_ref().unwrap();
-                    let table_suffix_bits: Vec<Rep3RingShare<u128>> =
-                        table_cycles.iter().map(|&j| all_bits[j]).collect();
-
-                    // Evaluate suffix MLE in MPC
-                    let _eval_span = tracing::trace_span!("suffix_mle_eval").entered();
-                    let suffix_evals: Vec<Rep3PrimeFieldShare<F>> = evaluate_suffix_mle_batched(
-                        suffix,
-                        &table_suffix_bits,
-                        suffix_len,
-                        io_ctx.main(),
-                        self.party_id,
-                    )?;
-                    drop(_eval_span);
-
-                    // Multiply u_evals * suffix_evals (shared × shared)
-                    let _mul_span = tracing::trace_span!("u_times_suffix").entered();
-                    let u_for_table: Vec<Rep3PrimeFieldShare<F>> =
-                        table_cycles.iter().map(|&j| self.u_evals[j]).collect();
-                    let weighted = rep3_arith::mul_vec(&u_for_table, &suffix_evals, io_ctx.main())?;
-                    drop(_mul_span);
-
-                    // Scatter into masked histogram
-                    for (idx_in_table, &j) in table_cycles.iter().enumerate() {
-                        if let Some(c) = self.c16[j] {
-                            h_c[c as usize] += weighted[idx_in_table];
+                    let suffix_evals = suffix_eval_cache.get(&(item.suffix as u8)).unwrap();
+                    let mut h_add = vec![AdditiveShare::<F>::zero(); M];
+                    for &j in table_cycles {
+                        if let Some(c) = c16[j] {
+                            let w: AdditiveShare<F> = u_evals[j] * suffix_evals[j];
+                            h_add[c as usize] = h_add[c as usize] + w;
                         }
                     }
+                    HistResult::Additive(item.table_idx, item.suffix_idx, h_add)
                 }
+            })
+            .collect();
 
-                // Unmask: H = FWHT^{-1}( FWHT(H_c) ⊙ Ehat16 ) / M
-                // Pointwise product is local: Rep3 * Rep3 → Additive (no communication).
-                let _unmask_span = tracing::trace_span!("fwht_unmask").entered();
+        // Partition into rep3 vs additive, and handle zero polys (no FWHT needed)
+        let mut rep3_hist_entries: Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)> = Vec::new();
+        let mut hist_entries_to_reshare: Vec<(usize, usize, Vec<AdditiveShare<F>>)> = Vec::new();
+        for result in hist_results {
+            match result {
+                HistResult::Rep3(ti, si, h) => rep3_hist_entries.push((ti, si, h)),
+                HistResult::Additive(ti, si, h) => hist_entries_to_reshare.push((ti, si, h)),
+                HistResult::ZeroPoly(ti, si) => {
+                    self.suffix_polys[ti][si] = AdditiveDensePoly::zeros(M);
+                }
+            }
+        }
+        drop(_span);
+
+        // -- Step 4: Batch reshare all additive histograms to Rep3 in one round --
+        let _span = info_span!("reshare_hists", n = hist_entries_to_reshare.len()).entered();
+        let reshared_histograms = if !hist_entries_to_reshare.is_empty() {
+            let total_len = hist_entries_to_reshare.len() * M;
+            let mut flat_additive = Vec::with_capacity(total_len);
+            for (_, _, ref hist) in &hist_entries_to_reshare {
+                flat_additive.extend_from_slice(hist);
+            }
+            let flat_rep3 = rep3_arith::reshare_additive_many(&flat_additive, io_ctx.main())?;
+            flat_rep3
+                .chunks_exact(M)
+                .map(|c| c.to_vec())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        drop(_span);
+
+        // -- Step 5: Merge reshared histograms back, then FWHT unmask all (parallel, local) --
+        // Replace additive histograms with their reshared Rep3 versions, then
+        // combine both lists into one unified FWHT pass.
+        let mut all_hist_entries: Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)> =
+            rep3_hist_entries;
+        for ((ti, si, _additive), reshared) in hist_entries_to_reshare
+            .into_iter()
+            .zip(reshared_histograms.into_iter())
+        {
+            all_hist_entries.push((ti, si, reshared));
+        }
+
+        let _span = info_span!("fwht_unmask", n = all_hist_entries.len()).entered();
+
+        let all_polys: Vec<(usize, usize, AdditiveDensePoly<F>)> = all_hist_entries
+            .into_par_iter()
+            .map(|(table_idx, suffix_idx, mut h_c)| {
                 fwht_rep3_in_place(&mut h_c);
                 let mut h: Vec<AdditiveShare<F>> = h_c
                     .iter()
@@ -724,11 +893,14 @@ impl<F: JoltField> ReadRafProverState<F> {
                 for v in h.iter_mut() {
                     *v = *v * inv_m;
                 }
-                drop(_unmask_span);
+                (table_idx, suffix_idx, AdditiveDensePoly::new(h))
+            })
+            .collect();
 
-                self.suffix_polys[table_idx][suffix_idx] = AdditiveDensePoly::new(h);
-            }
+        for (table_idx, suffix_idx, poly) in all_polys {
+            self.suffix_polys[table_idx][suffix_idx] = poly;
         }
+        drop(_span);
 
         Ok(())
     }
@@ -830,46 +1002,66 @@ impl<F: JoltField> ReadRafProverState<F> {
             }
         } else {
             // suffix_len > 0: secret suffix values for operand/identity suffixes.
-            // Weight = u_evals[j] * suffix_val[j] (shared × shared → needs mul_vec).
+            // left[0], right[0] are constant (ShiftHalf), identity[0] is constant (Shift).
+            // left[1], right[1], identity[1] are secret (need Rep3 × Rep3 → Additive).
+            //
+            // Use local multiply into additive histograms + reshare (O(3M) communication)
+            // instead of 3 × mul_vec (3 × O(N) communication).
 
-            // Compute weighted suffix values for interleaved cycles.
-            // left[0] and right[0] are constant (ShiftHalf), left[1] and right[1] are secret.
-            // identity[0] is constant (Shift), identity[1] is secret.
-
-            // For the constant suffixes (order 0), we can scatter directly.
-            // For the secret suffixes (order 1), we need mul_vec.
-
-            // Batch: compute u_evals * left_operand, u_evals * right_operand, u_evals * identity
-            let weighted_left = rep3_arith::mul_vec(&self.u_evals, &left_operand, io_ctx.main())?;
-            let weighted_right = rep3_arith::mul_vec(&self.u_evals, &right_operand, io_ctx.main())?;
-            let weighted_identity = rep3_arith::mul_vec(&self.u_evals, &identity, io_ctx.main())?;
+            let mut additive_hists: Vec<Vec<AdditiveShare<F>>> = (0..3)
+                .map(|_| vec![AdditiveShare::<F>::zero(); M])
+                .collect();
 
             for &j in &self.interleaved_cycles {
                 if let Some(c) = self.c16[j] {
                     let u = self.u_evals[j];
-                    histograms[0][c as usize] += u * shift_half_val;
-                    histograms[1][c as usize] += weighted_left[j];
-                    histograms[2][c as usize] += u * shift_half_val;
-                    histograms[3][c as usize] += weighted_right[j];
+                    let ci = c as usize;
+                    histograms[0][ci] += u * shift_half_val;
+                    histograms[2][ci] += u * shift_half_val;
+                    // Local Rep3 × Rep3 → Additive
+                    additive_hists[0][ci] = additive_hists[0][ci] + (u * left_operand[j]);
+                    additive_hists[1][ci] = additive_hists[1][ci] + (u * right_operand[j]);
                 }
             }
 
             for &j in &self.identity_cycles {
                 if let Some(c) = self.c16[j] {
                     let u = self.u_evals[j];
-                    histograms[4][c as usize] += u * shift_val;
-                    histograms[5][c as usize] += weighted_identity[j];
+                    let ci = c as usize;
+                    histograms[4][ci] += u * shift_val;
+                    additive_hists[2][ci] = additive_hists[2][ci] + (u * identity[j]);
                 }
+            }
+
+            // Batch reshare: flatten 3 additive histograms, reshare in one round
+            let _reshare = info_span!("q_reshare").entered();
+            let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
+            for h in &additive_hists {
+                flat.extend_from_slice(h);
+            }
+            let flat_rep3 = rep3_arith::reshare_additive_many(&flat, io_ctx.main())?;
+            drop(_reshare);
+
+            // Scatter reshared histograms into the Rep3 histogram slots
+            let left_hist = &flat_rep3[0..M];
+            let right_hist = &flat_rep3[M..2 * M];
+            let identity_hist = &flat_rep3[2 * M..3 * M];
+
+            for i in 0..M {
+                histograms[1][i] = left_hist[i];
+                histograms[3][i] = right_hist[i];
+                histograms[5][i] = identity_hist[i];
             }
         }
 
-        // FWHT + local pointwise multiply with Ehat16 + inverse FWHT
-        // Rep3 * Rep3 → Additive (no communication)
+        // FWHT + local pointwise multiply with Ehat16 + inverse FWHT (parallel)
+        use rayon::prelude::*;
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
+        let _fwht_span = info_span!("q_fwht_unmask").entered();
         let q_polys: Vec<AdditiveDensePoly<F>> = histograms
-            .iter_mut()
-            .map(|h| {
-                fwht_rep3_in_place(h);
+            .into_par_iter()
+            .map(|mut h| {
+                fwht_rep3_in_place(&mut h);
                 let mut h_k: Vec<AdditiveShare<F>> =
                     h.iter().zip(ehat16.iter()).map(|(&a, &b)| a * b).collect();
                 fwht_additive_in_place(&mut h_k);
@@ -879,6 +1071,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                 AdditiveDensePoly::new(h_k)
             })
             .collect();
+        drop(_fwht_span);
 
         let mut q_iter = q_polys.into_iter();
         self.left_operand_q[0] = q_iter.next().unwrap();
