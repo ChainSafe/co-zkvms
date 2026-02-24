@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use tracing::info_span;
 
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
@@ -98,29 +99,6 @@ impl Rep3JoltDAGWorker {
         let (outer_sumcheck_r, claimed_witness_evals) =
             Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
 
-        // // Cache outer sumcheck openings in the worker accumulator so downstream
-        // // subsystems (registers, RAM, lookups) can read r_cycle and claims.
-        // {
-        //     use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId};
-        //     use jolt_core::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
-        //     use jolt_core::zkvm::witness::VirtualPolynomial;
-
-        //     let num_steps_bits = padded_trace_length.ilog2() as usize;
-        //     let r_cycle = &outer_sumcheck_r[..num_steps_bits];
-        //     let r_cycle_point = OpeningPoint::new(r_cycle.to_vec());
-
-        //     for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
-        //         if let Ok(poly) = VirtualPolynomial::try_from(input) {
-        //             state.accumulator.append_virtual(
-        //                 poly,
-        //                 SumcheckId::SpartanOuter,
-        //                 r_cycle_point.clone(),
-        //                 *eval,
-        //             );
-        //         }
-        //     }
-        // }
-
         // --- Prepare RAM worker (ring→field conversion requires MPC communication) ---
         let mut ram_dag = Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
 
@@ -167,7 +145,9 @@ impl Rep3JoltDAGWorker {
             .chain(lookups_instances)
             .collect();
 
+        let _stage2 = info_span!("stage2_prove").entered();
         HybridBatchedSumcheckWorker::prove(&mut instances, &mut state.accumulator, &mut io_ctx)?;
+        drop(_stage2);
 
         // // -------------------------------------------------------------------
         // // Stage 2: batched sumcheck (secret instances only)
@@ -292,11 +272,13 @@ impl Rep3JoltDAGWorker {
             .chain(ram_stage3)
             .collect();
 
+        let _stage3 = info_span!("stage3_prove").entered();
         HybridBatchedSumcheckWorker::prove(
             &mut stage3_instances,
             &mut state.accumulator,
             &mut io_ctx,
         )?;
+        drop(_stage3);
 
         // Future stages (opening proof, etc.) will go here...
         Ok(())

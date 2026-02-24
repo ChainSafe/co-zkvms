@@ -55,10 +55,9 @@ struct AdditiveDensePoly<F: JoltField> {
 impl<F: JoltField> AdditiveDensePoly<F> {
     fn new(coeffs: Vec<AdditiveShare<F>>) -> Self {
         let len = coeffs.len();
-        let n = len / 2;
         Self {
             coeffs,
-            bound: vec![AdditiveShare::zero(); n],
+            bound: Vec::new(), // deferred — allocated on first bind()
             current_len: len,
             is_bound: false,
         }
@@ -91,6 +90,10 @@ impl<F: JoltField> AdditiveDensePoly<F> {
                 self.bound[i] = left + (right - left) * r;
             }
         } else {
+            // Allocate bound buffer on first bind (deferred from new())
+            if self.bound.len() < n {
+                self.bound.resize(n, AdditiveShare::zero());
+            }
             for i in 0..n {
                 let left = self.coeffs[i];
                 let right = self.coeffs[i + n];
@@ -144,12 +147,15 @@ fn combine_shared<F: JoltField>(
     shared_suffixes: &[AdditiveShare<F>],
 ) -> AdditiveShare<F> {
     let n = shared_suffixes.len();
-    // Extract weight for each suffix by evaluating combine with unit vector e_i
+    debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
+    // Extract all weights in one pass using a reusable stack buffer.
+    // n is always small (1-5 for all lookup tables), so a fixed-size array avoids heap allocs.
+    let mut unit = [F::zero(); 8];
     let mut result = AdditiveShare::<F>::zero();
     for i in 0..n {
-        let mut unit: Vec<SuffixEval<F>> = vec![F::zero(); n];
         unit[i] = F::one();
-        let weight: F = table.combine(prefixes, &unit);
+        let weight: F = table.combine(prefixes, &unit[..n]);
+        unit[i] = F::zero();
         result = result + shared_suffixes[i] * weight;
     }
     result
@@ -558,23 +564,38 @@ impl<F: JoltField> ReadRafProverState<F> {
                 })
                 .collect();
 
-            // Batch multiply: u_evals[j] *= eq_shifted[c16_prev[j]]
-            // and ra_acc[j] *= eq_shifted[c16_prev[j]]
-            let vals_to_mul: Vec<Rep3PrimeFieldShare<F>> = c16_prev
+            // Only multiply active cycles (c16_prev != None) to reduce mul_vec size.
+            // Inactive cycles already have u_evals = 0 (multiplied by zero in prior
+            // condensation or never set), so skipping them is safe.
+            let active_indices: Vec<usize> = c16_prev
                 .iter()
-                .map(|opt| match opt {
-                    Some(c) => eq_shifted[*c as usize],
-                    None => Rep3PrimeFieldShare::zero_share(),
-                })
+                .enumerate()
+                .filter_map(|(j, opt)| opt.map(|_| j))
                 .collect();
 
-            let u_products = rep3_arith::mul_vec(&self.u_evals, &vals_to_mul, io_ctx.main())?;
+            if !active_indices.is_empty() {
+                let u_active: Vec<Rep3PrimeFieldShare<F>> =
+                    active_indices.iter().map(|&j| self.u_evals[j]).collect();
+                let eq_active: Vec<Rep3PrimeFieldShare<F>> = active_indices
+                    .iter()
+                    .map(|&j| eq_shifted[c16_prev[j].unwrap() as usize])
+                    .collect();
 
-            // For inactive cycles (None), u_evals stays zero (mul by zero share).
-            // For active cycles, update in place.
-            // Note: only u_evals is updated in condensation (matching vanilla).
-            // ra_acc is only updated in cache_phase.
-            self.u_evals = u_products;
+                let products = rep3_arith::mul_vec(&u_active, &eq_active, io_ctx.main())?;
+
+                // Zero out all u_evals first, then write back active ones
+                for u in self.u_evals.iter_mut() {
+                    *u = Rep3PrimeFieldShare::zero_share();
+                }
+                for (idx, &j) in active_indices.iter().enumerate() {
+                    self.u_evals[j] = products[idx];
+                }
+            } else {
+                // All inactive — zero everything
+                for u in self.u_evals.iter_mut() {
+                    *u = Rep3PrimeFieldShare::zero_share();
+                }
+            }
         }
 
         drop(_cond_span);
@@ -1044,22 +1065,32 @@ impl<F: JoltField> ReadRafProverState<F> {
         // In masked domain: bucket = (c16[j] ^ r16) % M = c16[j] ^ r16 (since M = 2^16).
         // We use the shifted v table: v_shifted[c] = v[c ^ r16].
         let ehat16 = self.ehat16.as_ref().unwrap();
-        let v_values = self.v.clone_values();
-        assert_eq!(v_values.len(), M);
+        let v_shifted = shift_eq_table_with_mask(self.v.values(), ehat16);
 
-        let v_shifted = shift_eq_table_with_mask(&v_values, ehat16);
-
-        let vals_to_mul: Vec<Rep3PrimeFieldShare<F>> = self
+        // Only multiply active cycles (c16 != None) to reduce mul_vec size.
+        // Inactive cycles have ra_acc = 0 already (multiplied by zero in condensation
+        // or initialized to zero for padding), so skipping them is safe.
+        let active_indices: Vec<usize> = self
             .c16
             .iter()
-            .map(|opt| match opt {
-                Some(c) => v_shifted[*c as usize],
-                None => Rep3PrimeFieldShare::zero_share(),
-            })
+            .enumerate()
+            .filter_map(|(j, opt)| opt.map(|_| j))
             .collect();
 
-        let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx.main())?;
-        self.ra_acc = ra_products;
+        if !active_indices.is_empty() {
+            let ra_active: Vec<Rep3PrimeFieldShare<F>> =
+                active_indices.iter().map(|&j| self.ra_acc[j]).collect();
+            let v_active: Vec<Rep3PrimeFieldShare<F>> = active_indices
+                .iter()
+                .map(|&j| v_shifted[self.c16[j].unwrap() as usize])
+                .collect();
+
+            let products = rep3_arith::mul_vec(&ra_active, &v_active, io_ctx.main())?;
+
+            for (idx, &j) in active_indices.iter().enumerate() {
+                self.ra_acc[j] = products[idx];
+            }
+        }
 
         self.prefix_registry.update_checkpoints();
         Ok(())
@@ -1204,32 +1235,51 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize, io_ctx: &mut IoContextPool<N>) {
+        use rayon::prelude::*;
+
         let ps = &mut self.state;
         ps.r.push(r_j);
 
         if round < LOG_K {
-            // Bind suffix polynomials (additive)
             let r: F = r_j.into();
-            for polys in ps.suffix_polys.iter_mut() {
-                for poly in polys.iter_mut() {
-                    poly.bind(r);
-                }
-            }
 
-            // Bind prefix-suffix decompositions (public P via PSD, additive Q arrays)
-            ps.identity_ps.bind(r_j);
-            ps.right_operand_ps.bind(r_j);
-            ps.left_operand_ps.bind(r_j);
-            for q in ps.left_operand_q.iter_mut() {
-                q.bind(r);
-            }
-            for q in ps.right_operand_q.iter_mut() {
-                q.bind(r);
-            }
-            for q in ps.identity_q.iter_mut() {
-                q.bind(r);
-            }
-            ps.v.update(r_j);
+            // Run suffix poly binding, Q poly binding, PSD binding, and v.update
+            // concurrently — all are independent.
+            rayon::scope(|s| {
+                // Suffix polys: flatten all tables' suffix polys and bind in parallel
+                s.spawn(|_| {
+                    ps.suffix_polys
+                        .par_iter_mut()
+                        .for_each(|polys| {
+                            for poly in polys.iter_mut() {
+                                poly.bind(r);
+                            }
+                        });
+                });
+
+                // Q polys: bind all 6 Q arrays in parallel
+                s.spawn(|_| {
+                    let q_polys: Vec<&mut AdditiveDensePoly<F>> = ps
+                        .left_operand_q
+                        .iter_mut()
+                        .chain(ps.right_operand_q.iter_mut())
+                        .chain(ps.identity_q.iter_mut())
+                        .collect();
+                    q_polys.into_par_iter().for_each(|q| q.bind(r));
+                });
+
+                // PSD bindings (public, cheap — run together on one task)
+                s.spawn(|_| {
+                    ps.identity_ps.bind(r_j);
+                    ps.right_operand_ps.bind(r_j);
+                    ps.left_operand_ps.bind(r_j);
+                });
+
+                // Expanding table update
+                s.spawn(|_| {
+                    ps.v.update(r_j);
+                });
+            });
 
             // Update prefix checkpoints every 2 rounds
             if ps.r.len().is_multiple_of(2) {
@@ -1348,6 +1398,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
 
     /// Read-checking component of the prover message.
     fn prover_msg_read_checking(&self, j: usize) -> [AdditiveShare<F>; 2] {
+        use rayon::prelude::*;
+
         let ps = &self.state;
         let lookup_tables: Vec<_> = LookupTables::<XLEN>::iter().collect();
         let len = ps.suffix_polys[0][0].len();
@@ -1359,54 +1411,61 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             None
         };
 
-        let mut eval_0 = AdditiveShare::<F>::zero();
-        let mut eval_2_left = AdditiveShare::<F>::zero();
-        let mut eval_2_right = AdditiveShare::<F>::zero();
+        let half = len / 2;
+        let (eval_0, eval_2_left, eval_2_right) = (0..half)
+            .into_par_iter()
+            .map(|b| {
+                let b_bits = LookupBits::new(b as u128, log_len - 1);
 
-        for b in 0..len / 2 {
-            let b_bits = LookupBits::new(b as u128, log_len - 1);
+                let prefixes_c0: Vec<_> = Prefixes::iter()
+                    .map(|prefix| {
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            0,
+                            b_bits,
+                            j,
+                        )
+                    })
+                    .collect();
+                let prefixes_c2: Vec<_> = Prefixes::iter()
+                    .map(|prefix| {
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            2,
+                            b_bits,
+                            j,
+                        )
+                    })
+                    .collect();
 
-            let prefixes_c0: Vec<_> = Prefixes::iter()
-                .map(|prefix| {
-                    prefix.prefix_mle::<XLEN, F, F::Challenge>(
-                        &ps.prefix_checkpoints,
-                        r_x,
-                        0,
-                        b_bits,
-                        j,
+                let mut e0 = AdditiveShare::<F>::zero();
+                let mut e2l = AdditiveShare::<F>::zero();
+                let mut e2r = AdditiveShare::<F>::zero();
+
+                for (table, suffixes) in lookup_tables.iter().zip(ps.suffix_polys.iter()) {
+                    let suffixes_left: Vec<AdditiveShare<F>> =
+                        suffixes.iter().map(|s| s.get_coeff(b)).collect();
+                    let suffixes_right: Vec<AdditiveShare<F>> =
+                        suffixes.iter().map(|s| s.get_coeff(b + half)).collect();
+
+                    e0 += combine_shared(table, &prefixes_c0, &suffixes_left);
+                    e2l += combine_shared(table, &prefixes_c2, &suffixes_left);
+                    e2r += combine_shared(table, &prefixes_c2, &suffixes_right);
+                }
+                (e0, e2l, e2r)
+            })
+            .reduce(
+                || {
+                    (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
                     )
-                })
-                .collect();
-            let prefixes_c2: Vec<_> = Prefixes::iter()
-                .map(|prefix| {
-                    prefix.prefix_mle::<XLEN, F, F::Challenge>(
-                        &ps.prefix_checkpoints,
-                        r_x,
-                        2,
-                        b_bits,
-                        j,
-                    )
-                })
-                .collect();
-
-            for (table, suffixes) in lookup_tables.iter().zip(ps.suffix_polys.iter()) {
-                // suffix_left[s] = suffix_polys[table][s][b] (additive)
-                // suffix_right[s] = suffix_polys[table][s][b + len/2] (additive)
-                let suffixes_left: Vec<AdditiveShare<F>> =
-                    suffixes.iter().map(|s| s.get_coeff(b)).collect();
-                let suffixes_right: Vec<AdditiveShare<F>> =
-                    suffixes.iter().map(|s| s.get_coeff(b + len / 2)).collect();
-
-                // combine: public prefixes × additive suffixes → additive
-                let combined_c0 = combine_shared(table, &prefixes_c0, &suffixes_left);
-                let combined_c2_left = combine_shared(table, &prefixes_c2, &suffixes_left);
-                let combined_c2_right = combine_shared(table, &prefixes_c2, &suffixes_right);
-
-                eval_0 += combined_c0;
-                eval_2_left += combined_c2_left;
-                eval_2_right += combined_c2_right;
-            }
-        }
+                },
+                |(a0, a2l, a2r), (b0, b2l, b2r)| (a0 + b0, a2l + b2l, a2r + b2r),
+            );
 
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
     }
@@ -1417,51 +1476,35 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// (`{left,right,identity}_operand_q`) paired with public P polynomials
     /// from the `PrefixRegistry`.
     fn prover_msg_raf(&self) -> [AdditiveShare<F>; 2] {
+        use rayon::prelude::*;
+
         let ps = &self.state;
         let len = ps.identity_q[0].len();
+        let half = len / 2;
 
-        let mut left_0 = AdditiveShare::<F>::zero();
-        let mut left_2 = AdditiveShare::<F>::zero();
-        let mut right_0 = AdditiveShare::<F>::zero();
-        let mut right_2 = AdditiveShare::<F>::zero();
+        let left_p = ps.prefix_registry.polys[Prefix::LeftOperand as usize].as_ref();
+        let right_p = ps.prefix_registry.polys[Prefix::RightOperand as usize].as_ref();
+        let identity_p = ps.prefix_registry.polys[Prefix::Identity as usize].as_ref();
 
-        for b in 0..len / 2 {
-            // For each decomposition:
-            // P[0] = prefix polynomial (from registry), P[1] = None (constant 1)
-            // Q[0], Q[1] are our shared polynomials
-            //
-            // sumcheck_evals(index) computes:
-            //   For each (P_i, Q_i):
-            //     p_evals = if P_i is Some: (p[index], 2*p[index+len/2] - p[index])
-            //               else: (1, 1)
-            //     q_left = Q_i[index], q_right = Q_i[index + len/2]
-            //     accumulate (p_0 * q_left, p_2 * q_left, p_2 * q_right)
-            //   Result: (Σ p_0*q_left, 2*(Σ p_2*q_right) - (Σ p_2*q_left))
-
-            let (l0, l2) = psd_sumcheck_evals_shared(
-                ps.prefix_registry.polys[Prefix::LeftOperand as usize].as_ref(),
-                &ps.left_operand_q,
-                b,
-                len,
+        let (left_0, left_2, right_0, right_2) = (0..half)
+            .into_par_iter()
+            .map(|b| {
+                let (l0, l2) = psd_sumcheck_evals_shared(left_p, &ps.left_operand_q, b, len);
+                let (r0, r2) = psd_sumcheck_evals_shared(right_p, &ps.right_operand_q, b, len);
+                let (i0, i2) = psd_sumcheck_evals_shared(identity_p, &ps.identity_q, b, len);
+                (l0, l2, i0 + r0, i2 + r2)
+            })
+            .reduce(
+                || {
+                    (
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                        AdditiveShare::<F>::zero(),
+                    )
+                },
+                |(a0, a1, a2, a3), (b0, b1, b2, b3)| (a0 + b0, a1 + b1, a2 + b2, a3 + b3),
             );
-            let (r0, r2) = psd_sumcheck_evals_shared(
-                ps.prefix_registry.polys[Prefix::RightOperand as usize].as_ref(),
-                &ps.right_operand_q,
-                b,
-                len,
-            );
-            let (i0, i2) = psd_sumcheck_evals_shared(
-                ps.prefix_registry.polys[Prefix::Identity as usize].as_ref(),
-                &ps.identity_q,
-                b,
-                len,
-            );
-
-            left_0 += l0;
-            left_2 += l2;
-            right_0 += i0 + r0;
-            right_2 += i2 + r2;
-        }
 
         [
             left_0 * self.gamma + right_0 * self.gamma_squared,
@@ -1472,6 +1515,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
 }
 
 /// Lagrange interpolation through 4 points (0, y0), (1, y1), (2, y2), (3, y3) at x.
+///
+/// Denominators are constants: -6, 2, -2, 6. Their inverses are precomputed.
 fn lagrange_interp_4<F: JoltField>(
     y0: AdditiveShare<F>,
     y1: AdditiveShare<F>,
@@ -1479,15 +1524,20 @@ fn lagrange_interp_4<F: JoltField>(
     y3: AdditiveShare<F>,
     x: F,
 ) -> AdditiveShare<F> {
-    let x0 = F::zero();
-    let x1 = F::one();
-    let x2 = F::from(2u64);
-    let x3 = F::from(3u64);
+    // Precomputed inverse denominators: 1/(-6), 1/2, 1/(-2), 1/6
+    let inv6 = F::from(6u64).inverse().unwrap();
+    let inv2 = F::TWO_INV;
+    let inv_neg6 = -inv6; // 1/(-6)
+    let inv_neg2 = -inv2; // 1/(-2)
 
-    let l0 = (x - x1) * (x - x2) * (x - x3) / ((x0 - x1) * (x0 - x2) * (x0 - x3));
-    let l1 = (x - x0) * (x - x2) * (x - x3) / ((x1 - x0) * (x1 - x2) * (x1 - x3));
-    let l2 = (x - x0) * (x - x1) * (x - x3) / ((x2 - x0) * (x2 - x1) * (x2 - x3));
-    let l3 = (x - x0) * (x - x1) * (x - x2) / ((x3 - x0) * (x3 - x1) * (x3 - x2));
+    let xm1 = x - F::one();
+    let xm2 = x - F::from(2u64);
+    let xm3 = x - F::from(3u64);
+
+    let l0 = xm1 * xm2 * xm3 * inv_neg6;
+    let l1 = x * xm2 * xm3 * inv2;
+    let l2 = x * xm1 * xm3 * inv_neg2;
+    let l3 = x * xm1 * xm2 * inv6;
 
     y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3
 }

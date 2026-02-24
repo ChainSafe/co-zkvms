@@ -70,7 +70,7 @@ fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(5)
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -248,7 +248,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
 
     // Wrap network in IoContextPool
-    let num_io_forks = 4u32;
+    let num_io_forks = rayon::current_num_threads() as u32;
 
     let mut io_ctx = IoContextPool::init(network, num_io_forks)?;
     // populate_operands_casts: convert binary-shared operands to arithmetic

@@ -2,12 +2,12 @@
 //!
 //! This module contains implementation of the rep3 mpc network
 
-use mpc_types::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
+use mpc_types::field::PrimeField;
 use std::iter;
 use std::sync::{Arc, OnceLock};
 
