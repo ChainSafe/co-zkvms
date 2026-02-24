@@ -639,10 +639,11 @@ fn eval_sign_extension<F: JoltField, N: Rep3Network>(
 }
 
 /// SignExtensionUpperHalf: if suffix_len >= XLEN/2, extract sign bit at position (XLEN/2 - 1)
-/// in the interleaved representation (bit position 2*(XLEN/2 - 1) + 1 = XLEN - 1 in the
-/// interleaved u128), then multiply by weight.
+/// from the raw interleaved suffix bits, then multiply by weight.
 ///
-/// Binary domain: mask + shift → single bit → B2A deferred with weight.
+/// Vanilla does `(bits >> (half_word_size - 1)) & 1` directly on interleaved LookupBits.
+/// In the interleaved format, bit 31 corresponds to x[15] (left operand bit 15).
+/// We must NOT uninterleave — just extract the bit directly from the interleaved u128.
 fn eval_sign_extension_upper_half<F: JoltField, N: Rep3Network>(
     bits: &[Rep3RingShare<u128>],
     suffix_len: usize,
@@ -659,12 +660,12 @@ fn eval_sign_extension_upper_half<F: JoltField, N: Rep3Network>(
         ]);
     }
 
-    // Extract sign bit from the y operand at position (half - 1).
-    // In the uninterleaved binary domain, this is straightforward.
-    let (_, ys) = uninterleave_batch(bits);
-    let sign_bits: Vec<Rep3RingShare<Bit>> = ys
+    // Extract sign bit at position (half - 1) from the raw interleaved suffix bits,
+    // matching vanilla: `(bits >> sign_bit_position) & 1` where sign_bit_position = half - 1.
+    let sign_bit_pos = half - 1; // = 31 for XLEN=64
+    let sign_bits: Vec<Rep3RingShare<Bit>> = bits
         .iter()
-        .map(|y| downcast::<u64, Bit>(*y >> (half - 1)))
+        .map(|b| downcast::<u128, Bit>(*b >> sign_bit_pos))
         .collect();
     let weight = F::from_u128(((1u64 << half) - 1) as u128 * (1u128 << half));
     // Bit inject then multiply by weight → we do this eagerly since weight is public
@@ -852,8 +853,9 @@ pub fn compute_operand_q_suffix_evals<F: JoltField, N: Rep3Network>(
         .collect();
 
     // Identity: suffix_bits as field (binary domain → field via B2A)
-    let suffix_u64: Vec<Rep3RingShare<u64>> = suffix_bits.iter().map(|b| downcast(*b)).collect();
-    let identity = rep3_ring::casts::binary_ring_to_field_many(&suffix_u64, io_ctx)?;
+    // NOTE: suffix_len can be up to 112 bits (phase 0), so we must NOT downcast to u64.
+    // binary_ring_to_field_many supports u128 directly.
+    let identity = rep3_ring::casts::binary_ring_to_field_many(&suffix_bits, io_ctx)?;
 
     // Uninterleave (local) for left/right operands, then B2A
     let (xs, ys) = uninterleave_batch(&suffix_bits);

@@ -588,12 +588,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                 .collect();
 
             let u_products = rep3_arith::mul_vec(&self.u_evals, &vals_to_mul, io_ctx.main())?;
-            let ra_products = rep3_arith::mul_vec(&self.ra_acc, &vals_to_mul, io_ctx.main())?;
 
             // For inactive cycles (None), u_evals stays zero (mul by zero share).
             // For active cycles, update in place.
+            // Note: only u_evals is updated in condensation (matching vanilla).
+            // ra_acc is only updated in cache_phase.
             self.u_evals = u_products;
-            self.ra_acc = ra_products;
         }
 
         drop(_cond_span);
@@ -702,7 +702,8 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Flatten all futures, fulfill_batched, then split back.
         let _span = info_span!("suffix_fulfill").entered();
         let num_cycles = self.lookup_indices.len();
-        let suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
+        let mut suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
+        suffix_keys.sort_unstable(); // deterministic order across all parties
         let mut all_futures: Vec<SuffixFuture<F>> =
             Vec::with_capacity(suffix_keys.len() * num_cycles);
         for &key in &suffix_keys {
@@ -719,41 +720,9 @@ impl<F: JoltField> ReadRafProverState<F> {
                 .collect();
         drop(_span);
 
-        // --- Debug: verify a few suffix evals by opening ---
-        #[cfg(debug_assertions)]
-        if suffix_len > 0 && !suffix_eval_cache.is_empty() {
-            let check_count = 3.min(num_cycles);
-            // Open lookup_indices[0..check_count] to get plaintext
-            let idx_bs: Vec<RingElement<u128>> =
-                self.lookup_indices[..check_count].iter().map(|s| s.b).collect();
-            let idx_cs: Vec<RingElement<u128>> =
-                io_ctx.main().network.reshare_many(&idx_bs).unwrap();
-            let suffix_mask_u128 = (1u128 << suffix_len) - 1;
-
-            for &suffix in &needed_suffixes {
-                let cache_entry = suffix_eval_cache.get(&(suffix as u8)).unwrap();
-                for j in 0..check_count {
-                    // Open suffix eval
-                    let eval_share = cache_entry[j];
-                    let opened_eval = rep3_arith::open(eval_share, io_ctx.main()).unwrap();
-
-                    // Compute vanilla
-                    let idx_plain =
-                        (self.lookup_indices[j].a ^ self.lookup_indices[j].b ^ idx_cs[j]).0;
-                    let suffix_bits_plain = idx_plain & suffix_mask_u128;
-                    let vanilla_u64 = suffix
-                        .suffix_mle::<XLEN>(LookupBits::new(suffix_bits_plain, suffix_len));
-                    let vanilla_f = F::from_u64(vanilla_u64);
-
-                    if opened_eval != vanilla_f {
-                        tracing::error!(
-                            "Suffix {:?} eval mismatch at cycle {}: mpc={:?} vanilla={:?} (suffix_bits=0x{:x}, suffix_len={})",
-                            suffix, j, opened_eval, vanilla_f, suffix_bits_plain, suffix_len
-                        );
-                    }
-                }
-            }
-        }
+        // Debug: verify suffix evals (can be enabled when needed)
+        // #[cfg(debug_assertions)]
+        // { ... }
 
         // -- Step 3: Build histograms in parallel --
         // Collect all (table_idx, suffix_idx, table, suffix) work items.
@@ -1393,14 +1362,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     fn compute_prefix_suffix_prover_message(&self, round: usize) -> [AdditiveShare<F>; 2] {
         let read_checking = self.prover_msg_read_checking(round);
         let raf = self.prover_msg_raf();
-
-        if round == 0 {
-            eprintln!(
-                "[MPC party={:?}] round 0: read_checking=({:?},{:?}) raf=({:?},{:?})",
-                self.state.party_id, read_checking[0], read_checking[1], raf[0], raf[1]
-            );
-        }
-
         [read_checking[0] + raf[0], read_checking[1] + raf[1]]
     }
 
@@ -1526,6 +1487,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             left_2 * self.gamma + right_2 * self.gamma_squared,
         ]
     }
+
 }
 
 /// Lagrange interpolation through 4 points (0, y0), (1, y1), (2, y2), (3, y3) at x.
