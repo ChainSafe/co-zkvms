@@ -18,6 +18,8 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::types::Rep3Value;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 use crate::zkvm::instruction_lookups::booleanity::{extend_degree_3_evals, gruen_evals_deg_3};
@@ -666,7 +668,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3RamReadWriteCheckingWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RamReadWriteCheckingWorker<F> {
     fn degree(&self) -> usize { DEGREE }
 
     fn num_rounds(&self) -> usize { self.K.log_2() + self.T.log_2() }
@@ -699,7 +701,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3RamReadWriteCheckingWor
         }
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>) {
         let chunk_log = self.prover_state.chunk_size.log_2();
         let log_T = self.T.log_2();
 

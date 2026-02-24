@@ -12,6 +12,8 @@ use crate::field::JoltField;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::poly::Polynomial;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+
 use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerCoordinator;
@@ -80,7 +82,7 @@ impl<F: JoltField> Rep3InnerSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3InnerSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3InnerSumcheckWorker<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -125,7 +127,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3InnerSumcheckWorker<F> 
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         let r: F = r_j.into();
         self.poly_abc_small.bind(r, BindingOrder::HighToLow);
         self.poly_z.bind(r, BindingOrder::HighToLow);

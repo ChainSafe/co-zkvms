@@ -15,6 +15,8 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::types::Rep3Value;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 use crate::zkvm::instruction_lookups::booleanity::{extend_degree_3_evals, gruen_evals_deg_3};
@@ -70,7 +72,7 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ProductVirtualizationSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ProductVirtualizationSumcheckWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -163,7 +165,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ProductVirtualizationSu
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         self.eq_r_cycle.bind(r_j);
         let r: F = r_j.into();
         rayon::join(

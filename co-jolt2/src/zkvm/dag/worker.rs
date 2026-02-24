@@ -153,12 +153,12 @@ impl Rep3JoltDAGWorker {
         let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
         let mut lookups_dag =
-            Rep3LookupsDagWorker::<F, N>::new(instruction_one_hot_polys, read_raf_cycle_data);
+            Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys, read_raf_cycle_data);
         lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
         let lookups_instances = lookups_dag.stage2_instances(&mut state);
 
         // Collect all instances in vanilla order
-        let mut instances: Vec<BatchedSumcheckWorkerInstance<F>> = std::iter::empty()
+        let mut instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = std::iter::empty()
             .chain(std::iter::once(BatchedSumcheckWorkerInstance::Secret(
                 Box::new(inner),
             )))
@@ -266,15 +266,13 @@ impl Rep3JoltDAGWorker {
         let registers_stage3 = registers_dag.stage3_instances(&mut state);
 
         // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
-        let read_raf_io_ctx = io_ctx.fork_pool(io_ctx.num_workers())?;
         lookups_dag.set_stage3_init(
             lookups_gamma,
             read_raf_gamma,
             read_raf_rv_claim,
             read_raf_raf_claim,
-            read_raf_io_ctx,
         );
-        let lookups_stage3 = lookups_dag.stage3_instances(&mut state);
+        let lookups_stage3 = lookups_dag.stage3_instances(&mut state, &mut io_ctx);
 
         // 4) RAM: ValFinal (secret)
         ram_dag.set_stage3_init(ram_val_final_input_claim);
@@ -282,7 +280,7 @@ impl Rep3JoltDAGWorker {
 
         // Collect all instances in vanilla ordering:
         // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal)
-        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F>> = std::iter::empty()
+        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = std::iter::empty()
             .chain(std::iter::once(BatchedSumcheckWorkerInstance::Public(
                 Box::new(pc_sumcheck),
             )))

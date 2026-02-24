@@ -21,7 +21,7 @@ use crate::utils::types::Rep3Value;
 
 /// Worker-side sumcheck instance. Computes shared evaluations at each round
 /// and accumulates openings for the final batch opening proof.
-pub trait Rep3SumcheckInstanceWorker<F: JoltField>: Send {
+pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
     fn degree(&self) -> usize;
     fn num_rounds(&self) -> usize;
 
@@ -44,7 +44,7 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField>: Send {
     ) -> Vec<AdditiveShare<F>>;
 
     /// Bind the sumcheck variable for this round to challenge `r_j`.
-    fn bind(&mut self, r_j: F::Challenge, round: usize);
+    fn bind(&mut self, r_j: F::Challenge, round: usize, io_ctx: &mut IoContextPool<N>);
 
     /// Normalize the low-to-high sumcheck opening point to big-endian form.
     fn normalize_opening_point(
@@ -171,12 +171,12 @@ pub trait PublicSumcheckInstance<F: JoltField, T: Transcript> {
 // Batched instance wrappers
 // ---------------------------------------------------------------------------
 
-pub enum BatchedSumcheckWorkerInstance<F: JoltField> {
-    Secret(Box<dyn Rep3SumcheckInstanceWorker<F>>),
+pub enum BatchedSumcheckWorkerInstance<F: JoltField, N: Rep3NetworkWorker> {
+    Secret(Box<dyn Rep3SumcheckInstanceWorker<F, N>>),
     Public(Box<dyn PublicSumcheckInstanceWorker<F>>),
 }
 
-impl<F: JoltField> BatchedSumcheckWorkerInstance<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> BatchedSumcheckWorkerInstance<F, N> {
     fn degree(&self) -> usize {
         match self {
             BatchedSumcheckWorkerInstance::Secret(s) => s.degree(),
@@ -362,7 +362,7 @@ pub struct Rep3BatchedSumcheckWorker;
 impl Rep3BatchedSumcheckWorker {
     #[tracing::instrument(skip_all, name = "Rep3BatchedSumcheckWorker::prove", level = "trace")]
     pub fn prove<F, N>(
-        instances: &mut [Box<dyn Rep3SumcheckInstanceWorker<F>>],
+        instances: &mut [Box<dyn Rep3SumcheckInstanceWorker<F, N>>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<Vec<F::Challenge>>
@@ -475,7 +475,7 @@ impl Rep3BatchedSumcheckWorker {
                 let offset = max_num_rounds - num_rounds;
                 let local_round = round - offset;
 
-                instance.bind(r_j, local_round);
+                instance.bind(r_j, local_round, io_ctx);
 
                 let msg = active_round_msgs[i]
                     .take()
@@ -635,7 +635,7 @@ pub struct HybridBatchedSumcheckWorker;
 impl HybridBatchedSumcheckWorker {
     #[tracing::instrument(skip_all, name = "HybridBatchedSumcheckWorker::prove", level = "trace")]
     pub fn prove<F, N>(
-        instances: &mut [BatchedSumcheckWorkerInstance<F>],
+        instances: &mut [BatchedSumcheckWorkerInstance<F, N>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<Vec<F::Challenge>>
@@ -806,7 +806,7 @@ impl HybridBatchedSumcheckWorker {
 
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
-                        s.bind(r_j, local_round);
+                        s.bind(r_j, local_round, io_ctx);
                         let msg = active_secret_msgs[i]
                             .take()
                             .unwrap_or_else(|| unreachable!("active msg missing"));
@@ -1182,7 +1182,7 @@ mod tests {
         rounds: usize,
     }
 
-    impl Rep3SumcheckInstanceWorker<Fr> for ConstSecretWorker {
+    impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ConstSecretWorker {
         fn degree(&self) -> usize {
             2
         }
@@ -1203,7 +1203,7 @@ mod tests {
             vec![c; max_degree]
         }
 
-        fn bind(&mut self, _r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize) {}
+        fn bind(&mut self, _r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {}
 
         fn normalize_opening_point(
             &self,
@@ -1404,7 +1404,7 @@ mod tests {
             move |(), mut io_ctx| {
                 let party_id = io_ctx.party_id();
                 let mut acc = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
-                let mut instances: Vec<BatchedSumcheckWorkerInstance<Fr>> = vec![
+                let mut instances: Vec<BatchedSumcheckWorkerInstance<Fr, _>> = vec![
                     BatchedSumcheckWorkerInstance::Secret(Box::new(ConstSecretWorker {
                         input_claim: secret_claim,
                         rounds,

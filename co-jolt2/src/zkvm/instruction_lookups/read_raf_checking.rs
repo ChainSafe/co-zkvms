@@ -283,7 +283,7 @@ pub struct Rep3ReadRafSumcheckWorker<F: JoltField, N: Rep3NetworkWorker> {
     raf_claim: F,
     log_T: usize,
     state: ReadRafProverState<F>,
-    io_ctx: IoContextPool<N>,
+    _phantom: std::marker::PhantomData<N>,
 }
 
 impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
@@ -295,7 +295,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// - `one_hot_polys`: the D Rep3OneHotPolynomials from witness generation
     /// - `eq_r_cycle_public`: eq(r_cycle, ·) evaluations (public, length T)
     /// - `cycle_data`: pre-extracted public per-cycle data (lookup tables, interleaved flags)
-    /// - `io_ctx`: a forked IoContext for MPC operations during phase transitions
+    /// - `io_ctx`: IoContextPool for MPC operations during phase transitions
     /// - `party_id`: this party's ID
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "ReadRafWorker::new")]
@@ -307,7 +307,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         eq_r_cycle_public: &[F],
         cycle_data: ReadRafCycleData,
         lookup_indices: Vec<Rep3RingShare<u128>>,
-        mut io_ctx: IoContextPool<N>,
+        io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
     ) -> eyre::Result<Self> {
         let num_cycles = cycle_data.lookup_tables.len();
@@ -429,7 +429,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         };
 
         // Initialize phase 0
-        state.init_phase(0, &mut io_ctx)?;
+        state.init_phase(0, io_ctx)?;
 
         Ok(Self {
             gamma,
@@ -438,7 +438,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             raf_claim,
             log_T,
             state,
-            io_ctx,
+            _phantom: std::marker::PhantomData,
         })
     }
 }
@@ -490,6 +490,9 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         // -- Step F: compute Ehat16 via tensor product --
+        // Save the previous ehat16 for condensation (avoids recomputing it).
+        let ehat16_prev = self.ehat16.take();
+
         let _ehat_span = tracing::info_span!("ehat16_tensor_product").entered();
         let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
             self.one_hot_polys[hi].rand_ohv_e_field.as_ref().clone();
@@ -528,31 +531,9 @@ impl<F: JoltField> ReadRafProverState<F> {
             let prev_hi = 2 * (phase - 1);
             let prev_lo = 2 * (phase - 1) + 1;
 
-            // Build Ehat16_prev from previous phase's one-hot polys
-            let mut ehat8_prev_hi: Vec<Rep3PrimeFieldShare<F>> = self.one_hot_polys[prev_hi]
-                .rand_ohv_e_field
-                .as_ref()
-                .clone();
-            let mut ehat8_prev_lo: Vec<Rep3PrimeFieldShare<F>> = self.one_hot_polys[prev_lo]
-                .rand_ohv_e_field
-                .as_ref()
-                .clone();
-            fwht_rep3_in_place(&mut ehat8_prev_hi);
-            fwht_rep3_in_place(&mut ehat8_prev_lo);
-
-            let mut a_exp = Vec::with_capacity(M);
-            let mut b_exp = Vec::with_capacity(M);
-            for a_idx in 0..256 {
-                for _b_idx in 0..256 {
-                    a_exp.push(ehat8_prev_hi[a_idx]);
-                }
-            }
-            for _a_idx in 0..256 {
-                for b_idx in 0..256 {
-                    b_exp.push(ehat8_prev_lo[b_idx]);
-                }
-            }
-            let ehat16_prev = rep3_arith::mul_vec(&a_exp, &b_exp, io_ctx.main())?;
+            // Use cached ehat16 from the previous phase (avoids a 65536-element mul_vec)
+            let ehat16_prev = ehat16_prev
+                .expect("ehat16_prev must exist for phase > 0");
 
             // Build public EQ table from the 16 challenges of the previous phase
             let prev_start = (phase - 1) * LOG_M;
@@ -1134,7 +1115,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F>
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     for Rep3ReadRafSumcheckWorker<F, N>
 {
     fn degree(&self) -> usize {
@@ -1222,7 +1203,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F>
         }
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize, io_ctx: &mut IoContextPool<N>) {
         let ps = &mut self.state;
         ps.r.push(r_j);
 
@@ -1263,11 +1244,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F>
             // Phase transition at end of each LOG_M rounds
             if (round + 1).is_multiple_of(LOG_M) {
                 let phase = round / LOG_M;
-                ps.cache_phase(phase, &mut self.io_ctx)
+                ps.cache_phase(phase, io_ctx)
                     .expect("cache_phase failed");
 
                 if phase != PHASES - 1 {
-                    ps.init_phase(phase + 1, &mut self.io_ctx)
+                    ps.init_phase(phase + 1, io_ctx)
                         .expect("init_phase failed");
                 }
             }

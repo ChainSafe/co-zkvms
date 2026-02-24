@@ -18,6 +18,8 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomialProverOpening;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+
 use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::utils::types::{MaybeShared, Rep3Value};
 
@@ -216,10 +218,10 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         let num_sumchecks = self.sumchecks.len();
 
         // d. Drain sumchecks into boxed trait objects
-        let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<F>>> = self
+        let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<F, N>>> = self
             .sumchecks
             .drain(..)
-            .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstanceWorker<F>>)
+            .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstanceWorker<F, N>>)
             .collect();
 
         // e. Run batched sumcheck via framework
@@ -869,7 +871,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OpeningProofReductionSumcheck<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3OpeningProofReductionSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -897,7 +899,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OpeningProofReductionSu
         result
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>) {
         self.prover_state.as_mut().unwrap().bind(r_j, round);
     }
 

@@ -20,6 +20,8 @@ use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::types::Rep3Value;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
 
@@ -126,7 +128,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3OutputSumcheckWorker<F> {
     fn degree(&self) -> usize {
         DEGREE_OUTPUT
     }
@@ -188,7 +190,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3OutputSumcheckWorker<F>
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         self.val_init.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_final.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_io.bind_parallel(r_j, BindingOrder::HighToLow);
@@ -398,7 +400,7 @@ impl<F: JoltField> Rep3ValFinalSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValFinalSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ValFinalSumcheckWorker<F> {
     fn degree(&self) -> usize {
         DEGREE_VAL_FINAL
     }
@@ -447,7 +449,7 @@ impl<F: JoltField> Rep3SumcheckInstanceWorker<F> for Rep3ValFinalSumcheckWorker<
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         rayon::join(
             || self.inc.bind(r_j.into(), BindingOrder::HighToLow),
             || self.wa.bind_parallel(r_j, BindingOrder::HighToLow),

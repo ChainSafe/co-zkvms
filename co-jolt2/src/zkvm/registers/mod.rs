@@ -1,5 +1,6 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
+use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
@@ -48,13 +49,13 @@ impl<F: JoltField> Default for Rep3RegistersDagWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS>
-    for Rep3RegistersDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
+    SumcheckStagesWorker<F, PCS, N> for Rep3RegistersDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let (gamma, input_claim) = self
             .stage2
             .take()
@@ -66,7 +67,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> SumcheckStagesWorker<F, PCS
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let val_claim = self
             .stage3
             .take()

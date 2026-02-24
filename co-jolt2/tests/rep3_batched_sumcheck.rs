@@ -10,7 +10,7 @@ use jolt_core::field::JoltField as _;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::IoContextPool;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -38,7 +38,7 @@ impl ToyLinearWorker {
     }
 }
 
-impl Rep3SumcheckInstanceWorker<Fr> for ToyLinearWorker {
+impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyLinearWorker {
     fn degree(&self) -> usize {
         1
     }
@@ -74,7 +74,7 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyLinearWorker {
         evals
     }
 
-    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         let r: Fr = r_j.into();
         let one_minus_r = Fr::one() - r;
 
@@ -222,7 +222,7 @@ impl ToyCubicProductWorker {
     }
 }
 
-impl Rep3SumcheckInstanceWorker<Fr> for ToyCubicProductWorker {
+impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyCubicProductWorker {
     fn degree(&self) -> usize {
         3
     }
@@ -254,7 +254,7 @@ impl Rep3SumcheckInstanceWorker<Fr> for ToyCubicProductWorker {
         evals
     }
 
-    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize) {
+    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
         let r: Fr = r_j.into();
         Self::bind_vec(&mut self.a, r);
         Self::bind_vec(&mut self.b, r);
@@ -375,7 +375,7 @@ fn rep3_batched_sumcheck_mixed_degree_front_loaded_correct() {
         |(lin_coeffs, a, b, c), mut io_ctx: IoContextPool<_>| {
             let party_id = io_ctx.party_id();
 
-            let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<Fr>>> = vec![
+            let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<Fr, _>>> = vec![
                 Box::new(ToyLinearWorker::new(party_id, lin_coeffs)),
                 Box::new(ToyCubicProductWorker::new(party_id, a, b, c)),
             ];
@@ -457,7 +457,7 @@ fn rep3_batched_sumcheck_degree3_smoke_correct() {
         || coordinator_input,
         |(a, b, c), mut io_ctx: IoContextPool<_>| {
             let party_id = io_ctx.party_id();
-            let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<Fr>>> =
+            let mut instances: Vec<Box<dyn Rep3SumcheckInstanceWorker<Fr, _>>> =
                 vec![Box::new(ToyCubicProductWorker::new(party_id, a, b, c))];
 
             let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);

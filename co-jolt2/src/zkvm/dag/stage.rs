@@ -1,5 +1,6 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
+use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 
 use crate::field::JoltField;
 pub use crate::subprotocols::sumcheck::{
@@ -16,7 +17,8 @@ use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorke
 ///
 /// Each subsystem DAG node (e.g. `Rep3LookupsDagWorker`)
 /// implements this trait to contribute sumcheck instances from shared polynomials.
-pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>> {
+pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
+{
     fn stage1_prove(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
@@ -27,21 +29,21 @@ pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>> {
     fn stage2_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         vec![]
     }
 
     fn stage3_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         vec![]
     }
 
     fn stage4_instances(
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         vec![]
     }
 }

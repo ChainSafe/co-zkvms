@@ -48,7 +48,7 @@ fn compute_ra_evals<F: JoltField>(
 // ---------------------------------------------------------------------------
 
 /// Stage3 init data for the ReadRaf + HammingWeight sumchecks.
-struct LookupStage3Init<F: JoltField, N: Rep3NetworkWorker> {
+struct LookupStage3Init<F: JoltField> {
     /// HammingWeight gamma powers (drawn from transcript by coordinator).
     hamming_gamma: [F; D],
     /// ReadRaf gamma (drawn from transcript by coordinator).
@@ -57,13 +57,11 @@ struct LookupStage3Init<F: JoltField, N: Rep3NetworkWorker> {
     rv_claim: F,
     /// raf_claim = left_operand_claim + read_raf_gamma * right_operand_claim.
     raf_claim: F,
-    /// IoContextPool for ReadRaf's MPC parallel phase-transition multiplications.
-    io_ctx: IoContextPool<N>,
 }
 
-pub struct Rep3LookupsDagWorker<F: JoltField, N: Rep3NetworkWorker> {
+pub struct Rep3LookupsDagWorker<F: JoltField> {
     stage2: Option<([F; D], Vec<F::Challenge>)>,
-    stage3: Option<LookupStage3Init<F, N>>,
+    stage3: Option<LookupStage3Init<F>>,
     /// Shared G arrays computed in stage2, consumed in stage3.
     G: Option<[Vec<Rep3PrimeFieldShare<F>>; D]>,
     /// Public eq(r_cycle) evaluations.
@@ -74,7 +72,7 @@ pub struct Rep3LookupsDagWorker<F: JoltField, N: Rep3NetworkWorker> {
     cycle_data: Option<ReadRafCycleData>,
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3LookupsDagWorker<F, N> {
+impl<F: JoltField> Rep3LookupsDagWorker<F> {
     pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D], cycle_data: ReadRafCycleData) -> Self {
         Self {
             stage2: None,
@@ -90,32 +88,66 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3LookupsDagWorker<F, N> {
         self.stage2 = Some((gamma, r_address));
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn set_stage3_init(
         &mut self,
         hamming_gamma: [F; D],
         read_raf_gamma: F,
         rv_claim: F,
         raf_claim: F,
-        io_ctx: IoContextPool<N>,
     ) {
         self.stage3 = Some(LookupStage3Init {
             hamming_gamma,
             read_raf_gamma,
             rv_claim,
             raf_claim,
-            io_ctx,
         });
+    }
+
+    pub fn stage3_instances<PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>(
+        &mut self,
+        sm: &mut StateManagerWorker<'_, F, PCS>,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        let G = self.G.take().unwrap();
+        let init = self
+            .stage3
+            .take()
+            .expect("Rep3LookupsDagWorker stage3 init not set");
+
+        // ReadRaf (created before HammingWeight, matching vanilla ordering)
+        let eq_r_cycle = self.eq_r_cycle.take().unwrap();
+        let cycle_data = self.cycle_data.take().unwrap();
+        let one_hot_polys = self.one_hot_polys.clone();
+        let lookup_indices = sm.prover_state.cycle_witness.lookup_indices.clone();
+        let read_raf = Rep3ReadRafSumcheckWorker::new(
+            init.read_raf_gamma,
+            init.rv_claim,
+            init.raf_claim,
+            one_hot_polys,
+            &eq_r_cycle,
+            cycle_data,
+            lookup_indices,
+            io_ctx,
+            sm.party_id,
+        )
+        .expect("Rep3ReadRafSumcheckWorker::new failed");
+
+        let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G, init.hamming_gamma);
+
+        vec![
+            BatchedSumcheckWorkerInstance::Secret(Box::new(read_raf)),
+            BatchedSumcheckWorkerInstance::Secret(Box::new(hamming_weight)),
+        ]
     }
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS> for Rep3LookupsDagWorker<F, N>
+    SumcheckStagesWorker<F, PCS, N> for Rep3LookupsDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
+    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let (gamma, r_address) = self
             .stage2
             .take()
@@ -146,42 +178,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         );
 
         vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))]
-    }
-
-    fn stage3_instances(
-        &mut self,
-        sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F>> {
-        let G = self.G.take().unwrap();
-        let init = self
-            .stage3
-            .take()
-            .expect("Rep3LookupsDagWorker stage3 init not set");
-
-        // ReadRaf (created before HammingWeight, matching vanilla ordering)
-        let eq_r_cycle = self.eq_r_cycle.take().unwrap();
-        let cycle_data = self.cycle_data.take().unwrap();
-        let one_hot_polys = self.one_hot_polys.clone();
-        let lookup_indices = sm.prover_state.cycle_witness.lookup_indices.clone();
-        let read_raf = Rep3ReadRafSumcheckWorker::new(
-            init.read_raf_gamma,
-            init.rv_claim,
-            init.raf_claim,
-            one_hot_polys,
-            &eq_r_cycle,
-            cycle_data,
-            lookup_indices,
-            init.io_ctx,
-            sm.party_id,
-        )
-        .expect("Rep3ReadRafSumcheckWorker::new failed");
-
-        let hamming_weight = Rep3HammingWeightSumcheckWorker::new(G, init.hamming_gamma);
-
-        vec![
-            BatchedSumcheckWorkerInstance::Secret(Box::new(read_raf)),
-            BatchedSumcheckWorkerInstance::Secret(Box::new(hamming_weight)),
-        ]
     }
 }
 
