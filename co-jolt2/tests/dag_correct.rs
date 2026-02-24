@@ -151,9 +151,9 @@ fn vanilla_up_to_stage3(
     // lookups: ReadRaf (index 0) + HammingWeight (index 1) — both ported to MPC
     // ram: skip ValEvaluation (index 0), keep ValFinal (index 1), skip HammingBooleanity (index 2)
     let mut stage3_instances: Vec<Box<dyn SumcheckInstance<F, FS>>> = Vec::new();
-    stage3_instances.extend(spartan_stage3);               // PC + Product
-    stage3_instances.extend(registers_stage3);             // Val
-    stage3_instances.extend(lookups_stage3);               // ReadRaf + HammingWeight
+    stage3_instances.extend(spartan_stage3); // PC + Product
+    stage3_instances.extend(registers_stage3); // Val
+    stage3_instances.extend(lookups_stage3); // ReadRaf + HammingWeight
     if ram_stage3.len() > 1 {
         stage3_instances.extend(ram_stage3.into_iter().skip(1).take(1));
     }
@@ -189,6 +189,7 @@ fn dag_correct() {
     let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
     let (mut vanilla_trace, vanilla_memory, io_device) = program.trace(&inputs, &[], &[]);
 
+    tracing::info!("Trace len: {}", vanilla_trace.len());
     // Pad traces to next power of 2 (+1 termination cycle).
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
     vanilla_trace.resize(padded_len, Cycle::NoOp);

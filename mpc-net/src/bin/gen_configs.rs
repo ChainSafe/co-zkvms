@@ -30,7 +30,9 @@ struct CliArgs {
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    let (workers, coordinator) = NetworkConfig::generate_worker_configs(args.num_workers);
+    let data_dir = args.cert_dir.to_str().expect("cert_dir must be valid UTF-8");
+    let (workers, coordinator) =
+        NetworkConfig::generate_worker_configs_with_dir(args.num_workers, data_dir);
 
     for (id, config) in workers {
         let toml = toml::to_string_pretty(&config).context("serializing config")?;

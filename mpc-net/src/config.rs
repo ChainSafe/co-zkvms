@@ -333,96 +333,70 @@ impl NetworkConfig {
         BTreeMap<PartyWorkerID, NetworkConfigFile>,
         NetworkConfigFile,
     ) {
+        Self::generate_worker_configs_with_dir(num_workers, "data")
+    }
+
+    pub fn generate_worker_configs_with_dir(
+        num_workers: usize,
+        data_dir: &str,
+    ) -> (
+        BTreeMap<PartyWorkerID, NetworkConfigFile>,
+        NetworkConfigFile,
+    ) {
         let mut parties = vec![
             NetworkWorkerConfig {
                 id: 0,
                 worker: 0,
                 dns_name: "localhost:10000".parse().unwrap(),
-                cert_path: "data/cert0_0.der".into(),
+                cert_path: format!("{data_dir}/cert0_0.der").into(),
             },
             NetworkWorkerConfig {
                 id: 1,
                 worker: 0,
                 dns_name: "localhost:10001".parse().unwrap(),
-                cert_path: "data/cert0_1.der".into(),
+                cert_path: format!("{data_dir}/cert0_1.der").into(),
             },
             NetworkWorkerConfig {
                 id: 2,
                 worker: 0,
                 dns_name: "localhost:10002".parse().unwrap(),
-                cert_path: "data/cert0_2.der".into(),
+                cert_path: format!("{data_dir}/cert0_2.der").into(),
             },
         ];
         let coordinator = NetworkCoordinatorConfig {
             dns_name: "localhost:20000".parse().unwrap(),
-            cert_path: "data/cert_coordinator.der".into(),
+            cert_path: format!("{data_dir}/cert_coordinator.der").into(),
         };
         let mut workers = BTreeMap::new();
 
         for worker in 0..num_workers {
             let worker_port_offset = 1000 * worker as u16;
 
-            // TODO: refactor with inner loop in 0..=2
-            parties[0].worker = worker;
-            parties[0].dns_name.port += worker_port_offset;
-            parties[0].cert_path = format!("data/cert{}_0.der", worker).into();
+            for party in 0..=2usize {
+                parties[party].worker = worker;
+                parties[party].dns_name.port += worker_port_offset;
+                parties[party].cert_path =
+                    format!("{data_dir}/cert{worker}_{party}.der").into();
+            }
 
-            parties[1].worker = worker;
-            parties[1].dns_name.port += worker_port_offset;
-            parties[1].cert_path = format!("data/cert{}_1.der", worker).into();
-
-            parties[2].worker = worker;
-            parties[2].dns_name.port += worker_port_offset;
-            parties[2].cert_path = format!("data/cert{}_2.der", worker).into();
-
-            workers.insert(
-                PartyWorkerID::new(0, worker),
-                NetworkConfigFile {
-                    my_id: 0,
-                    worker,
-                    bind_addr: SocketAddr::new(
-                        IpAddr::from_str("0.0.0.0").unwrap(),
-                        10000 + worker_port_offset,
-                    ),
-                    key_path: format!("data/key{}_0.der", worker).into(),
-                    parties: parties.clone(),
-                    coordinator: Some(coordinator.clone()),
-                    is_coordinator: false,
-                    timeout_secs: None,
-                },
-            );
-            workers.insert(
-                PartyWorkerID::new(1, worker),
-                NetworkConfigFile {
-                    my_id: 1,
-                    worker,
-                    bind_addr: SocketAddr::new(
-                        IpAddr::from_str("0.0.0.0").unwrap(),
-                        10001 + worker_port_offset,
-                    ),
-                    key_path: format!("data/key{}_1.der", worker).into(),
-                    parties: parties.clone(),
-                    coordinator: Some(coordinator.clone()),
-                    is_coordinator: false,
-                    timeout_secs: None,
-                },
-            );
-            workers.insert(
-                PartyWorkerID::new(2, worker),
-                NetworkConfigFile {
-                    my_id: 2,
-                    worker,
-                    bind_addr: SocketAddr::new(
-                        IpAddr::from_str("0.0.0.0").unwrap(),
-                        10002 + worker_port_offset,
-                    ),
-                    key_path: format!("data/key{}_2.der", worker).into(),
-                    parties: parties.clone(),
-                    coordinator: Some(coordinator.clone()),
-                    is_coordinator: false,
-                    timeout_secs: None,
-                },
-            );
+            for party in 0..=2usize {
+                workers.insert(
+                    PartyWorkerID::new(party, worker),
+                    NetworkConfigFile {
+                        my_id: party,
+                        worker,
+                        bind_addr: SocketAddr::new(
+                            IpAddr::from_str("0.0.0.0").unwrap(),
+                            10000 + party as u16 + worker_port_offset,
+                        ),
+                        key_path: format!("{data_dir}/key{worker}_{party}.der").into(),
+                        parties: parties.clone(),
+                        coordinator: Some(coordinator.clone()),
+                        is_coordinator: false,
+                        timeout_secs: None,
+                    },
+                );
+            }
         }
 
         let coordinator_config = NetworkConfigFile {
@@ -430,7 +404,7 @@ impl NetworkConfig {
             my_id: 0,
             worker: 0,
             bind_addr: SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 20000),
-            key_path: format!("data/key_coordinator.der").into(),
+            key_path: format!("{data_dir}/key_coordinator.der").into(),
             parties: (0..num_workers)
                 .flat_map(|i| {
                     workers

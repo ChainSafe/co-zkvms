@@ -18,17 +18,13 @@ cargo build --bin gen_configs --release
 cd ../co-jolt2
 
 # Generate network configs (1 worker per party)
-# Configs, certs, and keys all go into .artifacts/
+# Configs, certs, and keys all go into ARTIFACT_DIR.
+# The -c flag sets both where DER files are written AND the paths embedded in TOMLs.
 ../target/release/gen_configs \
   -n 1 \
   -o "$ARTIFACT_DIR" \
   -c "$ARTIFACT_DIR" \
   -k "$ARTIFACT_DIR"
-
-# Fix cert/key paths in generated configs: data/ -> .artifacts/
-for f in "$ARTIFACT_DIR"/config_*.toml; do
-  sed -i 's|"data/|".artifacts/|g' "$f"
-done
 
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
