@@ -6,6 +6,7 @@ pub mod arithmetic;
 pub mod binary;
 pub mod casts;
 pub mod conversion;
+pub mod edabits;
 mod detail;
 pub mod gadgets;
 pub mod lut;
