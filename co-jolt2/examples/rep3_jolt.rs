@@ -265,14 +265,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let edabits_pool = {
         use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
-        let budget = compute_edabit_budget(padded_len);
+        let budget = compute_edabit_budget(trace_len);
         let mut pool_rng = rand::thread_rng();
         let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
         let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
         let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
         let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
         let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
-        let dabits = edabits::random_dabits::<F, _>(80 * padded_len, &mut pool_rng, io_ctx.main())?;
+        let dabits = edabits::random_dabits::<F, _>(80 * trace_len, &mut pool_rng, io_ctx.main())?;
         edabits::EdaBitsPool::new(lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128, dabits)
     };
     drop(_span);

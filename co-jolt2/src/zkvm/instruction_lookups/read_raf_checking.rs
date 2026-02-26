@@ -51,12 +51,12 @@ pub struct EdaBitBudget {
     pub u128: usize,
 }
 
-/// Compute the exact EdaBit budget needed for the padded trace length.
+/// Compute the exact EdaBit budget needed for the given number of non-noop cycles.
 ///
-/// **Important**: pass the *padded* trace length (power-of-two), not the raw trace
-/// length.  Padding cycles with `Rep3Cycle::NoOp` still receive valid `masked_indices_c`
-/// entries and are counted as non-noop by the one-hot witness generation, so the budget
-/// must cover them.
+/// Pass the un-padded trace length (upper bound on real non-NoOp cycles).
+/// NoOp padding cycles produce `None` in `instruction_ra` / `masked_indices_c`
+/// and are excluded from `non_noop_cycles` in ReadRaf, so the budget only needs
+/// to cover real instruction cycles.
 ///
 /// Two consumers:
 /// 1. **Suffix eval**: each unique `CastToFieldB2A` suffix across all tables produces
@@ -440,10 +440,16 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 lookup_indices_by_table[idx].push(j);
                 table_cycles_set.push(j);
             }
-            if is_interleaved {
-                interleaved_cycles.push(j);
-            } else {
-                identity_cycles.push(j);
+            // Only classify cycles that have a valid one-hot entry (not padding NoOps).
+            // Padding cycles have masked_indices_c[j] = None and c16[j] = None,
+            // so they'd be skipped by the histogram scatter guard anyway, but
+            // filtering here avoids iterating over ~(padded_len - trace_len) entries.
+            if one_hot_polys[0].masked_indices_c[j].is_some() {
+                if is_interleaved {
+                    interleaved_cycles.push(j);
+                } else {
+                    identity_cycles.push(j);
+                }
             }
         }
         let table_cycles = table_cycles_set;
@@ -459,12 +465,29 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             .collect();
 
         // -- Initialize u_evals and ra_acc --
+        // NoOp padding cycles get zero so they contribute nothing to the sumcheck.
         let u_evals: Vec<Rep3PrimeFieldShare<F>> = eq_r_cycle_public
             .iter()
-            .map(|&v| promote_to_trivial_share(v, party_id))
+            .zip(one_hot_polys[0].masked_indices_c.iter())
+            .map(|(&v, opt)| {
+                if opt.is_some() {
+                    promote_to_trivial_share(v, party_id)
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                }
+            })
             .collect();
-        let ra_acc: Vec<Rep3PrimeFieldShare<F>> =
-            vec![promote_to_trivial_share(F::one(), party_id); num_cycles];
+        let ra_acc: Vec<Rep3PrimeFieldShare<F>> = one_hot_polys[0]
+            .masked_indices_c
+            .iter()
+            .map(|opt| {
+                if opt.is_some() {
+                    promote_to_trivial_share(F::one(), party_id)
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                }
+            })
+            .collect();
 
         // -- Initialize suffix polynomials (empty, filled in init_phase) --
         let suffix_polys: Vec<Vec<AdditiveDensePoly<F>>> = LookupTables::<XLEN>::iter()
