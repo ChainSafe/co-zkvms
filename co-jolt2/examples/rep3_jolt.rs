@@ -87,6 +87,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn build_program() -> Program {
+    // let mut program = Program::new("sha2-chain-guest");
     let mut program = Program::new("fibonacci-guest");
     // Match sha2-chain's #[jolt::provable(stack_size = 65536, memory_size = 10240)]
     program.set_stack_size(65536);
@@ -96,6 +97,7 @@ fn build_program() -> Program {
 
 fn build_inputs(num_iters: u32) -> Vec<u8> {
     let mut inputs = postcard::to_stdvec(&128u8).unwrap();
+    // let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     inputs.append(&mut postcard::to_stdvec(&num_iters).unwrap());
     inputs
 }
@@ -252,9 +254,9 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
 
     // Wrap network in IoContextPool
-    let num_io_forks = rayon::current_num_threads() as u32;
+    let num_forks = rayon::current_num_threads() as u32;
 
-    let mut io_ctx = IoContextPool::init(network, 1)?;
+    let mut io_ctx = IoContextPool::init(network, num_forks)?;
     // populate_operands_casts: convert binary-shared operands to arithmetic
     populate_operands_casts(&mut trace, io_ctx.main())?;
 
@@ -264,17 +266,16 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         use mpc_core::protocols::rep3_ring::edabits;
         // Pool sized by trace_len (active cycles), not padded_len.
         // NoOp padding cycles are skipped during suffix MLE evaluation.
-        let num_edabits = 140 * trace_len;
-        let num_dabits = 80 * trace_len;
+        // Per-ring-type lazy sources; with truly lazy storage P0/P1 pay ~192 bytes each.
+        let n = trace_len;
         let mut pool_rng = rand::thread_rng();
-        let io = io_ctx.main();
-        let party_id = io.id;
-        let dabits = edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?;
-        edabits::EdaBitsPool::new(
-            edabits::random_edabits_lazy::<u64, F, _>(num_edabits, io)?,
-            edabits::LazyEdaBits::<u128, F>::empty(party_id),
-            dabits,
-        )
+        let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(50 * n, &mut io_ctx)?;
+        let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(100 * n, &mut io_ctx)?;
+        let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(100 * n, &mut io_ctx)?;
+        let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(200 * n, &mut io_ctx)?;
+        let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(10 * n, &mut io_ctx)?;
+        let dabits = edabits::random_dabits::<F, _>(80 * n, &mut pool_rng, io_ctx.main())?;
+        edabits::EdaBitsPool::new(lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128, dabits)
     };
     drop(_span);
 

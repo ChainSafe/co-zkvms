@@ -237,24 +237,28 @@ where
     }
 }
 
-/// Fulfill batched field-conversion futures using an [`EdaBitsPool`] for
-/// `CastToFieldB2A` and `BitInject` operations (1 masked-open round each),
-/// falling back to online protocols for everything else.
+/// Fulfill batched `CastToFieldB2A` futures using an [`EdaBitsPool`] for
+/// Protocol Π₂ conversion (K-bit broadcast + 1 reshare round).
 ///
-/// This is a standalone function (not a trait method) so existing callers of
-/// [`Rep3RingFutureExt::fulfill_batched`] are unchanged.
+/// Generic over ring type `R` — callers downcast suffix bits to the smallest
+/// ring that fits, so edaBits use fewer alphas and less communication.
+///
+/// Only handles `CastToFieldB2A` and `Ready` variants; other `FutureOp`
+/// variants will panic.
 #[tracing::instrument(
     skip_all,
     name = "fulfill_batched_with_pool",
     level = "trace"
 )]
-pub fn fulfill_batched_with_pool<F, T, Args, N, MapFn>(
-    futures: Vec<FutureRep3Ring<u64, T, Args>>,
+pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
+    futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
     pool: &mut EdaBitsPool<F>,
     map: MapFn,
 ) -> eyre::Result<Vec<T>>
 where
+    R: IntRing2k,
+    Standard: Distribution<R>,
     F: JoltField,
     T: Clone + Default + Send,
     Args: Send + Copy,
@@ -263,58 +267,40 @@ where
 {
     use mpc_core::protocols::rep3_ring::edabits;
 
-    let mut fufilled = vec![T::default(); futures.len()];
+    let mut fulfilled = vec![T::default(); futures.len()];
     let (mut bit_inject_x, mut fut_bit_inject, mut bit_inject_args) =
         (Vec::new(), Vec::new(), Vec::new());
-    let (mut cast_x, mut fut_cast, mut cast_args) = (Vec::new(), Vec::new(), Vec::new());
     let (mut cast_b2a_x, mut fut_cast_b2a, mut cast_b2a_args) =
         (Vec::new(), Vec::new(), Vec::new());
-    let (mut cast_signed_x, mut fut_cast_signed, mut cast_signed_args) =
-        (Vec::new(), Vec::new(), Vec::new());
-    let (mut fut_fulfilled, mut fulfilled_index) = (Vec::new(), Vec::new());
 
     futures
         .into_iter()
-        .zip_eq(fufilled.iter_mut())
-        .for_each(|(f, fufilled)| match f {
+        .zip_eq(fulfilled.iter_mut())
+        .for_each(|(f, slot)| match f {
             FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
                 bit_inject_x.push(x);
-                fut_bit_inject.push(fufilled);
+                fut_bit_inject.push(slot);
                 bit_inject_args.push(args);
-            }
-            FutureRep3Ring::Pending(FutureOp::CastToField(x), args) => {
-                cast_x.push(x);
-                fut_cast.push(fufilled);
-                cast_args.push(args);
             }
             FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
                 cast_b2a_x.push(x);
-                fut_cast_b2a.push(fufilled);
+                fut_cast_b2a.push(slot);
                 cast_b2a_args.push(args);
             }
-            FutureRep3Ring::Pending(FutureOp::CastToFieldSigned(x), args) => {
-                cast_signed_x.push(x);
-                fut_cast_signed.push(fufilled);
-                cast_signed_args.push(args);
-            }
-            FutureRep3Ring::Pending(FutureOp::Fulfilled, args) => {
-                fut_fulfilled.push(fufilled);
-                fulfilled_index.push(args);
-            }
             FutureRep3Ring::Ready(x) => {
-                *fufilled = x;
+                *slot = x;
             }
-            _ => unimplemented!(),
+            other => panic!(
+                "fulfill_batched_with_pool: unexpected variant {:?}",
+                std::mem::discriminant(&other)
+            ),
         });
 
-    // Bit Inject via daBits (1 masked-open round)
+    // Bit Inject (single-bit → field, no edaBits needed)
     {
         let c = if !bit_inject_x.is_empty() {
-            let dabits = pool.take_dabits(bit_inject_x.len());
-            let pairs: Vec<_> = bit_inject_x.into_iter().zip(dabits).collect();
-            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
-                let (xs, das): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::bit_inject_field_many(&xs, &das, io_ctx)
+            io_ctx.par_chunks(bit_inject_x, None, |bit_inject_x, io_ctx| {
+                rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)
             })?
         } else {
             vec![]
@@ -329,34 +315,14 @@ where
             });
     }
 
-    // Cast (arithmetic ring→field, unchanged — no edabits needed)
-    {
-        let c = if !cast_x.is_empty() {
-            io_ctx.par_chunks(cast_x, None, |cast_x, io_ctx| {
-                rep3_ring::casts::ring_to_field_many_selector(&cast_x, io_ctx)
-            })?
-        } else {
-            vec![]
-        };
-
-        fut_cast
-            .into_par_iter()
-            .zip_eq(c.into_par_iter())
-            .zip_eq(cast_args)
-            .for_each(|((f, c), args)| {
-                *f = map(c, args);
-            });
-    }
-
     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits
-    // (K bits broadcast + 1 reshare round), avoiding per-bit bit_inject.
     {
         let shares = if !cast_b2a_x.is_empty() {
-            let edas = pool.take_edabits_u64(cast_b2a_x.len());
+            let edas = pool.take_edabits::<R>(cast_b2a_x.len());
             let pairs: Vec<_> = cast_b2a_x.into_iter().zip(edas).collect();
             io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
                 let (xs, edas): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, edas, io_ctx)
+                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
             })?
         } else {
             vec![]
@@ -371,36 +337,7 @@ where
             });
     }
 
-    // Cast B2A Signed (unchanged — no edabits variant yet)
-    {
-        let shares = if !cast_signed_x.is_empty() {
-            io_ctx.par_chunks(cast_signed_x, None, |chunk, io_ctx| {
-                rep3_ring::casts::signed_binary_ring_to_field_many(chunk, io_ctx)
-            })?
-        } else {
-            vec![]
-        };
-
-        fut_cast_signed
-            .into_par_iter()
-            .zip_eq(shares.into_par_iter())
-            .zip_eq(cast_signed_args)
-            .for_each(|((f, c), args)| {
-                *f = map(c, args);
-            });
-    }
-
-    // Fulfilled
-    {
-        if !fulfilled_index.is_empty() {
-            fut_fulfilled
-                .into_par_iter()
-                .zip_eq(fulfilled_index)
-                .for_each(|(f, index)| *f = map(Default::default(), index));
-        }
-    }
-
-    Ok(fufilled)
+    Ok(fulfilled)
 }
 
 impl<R, T, Args> Rep3RingFutureExt<R, Rep3RingShare<R>, T, Args> for Vec<FutureRep3Ring<R, T, Args>>
