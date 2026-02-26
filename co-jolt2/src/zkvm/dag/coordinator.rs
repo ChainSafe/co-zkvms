@@ -15,6 +15,7 @@ use crate::zkvm::registers::val_evaluation::Rep3ValEvaluation;
 use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheck;
 use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::utils::math::Math;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
@@ -123,6 +124,25 @@ impl Rep3JoltDAGCoordinator {
             ProofKeys::Stage3Sumcheck,
             ProofData::SumcheckProof(stage3_proof),
         );
+
+        // -------------------------------------------------------------------
+        // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
+        // -------------------------------------------------------------------
+
+        let stage4_instances = Self::stage4_collect_instances(&mut state, network)?;
+
+        if !stage4_instances.is_empty() {
+            let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
+                &stage4_instances,
+                &mut state.accumulator,
+                &mut state.transcript,
+                network,
+            )?;
+            state.proofs.insert(
+                ProofKeys::Stage4Sumcheck,
+                ProofData::SumcheckProof(stage4_proof),
+            );
+        }
 
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {
@@ -330,6 +350,11 @@ impl Rep3JoltDAGCoordinator {
         // === 4) RAM: ValFinal (secret) — no transcript draw ===
         let ram_val_final = Rep3ValFinalSumcheck::<F>::new(state);
 
+        // === 5) RAM: HammingBooleanity (public) — no transcript draw ===
+        let log_T = state.trace_length.log_2();
+        let ram_hamming_bool =
+            jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
+
         // Broadcast stage3 init data to workers in three messages
         // (ark-serialize tuple impls only go up to small arities).
         network.broadcast_request((gamma_pc, input_claim_pc, product_input_claim))?;
@@ -343,7 +368,7 @@ impl Rep3JoltDAGCoordinator {
         network.broadcast_request((read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim))?;
 
         // Collect all instances in vanilla ordering:
-        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal)
+        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal, HammingBooleanity)
         let stage3_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = vec![
             BatchedSumcheckInstance::Public(Box::new(spartan_pc)),
             BatchedSumcheckInstance::Secret(Box::new(spartan_product)),
@@ -351,9 +376,114 @@ impl Rep3JoltDAGCoordinator {
             BatchedSumcheckInstance::Secret(Box::new(lookup_read_raf)),
             BatchedSumcheckInstance::Secret(Box::new(lookup_hamming)),
             BatchedSumcheckInstance::Secret(Box::new(ram_val_final)),
+            BatchedSumcheckInstance::Public(Box::new(ram_hamming_bool)),
         ];
 
         Ok(stage3_instances)
+    }
+
+    /// Collect all stage4 sumcheck instances from RAM, Bytecode, and Lookups.
+    ///
+    /// Creates coordinator-side instances (advancing the transcript in vanilla order),
+    /// broadcasts init data to workers, and returns all instances for batched proving.
+    ///
+    /// Vanilla ordering: RAM(HammingWeight, Booleanity, Ra) → Bytecode(ReadRaf, Booleanity,
+    /// HammingWeight) → Lookups(InstructionRa).
+    fn stage4_collect_instances<F, ProofTranscript, PCS, N>(
+        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        N: Rep3NetworkCoordinator,
+    {
+        use crate::zkvm::bytecode::Rep3BytecodeDag;
+        use crate::zkvm::instruction_lookups::ra_virtual::Rep3InstructionRaSumcheck;
+        use crate::zkvm::ram::Rep3RamDag;
+        use jolt_core::poly::opening_proof::OpeningId;
+        use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
+
+        // === 1) RAM: HammingWeight, Booleanity, Ra (all public) ===
+        let (ram_instances, ram_init) =
+            Rep3RamDag::stage4_instances_with_init::<F, ProofTranscript, PCS>(state);
+
+        // === 2) Bytecode: ReadRaf, Booleanity, HammingWeight (all public) ===
+        let (bytecode_instances, bytecode_init) =
+            Rep3BytecodeDag::stage4_instances_with_init::<F, ProofTranscript, PCS>(state);
+
+        // === 3) Lookups: InstructionRa (secret, conditional) ===
+        let ra_key = OpeningId::Virtual(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        );
+        let has_ra_opening = state.accumulator.openings.contains_key(&ra_key);
+
+        let lookups_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = if has_ra_opening
+        {
+            let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionRa,
+                SumcheckId::InstructionReadRaf,
+            );
+            let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
+            let r_address_chunks: Vec<Vec<F::Challenge>> =
+                r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+
+            let ra_coord =
+                Rep3InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
+
+            vec![BatchedSumcheckInstance::Secret(Box::new(ra_coord))]
+        } else {
+            vec![]
+        };
+
+        // Broadcast init data to workers.
+        // Message 1: has_ra_opening flag
+        network.broadcast_request(has_ra_opening)?;
+        // Message 2: RAM init (split into two messages due to tuple size limits)
+        network.broadcast_request((
+            ram_init.hamming_gamma_powers,
+            ram_init.hamming_input_claim,
+            ram_init.bool_r_cycle,
+            ram_init.bool_r_address,
+            ram_init.bool_gamma_powers,
+        ))?;
+        network.broadcast_request((
+            ram_init.ra_gamma,
+            ram_init.ra_claim,
+            ram_init.ra_r_cycle,
+            ram_init.ra_r_address_chunks,
+        ))?;
+        // Message 3: Bytecode init (split into two messages)
+        network.broadcast_request((
+            bytecode_init.read_raf_gamma,
+            bytecode_init.rv_claim,
+            bytecode_init.val_polys,
+            bytecode_init.r_cycles,
+        ))?;
+        network.broadcast_request((
+            bytecode_init.bool_gamma_powers,
+            bytecode_init.bool_r_address,
+            bytecode_init.hw_gamma_powers,
+        ))?;
+        // Message 4: Lookups RA init (only if active)
+        if has_ra_opening {
+            let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::InstructionRa,
+                SumcheckId::InstructionReadRaf,
+            );
+            let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
+            network.broadcast_request((ra_claim, r_address.to_vec(), r_cycle.to_vec()))?;
+        }
+
+        // Collect all instances in vanilla ordering.
+        let mut all_instances = Vec::new();
+        all_instances.extend(ram_instances);
+        all_instances.extend(bytecode_instances);
+        all_instances.extend(lookups_instances);
+
+        Ok(all_instances)
     }
 
     fn receive_commitments<F, PCS, ProofTranscript, N>(

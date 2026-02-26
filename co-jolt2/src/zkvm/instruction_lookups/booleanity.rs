@@ -341,6 +341,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         round: usize,
         previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         let base = if round < LOG_K_CHUNK {
             self.compute_phase1_message(round, previous_claim)

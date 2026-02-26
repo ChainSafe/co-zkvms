@@ -3,15 +3,19 @@ use std::marker::PhantomData;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::SumcheckId;
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Transcript;
-use jolt_core::zkvm::instruction_lookups::D;
+use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{
+    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::{compute_g_from_masked_indices, Rep3OneHotPolynomial};
+use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
     SumcheckStagesWorker,
@@ -20,10 +24,12 @@ use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorke
 
 use self::booleanity::{Rep3BooleanitySumcheck, Rep3BooleanitySumcheckWorker};
 use self::hamming_weight::{Rep3HammingWeightSumcheck, Rep3HammingWeightSumcheckWorker};
+use self::ra_virtual::{Rep3InstructionRaSumcheck, Rep3InstructionRaSumcheckWorker};
 use self::read_raf_checking::{Rep3ReadRafSumcheck, Rep3ReadRafSumcheckWorker};
 
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod ra_virtual;
 pub mod read_raf_checking;
 
 // ---------------------------------------------------------------------------
@@ -68,7 +74,7 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
     /// Public eq(r_cycle) evaluations.
     eq_r_cycle: Option<Vec<F>>,
     /// D Rep3OneHotPolynomials from witness gen, used for compute_ra_evals.
-    one_hot_polys: [Rep3OneHotPolynomial<F>; D],
+    pub one_hot_polys: [Rep3OneHotPolynomial<F>; D],
 }
 
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
@@ -142,6 +148,26 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             BatchedSumcheckWorkerInstance::Secret(Box::new(hamming_weight)),
         ]
     }
+
+    /// Run the worker-side RA virtualization sumcheck (stage 4).
+    ///
+    /// Receives init data (claim, r_address, r_cycle) from the coordinator
+    /// and runs the dedicated proving loop with IO context for resharing.
+    pub fn stage4_prove_worker<N: Rep3NetworkWorker>(
+        &self,
+        accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<Vec<F::Challenge>> {
+        let (ra_input_claim, ra_r_address, ra_r_cycle): (F, Vec<F::Challenge>, Vec<F::Challenge>) =
+            io_ctx.network().receive_request()?;
+        let mut ra_worker = Rep3InstructionRaSumcheckWorker::new(
+            &self.one_hot_polys,
+            &ra_r_address,
+            ra_r_cycle,
+            ra_input_claim,
+        );
+        ra_virtual::prove_worker(&mut ra_worker, accumulator, io_ctx)
+    }
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
@@ -203,6 +229,58 @@ impl<F: JoltField> Rep3LookupsDag<F> {
 impl<F: JoltField> Default for Rep3LookupsDag<F> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<F: JoltField> Rep3LookupsDag<F> {
+    /// Run the coordinator-side RA virtualization sumcheck (stage 4).
+    ///
+    /// Reads the InstructionRa opening from the accumulator, broadcasts init
+    /// data to workers, and runs the dedicated proving loop.
+    pub fn stage4_prove_coordinator<ProofTranscript, PCS, N>(
+        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<Option<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>>
+    where
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+        N: Rep3NetworkCoordinator,
+    {
+        use jolt_core::poly::opening_proof::OpeningId;
+
+        let ra_key = OpeningId::Virtual(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        );
+        let has_ra_opening = sm.accumulator.openings.contains_key(&ra_key);
+
+        // Tell workers whether stage 4 is active.
+        network.broadcast_request(has_ra_opening)?;
+
+        if !has_ra_opening {
+            return Ok(None);
+        }
+
+        let (ra_point, ra_claim) = sm.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        );
+
+        let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
+        let r_address_chunks: Vec<Vec<F::Challenge>> =
+            r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+
+        network.broadcast_request((ra_claim, r_address.to_vec(), r_cycle.to_vec()))?;
+
+        let ra_coord = Rep3InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
+        let result = ra_virtual::prove_coordinator(
+            &ra_coord,
+            &mut sm.accumulator,
+            &mut sm.transcript,
+            network,
+        )?;
+
+        Ok(Some(result))
     }
 }
 

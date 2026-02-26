@@ -255,8 +255,34 @@ impl Rep3JoltDAGWorker {
         ram_dag.set_stage3_init(ram_val_final_input_claim);
         let ram_stage3 = ram_dag.stage3_instances(&mut state);
 
+        // 5) RAM: HammingBooleanity (public)
+        use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
+        let ram_hamming_bool = if party_id == PartyID::ID0 {
+            let r_cycle = state
+                .accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r;
+            let ram_addrs = &state.prover_state.cycle_witness.ram_addr;
+            HammingBooleanitySumcheck::<F>::new_prover_from_parts(ram_addrs, &r_cycle)
+        } else {
+            let log_T = state
+                .accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r
+                .len();
+            HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T)
+        };
+
         // Collect all instances in vanilla ordering:
-        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal)
+        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal, HammingBooleanity)
         let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = std::iter::empty()
             .chain(std::iter::once(BatchedSumcheckWorkerInstance::Public(
                 Box::new(pc_sumcheck),
@@ -267,6 +293,9 @@ impl Rep3JoltDAGWorker {
             .chain(registers_stage3)
             .chain(lookups_stage3)
             .chain(ram_stage3)
+            .chain(std::iter::once(BatchedSumcheckWorkerInstance::Public(
+                Box::new(ram_hamming_bool),
+            )))
             .collect();
 
         let _stage3 = info_span!("stage3_prove").entered();
@@ -276,6 +305,105 @@ impl Rep3JoltDAGWorker {
             &mut io_ctx,
         )?;
         drop(_stage3);
+
+        // -------------------------------------------------------------------
+        // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
+        // -------------------------------------------------------------------
+        {
+            use crate::zkvm::bytecode::{BytecodeStage4Init, Rep3BytecodeDagWorker};
+            use crate::zkvm::instruction_lookups::ra_virtual::Rep3InstructionRaSumcheckWorker;
+            use crate::zkvm::ram::RamStage4Init;
+
+            // Message 1: has_ra_opening flag
+            let has_ra_opening: bool = io_ctx.network().receive_request()?;
+
+            // Message 2: RAM init (two messages)
+            let (
+                hamming_gamma_powers,
+                hamming_input_claim,
+                bool_r_cycle,
+                bool_r_address,
+                bool_gamma_powers,
+            ): (Vec<F>, F, Vec<F::Challenge>, Vec<F::Challenge>, Vec<F>) =
+                io_ctx.network().receive_request()?;
+            let (ra_gamma, ra_claim, ra_r_cycle, ra_r_address_chunks): (
+                [F; 3],
+                F,
+                [Vec<F::Challenge>; 3],
+                Vec<Vec<F::Challenge>>,
+            ) = io_ctx.network().receive_request()?;
+
+            ram_dag.set_stage4_init(RamStage4Init {
+                hamming_gamma_powers,
+                hamming_input_claim,
+                bool_r_cycle,
+                bool_r_address,
+                bool_gamma_powers,
+                ra_gamma,
+                ra_claim,
+                ra_r_cycle,
+                ra_r_address_chunks,
+            });
+            let ram_stage4 = ram_dag.stage4_instances(&mut state);
+
+            // Message 3: Bytecode init (two messages)
+            let (read_raf_gamma, rv_claim, val_polys, r_cycles): (
+                F,
+                F,
+                [Vec<F>; 3],
+                [Vec<F::Challenge>; 3],
+            ) = io_ctx.network().receive_request()?;
+            let (bc_bool_gamma_powers, bc_bool_r_address, hw_gamma_powers): (
+                Vec<F>,
+                Vec<F::Challenge>,
+                Vec<F>,
+            ) = io_ctx.network().receive_request()?;
+
+            let mut bytecode_dag = Rep3BytecodeDagWorker::<F>::new();
+            bytecode_dag.set_stage4_init(BytecodeStage4Init {
+                read_raf_gamma,
+                rv_claim,
+                val_polys,
+                r_cycles,
+                bool_gamma_powers: bc_bool_gamma_powers,
+                bool_r_address: bc_bool_r_address,
+                hw_gamma_powers,
+            });
+            let bytecode_stage4 = bytecode_dag.stage4_instances(&mut state);
+
+            // Message 4: Lookups RA init (only if active)
+            let lookups_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> = if has_ra_opening {
+                let (ra_input_claim, ra_r_address, ra_r_cycle): (
+                    F,
+                    Vec<F::Challenge>,
+                    Vec<F::Challenge>,
+                ) = io_ctx.network().receive_request()?;
+                let ra_worker = Rep3InstructionRaSumcheckWorker::new(
+                    &lookups_dag.one_hot_polys,
+                    &ra_r_address,
+                    ra_r_cycle,
+                    ra_input_claim,
+                );
+                vec![BatchedSumcheckWorkerInstance::Secret(Box::new(ra_worker))]
+            } else {
+                vec![]
+            };
+
+            // Collect all instances in vanilla ordering
+            let mut stage4_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = Vec::new();
+            stage4_instances.extend(ram_stage4);
+            stage4_instances.extend(bytecode_stage4);
+            stage4_instances.extend(lookups_stage4);
+
+            if !stage4_instances.is_empty() {
+                let _stage4 = info_span!("stage4_prove").entered();
+                HybridBatchedSumcheckWorker::prove(
+                    &mut stage4_instances,
+                    &mut state.accumulator,
+                    &mut io_ctx,
+                )?;
+            }
+        }
 
         // Future stages (opening proof, etc.) will go here...
         Ok(())

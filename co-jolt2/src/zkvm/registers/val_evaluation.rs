@@ -122,6 +122,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         _round: usize,
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // inc(SHARED) * wa(PUBLIC) * lt(PUBLIC) = SHARED → AdditiveShare
         let evals: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)

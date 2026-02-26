@@ -1418,6 +1418,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         round: usize,
         previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         if round < LOG_K {
             // Address rounds: prefix-suffix phase.

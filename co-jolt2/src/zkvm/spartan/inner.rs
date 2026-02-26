@@ -100,6 +100,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         _round: usize,
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         let half_len = self.poly_abc_small.len() / 2;
         let party_id = self.party_id;

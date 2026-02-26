@@ -56,6 +56,7 @@ impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyLinearWorker
         _round: usize,
         _previous_claim: AdditiveShare<Fr>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<Fr>> {
         let mut eval0 = Fr::zero();
         let mut eval1 = Fr::zero();
@@ -245,6 +246,7 @@ impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyCubicProduct
         _round: usize,
         _previous_claim: AdditiveShare<Fr>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<Fr>> {
         let mut evals = vec![AdditiveShare::zero(); max_degree];
         evals[0] = self.promote(self.sum_product_at_x(Fr::zero()));

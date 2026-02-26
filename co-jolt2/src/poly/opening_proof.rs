@@ -889,6 +889,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         round: usize,
         previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         let [e0, e2] = self.compute_prover_message(round, previous_claim);
         let mut result = vec![AdditiveShare::zero(); max_degree];

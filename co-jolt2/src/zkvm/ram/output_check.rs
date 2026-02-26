@@ -146,6 +146,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         _round: usize,
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // P(k) = eq(k) * io_mask(k) * (val_final(k) - val_io(k))
         //      = eq(k) * io_mask(k) * val_final(k) - eq(k) * io_mask(k) * val_io(k)
@@ -416,6 +417,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         _round: usize,
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // inc(SHARED) * wa(PUBLIC) → SHARED → AdditiveShare
         let eval_degree = max_degree.max(DEGREE_VAL_FINAL);

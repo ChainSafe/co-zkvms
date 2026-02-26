@@ -131,6 +131,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         _round: usize,
         _previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // All PUBLIC — compute plain evaluations.
         // Evaluate each linear factor at max_degree points so the degree-2
