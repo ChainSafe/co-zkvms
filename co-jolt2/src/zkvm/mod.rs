@@ -283,19 +283,24 @@ mod tests {
                 populate_operands_casts(&mut trace, io_ctx.main())?;
                 drop(_span);
 
-                // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions
+                // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions.
                 let edabits_pool = {
+                    use crate::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
-                    let num_cycles = trace.len();
-                    let num_edabits = 512 * num_cycles;
-                    let num_dabits = 512 * num_cycles;
+                    let budget = compute_edabit_budget(trace.len());
                     let mut pool_rng = rand::thread_rng();
-                    let io = io_ctx.main();
-                    let party_id = io.id;
+                    let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
+                    let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
+                    let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
+                    let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
+                    let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
+                    let dabits = edabits::random_dabits::<F, _>(
+                        512 * trace.len(),
+                        &mut pool_rng,
+                        io_ctx.main(),
+                    )?;
                     edabits::EdaBitsPool::new(
-                        edabits::random_edabits_lazy::<u64, F, _>(num_edabits, io)?,
-                        edabits::LazyEdaBits::<u128, F>::empty(party_id),
-                        edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
+                        lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128, dabits,
                     )
                 };
 

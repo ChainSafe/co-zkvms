@@ -25,11 +25,108 @@ use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::casts::downcast;
 use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use num_traits::AsPrimitive;
+use rand::distributions::Standard;
+use rand::prelude::Distribution;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::info_span;
+
+// ---------------------------------------------------------------------------
+// EdaBit budget computation
+// ---------------------------------------------------------------------------
+
+/// Per-ring-type EdaBit counts needed for the ReadRaf sumcheck.
+///
+/// Computed from the actual lookup table structure, not hardcoded multipliers.
+#[derive(Debug, Clone, Default)]
+pub struct EdaBitBudget {
+    pub u8: usize,
+    pub u16: usize,
+    pub u32: usize,
+    pub u64: usize,
+    pub u128: usize,
+}
+
+/// Compute the exact EdaBit budget needed for the padded trace length.
+///
+/// **Important**: pass the *padded* trace length (power-of-two), not the raw trace
+/// length.  Padding cycles with `Rep3Cycle::NoOp` still receive valid `masked_indices_c`
+/// entries and are counted as non-noop by the one-hot witness generation, so the budget
+/// must cover them.
+///
+/// Two consumers:
+/// 1. **Suffix eval**: each unique `CastToFieldB2A` suffix across all tables produces
+///    `n` futures of type T::Half per phase. All phases use the same unique suffix set.
+/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half (left + right)
+///    per phase.
+///
+/// Phase ring types: suffix_len = (7 - phase) * 16
+///   Phase 0-2: T=u128, T::Half=u64
+///   Phase 3-4: T=u64,  T::Half=u32
+///   Phase 5:   T=u32,  T::Half=u16
+///   Phase 6:   T=u16,  T::Half=u8
+///   Phase 7:   suffix_len=0, no B2A needed
+pub fn compute_edabit_budget(non_noop_cycles: usize) -> EdaBitBudget {
+    use crate::zkvm::instruction::suffixes::suffix_uses_b2a_edabits;
+
+    let n = non_noop_cycles;
+
+    // Count unique CastToFieldB2A suffixes across all tables (same for every phase)
+    let mut seen = std::collections::HashSet::new();
+    for table in LookupTables::<XLEN>::iter() {
+        for suffix in table.suffixes() {
+            if suffix_uses_b2a_edabits(&suffix) {
+                seen.insert(std::mem::discriminant(&suffix));
+            }
+        }
+    }
+    let num_b2a_suffixes = seen.len();
+
+    let mut budget = EdaBitBudget::default();
+
+    for phase in 0..PHASES {
+        let suffix_len = (PHASES - 1 - phase) * LOG_M;
+        if suffix_len == 0 {
+            continue;
+        }
+
+        // Operand Q: n × T + 2n × T::Half
+        // Suffix eval: num_b2a_suffixes × n × T::Half
+        let suffix_half = num_b2a_suffixes * n;
+        let operand_q_full = n;
+        let operand_q_half = 2 * n;
+
+        match suffix_len {
+            65..=128 => {
+                // T=u128, T::Half=u64
+                budget.u128 += operand_q_full;
+                budget.u64 += operand_q_half + suffix_half;
+            }
+            33..=64 => {
+                // T=u64, T::Half=u32
+                budget.u64 += operand_q_full;
+                budget.u32 += operand_q_half + suffix_half;
+            }
+            17..=32 => {
+                // T=u32, T::Half=u16
+                budget.u32 += operand_q_full;
+                budget.u16 += operand_q_half + suffix_half;
+            }
+            1..=16 => {
+                // T=u16, T::Half=u8
+                budget.u16 += operand_q_full;
+                budget.u8 += operand_q_half + suffix_half;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    budget
+}
 
 // ---------------------------------------------------------------------------
 // Additive dense polynomial — lightweight wrapper for suffix/Q polys
@@ -447,6 +544,79 @@ fn promote_to_trivial_share<F: JoltField>(val: F, party_id: PartyID) -> Rep3Prim
     Rep3PrimeFieldShare::promote_from_trivial(&val, party_id)
 }
 
+/// Evaluate all needed suffixes for a given ring type, flatten into a single future
+/// batch, fulfill via EdaBits pool, and return (sorted keys, flat field values).
+///
+/// Generic over `T: Uninterleavable` — callers downcast `u128` suffix bits to
+/// the smallest ring that fits `suffix_len`, reducing EdaBit and communication cost.
+fn eval_and_fulfill_suffixes<T, F, N>(
+    active_bits: &[Rep3RingShare<T>],
+    needed_suffixes: &[Suffixes],
+    suffix_len: usize,
+    io_ctx: &mut IoContextPool<N>,
+    party_id: PartyID,
+    pool: &mut EdaBitsPool<F>,
+) -> eyre::Result<(Vec<u8>, Vec<Rep3PrimeFieldShare<F>>)>
+where
+    T: crate::zkvm::instruction::suffixes::Uninterleavable + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    T::Half: AsPrimitive<T> + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    Standard: Distribution<T> + Distribution<T::Half>,
+    F: JoltField,
+    N: Rep3NetworkWorker,
+{
+    use crate::zkvm::instruction::suffixes::{evaluate_suffix_mle_batched, SuffixFuture};
+
+    let num_active = active_bits.len();
+    let _span = info_span!("suffix_mle", n_suffixes = needed_suffixes.len(), num_active).entered();
+
+    let mut suffix_futures_map: std::collections::HashMap<u8, Vec<SuffixFuture<T::Half, F>>> =
+        std::collections::HashMap::new();
+    for &suffix in needed_suffixes {
+        let futures = evaluate_suffix_mle_batched(
+            &suffix, active_bits, suffix_len, io_ctx.main(), party_id,
+        )?;
+        suffix_futures_map.insert(suffix as u8, futures);
+    }
+    drop(_span);
+
+    let _span = info_span!("suffix_fulfill").entered();
+    let mut suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
+    suffix_keys.sort_unstable();
+    let mut all_futures: Vec<SuffixFuture<T::Half, F>> =
+        Vec::with_capacity(suffix_keys.len() * num_active);
+    for &key in &suffix_keys {
+        all_futures.extend(suffix_futures_map.remove(&key).unwrap());
+    }
+    let all_field: Vec<Rep3PrimeFieldShare<F>> =
+        crate::utils::future_ring::fulfill_batched_with_pool(
+            all_futures, io_ctx, pool, |share, ()| share,
+        )?;
+    drop(_span);
+
+    Ok((suffix_keys, all_field))
+}
+
+/// Evaluate operand Q suffix evals for a given ring type.
+///
+/// Downcasts the full u128 lookup indices to `T`, computes identity/left/right
+/// operand field values via EdaBits Protocol Π₂, and returns the evals.
+fn eval_operand_q_for_ring<T, F, N>(
+    suffix_bits: &[Rep3RingShare<T>],
+    io_ctx: &mut IoContextPool<N>,
+    pool: &mut EdaBitsPool<F>,
+) -> eyre::Result<crate::zkvm::instruction::suffixes::OperandQSuffixEvals<F>>
+where
+    T: crate::zkvm::instruction::suffixes::Uninterleavable,
+    T::Half: AsPrimitive<T>,
+    Standard: Distribution<T> + Distribution<T::Half>,
+    F: JoltField,
+    N: Rep3NetworkWorker,
+{
+    crate::zkvm::instruction::suffixes::compute_operand_q_suffix_evals(
+        suffix_bits, io_ctx.main(), pool,
+    )
+}
+
 impl<F: JoltField> ReadRafProverState<F> {
     /// Initialize a new phase. Computes Ehat16, builds suffix polys and Q polys.
     ///
@@ -637,7 +807,6 @@ impl<F: JoltField> ReadRafProverState<F> {
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
-        use crate::zkvm::instruction::suffixes::{evaluate_suffix_mle_batched, SuffixFuture};
         use rayon::prelude::*;
 
         let ehat16 = self
@@ -685,41 +854,41 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         // -- Step 2: Batch-evaluate each unique suffix over ACTIVE cycles only --
-        // Each suffix returns Vec<SuffixFuture<F>> with deferred ring→field conversion.
-        // We flatten all futures and fulfill_batched once.
-        let _span = info_span!("suffix_mle", n_suffixes = needed_suffixes.len(), num_active).entered();
-        let mut suffix_futures_map: std::collections::HashMap<u8, Vec<SuffixFuture<F>>> =
-            std::collections::HashMap::new();
-        if let Some(ref active_bits) = active_suffix_bits {
-            for &suffix in &needed_suffixes {
-                let futures = evaluate_suffix_mle_batched(
-                    &suffix,
-                    active_bits,
-                    suffix_len,
-                    io_ctx.main(),
-                    self.party_id,
-                )?;
-                suffix_futures_map.insert(suffix as u8, futures);
+        // Dispatch to the smallest ring type that fits suffix_len bits.
+        // Returns (sorted suffix keys, flat field values) for cache construction.
+        let (suffix_keys, all_field) = if let Some(ref active_bits) = active_suffix_bits {
+            match suffix_len {
+                65..=128 => eval_and_fulfill_suffixes::<u128, F, N>(
+                    active_bits, &needed_suffixes, suffix_len,
+                    io_ctx, self.party_id, &mut self.edabits_pool,
+                )?,
+                33..=64 => {
+                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u64>(*b)).collect();
+                    eval_and_fulfill_suffixes::<u64, F, N>(
+                        &bits, &needed_suffixes, suffix_len,
+                        io_ctx, self.party_id, &mut self.edabits_pool,
+                    )?
+                }
+                17..=32 => {
+                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u32>(*b)).collect();
+                    eval_and_fulfill_suffixes::<u32, F, N>(
+                        &bits, &needed_suffixes, suffix_len,
+                        io_ctx, self.party_id, &mut self.edabits_pool,
+                    )?
+                }
+                1..=16 => {
+                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u16>(*b)).collect();
+                    eval_and_fulfill_suffixes::<u16, F, N>(
+                        &bits, &needed_suffixes, suffix_len,
+                        io_ctx, self.party_id, &mut self.edabits_pool,
+                    )?
+                }
+                _ => unreachable!("suffix_len must be 1..=128"),
             }
-        }
-        drop(_span);
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
-        // Flatten all futures, fulfill_batched, then split back.
-        let _span = info_span!("suffix_fulfill").entered();
-        let mut suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
-        suffix_keys.sort_unstable(); // deterministic order across all parties
-        let mut all_futures: Vec<SuffixFuture<F>> =
-            Vec::with_capacity(suffix_keys.len() * num_active);
-        for &key in &suffix_keys {
-            all_futures.extend(suffix_futures_map.remove(&key).unwrap());
-        }
-        let all_field: Vec<Rep3PrimeFieldShare<F>> =
-            crate::utils::future_ring::fulfill_batched_with_pool(
-                all_futures,
-                io_ctx,
-                &mut self.edabits_pool,
-                |share, ()| share,
-            )?;
         // Split back into per-suffix chunks indexed by active-local position
         let suffix_eval_cache: std::collections::HashMap<u8, &[Rep3PrimeFieldShare<F>]> =
             suffix_keys
@@ -727,7 +896,6 @@ impl<F: JoltField> ReadRafProverState<F> {
                 .enumerate()
                 .map(|(i, &key)| (key, &all_field[i * num_active..(i + 1) * num_active]))
                 .collect();
-        drop(_span);
 
         // Debug: verify suffix evals (can be enabled when needed)
         // #[cfg(debug_assertions)]
@@ -909,9 +1077,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
-        use crate::zkvm::instruction::suffixes::{
-            compute_operand_q_suffix_evals, OperandQSuffixEvals,
-        };
+        use crate::zkvm::instruction::suffixes::OperandQSuffixEvals;
 
         let ehat16 = self.ehat16.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -933,17 +1099,56 @@ impl<F: JoltField> ReadRafProverState<F> {
             global_to_non_noop[global] = local;
         }
 
+        // Mask to suffix_len bits and dispatch to smallest ring type.
+        let mask = if suffix_len > 0 && suffix_len < 128 {
+            RingElement((1u128 << suffix_len) - 1)
+        } else if suffix_len >= 128 {
+            RingElement(u128::MAX)
+        } else {
+            RingElement(0u128)
+        };
+        let masked: Vec<Rep3RingShare<u128>> = non_noop_lookup_indices
+            .iter()
+            .map(|b| *b & mask)
+            .collect();
+
         let OperandQSuffixEvals {
             left_operand,
             right_operand,
             identity,
-        } = compute_operand_q_suffix_evals(
-            phase,
-            &non_noop_lookup_indices,
-            num_non_noop,
-            io_ctx.main(),
-            self.party_id,
-        )?;
+        } = if suffix_len == 0 {
+            // All zeros — will use constant path below
+            OperandQSuffixEvals {
+                left_operand: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
+                right_operand: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
+                identity: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
+            }
+        } else {
+            match suffix_len {
+                65..=128 => eval_operand_q_for_ring::<u128, F, N>(
+                    &masked, io_ctx, &mut self.edabits_pool,
+                )?,
+                33..=64 => {
+                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u64>(*b)).collect();
+                    eval_operand_q_for_ring::<u64, F, N>(
+                        &bits, io_ctx, &mut self.edabits_pool,
+                    )?
+                }
+                17..=32 => {
+                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u32>(*b)).collect();
+                    eval_operand_q_for_ring::<u32, F, N>(
+                        &bits, io_ctx, &mut self.edabits_pool,
+                    )?
+                }
+                1..=16 => {
+                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u16>(*b)).collect();
+                    eval_operand_q_for_ring::<u16, F, N>(
+                        &bits, io_ctx, &mut self.edabits_pool,
+                    )?
+                }
+                _ => unreachable!("suffix_len must be 1..=128"),
+            }
+        };
 
         // Constant suffix values
         let shift_half_val = if suffix_len > 0 {
