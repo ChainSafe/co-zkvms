@@ -414,11 +414,17 @@ where
     };
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
-    // SAFETY: Each thread writes to a unique index i across the D arrays
+    // SAFETY: Each thread writes to a unique index i across the D arrays.
+    // NoOp padding cycles are left as None (the default) so that
+    // masked_indices_c[j] = None downstream, excluding them from non_noop_cycles
+    // and avoiding redundant B2A / edaBit consumption on padding.
     indices
         .par_iter()
         .enumerate()
         .for_each(|(i, lookup_index)| {
+            if matches!(trace[i], Rep3Cycle::NoOp) {
+                return;
+            }
             let batch_ref = unsafe { &mut *batch_cell.0.get() };
             for j in 0..instruction_lookups::D {
                 let k = (*lookup_index >> instruction_ra_shifts[j])

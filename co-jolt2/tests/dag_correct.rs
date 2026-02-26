@@ -272,18 +272,18 @@ fn dag_correct() {
             let party_id = io_ctx.party_id();
 
             // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions.
-            // Per-ring-type lazy sources; with truly lazy storage P0/P1 pay ~192 bytes each.
             let edabits_pool = {
+                use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
-                let n = trace.len();
+                let budget = compute_edabit_budget(trace.len());
                 let mut pool_rng = rand::thread_rng();
-                let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(50 * n, &mut io_ctx)?;
-                let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(100 * n, &mut io_ctx)?;
-                let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(100 * n, &mut io_ctx)?;
-                let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(200 * n, &mut io_ctx)?;
-                let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(10 * n, &mut io_ctx)?;
+                let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
+                let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
+                let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
+                let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
+                let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
                 let dabits =
-                    edabits::random_dabits::<F, _>(512 * n, &mut pool_rng, io_ctx.main())?;
+                    edabits::random_dabits::<F, _>(512 * trace.len(), &mut pool_rng, io_ctx.main())?;
                 edabits::EdaBitsPool::new(
                     lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128, dabits,
                 )

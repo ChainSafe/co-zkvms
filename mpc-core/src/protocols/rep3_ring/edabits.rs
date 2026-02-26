@@ -405,8 +405,11 @@ where
     pub fn take(&mut self, n: usize) -> Vec<EdaBits<T, F>> {
         assert!(
             self.cursor + n <= self.total,
-            "LazyEdaBits: need {n}, have {}",
-            self.remaining()
+            "LazyEdaBits<u{}>: need {n}, have {} (cursor={}, total={})",
+            T::K,
+            self.remaining(),
+            self.cursor,
+            self.total
         );
 
         if n == 0 {

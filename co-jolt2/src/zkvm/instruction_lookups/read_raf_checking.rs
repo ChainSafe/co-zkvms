@@ -36,6 +36,99 @@ use strum::{EnumCount, IntoEnumIterator};
 use tracing::info_span;
 
 // ---------------------------------------------------------------------------
+// EdaBit budget computation
+// ---------------------------------------------------------------------------
+
+/// Per-ring-type EdaBit counts needed for the ReadRaf sumcheck.
+///
+/// Computed from the actual lookup table structure, not hardcoded multipliers.
+#[derive(Debug, Clone, Default)]
+pub struct EdaBitBudget {
+    pub u8: usize,
+    pub u16: usize,
+    pub u32: usize,
+    pub u64: usize,
+    pub u128: usize,
+}
+
+/// Compute the exact EdaBit budget needed for the given number of non-noop cycles.
+///
+/// Pass the un-padded trace length (upper bound on real non-NoOp cycles).
+/// NoOp padding cycles produce `None` in `instruction_ra` / `masked_indices_c`
+/// and are excluded from `non_noop_cycles` in ReadRaf, so the budget only needs
+/// to cover real instruction cycles.
+///
+/// Two consumers:
+/// 1. **Suffix eval**: each unique `CastToFieldB2A` suffix across all tables produces
+///    `n` futures of type T::Half per phase. All phases use the same unique suffix set.
+/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half (left + right)
+///    per phase.
+///
+/// Phase ring types: suffix_len = (7 - phase) * 16
+///   Phase 0-2: T=u128, T::Half=u64
+///   Phase 3-4: T=u64,  T::Half=u32
+///   Phase 5:   T=u32,  T::Half=u16
+///   Phase 6:   T=u16,  T::Half=u8
+///   Phase 7:   suffix_len=0, no B2A needed
+pub fn compute_edabit_budget(non_noop_cycles: usize) -> EdaBitBudget {
+    use crate::zkvm::instruction::suffixes::suffix_uses_b2a_edabits;
+
+    let n = non_noop_cycles;
+
+    // Count unique CastToFieldB2A suffixes across all tables (same for every phase)
+    let mut seen = std::collections::HashSet::new();
+    for table in LookupTables::<XLEN>::iter() {
+        for suffix in table.suffixes() {
+            if suffix_uses_b2a_edabits(&suffix) {
+                seen.insert(std::mem::discriminant(&suffix));
+            }
+        }
+    }
+    let num_b2a_suffixes = seen.len();
+
+    let mut budget = EdaBitBudget::default();
+
+    for phase in 0..PHASES {
+        let suffix_len = (PHASES - 1 - phase) * LOG_M;
+        if suffix_len == 0 {
+            continue;
+        }
+
+        // Operand Q: n × T + 2n × T::Half
+        // Suffix eval: num_b2a_suffixes × n × T::Half
+        let suffix_half = num_b2a_suffixes * n;
+        let operand_q_full = n;
+        let operand_q_half = 2 * n;
+
+        match suffix_len {
+            65..=128 => {
+                // T=u128, T::Half=u64
+                budget.u128 += operand_q_full;
+                budget.u64 += operand_q_half + suffix_half;
+            }
+            33..=64 => {
+                // T=u64, T::Half=u32
+                budget.u64 += operand_q_full;
+                budget.u32 += operand_q_half + suffix_half;
+            }
+            17..=32 => {
+                // T=u32, T::Half=u16
+                budget.u32 += operand_q_full;
+                budget.u16 += operand_q_half + suffix_half;
+            }
+            1..=16 => {
+                // T=u16, T::Half=u8
+                budget.u16 += operand_q_full;
+                budget.u8 += operand_q_half + suffix_half;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    budget
+}
+
+// ---------------------------------------------------------------------------
 // Additive dense polynomial — lightweight wrapper for suffix/Q polys
 // ---------------------------------------------------------------------------
 
@@ -347,10 +440,16 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 lookup_indices_by_table[idx].push(j);
                 table_cycles_set.push(j);
             }
-            if is_interleaved {
-                interleaved_cycles.push(j);
-            } else {
-                identity_cycles.push(j);
+            // Only classify cycles that have a valid one-hot entry (not padding NoOps).
+            // Padding cycles have masked_indices_c[j] = None and c16[j] = None,
+            // so they'd be skipped by the histogram scatter guard anyway, but
+            // filtering here avoids iterating over ~(padded_len - trace_len) entries.
+            if one_hot_polys[0].masked_indices_c[j].is_some() {
+                if is_interleaved {
+                    interleaved_cycles.push(j);
+                } else {
+                    identity_cycles.push(j);
+                }
             }
         }
         let table_cycles = table_cycles_set;
@@ -366,12 +465,29 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             .collect();
 
         // -- Initialize u_evals and ra_acc --
+        // NoOp padding cycles get zero so they contribute nothing to the sumcheck.
         let u_evals: Vec<Rep3PrimeFieldShare<F>> = eq_r_cycle_public
             .iter()
-            .map(|&v| promote_to_trivial_share(v, party_id))
+            .zip(one_hot_polys[0].masked_indices_c.iter())
+            .map(|(&v, opt)| {
+                if opt.is_some() {
+                    promote_to_trivial_share(v, party_id)
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                }
+            })
             .collect();
-        let ra_acc: Vec<Rep3PrimeFieldShare<F>> =
-            vec![promote_to_trivial_share(F::one(), party_id); num_cycles];
+        let ra_acc: Vec<Rep3PrimeFieldShare<F>> = one_hot_polys[0]
+            .masked_indices_c
+            .iter()
+            .map(|opt| {
+                if opt.is_some() {
+                    promote_to_trivial_share(F::one(), party_id)
+                } else {
+                    Rep3PrimeFieldShare::zero_share()
+                }
+            })
+            .collect();
 
         // -- Initialize suffix polynomials (empty, filled in init_phase) --
         let suffix_polys: Vec<Vec<AdditiveDensePoly<F>>> = LookupTables::<XLEN>::iter()

@@ -1114,6 +1114,67 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Suffix classification for EdaBit budget estimation
+// ---------------------------------------------------------------------------
+
+/// Returns true if this suffix variant produces `CastToFieldB2A` futures
+/// (consuming edaBits of type T::Half) rather than `BitInject` or `Ready`.
+pub fn suffix_uses_b2a_edabits(suffix: &Suffixes) -> bool {
+    match suffix {
+        // CastToFieldB2A — consumes T::Half edaBits
+        Suffixes::And
+        | Suffixes::NotAnd
+        | Suffixes::Xor
+        | Suffixes::Or
+        | Suffixes::RightOperand
+        | Suffixes::RightOperandW
+        | Suffixes::UpperWord
+        | Suffixes::LowerWord
+        | Suffixes::LowerHalfWord
+        | Suffixes::Lsb
+        | Suffixes::XorRot16
+        | Suffixes::XorRot24
+        | Suffixes::XorRot32
+        | Suffixes::XorRot63
+        | Suffixes::XorRotW7
+        | Suffixes::XorRotW8
+        | Suffixes::XorRotW12
+        | Suffixes::XorRotW16
+        | Suffixes::Rev8W => true,
+
+        // Ready (constant) — no edaBits
+        Suffixes::One => false,
+
+        // BitInject (daBits, not edaBits) — boolean results
+        Suffixes::TwoLsb
+        | Suffixes::LessThan
+        | Suffixes::GreaterThan
+        | Suffixes::Eq
+        | Suffixes::LeftOperandIsZero
+        | Suffixes::RightOperandIsZero
+        | Suffixes::DivByZero
+        | Suffixes::OverflowBitsZero
+        | Suffixes::ChangeDivisor
+        | Suffixes::ChangeDivisorW
+        | Suffixes::Pow2
+        | Suffixes::Pow2W
+        | Suffixes::SignExtension
+        | Suffixes::SignExtensionUpperHalf
+        | Suffixes::SignExtensionRightOperand => false,
+
+        // Shift suffixes — evaluated via vanilla open, produce Ready
+        Suffixes::RightShift
+        | Suffixes::RightShiftHelper
+        | Suffixes::RightShiftPadding
+        | Suffixes::LeftShift
+        | Suffixes::RightShiftW
+        | Suffixes::RightShiftWHelper
+        | Suffixes::LeftShiftWHelper
+        | Suffixes::LeftShiftW => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shift-by-bitmask suffixes (complex — using open for prototype)
 // ---------------------------------------------------------------------------
 
