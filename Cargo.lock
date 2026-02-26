@@ -2440,6 +2440,7 @@ dependencies = [
 name = "mpc-core"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "ark-bn254",
  "ark-ec",
  "ark-ff",
