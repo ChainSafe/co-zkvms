@@ -9,7 +9,10 @@ use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
-use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup};
+use jolt_core::zkvm::instruction::{
+    CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
+};
+use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
@@ -165,6 +168,8 @@ where
     let mut ram_addr: Vec<u64> = Vec::with_capacity(n);
     let mut flags_bits: Vec<u32> = Vec::with_capacity(n);
     let mut advice: Vec<u64> = vec![0; n];
+    let mut lookup_tables: Vec<Option<LookupTables<XLEN>>> = Vec::with_capacity(n);
+    let mut is_interleaved_operands: Vec<bool> = Vec::with_capacity(n);
 
     // Ring-shared columns to cast to field
     let mut rs1_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
@@ -199,6 +204,10 @@ where
             }
         }
         flags_bits.push(mask);
+
+        // Lookup table and interleaved operand flag (public, derived from opcode).
+        lookup_tables.push(InstructionLookup::<XLEN>::lookup_table(cycle));
+        is_interleaved_operands.push(circuit_flags.is_interleaved_operands());
 
         // Advice value (only meaningful for VirtualAdvice).
         if circuit_flags[CircuitFlags::Advice as usize] {
@@ -246,6 +255,8 @@ where
     state.prover_state.cycle_witness.advice = std::mem::take(&mut advice);
 
     state.prover_state.cycle_witness.lookup_output = lookup_output;
+    state.prover_state.cycle_witness.lookup_tables = lookup_tables;
+    state.prover_state.cycle_witness.is_interleaved_operands = is_interleaved_operands;
     state.prover_state.cycle_witness.rs1_value = rs1_value;
     state.prover_state.cycle_witness.rs2_value = rs2_value;
     state.prover_state.cycle_witness.rd_write_value = rd_write_value;

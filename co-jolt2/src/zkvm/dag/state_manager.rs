@@ -10,7 +10,9 @@ use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
+use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
+use jolt2_common::constants::XLEN;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
@@ -62,6 +64,12 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     /// Full 128-bit lookup indices per cycle (ring-shared).
     /// Persisted from witness gen for use in ReadRaf suffix evaluation.
     pub lookup_indices: Vec<Rep3RingShare<u128>>,
+
+    /// Per-cycle lookup table variant (public; derived from opcode).
+    /// `None` for NoOp/padding and tableless instructions (SD/LD/FENCE/ECALL).
+    pub lookup_tables: Vec<Option<LookupTables<XLEN>>>,
+    /// Per-cycle flag: true if the instruction uses interleaved operands (RAF path).
+    pub is_interleaved_operands: Vec<bool>,
 
     /// RdInc polynomial (post - pre for register writes). Stored as
     /// `Option<Rep3DensePolynomial>` so provers can `.take()` ownership.

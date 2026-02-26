@@ -20,9 +20,9 @@ use mpc_types::protocols::rep3_ring::{
 };
 use num_bigint::BigUint;
 use rand::RngCore;
+use rand::SeedableRng;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
-use rand::SeedableRng;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::info_span;
@@ -363,6 +363,7 @@ where
     /// Regenerate `n` edaBits starting from the current cursor position.
     ///
     /// Advances the cursor by `n`. Panics if `n > remaining()`.
+    #[tracing::instrument(skip_all, name = "EdaBits::take")]
     pub fn take(&mut self, n: usize) -> Vec<EdaBits<T, F>> {
         assert!(
             self.cursor + n <= self.total,
@@ -444,6 +445,7 @@ where
         a_rng2.set_word_pos(self.pos2 + (alpha_byte_offset as u128) / 4);
 
         // Bulk generate gamma bytes (parallel over rng1/rng2).
+        let _span = info_span!("gen_alpha");
         let gamma_total_bytes = n * t_bytes;
         let (g1_bytes, g2_bytes) = {
             let mut a = vec![0u8; gamma_total_bytes];
@@ -451,8 +453,10 @@ where
             rayon::join(|| g_rng1.fill_bytes(&mut a), || g_rng2.fill_bytes(&mut b));
             (a, b)
         };
+        drop(_span);
 
         // Bulk generate alpha bytes (parallel over rng1/rng2).
+        let _span = info_span!("gen_alpha");
         let alpha_total_bytes = n * k * fb;
         let (a1_bytes, a2_bytes) = {
             let mut a = vec![0u8; alpha_total_bytes];
@@ -460,7 +464,7 @@ where
             rayon::join(|| a_rng1.fill_bytes(&mut a), || a_rng2.fill_bytes(&mut b));
             (a, b)
         };
-
+        drop(_span);
         // Parse into EdaBits (parallel).
         // P0 uses a1_bytes (rng1) for alpha_1; P1 uses a2_bytes (rng2 = P0's rng1).
         let alpha_bytes = if party_id == PartyID::ID0 {
@@ -469,6 +473,7 @@ where
             &a2_bytes
         };
 
+        let _span = info_span!("parse_gamma_alpha");
         let result: Vec<EdaBits<T, F>> = (0..n)
             .into_par_iter()
             .with_min_len(256)
@@ -558,7 +563,7 @@ where
         let g2_bytes = &all_bytes2[..gamma_total_bytes];
         let a1_bytes = &all_bytes1[gamma_total_bytes..];
 
-        let _span = info_span!("reshare_lazy").entered();
+        let _span = info_span!("alpha_2_all").entered();
 
         // P0 computes alpha_2 = F::from(gamma_bit) - alpha_1 and sends to P2.
         let alpha_2_all: Vec<F> = (0..num)
@@ -581,10 +586,14 @@ where
                     .collect::<Vec<_>>()
             })
             .collect();
+        drop(_span);
 
+        let _span = info_span!("send alpha_2", len = alpha_2_all.len()).entered();
         io.network.send_many(PartyID::ID2, &alpha_2_all)?;
         Vec::new()
     } else if party_id == PartyID::ID2 {
+        let _span = info_span!("recv alpha_2").entered();
+
         let alpha_2_all: Vec<F> = io.network.recv_many(PartyID::ID0)?;
         debug_assert_eq!(alpha_2_all.len(), num * k);
         alpha_2_all
@@ -880,10 +889,7 @@ impl<F: PrimeField> EdaBitsPool<F> {
         // For trivial testing, we still use eager generation and wrap in a
         // compatibility shim that pre-drains all edaBits into an eager vec.
         Self {
-            edabits_u64: LazyEdaBits::from_eager(
-                trivial_edabits(num_u64, party_id, rng),
-                party_id,
-            ),
+            edabits_u64: LazyEdaBits::from_eager(trivial_edabits(num_u64, party_id, rng), party_id),
             edabits_u128: LazyEdaBits::from_eager(
                 trivial_edabits(num_u128, party_id, rng),
                 party_id,

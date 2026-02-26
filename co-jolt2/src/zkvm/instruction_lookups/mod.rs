@@ -20,7 +20,7 @@ use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorke
 
 use self::booleanity::{Rep3BooleanitySumcheck, Rep3BooleanitySumcheckWorker};
 use self::hamming_weight::{Rep3HammingWeightSumcheck, Rep3HammingWeightSumcheckWorker};
-use self::read_raf_checking::{ReadRafCycleData, Rep3ReadRafSumcheck, Rep3ReadRafSumcheckWorker};
+use self::read_raf_checking::{Rep3ReadRafSumcheck, Rep3ReadRafSumcheckWorker};
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -69,19 +69,16 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
     eq_r_cycle: Option<Vec<F>>,
     /// D Rep3OneHotPolynomials from witness gen, used for compute_ra_evals.
     one_hot_polys: [Rep3OneHotPolynomial<F>; D],
-    /// Pre-extracted public per-cycle data for ReadRaf.
-    cycle_data: Option<ReadRafCycleData>,
 }
 
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
-    pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D], cycle_data: ReadRafCycleData) -> Self {
+    pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D]) -> Self {
         Self {
             stage2: None,
             stage3: None,
             G: None,
             eq_r_cycle: None,
             one_hot_polys,
-            cycle_data: Some(cycle_data),
         }
     }
 
@@ -118,16 +115,19 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
 
         // ReadRaf (created before HammingWeight, matching vanilla ordering)
         let eq_r_cycle = self.eq_r_cycle.take().unwrap();
-        let cycle_data = self.cycle_data.take().unwrap();
         let one_hot_polys = self.one_hot_polys.clone();
-        let lookup_indices = sm.prover_state.cycle_witness.lookup_indices.clone();
+        let cw = &mut sm.prover_state.cycle_witness;
+        let lookup_indices = cw.lookup_indices.clone();
+        let lookup_tables = std::mem::take(&mut cw.lookup_tables);
+        let is_interleaved_operands = std::mem::take(&mut cw.is_interleaved_operands);
         let read_raf = Rep3ReadRafSumcheckWorker::new(
             init.read_raf_gamma,
             init.rv_claim,
             init.raf_claim,
             one_hot_polys,
             &eq_r_cycle,
-            cycle_data,
+            lookup_tables,
+            is_interleaved_operands,
             lookup_indices,
             io_ctx,
             sm.party_id,

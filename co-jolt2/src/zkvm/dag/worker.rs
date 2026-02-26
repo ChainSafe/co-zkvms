@@ -15,7 +15,6 @@ use crate::subprotocols::sumcheck::{Rep3BatchedSumcheckWorker, Rep3SumcheckInsta
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
-use crate::zkvm::instruction_lookups::read_raf_checking::ReadRafCycleData;
 use crate::zkvm::instruction_lookups::Rep3LookupsDagWorker;
 use crate::zkvm::ram::Rep3RamDagWorker;
 use crate::zkvm::registers::Rep3RegistersDagWorker;
@@ -83,9 +82,6 @@ impl Rep3JoltDAGWorker {
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
         Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
 
-        // Extract public per-cycle data for ReadRaf before the trace is cleared.
-        let read_raf_cycle_data = ReadRafCycleData::from_rep3_trace(&state.prover_state.trace);
-
         let (_hint_map, instruction_one_hot_polys) = Self::generate_and_commit_polynomials::<
             F,
             PCS,
@@ -131,8 +127,7 @@ impl Rep3JoltDAGWorker {
         // 4) Lookups booleanity — receive (gamma_powers, r_address)
         let (lookups_gamma, lookups_r_address): ([F; D], Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
-        let mut lookups_dag =
-            Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys, read_raf_cycle_data);
+        let mut lookups_dag = Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys);
         lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
         let lookups_instances = lookups_dag.stage2_instances(&mut state);
 

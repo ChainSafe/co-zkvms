@@ -5,7 +5,6 @@ use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorW
 use crate::utils::fwht::{fwht_additive_in_place, fwht_rep3_in_place, shift_eq_table_with_mask};
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::instruction::Rep3Cycle;
 use jolt2_common::constants::XLEN;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
@@ -18,7 +17,6 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::expanding_table::ExpandingTable;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
-use jolt_core::zkvm::instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker};
 use jolt_core::zkvm::instruction_lookups::{D, LOG_M};
 use jolt_core::zkvm::lookup_table::prefixes::{PrefixCheckpoint, PrefixEval, Prefixes};
 use jolt_core::zkvm::lookup_table::suffixes::{SuffixEval, Suffixes};
@@ -107,35 +105,6 @@ impl<F: JoltField> AdditiveDensePoly<F> {
 }
 
 const LOG_K: usize = XLEN * 2; // 128
-
-/// Public per-cycle data extracted from the trace before it is cleared.
-/// Stored in `Rep3LookupsDagWorker` and consumed when building the ReadRaf worker.
-pub struct ReadRafCycleData {
-    pub lookup_tables: Vec<Option<LookupTables<XLEN>>>,
-    pub is_interleaved_operands: Vec<bool>,
-}
-
-impl ReadRafCycleData {
-    /// Extract public per-cycle data from the MPC trace.
-    pub fn from_rep3_trace(trace: &[Rep3Cycle]) -> Self {
-        let (lookup_tables, is_interleaved_operands): (Vec<_>, Vec<_>) = trace
-            .iter()
-            .map(|cycle| {
-                let table: Option<LookupTables<XLEN>> =
-                    InstructionLookup::<XLEN>::lookup_table(cycle);
-                let is_interleaved = cycle
-                    .instruction()
-                    .circuit_flags()
-                    .is_interleaved_operands();
-                (table, is_interleaved)
-            })
-            .unzip();
-        Self {
-            lookup_tables,
-            is_interleaved_operands,
-        }
-    }
-}
 
 /// MPC-compatible version of `LookupTables::combine`.
 ///
@@ -227,6 +196,13 @@ struct ReadRafProverState<F: JoltField> {
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
     /// Indices of cycles grouped by table type.
     lookup_indices_by_table: Vec<Vec<usize>>,
+    /// Sorted indices of cycles that have a lookup table (union of all table lists).
+    /// NoOp/padding cycles and tableless instructions (SD/LD/FENCE/ECALL) are excluded.
+    /// Used to filter suffix MLE inputs (only table cycles need suffix evaluation).
+    table_cycles: Vec<usize>,
+    /// Sorted indices of all non-NoOp cycles (real instructions including SD/LD/FENCE/ECALL).
+    /// Used to filter operand Q B2A inputs.
+    non_noop_cycles: Vec<usize>,
     /// Indices of cycles using interleaved operands (raf path).
     interleaved_cycles: Vec<usize>,
     /// Indices of cycles NOT using interleaved operands (identity path).
@@ -304,7 +280,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// - `rv_claim`, `raf_claim`: the virtual polynomial claims from Spartan outer sumcheck
     /// - `one_hot_polys`: the D Rep3OneHotPolynomials from witness generation
     /// - `eq_r_cycle_public`: eq(r_cycle, ·) evaluations (public, length T)
-    /// - `cycle_data`: pre-extracted public per-cycle data (lookup tables, interleaved flags)
+    /// - `lookup_tables`: per-cycle lookup table variant (from `cycle_witness`)
+    /// - `is_interleaved_operands`: per-cycle interleaved flag (from `cycle_witness`)
     /// - `io_ctx`: IoContextPool for MPC operations during phase transitions
     /// - `party_id`: this party's ID
     #[allow(clippy::too_many_arguments)]
@@ -315,13 +292,14 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         raf_claim: F,
         one_hot_polys: [Rep3OneHotPolynomial<F>; D],
         eq_r_cycle_public: &[F],
-        cycle_data: ReadRafCycleData,
+        lookup_tables: Vec<Option<LookupTables<XLEN>>>,
+        is_interleaved_operands: Vec<bool>,
         lookup_indices: Vec<Rep3RingShare<u128>>,
         io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
         edabits_pool: EdaBitsPool<F>,
     ) -> eyre::Result<Self> {
-        let num_cycles = cycle_data.lookup_tables.len();
+        let num_cycles = lookup_tables.len();
         eyre::ensure!(
             num_cycles.is_power_of_two(),
             "ReadRaf requires power-of-two number of cycles, got {num_cycles}"
@@ -350,12 +328,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         let log_T = num_cycles.log_2();
         let num_tables = LookupTables::<XLEN>::COUNT;
 
-        let ReadRafCycleData {
-            lookup_tables,
-            is_interleaved_operands,
-        } = cycle_data;
-
         let mut lookup_indices_by_table: Vec<Vec<usize>> = vec![Vec::new(); num_tables];
+        let mut table_cycles_set = Vec::new();
         let mut interleaved_cycles = Vec::new();
         let mut identity_cycles = Vec::new();
 
@@ -367,6 +341,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             if let Some(t) = table {
                 let idx = LookupTables::<XLEN>::enum_index(t);
                 lookup_indices_by_table[idx].push(j);
+                table_cycles_set.push(j);
             }
             if is_interleaved {
                 interleaved_cycles.push(j);
@@ -374,6 +349,17 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 identity_cycles.push(j);
             }
         }
+        let table_cycles = table_cycles_set;
+
+        // Non-NoOp cycles: derived from the first one_hot_poly's masked_indices_c.
+        // A cycle is NoOp iff masked_indices_c[j] == None (no instruction → no OHV).
+        // This includes SD/LD/FENCE/ECALL which have lookup_table()==None but valid OHVs.
+        let non_noop_cycles: Vec<usize> = one_hot_polys[0]
+            .masked_indices_c
+            .iter()
+            .enumerate()
+            .filter_map(|(j, opt)| opt.map(|_| j))
+            .collect();
 
         // -- Initialize u_evals and ra_acc --
         let u_evals: Vec<Rep3PrimeFieldShare<F>> = eq_r_cycle_public
@@ -413,6 +399,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
             lookup_indices_by_table,
+            table_cycles,
+            non_noop_cycles,
             interleaved_cycles,
             identity_cycles,
             is_interleaved_operands,
@@ -659,17 +647,29 @@ impl<F: JoltField> ReadRafProverState<F> {
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
 
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
-        let all_suffix_bits: Option<Vec<Rep3RingShare<u128>>> = if suffix_len > 0 {
+
+        // Only extract suffix bits for active cycles (those with a lookup table).
+        // NoOp/padding cycles have no table and never contribute to suffix histograms.
+        let num_active = self.table_cycles.len();
+        let active_suffix_bits: Option<Vec<Rep3RingShare<u128>>> = if suffix_len > 0 {
             let mask = RingElement((1u128 << suffix_len) - 1);
             Some(
-                self.lookup_indices
-                    .par_iter()
-                    .map(|idx| *idx & mask)
+                self.table_cycles
+                    .iter()
+                    .map(|&j| self.lookup_indices[j] & mask)
                     .collect(),
             )
         } else {
             None
         };
+
+        // Build dense mapping: global cycle index → active-local index.
+        // Only populated for active cycles; NoOp cycles never need lookup.
+        let num_cycles = self.lookup_indices.len();
+        let mut global_to_active = vec![0usize; num_cycles];
+        for (local, &global) in self.table_cycles.iter().enumerate() {
+            global_to_active[global] = local;
+        }
 
         // -- Step 1: Collect unique suffix types needed across all tables --
         let mut needed_suffixes: Vec<Suffixes> = Vec::new();
@@ -684,19 +684,17 @@ impl<F: JoltField> ReadRafProverState<F> {
             }
         }
 
-        // -- Step 2: Batch-evaluate each unique suffix over ALL cycles --
+        // -- Step 2: Batch-evaluate each unique suffix over ACTIVE cycles only --
         // Each suffix returns Vec<SuffixFuture<F>> with deferred ring→field conversion.
         // We flatten all futures and fulfill_batched once.
-        let _span = info_span!("suffix_mle", n_suffixes = needed_suffixes.len()).entered();
+        let _span = info_span!("suffix_mle", n_suffixes = needed_suffixes.len(), num_active).entered();
         let mut suffix_futures_map: std::collections::HashMap<u8, Vec<SuffixFuture<F>>> =
             std::collections::HashMap::new();
-        if let Some(ref all_bits) = all_suffix_bits {
+        if let Some(ref active_bits) = active_suffix_bits {
             for &suffix in &needed_suffixes {
-                // let _inner =
-                //     info_span!("eval_suffix", suffix = ?suffix).entered();
                 let futures = evaluate_suffix_mle_batched(
                     &suffix,
-                    all_bits,
+                    active_bits,
                     suffix_len,
                     io_ctx.main(),
                     self.party_id,
@@ -708,11 +706,10 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         // Flatten all futures, fulfill_batched, then split back.
         let _span = info_span!("suffix_fulfill").entered();
-        let num_cycles = self.lookup_indices.len();
         let mut suffix_keys: Vec<u8> = suffix_futures_map.keys().copied().collect();
         suffix_keys.sort_unstable(); // deterministic order across all parties
         let mut all_futures: Vec<SuffixFuture<F>> =
-            Vec::with_capacity(suffix_keys.len() * num_cycles);
+            Vec::with_capacity(suffix_keys.len() * num_active);
         for &key in &suffix_keys {
             all_futures.extend(suffix_futures_map.remove(&key).unwrap());
         }
@@ -723,12 +720,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                 &mut self.edabits_pool,
                 |share, ()| share,
             )?;
-        // Split back into per-suffix chunks (zero-copy via slicing)
+        // Split back into per-suffix chunks indexed by active-local position
         let suffix_eval_cache: std::collections::HashMap<u8, &[Rep3PrimeFieldShare<F>]> =
             suffix_keys
                 .iter()
                 .enumerate()
-                .map(|(i, &key)| (key, &all_field[i * num_cycles..(i + 1) * num_cycles]))
+                .map(|(i, &key)| (key, &all_field[i * num_active..(i + 1) * num_active]))
                 .collect();
         drop(_span);
 
@@ -806,7 +803,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let mut h_add = vec![AdditiveShare::<F>::zero(); M];
                     for &j in table_cycles {
                         if let Some(c) = c16[j] {
-                            let w: AdditiveShare<F> = u_evals[j] * suffix_evals[j];
+                            let local = global_to_active[j];
+                            let w: AdditiveShare<F> = u_evals[j] * suffix_evals[local];
                             h_add[c as usize] = h_add[c as usize] + w;
                         }
                     }
@@ -918,17 +916,31 @@ impl<F: JoltField> ReadRafProverState<F> {
         let ehat16 = self.ehat16.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
         let num_cycles = self.c16.len();
+        let num_non_noop = self.non_noop_cycles.len();
 
-        // Compute per-cycle suffix evaluations for the 3 secret suffix types.
-        // The 2 constant types (ShiftHalf, Shift) are handled inline.
+        // Only compute B2A for non-NoOp cycles. NoOp padding cycles have c16==None
+        // and are skipped in the histogram scatter. This includes SD/LD/FENCE/ECALL
+        // which have lookup_table()==None but valid c16 entries.
+        let non_noop_lookup_indices: Vec<Rep3RingShare<u128>> = self
+            .non_noop_cycles
+            .iter()
+            .map(|&j| self.lookup_indices[j])
+            .collect();
+
+        // Dense mapping: global cycle index → non_noop-local index.
+        let mut global_to_non_noop = vec![0usize; num_cycles];
+        for (local, &global) in self.non_noop_cycles.iter().enumerate() {
+            global_to_non_noop[global] = local;
+        }
+
         let OperandQSuffixEvals {
             left_operand,
             right_operand,
             identity,
         } = compute_operand_q_suffix_evals(
             phase,
-            &self.lookup_indices,
-            num_cycles,
+            &non_noop_lookup_indices,
+            num_non_noop,
             io_ctx.main(),
             self.party_id,
         )?;
@@ -997,11 +1009,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                 if let Some(c) = self.c16[j] {
                     let u = self.u_evals[j];
                     let ci = c as usize;
+                    let local = global_to_non_noop[j];
                     histograms[0][ci] += u * shift_half_val;
                     histograms[2][ci] += u * shift_half_val;
                     // Local Rep3 × Rep3 → Additive
-                    additive_hists[0][ci] = additive_hists[0][ci] + (u * left_operand[j]);
-                    additive_hists[1][ci] = additive_hists[1][ci] + (u * right_operand[j]);
+                    additive_hists[0][ci] = additive_hists[0][ci] + (u * left_operand[local]);
+                    additive_hists[1][ci] = additive_hists[1][ci] + (u * right_operand[local]);
                 }
             }
 
@@ -1009,8 +1022,9 @@ impl<F: JoltField> ReadRafProverState<F> {
                 if let Some(c) = self.c16[j] {
                     let u = self.u_evals[j];
                     let ci = c as usize;
+                    let local = global_to_non_noop[j];
                     histograms[4][ci] += u * shift_val;
-                    additive_hists[2][ci] = additive_hists[2][ci] + (u * identity[j]);
+                    additive_hists[2][ci] = additive_hists[2][ci] + (u * identity[local]);
                 }
             }
 
