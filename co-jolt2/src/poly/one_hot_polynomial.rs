@@ -131,11 +131,11 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                     .unwrap_or_else(Rep3RingShare::zero_share)
             })
             .collect();
-        let opened = binary::open_vec(masked_vec, io_ctx)?;
+        let opened = binary::open_vec(&masked_vec, io_ctx)?;
         let masked_indices_c: Vec<Option<u8>> = nonzero_indices
             .iter()
             .zip(opened.into_iter())
-            .map(|(opt, v)| opt.is_some().then_some(v as u8))
+            .map(|(opt, v)| opt.is_some().then_some(v))
             .collect();
 
         // Inject the OHV bits into prime-field shares once.

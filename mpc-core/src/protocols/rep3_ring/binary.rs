@@ -204,22 +204,14 @@ pub fn open<T: IntRing2k, N: Rep3Network>(
 
 /// Performs the opening of a shared value and returns the equivalent public value.
 pub fn open_vec<T: IntRing2k, N: Rep3Network>(
-    a: Vec<RingShare<T>>,
+    a: &[RingShare<T>],
     io_context: &mut IoContext<N>,
-) -> IoResult<Vec<usize>> {
+) -> IoResult<Vec<T>> {
     let a_b = a.iter().map(|a| a.b.clone()).collect::<Vec<_>>();
     let c = io_context.network.reshare_many(&a_b)?;
-    izip!(a, c)
-        .map(|(a, c)| {
-            (a.a ^ a.b ^ c)
-                .convert()
-                .try_into()
-                .or(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to convert BigUint",
-                )))
-        })
-        .collect::<Result<Vec<_>, _>>()
+    Ok(izip!(a, c)
+        .map(|(a, c)| (a.a ^ a.b ^ c).convert())
+        .collect())
 }
 
 /// Transforms a public value into a shared value: \[a\] = a.

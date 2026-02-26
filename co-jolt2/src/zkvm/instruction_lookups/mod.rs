@@ -8,6 +8,7 @@ use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::{compute_g_from_masked_indices, Rep3OneHotPolynomial};
@@ -107,6 +108,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
+        edabits_pool: EdaBitsPool<F>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let G = self.G.take().unwrap();
         let init = self
@@ -129,6 +131,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             lookup_indices,
             io_ctx,
             sm.party_id,
+            edabits_pool,
         )
         .expect("Rep3ReadRafSumcheckWorker::new failed");
 

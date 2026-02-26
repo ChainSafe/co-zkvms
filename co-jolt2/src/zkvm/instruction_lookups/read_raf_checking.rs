@@ -27,6 +27,7 @@ use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use strum::{EnumCount, IntoEnumIterator};
@@ -279,6 +280,9 @@ struct ReadRafProverState<F: JoltField> {
     eq_r_cycle: MultilinearPolynomial<F>,
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 
+    // -- Protocol Π₂ B2A preprocessing pool --
+    edabits_pool: EdaBitsPool<F>,
+
     party_id: PartyID,
 }
 
@@ -315,6 +319,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         lookup_indices: Vec<Rep3RingShare<u128>>,
         io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
+        edabits_pool: EdaBitsPool<F>,
     ) -> eyre::Result<Self> {
         let num_cycles = cycle_data.lookup_tables.len();
         eyre::ensure!(
@@ -431,6 +436,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             current_phase_pair: (0, 0),
             eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle_public.to_vec()),
             combined_val_polynomial: None,
+            edabits_pool,
             party_id,
         };
 
@@ -643,7 +649,6 @@ impl<F: JoltField> ReadRafProverState<F> {
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
-        use crate::utils::future_ring::Rep3RingFutureExt;
         use crate::zkvm::instruction::suffixes::{evaluate_suffix_mle_batched, SuffixFuture};
         use rayon::prelude::*;
 
@@ -712,7 +717,12 @@ impl<F: JoltField> ReadRafProverState<F> {
             all_futures.extend(suffix_futures_map.remove(&key).unwrap());
         }
         let all_field: Vec<Rep3PrimeFieldShare<F>> =
-            all_futures.fulfill_batched(io_ctx, |share, ()| share)?;
+            crate::utils::future_ring::fulfill_batched_with_pool(
+                all_futures,
+                io_ctx,
+                &mut self.edabits_pool,
+                |share, ()| share,
+            )?;
         // Split back into per-suffix chunks (zero-copy via slicing)
         let suffix_eval_cache: std::collections::HashMap<u8, &[Rep3PrimeFieldShare<F>]> =
             suffix_keys

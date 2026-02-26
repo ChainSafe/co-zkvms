@@ -27,6 +27,7 @@ use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreproc
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
+use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ where
         io_ctx: IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
+        edabits_pool: EdaBitsPool<F>,
     ) -> eyre::Result<()>;
 }
 
@@ -104,6 +106,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
+        edabits_pool: EdaBitsPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
@@ -115,7 +118,11 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             ram_K,
             advice_shares,
         );
-        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx)
+        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
+            state,
+            io_ctx,
+            edabits_pool,
+        )
     }
 }
 
@@ -276,6 +283,21 @@ mod tests {
                 populate_operands_casts(&mut trace, io_ctx.main())?;
                 drop(_span);
 
+                // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions
+                let edabits_pool = {
+                    use mpc_core::protocols::rep3_ring::edabits;
+                    let num_cycles = trace.len();
+                    let num_edabits = 512 * num_cycles;
+                    let num_dabits = 512 * num_cycles;
+                    let mut pool_rng = rand::thread_rng();
+                    let io = io_ctx.main();
+                    edabits::EdaBitsPool::new(
+                        edabits::random_edabits::<u64, F, _>(num_edabits, &mut pool_rng, io)?,
+                        vec![],
+                        edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
+                    )
+                };
+
                 <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
                     &preprocessing,
                     trace,
@@ -284,6 +306,7 @@ mod tests {
                     io_ctx,
                     ram_K,
                     Some(advice),
+                    edabits_pool,
                 )?;
                 Ok(())
             },

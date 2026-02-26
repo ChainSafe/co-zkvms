@@ -55,6 +55,7 @@ impl Rep3JoltDAGWorker {
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS>,
         mut io_ctx: IoContextPool<N>,
+        edabits_pool: mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
     ) -> eyre::Result<()>
     where
         F: JoltField,
@@ -252,7 +253,8 @@ impl Rep3JoltDAGWorker {
             read_raf_rv_claim,
             read_raf_raf_claim,
         );
-        let lookups_stage3 = lookups_dag.stage3_instances(&mut state, &mut io_ctx);
+
+        let lookups_stage3 = lookups_dag.stage3_instances(&mut state, &mut io_ctx, edabits_pool);
 
         // 4) RAM: ValFinal (secret)
         ram_dag.set_stage3_init(ram_val_final_input_claim);

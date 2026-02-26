@@ -270,6 +270,22 @@ fn dag_correct() {
                 input;
             let mut io_ctx = io_ctx;
             let party_id = io_ctx.party_id();
+
+            // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions
+            let edabits_pool = {
+                use mpc_core::protocols::rep3_ring::edabits;
+                let num_cycles = trace.len();
+                let num_edabits = 512 * num_cycles;
+                let num_dabits = 512 * num_cycles;
+                let mut pool_rng = rand::thread_rng();
+                let io = io_ctx.main();
+                edabits::EdaBitsPool::new(
+                    edabits::random_edabits::<u64, F, _>(num_edabits, &mut pool_rng, io)?,
+                    vec![],
+                    edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
+                )
+            };
+
             let state = StateManagerWorker::new(
                 &preprocessing,
                 trace,
@@ -279,7 +295,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, io_ctx)
+            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, io_ctx, edabits_pool)
         },
         move |input, net| {
             let (verifier_preprocessing, program_io, ram_K) = input;

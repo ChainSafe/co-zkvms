@@ -70,7 +70,7 @@ fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
+        .num_threads(4)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -87,7 +87,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn build_program() -> Program {
-    let mut program = Program::new("sha2-chain-guest");
+    let mut program = Program::new("fibonacci-guest");
     // Match sha2-chain's #[jolt::provable(stack_size = 65536, memory_size = 10240)]
     program.set_stack_size(65536);
     program.set_memory_size(10240);
@@ -95,7 +95,7 @@ fn build_program() -> Program {
 }
 
 fn build_inputs(num_iters: u32) -> Vec<u8> {
-    let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    let mut inputs = postcard::to_stdvec(&5u8).unwrap();
     inputs.append(&mut postcard::to_stdvec(&num_iters).unwrap());
     inputs
 }
@@ -107,6 +107,11 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         num_cpus::get(),
     );
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
+
+    // Create coordinator network FIRST — workers connect to coordinator
+    // during their Rep3QuicMpcNetWorker::new(), so we must be listening.
+    info!("creating coordinator network");
+    let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
 
     // Build guest program and prepare inputs
     let mut program = build_program();
@@ -149,10 +154,6 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             padded_len,
         );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-
-    // Create coordinator network
-    info!("creating coordinator network");
-    let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
 
     // Send shares to workers
     info!("sending shares to workers");
@@ -250,9 +251,26 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Wrap network in IoContextPool
     let num_io_forks = rayon::current_num_threads() as u32;
 
-    let mut io_ctx = IoContextPool::init(network, num_io_forks)?;
+    let mut io_ctx = IoContextPool::init(network, 1)?;
     // populate_operands_casts: convert binary-shared operands to arithmetic
     populate_operands_casts(&mut trace, io_ctx.main())?;
+
+    // Preprocessing: create EdaBits pool for Protocol Π₂ B2A conversions
+    let _span = info_span!("generating edaBits pool").entered();
+    let edabits_pool = {
+        use mpc_core::protocols::rep3_ring::edabits;
+        let num_cycles = padded_len;
+        let num_edabits = num_cycles; // 8 * num_cycles
+        let num_dabits = num_cycles; // 8 * num_cycles
+        let mut pool_rng = rand::thread_rng();
+        let io = io_ctx.main();
+        edabits::EdaBitsPool::new(
+            edabits::random_edabits::<u64, F, _>(num_edabits, &mut pool_rng, io)?,
+            vec![],
+            edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
+        )
+    };
+    drop(_span);
 
     // Prove
     <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
@@ -263,6 +281,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         io_ctx,
         ram_k,
         Some(program_io_share),
+        edabits_pool,
     )?;
 
     Ok(())
