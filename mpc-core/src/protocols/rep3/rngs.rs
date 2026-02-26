@@ -106,8 +106,8 @@ impl RngForker<RngType> {
 #[derive(Debug)]
 /// Rep3 rng with this party's rng and the prev party's rng
 pub struct Rep3Rand {
-    rng1: RngType,
-    rng2: RngType,
+    pub(crate) rng1: RngType,
+    pub(crate) rng2: RngType,
 }
 
 impl Rep3Rand {
@@ -117,6 +117,17 @@ impl Rep3Rand {
         let rng2 = RngType::from_seed(seed2);
 
         Self { rng1, rng2 }
+    }
+
+    /// Snapshot RNG state for later deterministic regeneration.
+    /// Returns (seed1, word_pos1, seed2, word_pos2).
+    pub fn snapshot(&self) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
+        (
+            self.rng1.get_seed(),
+            self.rng1.get_word_pos(),
+            self.rng2.get_seed(),
+            self.rng2.get_word_pos(),
+        )
     }
 
     /// Create a fork of this rng

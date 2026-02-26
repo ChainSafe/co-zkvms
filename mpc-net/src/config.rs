@@ -74,7 +74,12 @@ impl FromStr for Address {
 impl ToSocketAddrs for Address {
     type Iter = std::vec::IntoIter<SocketAddr>;
     fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        format!("{}:{}", self.hostname, self.port).to_socket_addrs()
+        let mut addrs: Vec<SocketAddr> =
+            format!("{}:{}", self.hostname, self.port).to_socket_addrs()?.collect();
+        // Sort IPv4 addresses first so that connections to servers bound on
+        // 0.0.0.0 succeed even when the OS resolves "localhost" to ::1 first.
+        addrs.sort_by_key(|a| matches!(a, SocketAddr::V6(_)));
+        Ok(addrs.into_iter())
     }
 }
 

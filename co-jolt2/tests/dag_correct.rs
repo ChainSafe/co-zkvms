@@ -279,9 +279,10 @@ fn dag_correct() {
                 let num_dabits = 512 * num_cycles;
                 let mut pool_rng = rand::thread_rng();
                 let io = io_ctx.main();
+                let party_id = io.id;
                 edabits::EdaBitsPool::new(
-                    edabits::random_edabits::<u64, F, _>(num_edabits, &mut pool_rng, io)?,
-                    vec![],
+                    edabits::random_edabits_lazy::<u64, F, _>(num_edabits, io)?,
+                    edabits::LazyEdaBits::<u128, F>::empty(party_id),
                     edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
                 )
             };

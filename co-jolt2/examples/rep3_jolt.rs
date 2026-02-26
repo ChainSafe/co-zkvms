@@ -87,7 +87,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn build_program() -> Program {
-    let mut program = Program::new("fibonacci-guest");
+    let mut program = Program::new("sha2-chain-guest");
     // Match sha2-chain's #[jolt::provable(stack_size = 65536, memory_size = 10240)]
     program.set_stack_size(65536);
     program.set_memory_size(10240);
@@ -95,7 +95,7 @@ fn build_program() -> Program {
 }
 
 fn build_inputs(num_iters: u32) -> Vec<u8> {
-    let mut inputs = postcard::to_stdvec(&5u8).unwrap();
+    let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     inputs.append(&mut postcard::to_stdvec(&num_iters).unwrap());
     inputs
 }
@@ -260,13 +260,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let edabits_pool = {
         use mpc_core::protocols::rep3_ring::edabits;
         let num_cycles = padded_len;
-        let num_edabits = num_cycles; // 8 * num_cycles
-        let num_dabits = num_cycles; // 8 * num_cycles
+        let num_edabits = 140 * num_cycles;
+        let num_dabits = 80 * num_cycles;
         let mut pool_rng = rand::thread_rng();
         let io = io_ctx.main();
+        let party_id = io.id;
         edabits::EdaBitsPool::new(
-            edabits::random_edabits::<u64, F, _>(num_edabits, &mut pool_rng, io)?,
-            vec![],
+            edabits::random_edabits_lazy::<u64, F, _>(num_edabits, io)?,
+            edabits::LazyEdaBits::<u128, F>::empty(party_id),
             edabits::random_dabits::<F, _>(num_dabits, &mut pool_rng, io)?,
         )
     };
