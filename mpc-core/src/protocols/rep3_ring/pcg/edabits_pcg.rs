@@ -43,13 +43,13 @@ pub struct PcgEdaBit<T: IntRing2k, F: PrimeField> {
 
 /// Lazy PCG-based edaBit source that expands daBits from seeds on demand.
 ///
-/// Stores pairwise PRF seeds + corrections (~O(N) for P0/P2 corrections).
-/// Online `take(n)` expands n edaBits locally with no communication.
+/// **O(1) storage** — only 3 pairwise seeds (96 bytes for P0/P2, 64 bytes for P1).
+/// No O(N) corrections. Online `take(n)` expands n edaBits locally with no communication.
 pub struct LazyPcgEdaBits<T: IntRing2k, F: PrimeField> {
-    setup: PcgDaBitSetup<F>,
+    setup: PcgDaBitSetup,
     total: usize,
     cursor: usize,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<(T, F)>,
 }
 
 impl<T: IntRing2k, F: PrimeField> LazyPcgEdaBits<T, F>
@@ -59,7 +59,7 @@ where
     /// Create a lazy edaBit source from a daBit setup.
     ///
     /// `total` is the number of edaBits available (each edaBit uses T::K daBits).
-    pub fn new(setup: PcgDaBitSetup<F>, total: usize) -> Self {
+    pub fn new(setup: PcgDaBitSetup, total: usize) -> Self {
         Self {
             setup,
             total,
@@ -76,7 +76,6 @@ where
                 seed_next: [0u8; 32],
                 seed_prev: [0u8; 32],
                 seed_third: None,
-                corrections: Vec::new(),
             },
             total: 0,
             cursor: 0,
@@ -97,35 +96,7 @@ where
             self.remaining()
         );
 
-        if n == 0 {
-            return Vec::new();
-        }
-
-        let k = T::K;
-        let dabit_start = self.cursor * k;
-        let dabit_count = n * k;
-
-        // Expand all needed daBits in parallel
-        let dabits = dabit_gen::expand_dabits::<F>(&self.setup, dabit_start, dabit_count);
-
-        // Pack K daBits into each edaBit
-        let result: Vec<PcgEdaBit<T, F>> = (0..n)
-            .into_par_iter()
-            .with_min_len(64)
-            .map(|i| {
-                let chunk = &dabits[i * k..(i + 1) * k];
-                let r_bits: Vec<Rep3RingShare<Bit>> = chunk.iter().map(|d| d.bit).collect(); // TODO: avoid iterating here; unzip or mem from parts?
-                let r_packed = binary::pack_bits::<T>(&r_bits);
-                let bit_values: Vec<Rep3PrimeFieldShare<F>> =
-                    chunk.iter().map(|d| d.value).collect(); // TODO: avoid iterating here
-                PcgEdaBit {
-                    r_bits,
-                    r_packed,
-                    bit_values,
-                }
-            })
-            .collect();
-
+        let result = dabit_gen::expand_edabits::<T, F>(&self.setup, self.cursor, n);
         self.cursor += n;
         result
     }
@@ -215,9 +186,6 @@ fn seed_to_fields<F: PrimeField>(seed: &[u8; 32]) -> [F; 4] {
 }
 
 /// Decode a 32-byte seed from 4 field elements.
-///
-/// Each field element encodes one u64 chunk. Since p >> 2^64 for bn254,
-/// `F::from(val).into_bigint()` has `val` in the first u64 limb.
 fn fields_to_seed<F: PrimeField>(fields: &[F]) -> [u8; 32] {
     assert!(fields.len() >= 4);
     let mut seed = [0u8; 32];
@@ -231,20 +199,21 @@ fn fields_to_seed<F: PrimeField>(fields: &[F]) -> [u8; 32] {
 
 /// Generate a PCG daBit setup distributed across 3 parties.
 ///
-/// P0 (trusted dealer) generates pairwise seeds and corrections, then
-/// distributes the per-party setups via the network.
+/// P0 (trusted dealer) generates pairwise seeds and distributes them.
 ///
-/// **Communication:** P0 → P1: 8 field elements (2 seeds).
-///                    P0 → P2: 8 + num field elements (2 seeds + corrections).
+/// **Communication:**
+///   P0 → P1: 8 field elements (2 seeds = 64 bytes).
+///   P0 → P2: 12 field elements (3 seeds = 96 bytes).
+///
+/// **Storage per party:** O(1) — just seeds.
 pub fn random_pcg_dabit_setup<F: PrimeField, N: Rep3NetworkWorker>(
-    num: usize,
     io: &mut IoContextPool<N>,
-) -> eyre::Result<PcgDaBitSetup<F>> {
+) -> eyre::Result<PcgDaBitSetup> {
     let party_id = io.party_id();
 
     if party_id == PartyID::ID0 {
         let mut rng = rand::thread_rng();
-        let dealer = dabit_gen::dealer_setup::<F>(num, &mut rng);
+        let dealer = dabit_gen::dealer_setup(&mut rng);
 
         // Send P1's seeds (8 field elements = 2 × 32-byte seeds)
         let p1_data: Vec<F> = {
@@ -255,12 +224,14 @@ pub fn random_pcg_dabit_setup<F: PrimeField, N: Rep3NetworkWorker>(
         };
         io.network().send_many(PartyID::ID1, &p1_data)?;
 
-        // Send P2's seeds + corrections
+        // Send P2's seeds (12 field elements = 3 × 32-byte seeds)
         let p2_data: Vec<F> = {
-            let mut v = Vec::with_capacity(8 + num);
+            let mut v = Vec::with_capacity(12);
             v.extend(seed_to_fields::<F>(&dealer.party2.seed_next));
             v.extend(seed_to_fields::<F>(&dealer.party2.seed_prev));
-            v.extend_from_slice(&dealer.party2.corrections);
+            // P2 also gets the third seed (seed_01)
+            let seed_third = dealer.party2.seed_third.unwrap();
+            v.extend(seed_to_fields::<F>(&seed_third));
             v
         };
         io.network().send_many(PartyID::ID2, &p2_data)?;
@@ -276,32 +247,29 @@ pub fn random_pcg_dabit_setup<F: PrimeField, N: Rep3NetworkWorker>(
             seed_next,
             seed_prev,
             seed_third: None,
-            corrections: Vec::new(),
         })
     } else {
         let data: Vec<F> = io.network().recv_many(PartyID::ID0)?;
         assert!(
-            data.len() >= 8 + num,
-            "P2: expected {} field elements, got {}",
-            8 + num,
+            data.len() >= 12,
+            "P2: expected 12 field elements, got {}",
             data.len()
         );
         let seed_next = fields_to_seed::<F>(&data[0..4]);
         let seed_prev = fields_to_seed::<F>(&data[4..8]);
-        let corrections = data[8..].to_vec();
+        let seed_third = fields_to_seed::<F>(&data[8..12]);
         Ok(PcgDaBitSetup {
             party_id,
             seed_next,
             seed_prev,
-            seed_third: None,
-            corrections,
+            seed_third: Some(seed_third),
         })
     }
 }
 
 /// Generate a lazy PCG edaBit source for ring type `T`.
 ///
-/// P0 runs dealer setup for `num * T::K` daBits and distributes setups.
+/// P0 runs dealer setup and distributes seeds (O(1) communication).
 /// Each party constructs a `LazyPcgEdaBits` that can expand edaBits locally.
 #[tracing::instrument(skip_all, name = "pcg_edabits_lazy", level = "trace", fields(num))]
 pub fn random_pcg_edabits_lazy<T: IntRing2k, F: PrimeField, N: Rep3NetworkWorker>(
@@ -315,8 +283,7 @@ where
         return Ok(LazyPcgEdaBits::empty(io.party_id()));
     }
 
-    let total_dabits = num * T::K;
-    let setup = random_pcg_dabit_setup::<F, N>(total_dabits, io)?;
+    let setup = random_pcg_dabit_setup::<F, N>(io)?;
     Ok(LazyPcgEdaBits::new(setup, num))
 }
 
@@ -326,13 +293,18 @@ where
 ///
 /// Drop-in replacement for `EdaBitsPool<F>`, backed by `LazyPcgEdaBits` sources
 /// that expand from compact seeds with zero online communication.
+///
+/// **Storage:** O(1) per ring width — just seeds, no O(N) corrections.
 pub struct PcgEdaBitsPool<F: PrimeField> {
     edabits_u8: LazyPcgEdaBits<u8, F>,
     edabits_u16: LazyPcgEdaBits<u16, F>,
     edabits_u32: LazyPcgEdaBits<u32, F>,
     edabits_u64: LazyPcgEdaBits<u64, F>,
     edabits_u128: LazyPcgEdaBits<u128, F>,
-    dabits: Vec<crate::protocols::rep3_ring::edabits::DaBit<F>>, // TODO: lazy dabits
+    /// Lazy daBit source (same setup, expanded on demand).
+    dabit_setup: PcgDaBitSetup,
+    dabit_total: usize,
+    dabit_cursor: usize,
 }
 
 impl<F: PrimeField> PcgEdaBitsPool<F> {
@@ -344,18 +316,26 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
             edabits_u32: LazyPcgEdaBits::empty(party_id),
             edabits_u64: LazyPcgEdaBits::empty(party_id),
             edabits_u128: LazyPcgEdaBits::empty(party_id),
-            dabits: Vec::new(),
+            dabit_setup: PcgDaBitSetup {
+                party_id,
+                seed_next: [0u8; 32],
+                seed_prev: [0u8; 32],
+                seed_third: None,
+            },
+            dabit_total: 0,
+            dabit_cursor: 0,
         }
     }
 
-    /// Create a pool from lazy PCG edaBits sources and eager daBits.
+    /// Create a pool from lazy PCG edaBit sources and a daBit setup.
     pub fn new(
         edabits_u8: LazyPcgEdaBits<u8, F>,
         edabits_u16: LazyPcgEdaBits<u16, F>,
         edabits_u32: LazyPcgEdaBits<u32, F>,
         edabits_u64: LazyPcgEdaBits<u64, F>,
         edabits_u128: LazyPcgEdaBits<u128, F>,
-        dabits: Vec<crate::protocols::rep3_ring::edabits::DaBit<F>>,
+        dabit_setup: PcgDaBitSetup,
+        dabit_total: usize,
     ) -> Self {
         Self {
             edabits_u8,
@@ -363,7 +343,9 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
             edabits_u32,
             edabits_u64,
             edabits_u128,
-            dabits,
+            dabit_setup,
+            dabit_total,
+            dabit_cursor: 0,
         }
     }
 
@@ -392,15 +374,17 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
         self.edabits_u128.take(n)
     }
 
-    /// Drain `n` dabits from the pool. Panics if insufficient.
+    /// Expand `n` daBits on demand from the lazy daBit source.
     #[tracing::instrument(skip(self))]
     pub fn take_dabits(&mut self, n: usize) -> Vec<crate::protocols::rep3_ring::edabits::DaBit<F>> {
         assert!(
-            self.dabits.len() >= n,
+            self.dabit_cursor + n <= self.dabit_total,
             "PcgEdaBitsPool: need {n} dabits, have {}",
-            self.dabits.len()
+            self.dabit_total - self.dabit_cursor
         );
-        self.dabits.drain(..n).collect()
+        let dabits = dabit_gen::expand_dabits(&self.dabit_setup, self.dabit_cursor, n);
+        self.dabit_cursor += n;
+        dabits
     }
 
     pub fn remaining_u64(&self) -> usize {
@@ -412,7 +396,7 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
     }
 
     pub fn remaining_dabits(&self) -> usize {
-        self.dabits.len()
+        self.dabit_total - self.dabit_cursor
     }
 
     pub fn is_empty(&self) -> bool {
@@ -421,7 +405,7 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
             && self.edabits_u32.remaining() == 0
             && self.edabits_u64.remaining() == 0
             && self.edabits_u128.remaining() == 0
-            && self.dabits.is_empty()
+            && self.remaining_dabits() == 0
     }
 
     /// Generic edaBits drain, dispatched by `TypeId`.
@@ -478,9 +462,8 @@ mod tests {
         // Need K=64 daBits per edaBit for u64
         let k = u64::K;
         let num_edabits = 10;
-        let num_dabits = num_edabits * k;
 
-        let dealer = dabit_gen::dealer_setup::<Fr>(num_dabits, &mut rng);
+        let dealer = dabit_gen::dealer_setup(&mut rng);
 
         let mut lazy0 = LazyPcgEdaBits::<u64, Fr>::new(dealer.party0, num_edabits);
         let mut lazy1 = LazyPcgEdaBits::<u64, Fr>::new(dealer.party1, num_edabits);
@@ -546,8 +529,7 @@ mod tests {
 
         // Generate PCG daBit setup (dealer generates for all 3 parties)
         let mut dealer_rng = rand_chacha::ChaCha20Rng::seed_from_u64(0xB2A002);
-        let k = u64::K;
-        let dealer = dabit_gen::dealer_setup::<Fr>(NUM * k, &mut dealer_rng);
+        let dealer = dabit_gen::dealer_setup(&mut dealer_rng);
         let setups = [dealer.party0, dealer.party1, dealer.party2];
 
         // Run 3-party B2A protocol
@@ -589,8 +571,6 @@ mod tests {
         let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] =
             std::array::from_fn(|pid| per_val_shares.iter().map(|s| s[pid]).collect());
 
-        let k = u64::K;
-
         // Run 3-party B2A with distributed setup (via network)
         let (outputs, _) = run_rep3_local_test_with_coordinator(
             1,
@@ -598,7 +578,7 @@ mod tests {
             || (),
             move |x_shares, mut io_ctx| {
                 // Distributed setup via network
-                let setup = random_pcg_dabit_setup::<Fr, _>(NUM * k, &mut io_ctx)?;
+                let setup = random_pcg_dabit_setup::<Fr, _>(&mut io_ctx)?;
                 let mut lazy = LazyPcgEdaBits::<u64, Fr>::new(setup, NUM);
                 let edas = lazy.take(NUM);
                 ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, edas, io_ctx.main())

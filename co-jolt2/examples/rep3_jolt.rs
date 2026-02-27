@@ -264,7 +264,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
     let edabits_pool = {
         use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
-        use mpc_core::protocols::rep3_ring::pcg::dabit_gen;
         use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
         let budget = compute_edabit_budget(trace_len);
         let lazy_u8 = edabits_pcg::random_pcg_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
@@ -273,9 +272,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let lazy_u64 = edabits_pcg::random_pcg_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
         let lazy_u128 =
             edabits_pcg::random_pcg_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
-        let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(80 * trace_len, &mut io_ctx)?;
-        let dabits = dabit_gen::expand_dabits(&dabit_setup, 0, 80 * trace_len);
-        edabits_pcg::PcgEdaBitsPool::new(lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128, dabits)
+        let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(&mut io_ctx)?;
+        edabits_pcg::PcgEdaBitsPool::new(
+            lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128,
+            dabit_setup, 80 * trace_len,
+        )
     };
     drop(_span);
 

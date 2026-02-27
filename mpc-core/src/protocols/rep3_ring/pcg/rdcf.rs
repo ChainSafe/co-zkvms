@@ -38,16 +38,13 @@ pub struct Prg {
 // Well-known fixed keys (publicly known constants derived from SHA-256 IV).
 // Security comes from the seed randomness, not these keys.
 const PRG_KEY_CONVERT: [u8; 16] = [
-    0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85,
-    0x3c, 0x6e, 0xf3, 0x72, 0xa5, 0x4f, 0xf5, 0x3a,
+    0x6a, 0x09, 0xe6, 0x67, 0xbb, 0x67, 0xae, 0x85, 0x3c, 0x6e, 0xf3, 0x72, 0xa5, 0x4f, 0xf5, 0x3a,
 ];
 const PRG_KEY_LEFT: [u8; 16] = [
-    0x51, 0x0e, 0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c,
-    0x1f, 0x83, 0xd9, 0xab, 0x5b, 0xe0, 0xcd, 0x19,
+    0x51, 0x0e, 0x52, 0x7f, 0x9b, 0x05, 0x68, 0x8c, 0x1f, 0x83, 0xd9, 0xab, 0x5b, 0xe0, 0xcd, 0x19,
 ];
 const PRG_KEY_RIGHT: [u8; 16] = [
-    0xd8, 0x07, 0xaa, 0x98, 0xa3, 0x03, 0x02, 0x42,
-    0x13, 0x19, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x44,
+    0xd8, 0x07, 0xaa, 0x98, 0xa3, 0x03, 0x02, 0x42, 0x13, 0x19, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x44,
 ];
 
 impl Prg {
@@ -82,6 +79,31 @@ impl Prg {
         (convert, left, right)
     }
 
+    /// Single AES call: key_convert only, returns raw 16 bytes (MMO).
+    ///
+    /// Produces identical output to `expand(seed).0` but skips the
+    /// key_left and key_right encryptions.
+    #[inline]
+    pub fn convert_single(&self, seed: &Seed) -> Seed {
+        use aes::cipher::BlockEncrypt;
+        let mut block = aes::Block::from(*seed);
+        self.key_convert.encrypt_block(&mut block);
+        xor_blocks(&block.into(), seed)
+    }
+
+    /// Fast field conversion: 1 AES call + `F::from(u128)`.
+    ///
+    /// Faster than [`convert_to_field`] because `F::from(u128)` (limb split +
+    /// one Montgomery mul) avoids the `from_be_bytes_mod_order` path (which
+    /// goes through BigUint parsing).
+    #[inline]
+    pub fn convert_to_field_fast<F: PrimeField>(&self, seed: &Seed) -> F {
+        let converted = self.convert_single(seed);
+        let lo = u64::from_le_bytes(converted[0..8].try_into().unwrap());
+        let hi = u64::from_le_bytes(converted[8..16].try_into().unwrap());
+        F::from((hi as u128) << 64 | lo as u128)
+    }
+
     /// Apply `ConvertG` to a seed: `AES_k_convert(seed) XOR seed`, then map to field.
     ///
     /// This matches the paper's `Convert` function which applies the PRG's
@@ -107,6 +129,17 @@ impl Default for Prg {
 // Prg is safe to share across threads (fixed AES keys are immutable).
 unsafe impl Sync for Prg {}
 unsafe impl Send for Prg {}
+
+/// Global shared PRG instance. Fixed keys, immutable after init, Send+Sync.
+static GLOBAL_PRG: std::sync::LazyLock<Prg> = std::sync::LazyLock::new(Prg::new);
+
+/// Returns a reference to the shared global PRG singleton.
+///
+/// Avoids repeated AES key expansion from `Prg::new()`.
+#[inline]
+pub fn prg() -> &'static Prg {
+    &GLOBAL_PRG
+}
 
 /// Map raw bytes to a field element via `from_be_bytes_mod_order`.
 ///
@@ -234,7 +267,13 @@ pub fn rdcf_setup<F: PrimeField>(
     let y = prg.convert_to_field::<F>(&current) + p1_corr;
 
     (
-        RdcfKey0 { alpha, m, k_bar, b_bar, y },
+        RdcfKey0 {
+            alpha,
+            m,
+            k_bar,
+            b_bar,
+            y,
+        },
         RdcfKey1 { k: root, m },
     )
 }
@@ -275,7 +314,9 @@ pub fn rdcf_eval_0<F: PrimeField>(prg: &Prg, key: &RdcfKey0<F>, x: u32) -> F {
         }
     }
 
-    prg.convert_to_field::<F>(&current) + key.b_bar[(first_diff_level - 1) as usize] + correction_sum
+    prg.convert_to_field::<F>(&current)
+        + key.b_bar[(first_diff_level - 1) as usize]
+        + correction_sum
 }
 
 /// Evaluate the RDCF for party 1 at a single point `x`.
@@ -302,11 +343,7 @@ pub fn rdcf_eval_1<F: PrimeField>(prg: &Prg, key: &RdcfKey1, x: u32) -> F {
 // ── RDCF Batch Eval (parallel) ───────────────────────────────────────────────
 
 /// Evaluate the RDCF for party 0 at multiple points in parallel.
-pub fn rdcf_eval_0_batch<F: PrimeField>(
-    prg: &Prg,
-    key: &RdcfKey0<F>,
-    xs: &[u32],
-) -> Vec<F> {
+pub fn rdcf_eval_0_batch<F: PrimeField>(prg: &Prg, key: &RdcfKey0<F>, xs: &[u32]) -> Vec<F> {
     xs.par_iter()
         .with_min_len(64)
         .map(|&x| rdcf_eval_0(prg, key, x))
@@ -314,11 +351,7 @@ pub fn rdcf_eval_0_batch<F: PrimeField>(
 }
 
 /// Evaluate the RDCF for party 1 at multiple points in parallel.
-pub fn rdcf_eval_1_batch<F: PrimeField>(
-    prg: &Prg,
-    key: &RdcfKey1,
-    xs: &[u32],
-) -> Vec<F> {
+pub fn rdcf_eval_1_batch<F: PrimeField>(prg: &Prg, key: &RdcfKey1, xs: &[u32]) -> Vec<F> {
     xs.par_iter()
         .with_min_len(64)
         .map(|&x| rdcf_eval_1(prg, key, x))
@@ -396,8 +429,14 @@ mod tests {
 
         let nonzero_0 = y0s.iter().filter(|y| !y.is_zero()).count();
         let nonzero_1 = y1s.iter().filter(|y| !y.is_zero()).count();
-        assert!(nonzero_0 > 200, "party 0 outputs too many zeros: {nonzero_0}");
-        assert!(nonzero_1 > 200, "party 1 outputs too many zeros: {nonzero_1}");
+        assert!(
+            nonzero_0 > 200,
+            "party 0 outputs too many zeros: {nonzero_0}"
+        );
+        assert!(
+            nonzero_1 > 200,
+            "party 1 outputs too many zeros: {nonzero_1}"
+        );
     }
 
     #[test]
