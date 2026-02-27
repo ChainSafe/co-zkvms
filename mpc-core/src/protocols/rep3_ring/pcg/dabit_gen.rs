@@ -136,13 +136,12 @@ pub fn expand_dabits<F: PrimeField>(
 
 /// Expand `count` edaBits directly from seeds, fusing daBit expansion + packing.
 ///
-/// Avoids the intermediate `Vec<DaBit>` allocation that `expand_dabits` + chunk/pack
-/// would require (~66 bytes × K × count). Each edaBit packs K daBits in-place.
+/// Uses combined PRF: 1 AES call per (seed, index) produces both bit and field.
+/// P0/P2: 3 AES/daBit (seed_next + seed_prev + seed_third).
+/// P1: 2 AES/daBit (seed_next + seed_prev).
 ///
-/// On x86_64 with AES-NI, uses a batched approach: pre-computes all PRF inputs
-/// per (seed, tag), batch-encrypts via `encrypt_many` for pipelined AES, then
-/// interprets outputs. On other architectures (ARM), uses the simpler single-pass
-/// approach since the scalar AES backend doesn't benefit from batching.
+/// On x86_64 with AES-NI, uses a batched approach with `encrypt_many` pipelining.
+/// On other architectures (ARM), uses single-pass since scalar AES doesn't benefit.
 #[tracing::instrument(skip(setup, start))]
 pub fn expand_edabits<T: IntRing2k, F: PrimeField>(
     setup: &PcgDaBitSetup,
@@ -192,12 +191,10 @@ where
     }
 }
 
-/// Batched edaBit expansion (best on x86_64 with AES-NI pipeline).
+/// Batched edaBit expansion with combined PRF (best on x86_64 with AES-NI pipeline).
 ///
-/// Pre-computes all K PRF inputs per (seed, tag) into stack-allocated arrays,
-/// batch-encrypts via `Prg::batch_convert` (which uses `encrypt_many::<8>`),
-/// then interprets the outputs. The 4-wide AES-NI pipeline processes 8 blocks
-/// in ~2 passes vs 8 sequential encryptions.
+/// Uses combined PRF: 1 batch_convert per seed extracts both bits and field elements.
+/// P1: 2 batches (2K AES). P0/P2: 3 batches (3K AES). Down from 4K/5K before.
 ///
 /// Uses `[Block; MAX_K]` stack arrays (2 × 2KB) to avoid heap allocation.
 #[cfg(target_arch = "x86_64")]
@@ -213,30 +210,34 @@ where
     use scuttlebutt::Block;
     use vectoreyes::SimdBase;
 
-    // Max K is 128 (u128). Stack arrays avoid heap allocation per edaBit.
     const MAX_K: usize = 128;
     assert!(k <= MAX_K);
 
     let mut inputs = [Block::ZERO; MAX_K];
     let mut outputs = [Block::ZERO; MAX_K];
 
-    // Pre-compute constant part of prf_input for each (seed, tag) pair.
-    let base_next_bit = prf_input_base(&setup.seed_next, b"bit\0");
-    let base_prev_bit = prf_input_base(&setup.seed_prev, b"bit\0");
-
-    // ── Bit PRFs ──
-    fill_prf_inputs(&base_next_bit, base, k, &mut inputs);
+    // ── Batch 1: seed_next (combined bit + field) ──
+    let base_next = prf_input_base(&setup.seed_next, b"cmb\0");
+    fill_prf_inputs(&base_next, base, k, &mut inputs);
     prg.batch_convert(&inputs[..k], &mut outputs[..k]);
     let mut bits_a = [false; MAX_K];
+    let mut fields_next: Vec<F> = Vec::with_capacity(k);
     for j in 0..k {
-        bits_a[j] = outputs[j].as_array()[0] & 1 != 0;
+        let arr = outputs[j].as_array();
+        bits_a[j] = arr[0] & 1 != 0;
+        fields_next.push(block_to_field(&outputs[j]));
     }
 
-    fill_prf_inputs(&base_prev_bit, base, k, &mut inputs);
+    // ── Batch 2: seed_prev (combined bit + field) ──
+    let base_prev = prf_input_base(&setup.seed_prev, b"cmb\0");
+    fill_prf_inputs(&base_prev, base, k, &mut inputs);
     prg.batch_convert(&inputs[..k], &mut outputs[..k]);
     let mut bits_b = [false; MAX_K];
+    let mut fields_prev: Vec<F> = Vec::with_capacity(k);
     for j in 0..k {
-        bits_b[j] = outputs[j].as_array()[0] & 1 != 0;
+        let arr = outputs[j].as_array();
+        bits_b[j] = arr[0] & 1 != 0;
+        fields_prev.push(block_to_field(&outputs[j]));
     }
 
     let mut r_bits = Vec::with_capacity(k);
@@ -244,67 +245,43 @@ where
         r_bits.push(Rep3RingShare::new(Bit::new(bits_a[j]), Bit::new(bits_b[j])));
     }
 
-    // ── Field PRFs ──
+    // ── Field shares ──
     let bit_values = match setup.party_id {
         PartyID::ID1 => {
-            let base_next_fld = prf_input_base(&setup.seed_next, b"fld\0");
-            let base_prev_fld = prf_input_base(&setup.seed_prev, b"fld\0");
-
-            fill_prf_inputs(&base_next_fld, base, k, &mut inputs);
-            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
-            let mut fields_a = Vec::with_capacity(k);
-            for j in 0..k {
-                fields_a.push(block_to_field::<F>(&outputs[j]));
-            }
-
-            fill_prf_inputs(&base_prev_fld, base, k, &mut inputs);
-            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
-
+            // P1: 2 batches total, use both field outputs directly.
             (0..k)
-                .map(|j| Rep3PrimeFieldShare::new(fields_a[j], block_to_field(&outputs[j])))
+                .map(|j| Rep3PrimeFieldShare::new(fields_next[j], fields_prev[j]))
                 .collect()
         }
         _ => {
+            // P0/P2: batch 3 for seed_third (combined bit + field).
             let seed_third = setup.seed_third.expect("P0/P2 must have seed_third");
-            let base_third_bit = prf_input_base(&seed_third, b"bit\0");
-
-            fill_prf_inputs(&base_third_bit, base, k, &mut inputs);
+            let base_third = prf_input_base(&seed_third, b"cmb\0");
+            fill_prf_inputs(&base_third, base, k, &mut inputs);
             prg.batch_convert(&inputs[..k], &mut outputs[..k]);
             let mut bits_third = [false; MAX_K];
+            let mut fields_third: Vec<F> = Vec::with_capacity(k);
             for j in 0..k {
-                bits_third[j] = outputs[j].as_array()[0] & 1 != 0;
+                let arr = outputs[j].as_array();
+                bits_third[j] = arr[0] & 1 != 0;
+                fields_third.push(block_to_field(&outputs[j]));
             }
-
-            let (seed_own, seed_trd) = match setup.party_id {
-                PartyID::ID0 => (&setup.seed_next, &seed_third),
-                _ => (&setup.seed_prev, &seed_third),
-            };
-
-            let base_own_fld = prf_input_base(seed_own, b"fld\0");
-            let base_trd_fld = prf_input_base(seed_trd, b"fld\0");
-
-            fill_prf_inputs(&base_own_fld, base, k, &mut inputs);
-            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
-            let mut fields_own = Vec::with_capacity(k);
-            for j in 0..k {
-                fields_own.push(block_to_field::<F>(&outputs[j]));
-            }
-
-            fill_prf_inputs(&base_trd_fld, base, k, &mut inputs);
-            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
 
             (0..k)
                 .map(|j| {
                     let bit = bits_a[j] ^ bits_b[j] ^ bits_third[j];
                     let target = if bit { F::one() } else { F::zero() };
-                    let f_trd: F = block_to_field(&outputs[j]);
                     match setup.party_id {
-                        PartyID::ID0 => {
-                            Rep3PrimeFieldShare::new(fields_own[j], target - fields_own[j] - f_trd)
-                        }
-                        _ => {
-                            Rep3PrimeFieldShare::new(target - fields_own[j] - f_trd, fields_own[j])
-                        }
+                        // P0: a = f_next, b = bit - f_next - f_third
+                        PartyID::ID0 => Rep3PrimeFieldShare::new(
+                            fields_next[j],
+                            target - fields_next[j] - fields_third[j],
+                        ),
+                        // P2: a = bit - f_prev - f_third, b = f_prev
+                        _ => Rep3PrimeFieldShare::new(
+                            target - fields_prev[j] - fields_third[j],
+                            fields_prev[j],
+                        ),
                     }
                 })
                 .collect()
@@ -366,54 +343,38 @@ fn block_to_field<F: PrimeField>(block: &scuttlebutt::Block) -> F {
 
 /// Expand a single daBit at position `x`.
 ///
-/// Algebraically optimized: merges correction computation inline and exploits
-/// cancellation to avoid redundant PRF calls. For P0/P2: 3 bit PRFs + 2 field PRFs
-/// (= 5 AES calls) instead of the previous 10 PRF calls (= 24 AES calls).
-/// P1: 2 bit PRFs + 2 field PRFs (= 4 AES calls) instead of 8.
+/// Uses combined PRF: each AES call produces both a bit and a field element.
+/// P0/P2: 3 AES calls (seed_next + seed_prev + seed_third).
+/// P1: 2 AES calls (seed_next + seed_prev).
+///
+/// The field output from seed_prev (P0) or seed_next (P2) is unused — it
+/// cancels algebraically in the correction formula, same as before.
 #[inline]
 fn expand_single_dabit<F: PrimeField>(setup: &PcgDaBitSetup, x: usize, prg: &Prg) -> DaBit<F> {
-    // ── Boolean share ──
-    let bit_a = prf_bit(prg, &setup.seed_next, x);
-    let bit_b = prf_bit(prg, &setup.seed_prev, x);
+    let (bit_a, f_next) = prf_combined::<F>(prg, &setup.seed_next, x);
+    let (bit_b, f_prev) = prf_combined::<F>(prg, &setup.seed_prev, x);
     let bit_share = Rep3RingShare::new(Bit::new(bit_a), Bit::new(bit_b));
 
-    // ── Arithmetic share (with inlined correction) ──
-    //
-    // Correction c = bit - (f_next + f_prev + f_third) applied to the (P2→P0) edge.
-    // Key insight: the f_prev term for P0 (resp. f_next for P2) cancels algebraically:
-    //   P0: b_slot = f_prev + c = f_prev + bit - f_next - f_prev - f_third = bit - f_next - f_third
-    //   P2: a_slot = f_next + c = f_next + bit - f_next - f_prev - f_third = bit - f_prev - f_third
-    // So we skip computing the canceling PRF entirely.
     let value = match setup.party_id {
         PartyID::ID1 => {
-            // P1: no correction needed, just 2 field PRFs
-            let a_i: F = prf_field(prg, &setup.seed_next, x);
-            let b_i: F = prf_field(prg, &setup.seed_prev, x);
-            Rep3PrimeFieldShare::new(a_i, b_i)
+            // P1: no correction, both field values used directly. 2 AES total.
+            Rep3PrimeFieldShare::new(f_next, f_prev)
         }
         _ => {
+            // P0/P2: 1 extra combined PRF for third seed. 3 AES total.
             let seed_third = setup
                 .seed_third
                 .expect("P0/P2 must have seed_third for correction computation");
+            let (bit_third, f_third) = prf_combined::<F>(prg, &seed_third, x);
 
-            // 1 extra bit PRF to reconstruct the full bit
-            let bit_third = prf_bit(prg, &seed_third, x);
             let bit = bit_a ^ bit_b ^ bit_third;
             let target = if bit { F::one() } else { F::zero() };
 
             match setup.party_id {
-                PartyID::ID0 => {
-                    // P0: a_slot = f_next (own PRF), b_slot = bit - f_next - f_third
-                    let f_next: F = prf_field(prg, &setup.seed_next, x);
-                    let f_third: F = prf_field(prg, &seed_third, x);
-                    Rep3PrimeFieldShare::new(f_next, target - f_next - f_third)
-                }
-                _ => {
-                    // P2: a_slot = bit - f_prev - f_third, b_slot = f_prev (own PRF)
-                    let f_prev: F = prf_field(prg, &setup.seed_prev, x);
-                    let f_third: F = prf_field(prg, &seed_third, x);
-                    Rep3PrimeFieldShare::new(target - f_prev - f_third, f_prev)
-                }
+                // P0: a = f_next, b = bit - f_next - f_third (f_prev cancels)
+                PartyID::ID0 => Rep3PrimeFieldShare::new(f_next, target - f_next - f_third),
+                // P2: a = bit - f_prev - f_third, b = f_prev (f_next cancels)
+                _ => Rep3PrimeFieldShare::new(target - f_prev - f_third, f_prev),
             }
         }
     };
@@ -427,21 +388,19 @@ fn expand_single_dabit<F: PrimeField>(setup: &PcgDaBitSetup, x: usize, prg: &Prg
 // ── AES-based PRF helpers ──────────────────────────────────────────────────
 // Using the RDCF PRG (fixed-key AES-128 in MMO mode) for fast evaluation.
 
-/// Deterministic PRF producing a single bit from a seed and index.
-/// Uses 1 AES call (convert_single) instead of 3 (expand).
+/// Combined PRF: 1 AES call produces both a bit and a field element.
+///
+/// Extracts bit from byte[0] LSB, field element from the full 128-bit output.
+/// TODO: it this safe in semi-honest model?
 #[inline]
-fn prf_bit(prg: &Prg, seed: &[u8; 32], x: usize) -> bool {
-    let input = prf_input(seed, x, b"bit\0");
+fn prf_combined<F: PrimeField>(prg: &Prg, seed: &[u8; 32], x: usize) -> (bool, F) {
+    let input = prf_input(seed, x, b"cmb\0");
     let converted = prg.convert_single(&input);
-    (converted[0] & 1) != 0
-}
-
-/// Deterministic PRF producing a field element from a seed and index.
-/// Uses fast u128→field path (1 AES + F::from(u128)).
-#[inline]
-fn prf_field<F: PrimeField>(prg: &Prg, seed: &[u8; 32], x: usize) -> F {
-    let input = prf_input(seed, x, b"fld\0");
-    prg.convert_to_field_fast::<F>(&input)
+    let bit = (converted[0] & 1) != 0;
+    let lo = u64::from_le_bytes(converted[0..8].try_into().unwrap());
+    let hi = u64::from_le_bytes(converted[8..16].try_into().unwrap());
+    let field = F::from((hi as u128) << 64 | lo as u128);
+    (bit, field)
 }
 
 /// Construct a 128-bit PRF input from seed (32 bytes), index, and domain tag (4 bytes).
@@ -558,17 +517,18 @@ mod tests {
     }
 
     #[test]
-    fn prf_independence() {
-        // Verify that bit and field PRFs with same seed/index produce independent outputs
+    fn prf_combined_deterministic() {
         let prg = Prg::new();
         let seed = [0x42u8; 32];
 
-        // bit PRF and field PRF should be independent (different domain tags)
-        let bit = prf_bit(&prg, &seed, 0);
-        let field: Fr = prf_field(&prg, &seed, 0);
+        let (bit1, field1): (bool, Fr) = prf_combined(&prg, &seed, 0);
+        let (bit2, field2): (bool, Fr) = prf_combined(&prg, &seed, 0);
+        assert_eq!(bit1, bit2);
+        assert_eq!(field1, field2);
 
-        // Just check they don't trivially correlate (field element isn't just 0 or 1)
-        assert!(field != Fr::zero() || !bit, "PRFs should be independent");
+        // Different index gives different output
+        let (_, field3): (bool, Fr) = prf_combined(&prg, &seed, 1);
+        assert_ne!(field1, field3);
     }
 
     #[test]

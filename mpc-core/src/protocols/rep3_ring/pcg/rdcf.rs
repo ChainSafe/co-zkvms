@@ -122,18 +122,24 @@ impl Prg {
         // Process chunks of 8 for pipelined AES
         while i + 8 <= n {
             let chunk: [Block; 8] = [
-                inputs[i], inputs[i+1], inputs[i+2], inputs[i+3],
-                inputs[i+4], inputs[i+5], inputs[i+6], inputs[i+7],
+                inputs[i],
+                inputs[i + 1],
+                inputs[i + 2],
+                inputs[i + 3],
+                inputs[i + 4],
+                inputs[i + 5],
+                inputs[i + 6],
+                inputs[i + 7],
             ];
             let encrypted = self.key_convert.encrypt_many(chunk);
-            outputs[i]   = encrypted[0] ^ chunk[0];
-            outputs[i+1] = encrypted[1] ^ chunk[1];
-            outputs[i+2] = encrypted[2] ^ chunk[2];
-            outputs[i+3] = encrypted[3] ^ chunk[3];
-            outputs[i+4] = encrypted[4] ^ chunk[4];
-            outputs[i+5] = encrypted[5] ^ chunk[5];
-            outputs[i+6] = encrypted[6] ^ chunk[6];
-            outputs[i+7] = encrypted[7] ^ chunk[7];
+            outputs[i] = encrypted[0] ^ chunk[0];
+            outputs[i + 1] = encrypted[1] ^ chunk[1];
+            outputs[i + 2] = encrypted[2] ^ chunk[2];
+            outputs[i + 3] = encrypted[3] ^ chunk[3];
+            outputs[i + 4] = encrypted[4] ^ chunk[4];
+            outputs[i + 5] = encrypted[5] ^ chunk[5];
+            outputs[i + 6] = encrypted[6] ^ chunk[6];
+            outputs[i + 7] = encrypted[7] ^ chunk[7];
             i += 8;
         }
 
