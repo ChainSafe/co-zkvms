@@ -27,7 +27,7 @@ use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreproc
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3_ring::pcg::edabits_pcg::PcgEdaBitsPool;
+use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ where
         io_ctx: IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: PcgEdaBitsPool<F>,
+        edabits_pool: EdaBitsPool<F>,
     ) -> eyre::Result<()>;
 }
 
@@ -106,7 +106,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: PcgEdaBitsPool<Fr>,
+        edabits_pool: EdaBitsPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
@@ -283,18 +283,19 @@ mod tests {
                 populate_operands_casts(&mut trace, io_ctx.main())?;
                 drop(_span);
 
-                // Preprocessing: create PCG EdaBits pool for B2A conversions.
+                // Preprocessing: create EdaBits pool for B2A conversions.
                 let edabits_pool = {
                     use crate::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
+                    use mpc_core::protocols::rep3_ring::edabits;
                     use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
                     let budget = compute_edabit_budget(trace.len());
-                    let lazy_u8 = edabits_pcg::random_pcg_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
-                    let lazy_u16 = edabits_pcg::random_pcg_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
-                    let lazy_u32 = edabits_pcg::random_pcg_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
-                    let lazy_u64 = edabits_pcg::random_pcg_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
-                    let lazy_u128 = edabits_pcg::random_pcg_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
+                    let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
+                    let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
+                    let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
+                    let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
+                    let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
                     let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(&mut io_ctx)?;
-                    edabits_pcg::PcgEdaBitsPool::new(
+                    edabits::EdaBitsPool::new(
                         lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128,
                         dabit_setup, 512 * trace.len(),
                     )

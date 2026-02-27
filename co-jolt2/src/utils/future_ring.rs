@@ -7,7 +7,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::{
         self,
-        pcg::edabits_pcg::PcgEdaBitsPool,
+        edabits::EdaBitsPool,
         ring::{bit::Bit, int_ring::IntRing2k},
         Rep3RingShare, Rep3RingSignedShare,
     },
@@ -237,7 +237,7 @@ where
     }
 }
 
-/// Fulfill batched `CastToFieldB2A` futures using a [`PcgEdaBitsPool`] for
+/// Fulfill batched `CastToFieldB2A` futures using an [`EdaBitsPool`] for
 /// PCG-based B2A conversion (1 binary open round).
 ///
 /// Generic over ring type `R` — callers downcast suffix bits to the smallest
@@ -249,7 +249,7 @@ where
 pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
     futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
-    pool: &mut PcgEdaBitsPool<F>,
+    pool: &mut EdaBitsPool<F>,
     map: MapFn,
 ) -> eyre::Result<Vec<T>>
 where
@@ -261,7 +261,7 @@ where
     N: Rep3NetworkWorker,
     MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
 {
-    use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
+    use mpc_core::protocols::rep3_ring::edabits;
 
     let mut fulfilled = vec![T::default(); futures.len()];
     let (mut bit_inject_x, mut fut_bit_inject, mut bit_inject_args) =
@@ -323,7 +323,7 @@ where
             let pairs: Vec<_> = cast_b2a_x.into_iter().zip(edas).collect();
             io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
                 let (xs, edas): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits_pcg::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
+                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
             })?
         } else {
             vec![]
