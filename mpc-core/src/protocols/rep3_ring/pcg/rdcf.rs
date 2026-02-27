@@ -14,6 +14,8 @@
 use mpc_types::field::PrimeField;
 use rand::RngCore;
 use rayon::prelude::*;
+use scuttlebutt::{AesHash, Block};
+use vectoreyes::SimdBase;
 
 // ── PRG from fixed-key AES (Matyas-Meyer-Oseas) ──────────────────────────────
 
@@ -22,17 +24,20 @@ pub type Seed = [u8; 16];
 
 /// The PRG `G: {0,1}^128 -> (Seed_convert, Seed_left, Seed_right)`.
 ///
-/// Uses three fixed AES-128 keys in Matyas-Meyer-Oseas mode:
+/// Uses three fixed AES-128 keys in Matyas-Meyer-Oseas mode (MMO):
 ///   output = `AES_k(x) XOR x`
+///
+/// Backed by Swanky's `AesHash::cr_hash` which computes `π(x) ⊕ x`
+/// (identical to MMO with fixed key).
 ///
 /// The three outputs correspond to:
 /// - **convert**: used to derive a field element (group element)
 /// - **left**: left-child seed in the GGM tree
 /// - **right**: right-child seed in the GGM tree
 pub struct Prg {
-    key_convert: aes::Aes128,
-    key_left: aes::Aes128,
-    key_right: aes::Aes128,
+    hash_convert: AesHash,
+    hash_left: AesHash,
+    hash_right: AesHash,
 }
 
 // Well-known fixed keys (publicly known constants derived from SHA-256 IV).
@@ -47,36 +52,29 @@ const PRG_KEY_RIGHT: [u8; 16] = [
     0xd8, 0x07, 0xaa, 0x98, 0xa3, 0x03, 0x02, 0x42, 0x13, 0x19, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x44,
 ];
 
+/// Dummy tweak for `cr_hash`. The `_i` parameter is unused in the
+/// correlation-robust hash `π(x) ⊕ x`.
+const ZERO: Block = Block::ZERO;
+
 impl Prg {
     /// Create a new PRG instance with the well-known fixed keys.
     pub fn new() -> Self {
-        use aes::cipher::KeyInit;
         Self {
-            key_convert: aes::Aes128::new(&PRG_KEY_CONVERT.into()),
-            key_left: aes::Aes128::new(&PRG_KEY_LEFT.into()),
-            key_right: aes::Aes128::new(&PRG_KEY_RIGHT.into()),
+            hash_convert: AesHash::new(Block::from_array(PRG_KEY_CONVERT)),
+            hash_left: AesHash::new(Block::from_array(PRG_KEY_LEFT)),
+            hash_right: AesHash::new(Block::from_array(PRG_KEY_RIGHT)),
         }
     }
 
     /// Evaluate the PRG: `G(seed) -> (convert_bytes, left_seed, right_seed)`.
     #[inline]
     pub fn expand(&self, seed: &Seed) -> (Seed, Seed, Seed) {
-        use aes::cipher::BlockEncrypt;
-        let block = aes::Block::from(*seed);
-
-        let mut c = block;
-        self.key_convert.encrypt_block(&mut c);
-        let convert: Seed = xor_blocks(&c.into(), seed);
-
-        let mut l = block;
-        self.key_left.encrypt_block(&mut l);
-        let left: Seed = xor_blocks(&l.into(), seed);
-
-        let mut r = block;
-        self.key_right.encrypt_block(&mut r);
-        let right: Seed = xor_blocks(&r.into(), seed);
-
-        (convert, left, right)
+        let block = Block::from_array(*seed);
+        (
+            self.hash_convert.cr_hash(ZERO, block).as_array(),
+            self.hash_left.cr_hash(ZERO, block).as_array(),
+            self.hash_right.cr_hash(ZERO, block).as_array(),
+        )
     }
 
     /// Single AES call: key_convert only, returns raw 16 bytes (MMO).
@@ -85,10 +83,7 @@ impl Prg {
     /// key_left and key_right encryptions.
     #[inline]
     pub fn convert_single(&self, seed: &Seed) -> Seed {
-        use aes::cipher::BlockEncrypt;
-        let mut block = aes::Block::from(*seed);
-        self.key_convert.encrypt_block(&mut block);
-        xor_blocks(&block.into(), seed)
+        self.hash_convert.cr_hash(ZERO, Block::from_array(*seed)).as_array()
     }
 
     /// Fast field conversion: 1 AES call + `F::from(u128)`.
@@ -110,13 +105,7 @@ impl Prg {
     /// convert key before mapping to a field element.
     #[inline]
     pub fn convert_to_field<F: PrimeField>(&self, seed: &Seed) -> F {
-        use aes::cipher::BlockEncrypt;
-        let mut block = aes::Block::from(*seed);
-        self.key_convert.encrypt_block(&mut block);
-        let converted: Seed = xor_blocks(&block.into(), seed);
-        let mut buf = [0u8; 32];
-        buf[16..].copy_from_slice(&converted);
-        F::from_be_bytes_mod_order(&buf)
+        bytes_to_field(&self.convert_single(seed))
     }
 }
 
@@ -150,15 +139,6 @@ fn bytes_to_field<F: PrimeField>(bytes: &Seed) -> F {
     let mut buf = [0u8; 32];
     buf[16..].copy_from_slice(bytes);
     F::from_be_bytes_mod_order(&buf)
-}
-
-#[inline]
-fn xor_blocks(a: &Seed, b: &Seed) -> Seed {
-    let mut out = [0u8; 16];
-    for i in 0..16 {
-        out[i] = a[i] ^ b[i];
-    }
-    out
 }
 
 // ── RDCF Keys ────────────────────────────────────────────────────────────────
