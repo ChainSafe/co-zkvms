@@ -12,8 +12,7 @@
 
 use super::dabit_gen::{self, PcgDaBitSetup};
 use crate::protocols::rep3::{
-    PartyID,
-    arithmetic as rep3_arith,
+    PartyID, arithmetic as rep3_arith,
     network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker},
 };
 use crate::protocols::rep3_ring::{arithmetic as rep3_ring_arith, binary};
@@ -115,11 +114,15 @@ where
             .with_min_len(64)
             .map(|i| {
                 let chunk = &dabits[i * k..(i + 1) * k];
-                let r_bits: Vec<Rep3RingShare<Bit>> = chunk.iter().map(|d| d.bit).collect();
+                let r_bits: Vec<Rep3RingShare<Bit>> = chunk.iter().map(|d| d.bit).collect(); // TODO: avoid iterating here; unzip or mem from parts?
                 let r_packed = binary::pack_bits::<T>(&r_bits);
                 let bit_values: Vec<Rep3PrimeFieldShare<F>> =
-                    chunk.iter().map(|d| d.value).collect();
-                PcgEdaBit { r_bits, r_packed, bit_values }
+                    chunk.iter().map(|d| d.value).collect(); // TODO: avoid iterating here
+                PcgEdaBit {
+                    r_bits,
+                    r_packed,
+                    bit_values,
+                }
             })
             .collect();
 
@@ -135,7 +138,7 @@ where
 /// Standard B2A with 1 online round:
 /// 1. Open `c = x XOR r_packed`
 /// 2. `[x]_p = Σ 2^i * XOR_p(c_i, [r_i]_p)`
-pub fn ring_to_field_b2a_pcg<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+pub fn ring_to_field_b2a_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     x_binary: &[Rep3RingShare<T>],
     eda: Vec<PcgEdaBit<T, F>>,
     io: &mut IoContext<N>,
@@ -167,16 +170,17 @@ where
 
     // Round 1: open c = x XOR r_packed (binary/XOR domain)
     let c_shares: Vec<Rep3RingShare<T>> = x_binary
-        .iter()
+        .par_iter()
         .zip(&eda)
         .map(|(x, e)| *x ^ e.r_packed)
         .collect();
 
     let c_values = binary::open_vec(&c_shares, io)?;
+    let party_id = io.id;
 
     // Local: [x]_p = Σ 2^i * XOR_p(c_i, [r_i]_p)
     let results: Vec<Rep3PrimeFieldShare<F>> = c_values
-        .into_iter()
+        .into_par_iter()
         .zip(&eda)
         .map(|(c, e)| {
             let mut result = Rep3PrimeFieldShare::zero_share();
@@ -187,7 +191,7 @@ where
                     e.bit_values[i]
                 } else {
                     // XOR_p(1, [r_i]) = 1 - [r_i]
-                    rep3_arith::promote_to_trivial_share(io.id, F::one()) - e.bit_values[i]
+                    rep3_arith::sub_public_by_shared(F::one(), e.bit_values[i], party_id)
                 };
                 result = result + contrib * pow2[i];
             }
@@ -299,6 +303,7 @@ pub fn random_pcg_dabit_setup<F: PrimeField, N: Rep3NetworkWorker>(
 ///
 /// P0 runs dealer setup for `num * T::K` daBits and distributes setups.
 /// Each party constructs a `LazyPcgEdaBits` that can expand edaBits locally.
+#[tracing::instrument(skip_all, name = "pcg_edabits_lazy", level = "trace", fields(num))]
 pub fn random_pcg_edabits_lazy<T: IntRing2k, F: PrimeField, N: Rep3NetworkWorker>(
     num: usize,
     io: &mut IoContextPool<N>,
@@ -327,7 +332,7 @@ pub struct PcgEdaBitsPool<F: PrimeField> {
     edabits_u32: LazyPcgEdaBits<u32, F>,
     edabits_u64: LazyPcgEdaBits<u64, F>,
     edabits_u128: LazyPcgEdaBits<u128, F>,
-    dabits: Vec<crate::protocols::rep3_ring::edabits::DaBit<F>>,
+    dabits: Vec<crate::protocols::rep3_ring::edabits::DaBit<F>>, // TODO: lazy dabits
 }
 
 impl<F: PrimeField> PcgEdaBitsPool<F> {
@@ -362,27 +367,33 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits_u8(&mut self, n: usize) -> Vec<PcgEdaBit<u8, F>> {
         self.edabits_u8.take(n)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits_u16(&mut self, n: usize) -> Vec<PcgEdaBit<u16, F>> {
         self.edabits_u16.take(n)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits_u32(&mut self, n: usize) -> Vec<PcgEdaBit<u32, F>> {
         self.edabits_u32.take(n)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits_u64(&mut self, n: usize) -> Vec<PcgEdaBit<u64, F>> {
         self.edabits_u64.take(n)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits_u128(&mut self, n: usize) -> Vec<PcgEdaBit<u128, F>> {
         self.edabits_u128.take(n)
     }
 
     /// Drain `n` dabits from the pool. Panics if insufficient.
+    #[tracing::instrument(skip(self))]
     pub fn take_dabits(&mut self, n: usize) -> Vec<crate::protocols::rep3_ring::edabits::DaBit<F>> {
         assert!(
             self.dabits.len() >= n,
@@ -416,6 +427,7 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
     /// Generic edaBits drain, dispatched by `TypeId`.
     ///
     /// Panics if `T` is not one of u8, u16, u32, u64, u128.
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits<T: IntRing2k>(&mut self, n: usize) -> Vec<PcgEdaBit<T, F>>
     where
         Standard: Distribution<T>,
@@ -449,6 +461,7 @@ impl<F: PrimeField> PcgEdaBitsPool<F> {
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
+    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use ark_bn254::Fr;
     use ark_ff::Zero;
     use mpc_types::protocols::rep3::{combine_field_element, combine_field_elements};
@@ -457,7 +470,6 @@ mod tests {
         share_ring_element_binary,
     };
     use rand::{RngCore, SeedableRng};
-    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
 
     #[test]
     fn edabit_packing_consistent() {
@@ -485,32 +497,34 @@ mod tests {
 
             // Check bits and values match
             for j in 0..k {
-                let bit: RingElement<Bit> = combine_ring_element(
-                    eda0[i].r_bits[j], eda1[i].r_bits[j], eda2[i].r_bits[j],
-                );
+                let bit: RingElement<Bit> =
+                    combine_ring_element(eda0[i].r_bits[j], eda1[i].r_bits[j], eda2[i].r_bits[j]);
                 let b: bool = bit.0.convert();
 
                 let val = combine_field_element(
-                    eda0[i].bit_values[j], eda1[i].bit_values[j], eda2[i].bit_values[j],
+                    eda0[i].bit_values[j],
+                    eda1[i].bit_values[j],
+                    eda2[i].bit_values[j],
                 );
                 let expected = if b { Fr::from(1u64) } else { Fr::zero() };
                 assert_eq!(val, expected, "eda {i}, bit {j}: bool/arith mismatch");
             }
 
             // Check packed value matches individual bits (binary world = XOR reconstruction)
-            let packed_val: RingElement<u64> = combine_ring_element_binary(
-                eda0[i].r_packed, eda1[i].r_packed, eda2[i].r_packed,
-            );
+            let packed_val: RingElement<u64> =
+                combine_ring_element_binary(eda0[i].r_packed, eda1[i].r_packed, eda2[i].r_packed);
             let mut expected_packed = 0u64;
             for j in 0..k {
-                let bit: RingElement<Bit> = combine_ring_element(
-                    eda0[i].r_bits[j], eda1[i].r_bits[j], eda2[i].r_bits[j],
-                );
+                let bit: RingElement<Bit> =
+                    combine_ring_element(eda0[i].r_bits[j], eda1[i].r_bits[j], eda2[i].r_bits[j]);
                 if bit.0.convert() {
                     expected_packed |= 1u64 << j;
                 }
             }
-            assert_eq!(packed_val.0, expected_packed, "eda {i}: packed bits mismatch");
+            assert_eq!(
+                packed_val.0, expected_packed,
+                "eda {i}: packed bits mismatch"
+            );
         }
     }
 
@@ -544,7 +558,7 @@ mod tests {
             |(x_shares, setup), mut io_ctx| {
                 let mut lazy = LazyPcgEdaBits::<u64, Fr>::new(setup, NUM);
                 let edas = lazy.take(NUM);
-                ring_to_field_b2a_pcg::<u64, Fr, _>(&x_shares, edas, io_ctx.main())
+                ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, edas, io_ctx.main())
                     .map_err(Into::into)
             },
             |(), _net| Ok(()),
@@ -553,7 +567,10 @@ mod tests {
         // Combine shares and verify
         let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
         let expected: Vec<Fr> = xs.into_iter().map(Fr::from).collect();
-        assert_eq!(combined, expected, "B2A PCG did not recover the original values");
+        assert_eq!(
+            combined, expected,
+            "B2A PCG did not recover the original values"
+        );
     }
 
     #[test]
@@ -584,7 +601,7 @@ mod tests {
                 let setup = random_pcg_dabit_setup::<Fr, _>(NUM * k, &mut io_ctx)?;
                 let mut lazy = LazyPcgEdaBits::<u64, Fr>::new(setup, NUM);
                 let edas = lazy.take(NUM);
-                ring_to_field_b2a_pcg::<u64, Fr, _>(&x_shares, edas, io_ctx.main())
+                ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, edas, io_ctx.main())
                     .map_err(Into::into)
             },
             |(), _net| Ok(()),

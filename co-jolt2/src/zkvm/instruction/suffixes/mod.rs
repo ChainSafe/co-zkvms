@@ -42,7 +42,9 @@ use rand::prelude::Distribution;
 /// `T::Half`-sized shares, each holding `suffix_len/2` bits.
 pub trait Uninterleavable: IntRing2k + AsPrimitive<Self::Half> {
     type Half: IntRing2k + AsPrimitive<Self>;
-    fn uninterleave(s: Rep3RingShare<Self>) -> (Rep3RingShare<Self::Half>, Rep3RingShare<Self::Half>)
+    fn uninterleave(
+        s: Rep3RingShare<Self>,
+    ) -> (Rep3RingShare<Self::Half>, Rep3RingShare<Self::Half>)
     where
         Standard: Distribution<Self::Half>;
 }
@@ -61,9 +63,7 @@ macro_rules! impl_uninterleavable {
     ($full:ty, $half:ty) => {
         impl Uninterleavable for $full {
             type Half = $half;
-            fn uninterleave(
-                s: Rep3RingShare<Self>,
-            ) -> (Rep3RingShare<$half>, Rep3RingShare<$half>)
+            fn uninterleave(s: Rep3RingShare<Self>) -> (Rep3RingShare<$half>, Rep3RingShare<$half>)
             where
                 Standard: Distribution<$half>,
             {
@@ -134,9 +134,7 @@ fn uninterleave_batch<T: Uninterleavable>(
 where
     Standard: Distribution<T::Half>,
 {
-    bits.iter()
-        .map(|b| uninterleave_generic(*b))
-        .unzip()
+    bits.iter().map(|b| uninterleave_generic(*b)).unzip()
 }
 
 // ---------------------------------------------------------------------------
@@ -501,8 +499,7 @@ where
     let mask = T::try_from(0b11u128).unwrap_or_else(|_| unreachable!());
     let lsbs: Vec<Rep3RingShare<T>> = bits.iter().map(|b| *b & RingElement(mask)).collect();
     // is_zero_many on T-sized shares (benefits from smaller T)
-    let result: Vec<Rep3RingShare<Bit>> =
-        rep3_ring::binary::is_zero_many::<T, _>(&lsbs, io_ctx)?;
+    let result: Vec<Rep3RingShare<Bit>> = rep3_ring::binary::is_zero_many::<T, _>(&lsbs, io_ctx)?;
     Ok(result
         .into_iter()
         .map(|b| SuffixFuture::Pending(FutureOp::BitInject(b), ()))
@@ -523,7 +520,8 @@ where
 {
     let (xs, ys) = uninterleave_batch(bits);
     // x < y ≡ !(x >= y); ge_many expects binary shares
-    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many::<T::Half, _>(&xs, &ys, io_ctx)?;
+    let ge_bits: Vec<Rep3RingShare<Bit>> =
+        rep3_ring::arithmetic::ge_many::<T::Half, _>(&xs, &ys, io_ctx)?;
     let lt_bits: Vec<Rep3RingShare<Bit>> = ge_bits.iter().map(|b| !b).collect();
     Ok(lt_bits
         .into_iter()
@@ -540,7 +538,8 @@ where
     Standard: Distribution<T::Half>,
 {
     let (xs, ys) = uninterleave_batch(bits);
-    let ge_bits: Vec<Rep3RingShare<Bit>> = rep3_ring::arithmetic::ge_many::<T::Half, _>(&ys, &xs, io_ctx)?;
+    let ge_bits: Vec<Rep3RingShare<Bit>> =
+        rep3_ring::arithmetic::ge_many::<T::Half, _>(&ys, &xs, io_ctx)?;
     let gt_bits: Vec<Rep3RingShare<Bit>> = ge_bits.iter().map(|b| !b).collect();
     Ok(gt_bits
         .into_iter()
@@ -767,8 +766,10 @@ where
     let num_bits = log_xlen.min(suffix_len);
     let shift_mask_val = T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
     // Extract shift bits, use T for is_zero (benefits from smaller ring)
-    let shifts: Vec<Rep3RingShare<T>> =
-        bits.iter().map(|b| *b & RingElement(shift_mask_val)).collect();
+    let shifts: Vec<Rep3RingShare<T>> = bits
+        .iter()
+        .map(|b| *b & RingElement(shift_mask_val))
+        .collect();
     eval_pow2_from_shift_bits(&shifts, num_bits, io_ctx, party_id)
 }
 
@@ -784,8 +785,10 @@ where
 {
     let num_bits = 5usize.min(suffix_len);
     let shift_mask_val = T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
-    let shifts: Vec<Rep3RingShare<T>> =
-        bits.iter().map(|b| *b & RingElement(shift_mask_val)).collect();
+    let shifts: Vec<Rep3RingShare<T>> = bits
+        .iter()
+        .map(|b| *b & RingElement(shift_mask_val))
+        .collect();
     eval_pow2_from_shift_bits(&shifts, num_bits, io_ctx, party_id)
 }
 
@@ -917,7 +920,11 @@ where
 /// Vanilla does `(bits >> (half_word_size - 1)) & 1` directly on interleaved LookupBits.
 /// In the interleaved format, bit 31 corresponds to x[15] (left operand bit 15).
 /// We must NOT uninterleave — just extract the bit directly from the interleaved T.
-fn eval_sign_extension_upper_half<T: Uninterleavable + AsPrimitive<Bit>, F: JoltField, N: Rep3Network>(
+fn eval_sign_extension_upper_half<
+    T: Uninterleavable + AsPrimitive<Bit>,
+    F: JoltField,
+    N: Rep3Network,
+>(
     bits: &[Rep3RingShare<T>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
@@ -1099,8 +1106,12 @@ where
             .iter()
             .map(|r| {
                 let half = Rep3RingShare {
-                    a: RingElement(T::Half::try_from(r.a.0 as u128).unwrap_or_else(|_| unreachable!())),
-                    b: RingElement(T::Half::try_from(r.b.0 as u128).unwrap_or_else(|_| unreachable!())),
+                    a: RingElement(
+                        T::Half::try_from(r.a.0 as u128).unwrap_or_else(|_| unreachable!()),
+                    ),
+                    b: RingElement(
+                        T::Half::try_from(r.b.0 as u128).unwrap_or_else(|_| unreachable!()),
+                    ),
                 };
                 SuffixFuture::cast_to_field_b2a(half)
             })
@@ -1238,7 +1249,7 @@ pub struct OperandQSuffixEvals<F: JoltField> {
 pub fn compute_operand_q_suffix_evals<T, F, N>(
     suffix_bits: &[Rep3RingShare<T>],
     io_ctx: &mut IoContext<N>,
-    pool: &mut mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
+    pool: &mut mpc_core::protocols::rep3_ring::pcg::edabits_pcg::PcgEdaBitsPool<F>,
 ) -> eyre::Result<OperandQSuffixEvals<F>>
 where
     T: Uninterleavable,
@@ -1247,24 +1258,24 @@ where
     F: JoltField,
     N: Rep3Network,
 {
-    use mpc_core::protocols::rep3_ring::edabits;
+    use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
 
-    // Identity: suffix_bits as field (T ring B2A via edaBits)
+    // Identity: suffix_bits as field (T ring B2A via PCG edaBits)
     let identity = {
         let edas = pool.take_edabits::<T>(suffix_bits.len());
         let xs: Vec<_> = suffix_bits.iter().copied().collect();
-        edabits::ring_to_field_b2a_many::<T, F, _>(&xs, edas, io_ctx)?
+        edabits_pcg::ring_to_field_b2a_many::<T, F, _>(&xs, edas, io_ctx)?
     };
 
-    // Uninterleave (local) for left/right operands, then B2A via edaBits (T::Half ring)
+    // Uninterleave (local) for left/right operands, then B2A via PCG edaBits (T::Half ring)
     let (xs, ys) = uninterleave_batch(suffix_bits);
     let left_operand = {
         let edas = pool.take_edabits::<T::Half>(xs.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&xs, edas, io_ctx)?
+        edabits_pcg::ring_to_field_b2a_many::<T::Half, F, _>(&xs, edas, io_ctx)?
     };
     let right_operand = {
         let edas = pool.take_edabits::<T::Half>(ys.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&ys, edas, io_ctx)?
+        edabits_pcg::ring_to_field_b2a_many::<T::Half, F, _>(&ys, edas, io_ctx)?
     };
 
     Ok(OperandQSuffixEvals {
@@ -1302,9 +1313,18 @@ mod tests {
             let c: u128 = val ^ a ^ b;
 
             // Party 0: (a, b), Party 1: (b, c), Party 2: (c, a)
-            let share0 = Rep3RingShare { a: RingElement(a), b: RingElement(b) };
-            let share1 = Rep3RingShare { a: RingElement(b), b: RingElement(c) };
-            let share2 = Rep3RingShare { a: RingElement(c), b: RingElement(a) };
+            let share0 = Rep3RingShare {
+                a: RingElement(a),
+                b: RingElement(b),
+            };
+            let share1 = Rep3RingShare {
+                a: RingElement(b),
+                b: RingElement(c),
+            };
+            let share2 = Rep3RingShare {
+                a: RingElement(c),
+                b: RingElement(a),
+            };
 
             let (x0, y0) = uninterleave_generic::<u128>(share0);
             let (x1, y1) = uninterleave_generic::<u128>(share1);

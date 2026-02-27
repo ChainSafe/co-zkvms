@@ -25,10 +25,7 @@ use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::edabits::DaBit;
 use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_types::protocols::rep3_ring::{
-    Rep3RingShare,
-    ring::bit::Bit,
-};
+use mpc_types::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
 use rayon::prelude::*;
 use sha3::Digest;
 
@@ -44,7 +41,8 @@ pub struct PcgDaBitSetup<F: PrimeField> {
     pub seed_prev: [u8; 32],
     /// P0: the third pairwise seed (P1↔P2) for computing corrections.
     pub seed_third: Option<[u8; 32]>,
-    /// P0 and P2: pre-computed corrections. P1: empty.
+    /// P2: pre-computed corrections (O(N) field elements). P0/P1: empty.
+    /// P0 recomputes corrections on-the-fly from its 3 pairwise seeds.
     pub corrections: Vec<F>,
 }
 
@@ -60,10 +58,7 @@ pub struct DealerOutput<F: PrimeField> {
 /// P0 generates pairwise seeds and computes corrections for `num` daBits.
 ///
 /// Returns setups for all 3 parties. P0 must send `party2.corrections` to P2.
-pub fn dealer_setup<F: PrimeField>(
-    num: usize,
-    rng: &mut impl rand::RngCore,
-) -> DealerOutput<F> {
+pub fn dealer_setup<F: PrimeField>(num: usize, rng: &mut impl rand::RngCore) -> DealerOutput<F> {
     let mut seed_01 = [0u8; 32];
     let mut seed_12 = [0u8; 32];
     let mut seed_20 = [0u8; 32];
@@ -96,21 +91,21 @@ pub fn dealer_setup<F: PrimeField>(
             seed_next: seed_01,
             seed_prev: seed_20,
             seed_third: Some(seed_12),
-            corrections: corrections.clone(),
+            corrections: Vec::new(), // P0 recomputes on-the-fly from 3 seeds
         },
         party1: PcgDaBitSetup {
             party_id: PartyID::ID1,
             seed_next: seed_12,
             seed_prev: seed_01,
             seed_third: None,
-            corrections: Vec::new(),
+            corrections: Vec::new(), // P1 needs no corrections
         },
         party2: PcgDaBitSetup {
             party_id: PartyID::ID2,
             seed_next: seed_20,
             seed_prev: seed_12,
             seed_third: None,
-            corrections,
+            corrections,             // P2 must store corrections (no seed_third)
         },
     }
 }
@@ -118,6 +113,11 @@ pub fn dealer_setup<F: PrimeField>(
 // ── Local daBit Expansion ───────────────────────────────────────────────────
 
 /// Expand `count` daBits starting at position `start`. No communication.
+///
+/// P1 uses zero corrections (its share needs none by construction).
+/// P2 looks up pre-stored corrections.
+/// P0 recomputes corrections on-the-fly from its three pairwise seeds,
+/// so P0's `PcgDaBitSetup` doesn't need to store them.
 pub fn expand_dabits<F: PrimeField>(
     setup: &PcgDaBitSetup<F>,
     start: usize,
@@ -127,10 +127,25 @@ pub fn expand_dabits<F: PrimeField>(
         .into_par_iter()
         .with_min_len(64)
         .map(|x| {
-            let correction = if !setup.corrections.is_empty() {
-                setup.corrections[x]
-            } else {
-                F::zero()
+            let correction = match setup.party_id {
+                PartyID::ID1 => F::zero(),
+                PartyID::ID2 => setup.corrections[x],
+                PartyID::ID0 => {
+                    // P0 has all 3 seeds → recompute c(x) = F::from(b(x)) - S(x)
+                    let seed_third = setup.seed_third
+                        .expect("P0 must have seed_third");
+                    let bit_01 = prf_bit(&setup.seed_next, x);
+                    let bit_12 = prf_bit(&seed_third, x);
+                    let bit_20 = prf_bit(&setup.seed_prev, x);
+                    let b = bit_01 ^ bit_12 ^ bit_20;
+
+                    let s: F = prf_field::<F>(&setup.seed_next, x)
+                        + prf_field::<F>(&seed_third, x)
+                        + prf_field::<F>(&setup.seed_prev, x);
+
+                    let target = if b { F::one() } else { F::zero() };
+                    target - s
+                }
             };
             expand_single_dabit(setup, x, correction)
         })
@@ -162,7 +177,10 @@ fn expand_single_dabit<F: PrimeField>(
         PartyID::ID1 => Rep3PrimeFieldShare::new(a_i, b_i),
     };
 
-    DaBit { bit: bit_share, value }
+    DaBit {
+        bit: bit_share,
+        value,
+    }
 }
 
 // ── PRF helpers ─────────────────────────────────────────────────────────────
@@ -179,12 +197,12 @@ fn prf_bit(seed: &[u8; 32], x: usize) -> bool {
 
 /// Deterministic PRF producing a field element.
 fn prf_field<F: PrimeField>(seed: &[u8; 32], x: usize) -> F {
-    let mut hasher = sha3::Sha3_256::new();
+    let mut hasher = sha3::Sha3_256::new(); // TODO: faster hash func?
     hasher.update(seed);
     hasher.update(b"arith");
     hasher.update(x.to_le_bytes());
     let hash: [u8; 32] = hasher.finalize().into();
-    F::from_be_bytes_mod_order(&hash)
+    F::from_be_bytes_mod_order(&hash) // TODO: from_be_bytes_mod_order slow
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -238,26 +256,27 @@ mod tests {
 
         let (dabits0, (dabits1, dabits2)) = rayon::join(
             || expand_dabits::<Fr>(&dealer.party0, 0, 200),
-            || rayon::join(
-                || expand_dabits::<Fr>(&dealer.party1, 0, 200),
-                || expand_dabits::<Fr>(&dealer.party2, 0, 200),
-            ),
+            || {
+                rayon::join(
+                    || expand_dabits::<Fr>(&dealer.party1, 0, 200),
+                    || expand_dabits::<Fr>(&dealer.party2, 0, 200),
+                )
+            },
         );
 
         let mut ones = 0;
         for i in 0..200 {
-            let bit: RingElement<Bit> = combine_ring_element(
-                dabits0[i].bit, dabits1[i].bit, dabits2[i].bit,
-            );
+            let bit: RingElement<Bit> =
+                combine_ring_element(dabits0[i].bit, dabits1[i].bit, dabits2[i].bit);
             let b: bool = bit.0.convert();
 
-            let val = combine_field_element(
-                dabits0[i].value, dabits1[i].value, dabits2[i].value,
-            );
+            let val = combine_field_element(dabits0[i].value, dabits1[i].value, dabits2[i].value);
             let expected = if b { Fr::from(1u64) } else { Fr::zero() };
             assert_eq!(val, expected, "daBit {i}: bit={b}");
 
-            if b { ones += 1; }
+            if b {
+                ones += 1;
+            }
         }
 
         assert!(ones > 30 && ones < 170, "bad distribution: {ones}/200 ones");

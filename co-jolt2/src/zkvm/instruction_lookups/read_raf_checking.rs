@@ -26,7 +26,7 @@ use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::downcast;
-use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
+use mpc_core::protocols::rep3_ring::pcg::edabits_pcg::PcgEdaBitsPool;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use num_traits::AsPrimitive;
@@ -354,7 +354,7 @@ struct ReadRafProverState<F: JoltField> {
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 
     // -- Protocol Π₂ B2A preprocessing pool --
-    edabits_pool: EdaBitsPool<F>,
+    edabits_pool: PcgEdaBitsPool<F>,
 
     party_id: PartyID,
 }
@@ -394,7 +394,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         lookup_indices: Vec<Rep3RingShare<u128>>,
         io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
-        edabits_pool: EdaBitsPool<F>,
+        edabits_pool: PcgEdaBitsPool<F>,
     ) -> eyre::Result<Self> {
         let num_cycles = lookup_tables.len();
         eyre::ensure!(
@@ -578,7 +578,7 @@ fn eval_and_fulfill_suffixes<T, F, N>(
     suffix_len: usize,
     io_ctx: &mut IoContextPool<N>,
     party_id: PartyID,
-    pool: &mut EdaBitsPool<F>,
+    pool: &mut PcgEdaBitsPool<F>,
 ) -> eyre::Result<(Vec<u8>, Vec<Rep3PrimeFieldShare<F>>)>
 where
     T: crate::zkvm::instruction::suffixes::Uninterleavable + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
@@ -626,7 +626,7 @@ where
 fn eval_operand_q_for_ring<T, F, N>(
     suffix_bits: &[Rep3RingShare<T>],
     io_ctx: &mut IoContextPool<N>,
-    pool: &mut EdaBitsPool<F>,
+    pool: &mut PcgEdaBitsPool<F>,
 ) -> eyre::Result<crate::zkvm::instruction::suffixes::OperandQSuffixEvals<F>>
 where
     T: crate::zkvm::instruction::suffixes::Uninterleavable,

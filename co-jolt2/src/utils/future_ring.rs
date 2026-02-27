@@ -7,7 +7,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::{
         self,
-        edabits::EdaBitsPool,
+        pcg::edabits_pcg::PcgEdaBitsPool,
         ring::{bit::Bit, int_ring::IntRing2k},
         Rep3RingShare, Rep3RingSignedShare,
     },
@@ -237,23 +237,19 @@ where
     }
 }
 
-/// Fulfill batched `CastToFieldB2A` futures using an [`EdaBitsPool`] for
-/// Protocol Π₂ conversion (K-bit broadcast + 1 reshare round).
+/// Fulfill batched `CastToFieldB2A` futures using a [`PcgEdaBitsPool`] for
+/// PCG-based B2A conversion (1 binary open round).
 ///
 /// Generic over ring type `R` — callers downcast suffix bits to the smallest
 /// ring that fits, so edaBits use fewer alphas and less communication.
 ///
 /// Only handles `CastToFieldB2A` and `Ready` variants; other `FutureOp`
 /// variants will panic.
-#[tracing::instrument(
-    skip_all,
-    name = "fulfill_batched_with_pool",
-    level = "trace"
-)]
+#[tracing::instrument(skip_all, name = "fulfill_batched_with_pool", level = "trace")]
 pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
     futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
-    pool: &mut EdaBitsPool<F>,
+    pool: &mut PcgEdaBitsPool<F>,
     map: MapFn,
 ) -> eyre::Result<Vec<T>>
 where
@@ -265,7 +261,7 @@ where
     N: Rep3NetworkWorker,
     MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
 {
-    use mpc_core::protocols::rep3_ring::edabits;
+    use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
 
     let mut fulfilled = vec![T::default(); futures.len()];
     let (mut bit_inject_x, mut fut_bit_inject, mut bit_inject_args) =
@@ -296,11 +292,16 @@ where
             ),
         });
 
-    // Bit Inject (single-bit → field, no edaBits needed)
+    // Bit Inject (single-bit → field via daBits)
     {
+        use mpc_core::protocols::rep3_ring::edabits;
+
         let c = if !bit_inject_x.is_empty() {
-            io_ctx.par_chunks(bit_inject_x, None, |bit_inject_x, io_ctx| {
-                rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)
+            let dabits = pool.take_dabits(bit_inject_x.len());
+            let pairs: Vec<_> = bit_inject_x.into_iter().zip(dabits).collect();
+            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
+                let (xs, das): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
+                edabits::bit_inject_field_many(&xs, &das, io_ctx)
             })?
         } else {
             vec![]
@@ -322,7 +323,7 @@ where
             let pairs: Vec<_> = cast_b2a_x.into_iter().zip(edas).collect();
             io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
                 let (xs, edas): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
+                edabits_pcg::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
             })?
         } else {
             vec![]

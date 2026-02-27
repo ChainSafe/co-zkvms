@@ -787,7 +787,7 @@ where
             // P1 adds the public β value (one party must add it for 2-of-2).
             if io.id == PartyID::ID1 {
                 let beta_big = beta.0.cast_to_biguint();
-                let beta_f = F::from_be_bytes_mod_order(&beta_big.to_bytes_be());
+                let beta_f = F::from_be_bytes_mod_order(&beta_big.to_bytes_be()); // TODO: from_be_bytes_mod_order is slow
                 v += beta_f;
             }
 
@@ -1440,41 +1440,50 @@ mod tests {
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
 
-        let outputs: [(Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>); 3] =
-            run_rep3_local_test_with_coordinator(
-                1,
-                |i| (id_shares[i].clone(), left_shares[i].clone(), right_shares[i].clone()),
-                || (),
-                |(id_sh, left_sh, right_sh), mut io_ctx| {
-                    // Generate lazy edaBits for u32 and u16
-                    let mut lazy_u32 = random_edabits_lazy::<u32, Fr, _>(NUM, &mut io_ctx)?;
-                    let mut lazy_u16 = random_edabits_lazy::<u16, Fr, _>(2 * NUM, &mut io_ctx)?;
+        let outputs: [(
+            Vec<Rep3PrimeFieldShare<Fr>>,
+            Vec<Rep3PrimeFieldShare<Fr>>,
+            Vec<Rep3PrimeFieldShare<Fr>>,
+        ); 3] = run_rep3_local_test_with_coordinator(
+            1,
+            |i| {
+                (
+                    id_shares[i].clone(),
+                    left_shares[i].clone(),
+                    right_shares[i].clone(),
+                )
+            },
+            || (),
+            |(id_sh, left_sh, right_sh), mut io_ctx| {
+                // Generate lazy edaBits for u32 and u16
+                let mut lazy_u32 = random_edabits_lazy::<u32, Fr, _>(NUM, &mut io_ctx)?;
+                let mut lazy_u16 = random_edabits_lazy::<u16, Fr, _>(2 * NUM, &mut io_ctx)?;
 
-                    let io = io_ctx.main();
+                let io = io_ctx.main();
 
-                    // Call 1: u32 identity
-                    let identity = {
-                        let edas = lazy_u32.take(NUM);
-                        ring_to_field_b2a_many::<u32, Fr, _>(&id_sh, edas, io)?
-                    };
+                // Call 1: u32 identity
+                let identity = {
+                    let edas = lazy_u32.take(NUM);
+                    ring_to_field_b2a_many::<u32, Fr, _>(&id_sh, edas, io)?
+                };
 
-                    // Call 2: u16 left
-                    let left = {
-                        let edas = lazy_u16.take(NUM);
-                        ring_to_field_b2a_many::<u16, Fr, _>(&left_sh, edas, io)?
-                    };
+                // Call 2: u16 left
+                let left = {
+                    let edas = lazy_u16.take(NUM);
+                    ring_to_field_b2a_many::<u16, Fr, _>(&left_sh, edas, io)?
+                };
 
-                    // Call 3: u16 right
-                    let right = {
-                        let edas = lazy_u16.take(NUM);
-                        ring_to_field_b2a_many::<u16, Fr, _>(&right_sh, edas, io)?
-                    };
+                // Call 3: u16 right
+                let right = {
+                    let edas = lazy_u16.take(NUM);
+                    ring_to_field_b2a_many::<u16, Fr, _>(&right_sh, edas, io)?
+                };
 
-                    Ok((identity, left, right))
-                },
-                |(), _net| Ok(()),
-            )
-            .0;
+                Ok((identity, left, right))
+            },
+            |(), _net| Ok(()),
+        )
+        .0;
 
         // Verify identity (u32)
         let id_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
@@ -1530,6 +1539,9 @@ mod tests {
 
         let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
         let expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x as u64)).collect();
-        assert_eq!(combined, expected, "u16 lazy B2A mismatch after cursor offset");
+        assert_eq!(
+            combined, expected,
+            "u16 lazy B2A mismatch after cursor offset"
+        );
     }
 }
