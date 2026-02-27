@@ -165,7 +165,10 @@ where
         .collect()
 }
 
-/// Single-pass edaBit expansion (best on ARM / scalar AES backend).
+/// Single-pass edaBit expansion with additive field shares (ARM / scalar AES).
+///
+/// P0: 3 AES/bit (seed_next + seed_prev + seed_third for bit correction).
+/// P1, P2: 2 AES/bit (seed_next + seed_prev only).
 #[cfg(not(target_arch = "x86_64"))]
 fn expand_single_edabit<T: IntRing2k, F: PrimeField>(
     setup: &PcgDaBitSetup,
@@ -178,10 +181,25 @@ where
 {
     let mut r_bits = Vec::with_capacity(k);
     let mut bit_values = Vec::with_capacity(k);
+    let is_dealer = setup.party_id == PartyID::ID0;
+
     for j in 0..k {
-        let d = expand_single_dabit::<F>(setup, base + j, prg);
-        r_bits.push(d.bit);
-        bit_values.push(d.value);
+        let x = base + j;
+        let (bit_a, f_next) = prf_combined::<F>(prg, &setup.seed_next, x);
+        let (bit_b, f_prev) = prf_combined::<F>(prg, &setup.seed_prev, x);
+        r_bits.push(Rep3RingShare::new(Bit::new(bit_a), Bit::new(bit_b)));
+
+        // Additive share: s = f_next - f_prev
+        let mut s = f_next - f_prev;
+        // P0 (dealer) adds correction: s += b (the secret bit)
+        if is_dealer {
+            let seed_third = setup.seed_third.unwrap();
+            let (bit_third, _) = prf_combined::<F>(prg, &seed_third, x);
+            if bit_a ^ bit_b ^ bit_third {
+                s += F::one();
+            }
+        }
+        bit_values.push(s);
     }
     let r_packed = binary::pack_bits::<T>(&r_bits);
     PcgEdaBit {
@@ -191,10 +209,11 @@ where
     }
 }
 
-/// Batched edaBit expansion with combined PRF (best on x86_64 with AES-NI pipeline).
+/// Batched edaBit expansion with additive field shares (x86_64, AES-NI pipeline).
 ///
 /// Uses combined PRF: 1 batch_convert per seed extracts both bits and field elements.
-/// P1: 2 batches (2K AES). P0/P2: 3 batches (3K AES). Down from 4K/5K before.
+/// P0: 3 batches (3K AES, needs seed_third for bit correction).
+/// P1, P2: 2 batches (2K AES, additive share = f_next - f_prev).
 ///
 /// Uses `[Block; MAX_K]` stack arrays (2 × 2KB) to avoid heap allocation.
 #[cfg(target_arch = "x86_64")]
@@ -245,47 +264,28 @@ where
         r_bits.push(Rep3RingShare::new(Bit::new(bits_a[j]), Bit::new(bits_b[j])));
     }
 
-    // ── Field shares ──
-    let bit_values = match setup.party_id {
-        PartyID::ID1 => {
-            // P1: 2 batches total, use both field outputs directly.
-            (0..k)
-                .map(|j| Rep3PrimeFieldShare::new(fields_next[j], fields_prev[j]))
-                .collect()
-        }
-        _ => {
-            // P0/P2: batch 3 for seed_third (combined bit + field).
-            let seed_third = setup.seed_third.expect("P0/P2 must have seed_third");
-            let base_third = prf_input_base(&seed_third, b"cmb\0");
-            fill_prf_inputs(&base_third, base, k, &mut inputs);
-            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
-            let mut bits_third = [false; MAX_K];
-            let mut fields_third: Vec<F> = Vec::with_capacity(k);
-            for j in 0..k {
-                let arr = outputs[j].as_array();
-                bits_third[j] = arr[0] & 1 != 0;
-                fields_third.push(block_to_field(&outputs[j]));
-            }
+    // ── Additive field shares: s = f_next - f_prev ──
+    let bit_values = if setup.party_id == PartyID::ID0 {
+        // P0 (dealer): batch 3 for seed_third (only need bits for correction).
+        let seed_third = setup.seed_third.expect("P0 must have seed_third");
+        let base_third = prf_input_base(&seed_third, b"cmb\0");
+        fill_prf_inputs(&base_third, base, k, &mut inputs);
+        prg.batch_convert(&inputs[..k], &mut outputs[..k]);
 
-            (0..k)
-                .map(|j| {
-                    let bit = bits_a[j] ^ bits_b[j] ^ bits_third[j];
-                    let target = if bit { F::one() } else { F::zero() };
-                    match setup.party_id {
-                        // P0: a = f_next, b = bit - f_next - f_third
-                        PartyID::ID0 => Rep3PrimeFieldShare::new(
-                            fields_next[j],
-                            target - fields_next[j] - fields_third[j],
-                        ),
-                        // P2: a = bit - f_prev - f_third, b = f_prev
-                        _ => Rep3PrimeFieldShare::new(
-                            target - fields_prev[j] - fields_third[j],
-                            fields_prev[j],
-                        ),
-                    }
-                })
-                .collect()
-        }
+        (0..k)
+            .map(|j| {
+                let bit_third = outputs[j].as_array()[0] & 1 != 0;
+                let bit = bits_a[j] ^ bits_b[j] ^ bit_third;
+                let mut s = fields_next[j] - fields_prev[j];
+                if bit {
+                    s += F::one();
+                }
+                s
+            })
+            .collect()
+    } else {
+        // P1/P2: 2 batches total, additive share = f_next - f_prev.
+        (0..k).map(|j| fields_next[j] - fields_prev[j]).collect()
     };
 
     let r_packed = binary::pack_bits::<T>(&r_bits);

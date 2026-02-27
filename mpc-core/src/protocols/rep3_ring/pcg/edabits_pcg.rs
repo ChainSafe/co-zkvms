@@ -3,19 +3,19 @@
 //! An **edaBit** packs K individual daBits into a single unit:
 //! - `r_bits`: K boolean Rep3 shares `[r_i]_2`
 //! - `r_packed`: the packed ring share `[r]_{2^K}` where `r = Σ 2^i * r_i`
-//! - `bit_values`: K arithmetic field shares `[r_i]_p`
+//! - `bit_values`: K additive (3-of-3) field shares of the same bits
 //!
-//! The **B2A** conversion (1 online round):
-//! 1. Open `c = x XOR r_packed`
-//! 2. `[x]_p = Σ 2^i * XOR_p(c_i, [r_i]_p)`
-//!    where `XOR_p(0, [v]) = [v]` and `XOR_p(1, [v]) = 1 - [v]`.
+//! The **B2A** conversion (2 online rounds):
+//! 1. Open `c = x XOR r_packed` (1 round)
+//! 2. Local: each party computes additive share of `[x]_p`
+//! 3. Reshare additive → Rep3 (1 round, O(N) elements)
 
 use super::dabit_gen::{self, PcgDaBitSetup};
 use crate::protocols::rep3::{
-    PartyID, arithmetic as rep3_arith,
+    PartyID,
     network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker},
 };
-use crate::protocols::rep3_ring::{arithmetic as rep3_ring_arith, binary};
+use crate::protocols::rep3_ring::binary;
 use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_types::protocols::rep3_ring::{
@@ -35,8 +35,9 @@ pub struct PcgEdaBit<T: IntRing2k, F: PrimeField> {
     pub r_bits: Vec<Rep3RingShare<Bit>>,
     /// Packed ring share: `r = Σ 2^i * r_i`.
     pub r_packed: Rep3RingShare<T>,
-    /// K arithmetic field shares of the same bits.
-    pub bit_values: Vec<Rep3PrimeFieldShare<F>>,
+    /// K additive (3-of-3) field shares of the same bits.
+    /// Each party holds one `F` per bit; the sum over 3 parties equals the bit value.
+    pub bit_values: Vec<F>,
 }
 
 // ── Lazy edaBit source ──────────────────────────────────────────────────────
@@ -106,9 +107,10 @@ where
 
 /// Convert binary (XOR-shared) ring shares to arithmetic field shares.
 ///
-/// Standard B2A with 1 online round:
-/// 1. Open `c = x XOR r_packed`
-/// 2. `[x]_p = Σ 2^i * XOR_p(c_i, [r_i]_p)`
+/// B2A with 2 online rounds (additive edaBit shares):
+/// 1. Open `c = x XOR r_packed` (1 round)
+/// 2. Local: each party computes additive share of `[x]_p`
+/// 3. Reshare additive → Rep3 via `masking_field_element` + `reshare_many` (1 round)
 pub fn ring_to_field_b2a_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     x_binary: &[Rep3RingShare<T>],
     eda: Vec<PcgEdaBit<T, F>>,
@@ -149,28 +151,42 @@ where
     let c_values = binary::open_vec(&c_shares, io)?;
     let party_id = io.id;
 
-    // Local: [x]_p = Σ 2^i * XOR_p(c_i, [r_i]_p)
-    let results: Vec<Rep3PrimeFieldShare<F>> = c_values
+    // Local: compute additive share of [x]_p = Σ 2^i * xor_additive(c_i, s_i)
+    // where s_i is the additive field share of bit r_i.
+    // xor_additive(0, s) = s, xor_additive(1, s) = -s (+ 1 for P0)
+    let additive_results: Vec<F> = c_values
         .into_par_iter()
         .zip(&eda)
         .map(|(c, e)| {
-            let mut result = Rep3PrimeFieldShare::zero_share();
+            let mut result = F::zero();
             for i in 0..k {
                 let c_bit = ((c >> i) & T::one()) == T::one();
-                let contrib = if !c_bit {
-                    // XOR_p(0, [r_i]) = [r_i]
-                    e.bit_values[i]
+                let s = e.bit_values[i];
+                if c_bit {
+                    result -= s * pow2[i];
+                    if party_id == PartyID::ID0 {
+                        result += pow2[i];
+                    }
                 } else {
-                    // XOR_p(1, [r_i]) = 1 - [r_i]
-                    rep3_arith::sub_public_by_shared(F::one(), e.bit_values[i], party_id)
-                };
-                result = result + contrib * pow2[i];
+                    result += s * pow2[i];
+                }
             }
             result
         })
         .collect();
 
-    Ok(results)
+    // Round 2: reshare additive → Rep3 (same pattern as edabits.rs:798-807)
+    let s_selfs: Vec<F> = additive_results
+        .iter()
+        .map(|v| *v + io.masking_field_element::<F>())
+        .collect();
+    let s_prevs = io.network.reshare_many(&s_selfs)?;
+
+    Ok(s_selfs
+        .into_iter()
+        .zip(s_prevs)
+        .map(|(s_self, s_prev)| Rep3PrimeFieldShare::new(s_self, s_prev))
+        .collect())
 }
 
 // ── Distributed Setup ──────────────────────────────────────────────────────
@@ -448,7 +464,7 @@ mod tests {
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use ark_bn254::Fr;
     use ark_ff::Zero;
-    use mpc_types::protocols::rep3::{combine_field_element, combine_field_elements};
+    use mpc_types::protocols::rep3::combine_field_elements;
     use mpc_types::protocols::rep3_ring::{
         combine_ring_element, combine_ring_element_binary, ring::ring_impl::RingElement,
         share_ring_element_binary,
@@ -478,17 +494,13 @@ mod tests {
             let packed_0 = binary::pack_bits::<u64>(&eda0[i].r_bits);
             assert_eq!(packed_0, eda0[i].r_packed, "eda {i}: pack mismatch P0");
 
-            // Check bits and values match
+            // Check bits and values match (additive shares: sum = bit value)
             for j in 0..k {
                 let bit: RingElement<Bit> =
                     combine_ring_element(eda0[i].r_bits[j], eda1[i].r_bits[j], eda2[i].r_bits[j]);
                 let b: bool = bit.0.convert();
 
-                let val = combine_field_element(
-                    eda0[i].bit_values[j],
-                    eda1[i].bit_values[j],
-                    eda2[i].bit_values[j],
-                );
+                let val = eda0[i].bit_values[j] + eda1[i].bit_values[j] + eda2[i].bit_values[j];
                 let expected = if b { Fr::from(1u64) } else { Fr::zero() };
                 assert_eq!(val, expected, "eda {i}, bit {j}: bool/arith mismatch");
             }
