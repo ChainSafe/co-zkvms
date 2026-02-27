@@ -14,8 +14,8 @@
 use mpc_types::field::PrimeField;
 use rand::RngCore;
 use rayon::prelude::*;
-use scuttlebutt::{AesHash, Block};
-use vectoreyes::SimdBase;
+use scuttlebutt::Block;
+use vectoreyes::{Aes128EncryptOnly, AesBlockCipher, SimdBase};
 
 // ── PRG from fixed-key AES (Matyas-Meyer-Oseas) ──────────────────────────────
 
@@ -27,17 +27,17 @@ pub type Seed = [u8; 16];
 /// Uses three fixed AES-128 keys in Matyas-Meyer-Oseas mode (MMO):
 ///   output = `AES_k(x) XOR x`
 ///
-/// Backed by Swanky's `AesHash::cr_hash` which computes `π(x) ⊕ x`
-/// (identical to MMO with fixed key).
+/// Uses Swanky's `Aes128EncryptOnly` from vectoreyes, which provides
+/// `encrypt_many` for batched AES pipelining.
 ///
 /// The three outputs correspond to:
 /// - **convert**: used to derive a field element (group element)
 /// - **left**: left-child seed in the GGM tree
 /// - **right**: right-child seed in the GGM tree
 pub struct Prg {
-    hash_convert: AesHash,
-    hash_left: AesHash,
-    hash_right: AesHash,
+    key_convert: Aes128EncryptOnly,
+    key_left: Aes128EncryptOnly,
+    key_right: Aes128EncryptOnly,
 }
 
 // Well-known fixed keys (publicly known constants derived from SHA-256 IV).
@@ -52,17 +52,19 @@ const PRG_KEY_RIGHT: [u8; 16] = [
     0xd8, 0x07, 0xaa, 0x98, 0xa3, 0x03, 0x02, 0x42, 0x13, 0x19, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x44,
 ];
 
-/// Dummy tweak for `cr_hash`. The `_i` parameter is unused in the
-/// correlation-robust hash `π(x) ⊕ x`.
-const ZERO: Block = Block::ZERO;
+/// Single-block MMO: `AES_k(x) XOR x`.
+#[inline(always)]
+fn mmo(cipher: &Aes128EncryptOnly, block: Block) -> Block {
+    cipher.encrypt(block) ^ block
+}
 
 impl Prg {
     /// Create a new PRG instance with the well-known fixed keys.
     pub fn new() -> Self {
         Self {
-            hash_convert: AesHash::new(Block::from_array(PRG_KEY_CONVERT)),
-            hash_left: AesHash::new(Block::from_array(PRG_KEY_LEFT)),
-            hash_right: AesHash::new(Block::from_array(PRG_KEY_RIGHT)),
+            key_convert: Aes128EncryptOnly::new_with_key(Block::from_array(PRG_KEY_CONVERT)),
+            key_left: Aes128EncryptOnly::new_with_key(Block::from_array(PRG_KEY_LEFT)),
+            key_right: Aes128EncryptOnly::new_with_key(Block::from_array(PRG_KEY_RIGHT)),
         }
     }
 
@@ -71,9 +73,9 @@ impl Prg {
     pub fn expand(&self, seed: &Seed) -> (Seed, Seed, Seed) {
         let block = Block::from_array(*seed);
         (
-            self.hash_convert.cr_hash(ZERO, block).as_array(),
-            self.hash_left.cr_hash(ZERO, block).as_array(),
-            self.hash_right.cr_hash(ZERO, block).as_array(),
+            mmo(&self.key_convert, block).as_array(),
+            mmo(&self.key_left, block).as_array(),
+            mmo(&self.key_right, block).as_array(),
         )
     }
 
@@ -83,7 +85,7 @@ impl Prg {
     /// key_left and key_right encryptions.
     #[inline]
     pub fn convert_single(&self, seed: &Seed) -> Seed {
-        self.hash_convert.cr_hash(ZERO, Block::from_array(*seed)).as_array()
+        mmo(&self.key_convert, Block::from_array(*seed)).as_array()
     }
 
     /// Fast field conversion: 1 AES call + `F::from(u128)`.
@@ -106,6 +108,40 @@ impl Prg {
     #[inline]
     pub fn convert_to_field<F: PrimeField>(&self, seed: &Seed) -> F {
         bytes_to_field(&self.convert_single(seed))
+    }
+
+    /// Batch MMO with key_convert: `AES_k(x_i) XOR x_i` for each input.
+    ///
+    /// Processes in chunks of 8 using `encrypt_many` for AES-NI pipelining,
+    /// then handles the remainder one at a time.
+    pub fn batch_convert(&self, inputs: &[Block], outputs: &mut [Block]) {
+        debug_assert_eq!(inputs.len(), outputs.len());
+        let n = inputs.len();
+        let mut i = 0;
+
+        // Process chunks of 8 for pipelined AES
+        while i + 8 <= n {
+            let chunk: [Block; 8] = [
+                inputs[i], inputs[i+1], inputs[i+2], inputs[i+3],
+                inputs[i+4], inputs[i+5], inputs[i+6], inputs[i+7],
+            ];
+            let encrypted = self.key_convert.encrypt_many(chunk);
+            outputs[i]   = encrypted[0] ^ chunk[0];
+            outputs[i+1] = encrypted[1] ^ chunk[1];
+            outputs[i+2] = encrypted[2] ^ chunk[2];
+            outputs[i+3] = encrypted[3] ^ chunk[3];
+            outputs[i+4] = encrypted[4] ^ chunk[4];
+            outputs[i+5] = encrypted[5] ^ chunk[5];
+            outputs[i+6] = encrypted[6] ^ chunk[6];
+            outputs[i+7] = encrypted[7] ^ chunk[7];
+            i += 8;
+        }
+
+        // Remainder
+        while i < n {
+            outputs[i] = mmo(&self.key_convert, inputs[i]);
+            i += 1;
+        }
     }
 }
 

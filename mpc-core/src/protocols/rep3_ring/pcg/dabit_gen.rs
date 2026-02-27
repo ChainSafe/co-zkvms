@@ -138,6 +138,11 @@ pub fn expand_dabits<F: PrimeField>(
 ///
 /// Avoids the intermediate `Vec<DaBit>` allocation that `expand_dabits` + chunk/pack
 /// would require (~66 bytes × K × count). Each edaBit packs K daBits in-place.
+///
+/// On x86_64 with AES-NI, uses a batched approach: pre-computes all PRF inputs
+/// per (seed, tag), batch-encrypts via `encrypt_many` for pipelined AES, then
+/// interprets outputs. On other architectures (ARM), uses the simpler single-pass
+/// approach since the scalar AES backend doesn't benefit from batching.
 #[tracing::instrument(skip(setup, start))]
 pub fn expand_edabits<T: IntRing2k, F: PrimeField>(
     setup: &PcgDaBitSetup,
@@ -157,23 +162,206 @@ where
     (0..count)
         .into_par_iter()
         .with_min_len(64)
-        .map(|i| {
-            let base = (start + i) * k;
-            let mut r_bits = Vec::with_capacity(k);
-            let mut bit_values = Vec::with_capacity(k);
-            for j in 0..k {
-                let d = expand_single_dabit::<F>(setup, base + j, prg);
-                r_bits.push(d.bit);
-                bit_values.push(d.value);
-            }
-            let r_packed = binary::pack_bits::<T>(&r_bits);
-            PcgEdaBit {
-                r_bits,
-                r_packed,
-                bit_values,
-            }
-        })
+        .map(|i| expand_single_edabit(setup, (start + i) * k, k, prg))
         .collect()
+}
+
+/// Single-pass edaBit expansion (best on ARM / scalar AES backend).
+#[cfg(not(target_arch = "x86_64"))]
+fn expand_single_edabit<T: IntRing2k, F: PrimeField>(
+    setup: &PcgDaBitSetup,
+    base: usize,
+    k: usize,
+    prg: &Prg,
+) -> PcgEdaBit<T, F>
+where
+    Standard: Distribution<T>,
+{
+    let mut r_bits = Vec::with_capacity(k);
+    let mut bit_values = Vec::with_capacity(k);
+    for j in 0..k {
+        let d = expand_single_dabit::<F>(setup, base + j, prg);
+        r_bits.push(d.bit);
+        bit_values.push(d.value);
+    }
+    let r_packed = binary::pack_bits::<T>(&r_bits);
+    PcgEdaBit {
+        r_bits,
+        r_packed,
+        bit_values,
+    }
+}
+
+/// Batched edaBit expansion (best on x86_64 with AES-NI pipeline).
+///
+/// Pre-computes all K PRF inputs per (seed, tag) into stack-allocated arrays,
+/// batch-encrypts via `Prg::batch_convert` (which uses `encrypt_many::<8>`),
+/// then interprets the outputs. The 4-wide AES-NI pipeline processes 8 blocks
+/// in ~2 passes vs 8 sequential encryptions.
+///
+/// Uses `[Block; MAX_K]` stack arrays (2 × 2KB) to avoid heap allocation.
+#[cfg(target_arch = "x86_64")]
+fn expand_single_edabit<T: IntRing2k, F: PrimeField>(
+    setup: &PcgDaBitSetup,
+    base: usize,
+    k: usize,
+    prg: &Prg,
+) -> PcgEdaBit<T, F>
+where
+    Standard: Distribution<T>,
+{
+    use scuttlebutt::Block;
+    use vectoreyes::SimdBase;
+
+    // Max K is 128 (u128). Stack arrays avoid heap allocation per edaBit.
+    const MAX_K: usize = 128;
+    assert!(k <= MAX_K);
+
+    let mut inputs = [Block::ZERO; MAX_K];
+    let mut outputs = [Block::ZERO; MAX_K];
+
+    // Pre-compute constant part of prf_input for each (seed, tag) pair.
+    let base_next_bit = prf_input_base(&setup.seed_next, b"bit\0");
+    let base_prev_bit = prf_input_base(&setup.seed_prev, b"bit\0");
+
+    // ── Bit PRFs ──
+    fill_prf_inputs(&base_next_bit, base, k, &mut inputs);
+    prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+    let mut bits_a = [false; MAX_K];
+    for j in 0..k {
+        bits_a[j] = outputs[j].as_array()[0] & 1 != 0;
+    }
+
+    fill_prf_inputs(&base_prev_bit, base, k, &mut inputs);
+    prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+    let mut bits_b = [false; MAX_K];
+    for j in 0..k {
+        bits_b[j] = outputs[j].as_array()[0] & 1 != 0;
+    }
+
+    let mut r_bits = Vec::with_capacity(k);
+    for j in 0..k {
+        r_bits.push(Rep3RingShare::new(Bit::new(bits_a[j]), Bit::new(bits_b[j])));
+    }
+
+    // ── Field PRFs ──
+    let bit_values = match setup.party_id {
+        PartyID::ID1 => {
+            let base_next_fld = prf_input_base(&setup.seed_next, b"fld\0");
+            let base_prev_fld = prf_input_base(&setup.seed_prev, b"fld\0");
+
+            fill_prf_inputs(&base_next_fld, base, k, &mut inputs);
+            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+            let mut fields_a = Vec::with_capacity(k);
+            for j in 0..k {
+                fields_a.push(block_to_field::<F>(&outputs[j]));
+            }
+
+            fill_prf_inputs(&base_prev_fld, base, k, &mut inputs);
+            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+
+            (0..k)
+                .map(|j| Rep3PrimeFieldShare::new(fields_a[j], block_to_field(&outputs[j])))
+                .collect()
+        }
+        _ => {
+            let seed_third = setup.seed_third.expect("P0/P2 must have seed_third");
+            let base_third_bit = prf_input_base(&seed_third, b"bit\0");
+
+            fill_prf_inputs(&base_third_bit, base, k, &mut inputs);
+            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+            let mut bits_third = [false; MAX_K];
+            for j in 0..k {
+                bits_third[j] = outputs[j].as_array()[0] & 1 != 0;
+            }
+
+            let (seed_own, seed_trd) = match setup.party_id {
+                PartyID::ID0 => (&setup.seed_next, &seed_third),
+                _ => (&setup.seed_prev, &seed_third),
+            };
+
+            let base_own_fld = prf_input_base(seed_own, b"fld\0");
+            let base_trd_fld = prf_input_base(seed_trd, b"fld\0");
+
+            fill_prf_inputs(&base_own_fld, base, k, &mut inputs);
+            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+            let mut fields_own = Vec::with_capacity(k);
+            for j in 0..k {
+                fields_own.push(block_to_field::<F>(&outputs[j]));
+            }
+
+            fill_prf_inputs(&base_trd_fld, base, k, &mut inputs);
+            prg.batch_convert(&inputs[..k], &mut outputs[..k]);
+
+            (0..k)
+                .map(|j| {
+                    let bit = bits_a[j] ^ bits_b[j] ^ bits_third[j];
+                    let target = if bit { F::one() } else { F::zero() };
+                    let f_trd: F = block_to_field(&outputs[j]);
+                    match setup.party_id {
+                        PartyID::ID0 => {
+                            Rep3PrimeFieldShare::new(fields_own[j], target - fields_own[j] - f_trd)
+                        }
+                        _ => {
+                            Rep3PrimeFieldShare::new(target - fields_own[j] - f_trd, fields_own[j])
+                        }
+                    }
+                })
+                .collect()
+        }
+    };
+
+    let r_packed = binary::pack_bits::<T>(&r_bits);
+    PcgEdaBit {
+        r_bits,
+        r_packed,
+        bit_values,
+    }
+}
+
+// ── Helpers for batched edaBit expansion (x86_64) ────────────────────────────
+
+/// Constant part of `prf_input`: folds the 32-byte seed and mixes in the tag.
+/// Only bytes `[0..8]` need XOR with `x.to_le_bytes()` at each index.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn prf_input_base(seed: &[u8; 32], tag: &[u8; 4]) -> [u8; 16] {
+    let mut base = [0u8; 16];
+    for i in 0..8 {
+        base[i] = seed[i] ^ seed[i + 16];
+    }
+    for i in 0..4 {
+        base[8 + i] = seed[8 + i] ^ seed[24 + i] ^ tag[i];
+    }
+    for i in 0..4 {
+        base[12 + i] = seed[12 + i] ^ seed[28 + i];
+    }
+    base
+}
+
+/// Fill `inputs[0..k]` with PRF input blocks for indices `base..base+k`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn fill_prf_inputs(prf_base: &[u8; 16], base: usize, k: usize, inputs: &mut [scuttlebutt::Block]) {
+    use scuttlebutt::Block;
+    use vectoreyes::SimdBase;
+    let base_block = Block::from_array(*prf_base);
+    for j in 0..k {
+        let mut x_pad = [0u8; 16];
+        x_pad[0..8].copy_from_slice(&(base + j).to_le_bytes());
+        inputs[j] = base_block ^ Block::from_array(x_pad);
+    }
+}
+
+/// Convert a Block (MMO output) to a field element via `F::from(u128)`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn block_to_field<F: PrimeField>(block: &scuttlebutt::Block) -> F {
+    use vectoreyes::SimdBase;
+    let arr = block.as_array();
+    let lo = u64::from_le_bytes(arr[0..8].try_into().unwrap());
+    let hi = u64::from_le_bytes(arr[8..16].try_into().unwrap());
+    F::from((hi as u128) << 64 | lo as u128)
 }
 
 /// Expand a single daBit at position `x`.
