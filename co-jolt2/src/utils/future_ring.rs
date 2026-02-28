@@ -319,12 +319,8 @@ where
     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits
     {
         let shares = if !cast_b2a_x.is_empty() {
-            let edas = pool.take_edabits::<R>(cast_b2a_x.len());
-            let pairs: Vec<_> = cast_b2a_x.into_iter().zip(edas).collect();
-            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
-                let (xs, edas): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
-            })?
+            let batch = pool.take_edabits::<R>(cast_b2a_x.len());
+            edabits::ring_to_field_b2a_many::<R, F, _>(&cast_b2a_x, &batch, io_ctx.main())?
         } else {
             vec![]
         };

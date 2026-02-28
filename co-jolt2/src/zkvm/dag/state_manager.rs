@@ -7,12 +7,12 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::instruction::Rep3Cycle;
+use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
-use jolt2_common::constants::XLEN;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
@@ -281,7 +281,10 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
             // (0, x * y_u64) as a u128 (represented in the field); provided by the caller.
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (zero, promote_to_trivial_share(party_id, F::from_u64(self.advice())))
+            (
+                zero,
+                promote_to_trivial_share(party_id, F::from_u64(self.advice())),
+            )
         } else {
             // Default: operands are the instruction inputs interpreted as (x, y_u64).
             (left_u64, right_u64)

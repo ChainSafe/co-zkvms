@@ -1262,20 +1262,20 @@ where
 
     // Identity: suffix_bits as field (T ring B2A via edaBits)
     let identity = {
-        let edas = pool.take_edabits::<T>(suffix_bits.len());
+        let batch = pool.take_edabits::<T>(suffix_bits.len());
         let xs: Vec<_> = suffix_bits.iter().copied().collect();
-        edabits::ring_to_field_b2a_many::<T, F, _>(&xs, edas, io_ctx)?
+        edabits::ring_to_field_b2a_many::<T, F, _>(&xs, &batch, io_ctx)?
     };
 
     // Uninterleave (local) for left/right operands, then B2A via edaBits (T::Half ring)
     let (xs, ys) = uninterleave_batch(suffix_bits);
     let left_operand = {
-        let edas = pool.take_edabits::<T::Half>(xs.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&xs, edas, io_ctx)?
+        let batch = pool.take_edabits::<T::Half>(xs.len());
+        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&xs, &batch, io_ctx)?
     };
     let right_operand = {
-        let edas = pool.take_edabits::<T::Half>(ys.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&ys, edas, io_ctx)?
+        let batch = pool.take_edabits::<T::Half>(ys.len());
+        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&ys, &batch, io_ctx)?
     };
 
     Ok(OperandQSuffixEvals {
