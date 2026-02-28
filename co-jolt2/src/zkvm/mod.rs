@@ -6,6 +6,7 @@ pub mod r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
+pub mod suffixes;
 pub mod witness;
 
 use std::collections::HashMap;

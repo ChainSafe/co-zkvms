@@ -90,12 +90,17 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<u128> {
     }
 }
 
-/// Extract the public right-operand bitmask for shift instructions.
+/// Extract the public right-operand value for instructions with a public right operand.
 ///
-/// Returns `Some(mask_u64)` for VirtualSRA/SRL (rs2 is public bitmask)
-/// and VirtualSRAI/SRLI (immediate is public bitmask).
-/// Used by ReadRaf to compute SignExtension suffix locally without MPC.
-fn compute_right_operand_public_mask(cycle: &Rep3Cycle) -> Option<u64> {
+/// Returns `Some(value_u64)` for:
+/// - Shift/rotate: VirtualSRA/SRL/SRAI/SRLI (rs2 is public bitmask),
+///   VirtualROTRI/ROTRIW (immediate bitmask)
+/// - Immediate ALU: ADDI, ANDI, ORI, XORI, SLTI, SLTIU, VirtualMULI
+///
+/// Used by ReadRaf to exploit public right operands:
+/// - Skip MPC for And/Xor/Or/shift suffixes when right operand is known
+/// - Compute SignExtension suffix locally
+fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
     let extract_right = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u64> {
         match inputs.1 {
             Rep3Operand::Public(v)
@@ -106,6 +111,7 @@ fn compute_right_operand_public_mask(cycle: &Rep3Cycle) -> Option<u64> {
         }
     };
     match cycle {
+        // Shift/rotate — rs2 is public bitmask
         Rep3Cycle::VirtualSRA(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -116,6 +122,34 @@ fn compute_right_operand_public_mask(cycle: &Rep3Cycle) -> Option<u64> {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
         Rep3Cycle::VirtualSRLI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualROTRI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualROTRIW(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        // Immediate ALU — right operand is the immediate
+        Rep3Cycle::ADDI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::ANDI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::ORI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::XORI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::SLTI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::SLTIU(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualMULI(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
         _ => None,
@@ -535,11 +569,12 @@ where
     state.prover_state.cycle_witness.lookup_indices = either_indices;
 
     // Build right_operand_public_mask for SignExtension shortcut in ReadRaf.
-    // Populated for VirtualSRA/SRL/SRAI/SRLI where the shift bitmask is public.
-    // TODO: optimize: avoid iterating over all cycles
+    // Populated for instructions where the right operand is public:
+    // shift/rotate (VirtualSRA/SRL/SRAI/SRLI/ROTRI/ROTRIW) and
+    // immediate ALU (ADDI/ANDI/ORI/XORI/SLTI/SLTIU/VirtualMULI).
     state.prover_state.cycle_witness.right_operand_public_mask = trace
         .par_iter()
-        .map(compute_right_operand_public_mask)
+        .map(compute_right_operand_public)
         .collect();
 
     let mut batch = Arc::try_unwrap(batch_cell)

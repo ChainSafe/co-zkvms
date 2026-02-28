@@ -1,5 +1,4 @@
 pub mod format;
-pub mod suffixes;
 pub mod types;
 
 pub use types::rep3_operand::{promote_operand_to_share, Rep3Operand, PUBLIC_ZERO};
