@@ -6,6 +6,7 @@ use crate::host::memory::Rep3Memory;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Either;
 use crate::zkvm::instruction::Rep3Cycle;
 use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -61,9 +62,16 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     pub ram_read_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_write_value: Vec<Rep3PrimeFieldShare<F>>,
 
-    /// Full 128-bit lookup indices per cycle (ring-shared).
+    /// Full 128-bit lookup indices per cycle.
+    /// `Either::Public` for control-only instructions (LUI, AUIPC, JAL, VirtualPow2*, etc.),
+    /// `Either::Shared` for instructions with secret operands.
     /// Persisted from witness gen for use in ReadRaf suffix evaluation.
-    pub lookup_indices: Vec<Rep3RingShare<u128>>,
+    pub lookup_indices: Vec<Either<u128, Rep3RingShare<u128>>>,
+
+    /// Per-cycle optional public right-operand bitmask (for SignExtension shortcut).
+    /// `Some(mask)` for VirtualSRA/SRL/SRAI/SRLI cycles where the shift bitmask is public.
+    /// Used by ReadRaf to skip MPC for SignExtension suffix on these cycles.
+    pub right_operand_public_mask: Vec<Option<u64>>,
 
     /// Per-cycle lookup table variant (public; derived from opcode).
     /// `None` for NoOp/padding and tableless instructions (SD/LD/FENCE/ECALL).

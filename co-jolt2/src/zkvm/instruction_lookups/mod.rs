@@ -120,6 +120,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         let lookup_indices = cw.lookup_indices.clone();
         let lookup_tables = std::mem::take(&mut cw.lookup_tables);
         let is_interleaved_operands = std::mem::take(&mut cw.is_interleaved_operands);
+        let right_operand_public_mask = std::mem::take(&mut cw.right_operand_public_mask);
         let read_raf = Rep3ReadRafSumcheckWorker::new(
             init.read_raf_gamma,
             init.rv_claim,
@@ -129,6 +130,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             lookup_tables,
             is_interleaved_operands,
             lookup_indices,
+            right_operand_public_mask,
             io_ctx,
             sm.party_id,
             edabits_pool,

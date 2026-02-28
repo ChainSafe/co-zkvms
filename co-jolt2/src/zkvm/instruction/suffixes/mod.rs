@@ -17,7 +17,9 @@
 
 use crate::field::JoltField;
 use crate::utils::future_ring::{FutureOp, FutureRep3Ring};
+use crate::utils::types::Either;
 use jolt2_common::constants::XLEN;
+use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
@@ -101,24 +103,29 @@ impl_uninterleavable!(u128, u64);
 /// Suffix evaluation future parameterized by half-ring type H.
 pub type SuffixFuture<H, F> = FutureRep3Ring<H, Rep3PrimeFieldShare<F>>;
 
+/// Compute the sign-extension suffix value from a public right-operand bitmask.
+///
+/// Mirrors vanilla `SignExtensionSuffix::suffix_mle` logic:
+/// sign extension padding length = trailing_zeros of the right operand's low bits.
+fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
+    let y_len = suffix_len / 2;
+    let y_low = if y_len >= 64 {
+        mask_u64
+    } else {
+        mask_u64 & ((1u64 << y_len) - 1)
+    };
+    let padding_len = y_low.trailing_zeros() as u64;
+    // The sign-extension MLE value: 2^padding_len
+    1u64 << padding_len.min(63)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Zero-extend a smaller binary share to a larger ring.
-/// Local operation (no communication).
-fn zext<S: IntRing2k, D: IntRing2k>(s: Rep3RingShare<S>) -> Rep3RingShare<D>
-where
-    S: AsPrimitive<D>,
-{
-    Rep3RingShare {
-        a: RingElement(s.a.0.as_()),
-        b: RingElement(s.b.0.as_()),
-    }
-}
-
-/// Truncate or zero-extend a share to u32 (used by W-variant instructions).
+/// Truncate a share to u32 (used by W-variant instructions).
 fn to_u32_share<H: IntRing2k>(s: Rep3RingShare<H>) -> Rep3RingShare<u32> {
+    // Via Into<u128> → truncate, since H may not impl AsPrimitive<u32> directly.
     let a: u128 = s.a.0.into();
     let b: u128 = s.b.0.into();
     Rep3RingShare {
@@ -141,21 +148,28 @@ where
 // Top-level dispatch
 // ---------------------------------------------------------------------------
 
-/// Evaluate a suffix MLE on a batch of secret suffix bits, producing
+/// Evaluate a suffix MLE on a batch of lookup-index suffix bits, producing
 /// per-cycle suffix futures (deferred field conversion).
 ///
-/// `bits[j]` is a **binary-domain** `Rep3RingShare<T>` representing the low
-/// `suffix_len` bits of cycle j's lookup index, where `T` is the smallest
-/// ring fitting `suffix_len` bits.
+/// Accepts `Either` indices — batches may be mixed (public + shared).
+/// Each suffix arm handles the public/shared split internally via
+/// `split_and_eval`: public entries are computed locally via
+/// `suffix.suffix_mle()`, shared entries go through the per-suffix MPC path,
+/// and results are merged in original order.
+///
+/// Special cases:
+/// - `SignExtension`: shared entries with a `right_operand_public_mask` are
+///   also computed locally (no MPC) via the public bitmask.
 ///
 /// Returns `Vec<SuffixFuture<T::Half, F>>` — callers must call
 /// `fulfill_batched_with_pool` to convert to `Vec<Rep3PrimeFieldShare<F>>`.
 pub fn evaluate_suffix_mle_batched<T, F, N>(
     suffix: &Suffixes,
-    bits: &[Rep3RingShare<T>],
+    indices: &[Either<u128, Rep3RingShare<T>>],
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
+    right_operand_public_mask: Option<&[Option<u64>]>,
 ) -> eyre::Result<Vec<SuffixFuture<T::Half, F>>>
 where
     T: Uninterleavable + AsPrimitive<Bit>,
@@ -164,7 +178,7 @@ where
     F: JoltField,
     N: Rep3Network,
 {
-    let n = bits.len();
+    let n = indices.len();
 
     // suffix_len == 0 is handled by caller (constant value).
     debug_assert!(suffix_len > 0);
@@ -178,45 +192,49 @@ where
         ]),
 
         // --- Simple bitwise (uninterleave + local bitwise op) ---
-        Suffixes::And => eval_and(bits, io_ctx),
-        Suffixes::NotAnd => eval_notand(bits, io_ctx),
-        Suffixes::Xor => eval_xor(bits),
-        Suffixes::Or => eval_or(bits, io_ctx),
+        Suffixes::And => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_and(b, io_ctx)),
+        Suffixes::NotAnd => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_notand(b, io_ctx)),
+        Suffixes::Xor => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_xor(b)),
+        Suffixes::Or => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_or(b, io_ctx)),
 
         // --- Value extraction ---
-        Suffixes::RightOperand => Ok(eval_right_operand(bits)),
-        Suffixes::RightOperandW => Ok(eval_right_operand_w(bits)),
-        Suffixes::UpperWord => eval_upper_word(bits, io_ctx),
-        Suffixes::LowerWord => eval_lower_word(bits, io_ctx),
-        Suffixes::LowerHalfWord => eval_lower_half_word(bits, io_ctx),
-        Suffixes::Lsb => Ok(eval_lsb(bits)),
-        Suffixes::TwoLsb => eval_two_lsb(bits, io_ctx),
+        Suffixes::RightOperand => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_right_operand(b))),
+        Suffixes::RightOperandW => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_right_operand_w(b))),
+        Suffixes::UpperWord => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_upper_word(b, io_ctx)),
+        Suffixes::LowerWord => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_lower_word(b, io_ctx)),
+        Suffixes::LowerHalfWord => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_lower_half_word(b, io_ctx)),
+        Suffixes::Lsb => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_lsb(b))),
+        Suffixes::TwoLsb => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_two_lsb(b, io_ctx)),
 
         // --- Comparisons ---
-        Suffixes::LessThan => eval_less_than(bits, io_ctx),
-        Suffixes::GreaterThan => eval_greater_than(bits, io_ctx),
-        Suffixes::Eq => eval_eq(bits, io_ctx),
-        Suffixes::LeftOperandIsZero => eval_left_is_zero(bits, io_ctx),
-        Suffixes::RightOperandIsZero => eval_right_is_zero(bits, io_ctx),
-        Suffixes::DivByZero => eval_div_by_zero(bits, suffix_len, io_ctx, party_id),
-        Suffixes::OverflowBitsZero => eval_overflow_bits_zero(bits, io_ctx),
+        Suffixes::LessThan => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_less_than(b, io_ctx)),
+        Suffixes::GreaterThan => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_greater_than(b, io_ctx)),
+        Suffixes::Eq => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_eq(b, io_ctx)),
+        Suffixes::LeftOperandIsZero => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_left_is_zero(b, io_ctx)),
+        Suffixes::RightOperandIsZero => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_right_is_zero(b, io_ctx)),
+        Suffixes::DivByZero => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_div_by_zero(b, suffix_len, io_ctx, party_id)),
+        Suffixes::OverflowBitsZero => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_overflow_bits_zero(b, io_ctx)),
 
         // --- Change divisor ---
-        Suffixes::ChangeDivisor => eval_change_divisor(bits, suffix_len, io_ctx, party_id),
-        Suffixes::ChangeDivisorW => eval_change_divisor_w(bits, suffix_len, io_ctx, party_id),
+        Suffixes::ChangeDivisor => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_change_divisor(b, suffix_len, io_ctx, party_id)),
+        Suffixes::ChangeDivisorW => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_change_divisor_w(b, suffix_len, io_ctx, party_id)),
 
         // --- Pow2 ---
-        Suffixes::Pow2 => eval_pow2(bits, suffix_len, io_ctx, party_id),
-        Suffixes::Pow2W => eval_pow2_w(bits, suffix_len, io_ctx, party_id),
+        Suffixes::Pow2 => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_pow2(b, suffix_len, io_ctx, party_id)),
+        Suffixes::Pow2W => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_pow2_w(b, suffix_len, io_ctx, party_id)),
 
         // --- Sign extension ---
-        Suffixes::SignExtension => eval_sign_extension(bits, suffix_len, io_ctx, party_id),
-        Suffixes::SignExtensionUpperHalf => {
-            eval_sign_extension_upper_half(bits, suffix_len, io_ctx, party_id)
-        }
-        Suffixes::SignExtensionRightOperand => {
-            eval_sign_extension_right_operand(bits, suffix_len, io_ctx, party_id)
-        }
+        // SignExtension uses right_operand_public_mask: shared entries with a
+        // public bitmask are computed locally without MPC.
+        Suffixes::SignExtension => split_and_eval_sign_ext(
+            indices, suffix_len, party_id, right_operand_public_mask, io_ctx,
+        ),
+        Suffixes::SignExtensionUpperHalf => split_and_eval(suffix, indices, suffix_len, party_id, |b| {
+            eval_sign_extension_upper_half(b, suffix_len, io_ctx, party_id)
+        }),
+        Suffixes::SignExtensionRightOperand => split_and_eval(suffix, indices, suffix_len, party_id, |b| {
+            eval_sign_extension_right_operand(b, suffix_len, io_ctx, party_id)
+        }),
 
         // --- Right shift / left shift (bitmask-based) ---
         Suffixes::RightShift
@@ -226,23 +244,135 @@ where
         | Suffixes::RightShiftW
         | Suffixes::RightShiftWHelper
         | Suffixes::LeftShiftWHelper
-        | Suffixes::LeftShiftW => {
-            eval_with_vanilla_open(bits, suffix_len, suffix, io_ctx, party_id)
-        }
+        | Suffixes::LeftShiftW => split_and_eval(suffix, indices, suffix_len, party_id, |b| {
+            eval_with_vanilla_open(b, suffix_len, suffix, io_ctx, party_id)
+        }),
 
         // --- XOR-rotate ---
-        Suffixes::XorRot16 => Ok(eval_xor_rot::<16, T, F>(bits)),
-        Suffixes::XorRot24 => Ok(eval_xor_rot::<24, T, F>(bits)),
-        Suffixes::XorRot32 => Ok(eval_xor_rot::<32, T, F>(bits)),
-        Suffixes::XorRot63 => Ok(eval_xor_rot::<63, T, F>(bits)),
-        Suffixes::XorRotW7 => eval_xor_rot_w::<7, T, F, N>(bits, io_ctx),
-        Suffixes::XorRotW8 => eval_xor_rot_w::<8, T, F, N>(bits, io_ctx),
-        Suffixes::XorRotW12 => eval_xor_rot_w::<12, T, F, N>(bits, io_ctx),
-        Suffixes::XorRotW16 => eval_xor_rot_w::<16, T, F, N>(bits, io_ctx),
+        Suffixes::XorRot16 => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_xor_rot::<16, T, F>(b))),
+        Suffixes::XorRot24 => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_xor_rot::<24, T, F>(b))),
+        Suffixes::XorRot32 => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_xor_rot::<32, T, F>(b))),
+        Suffixes::XorRot63 => split_and_eval(suffix, indices, suffix_len, party_id, |b| Ok(eval_xor_rot::<63, T, F>(b))),
+        Suffixes::XorRotW7 => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_xor_rot_w::<7, T, F, N>(b, io_ctx)),
+        Suffixes::XorRotW8 => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_xor_rot_w::<8, T, F, N>(b, io_ctx)),
+        Suffixes::XorRotW12 => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_xor_rot_w::<12, T, F, N>(b, io_ctx)),
+        Suffixes::XorRotW16 => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_xor_rot_w::<16, T, F, N>(b, io_ctx)),
 
         // --- Rev8W ---
-        Suffixes::Rev8W => eval_rev8w(bits, io_ctx),
+        Suffixes::Rev8W => split_and_eval(suffix, indices, suffix_len, party_id, |b| eval_rev8w(b, io_ctx)),
     }
+}
+
+/// Split an `Either` batch into public (computed locally) and shared (evaluated
+/// via `eval_shared`), then merge results in original order.
+///
+/// Public entries: `suffix.suffix_mle()` → `Ready(trivial_share)`.
+/// Shared entries: collected, passed to `eval_shared`, scattered back.
+///
+/// When all entries are the same variant, the non-applicable path is skipped
+/// (no allocation for the empty side).
+fn split_and_eval<T, F>(
+    suffix: &Suffixes,
+    indices: &[Either<u128, Rep3RingShare<T>>],
+    suffix_len: usize,
+    party_id: PartyID,
+    eval_shared: impl FnOnce(&[Rep3RingShare<T>]) -> eyre::Result<Vec<SuffixFuture<T::Half, F>>>,
+) -> eyre::Result<Vec<SuffixFuture<T::Half, F>>>
+where
+    T: Uninterleavable,
+    F: JoltField,
+{
+    let n = indices.len();
+    let mask = if suffix_len >= 128 { u128::MAX } else { (1u128 << suffix_len) - 1 };
+
+    let mut result: Vec<SuffixFuture<T::Half, F>> = Vec::with_capacity(n);
+    let mut shared_positions: Vec<usize> = Vec::new();
+    let mut shared_bits: Vec<Rep3RingShare<T>> = Vec::new();
+
+    for (i, idx) in indices.iter().enumerate() {
+        match idx {
+            Either::Public(p) => {
+                let val = suffix.suffix_mle::<XLEN>(LookupBits::new(*p & mask, suffix_len));
+                result.push(SuffixFuture::Ready(
+                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id),
+                ));
+            }
+            Either::Shared(s) => {
+                shared_positions.push(i);
+                shared_bits.push(*s);
+                // Placeholder — will be overwritten by scatter below.
+                result.push(SuffixFuture::Ready(Rep3PrimeFieldShare::zero_share()));
+            }
+        }
+    }
+
+    if !shared_bits.is_empty() {
+        let shared_futures = eval_shared(&shared_bits)?;
+        for (k, &pos) in shared_positions.iter().enumerate() {
+            result[pos] = shared_futures[k].clone();
+        }
+    }
+
+    Ok(result)
+}
+
+/// Split-and-eval specialised for `SignExtension`: shared entries that have
+/// a `right_operand_public_mask` are computed locally from the bitmask,
+/// avoiding MPC entirely.
+fn split_and_eval_sign_ext<T, F, N>(
+    indices: &[Either<u128, Rep3RingShare<T>>],
+    suffix_len: usize,
+    party_id: PartyID,
+    right_operand_public_mask: Option<&[Option<u64>]>,
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Vec<SuffixFuture<T::Half, F>>>
+where
+    T: Uninterleavable + AsPrimitive<Bit>,
+    Standard: Distribution<T> + Distribution<T::Half>,
+    T::Half: AsPrimitive<T> + AsPrimitive<Bit>,
+    F: JoltField,
+    N: Rep3Network,
+{
+    let n = indices.len();
+    let mask = if suffix_len >= 128 { u128::MAX } else { (1u128 << suffix_len) - 1 };
+    let suffix = Suffixes::SignExtension;
+
+    let mut result: Vec<SuffixFuture<T::Half, F>> = Vec::with_capacity(n);
+    let mut shared_positions: Vec<usize> = Vec::new();
+    let mut shared_bits: Vec<Rep3RingShare<T>> = Vec::new();
+
+    for (i, idx) in indices.iter().enumerate() {
+        match idx {
+            Either::Public(p) => {
+                let val = suffix.suffix_mle::<XLEN>(LookupBits::new(*p & mask, suffix_len));
+                result.push(SuffixFuture::Ready(
+                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id),
+                ));
+            }
+            Either::Shared(s) => {
+                // Check if the right-operand bitmask is available for this entry.
+                if let Some(mask_val) = right_operand_public_mask.and_then(|m| m[i]) {
+                    let val = compute_sign_extension_from_mask(mask_val, suffix_len);
+                    result.push(SuffixFuture::Ready(
+                        Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id),
+                    ));
+                } else {
+                    shared_positions.push(i);
+                    shared_bits.push(*s);
+                    result.push(SuffixFuture::Ready(Rep3PrimeFieldShare::zero_share()));
+                }
+            }
+        }
+    }
+
+    if !shared_bits.is_empty() {
+        let shared_futures = eval_sign_extension(&shared_bits, suffix_len, io_ctx, party_id)?;
+        for (k, &pos) in shared_positions.iter().enumerate() {
+            result[pos] = shared_futures[k].clone();
+        }
+    }
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

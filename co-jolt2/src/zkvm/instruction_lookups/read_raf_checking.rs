@@ -3,7 +3,7 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::fwht::{fwht_additive_in_place, fwht_rep3_in_place, shift_eq_table_with_mask};
-use crate::utils::types::Rep3Value;
+use crate::utils::types::{Either, Rep3Value};
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use jolt2_common::constants::XLEN;
 use jolt_core::poly::eq_poly::EqPolynomial;
@@ -335,9 +335,14 @@ struct ReadRafProverState<F: JoltField> {
     v: ExpandingTable<F>,
 
     // -- Lookup index data from witness --
-    /// Full 128-bit lookup indices per cycle (ring-shared, arithmetic domain).
+    /// Full 128-bit lookup indices per cycle.
+    /// `Either::Public` for control-only instructions, `Either::Shared` for secret operands.
     /// Used to extract suffix bits per phase.
-    lookup_indices: Vec<Rep3RingShare<u128>>,
+    lookup_indices: Vec<Either<u128, Rep3RingShare<u128>>>,
+
+    /// Per-cycle optional public right-operand bitmask (for SignExtension shortcut).
+    /// `Some(mask)` for VirtualSRA/SRL/SRAI/SRLI cycles where the shift bitmask is public.
+    right_operand_public_mask: Vec<Option<u64>>,
 
     // -- Mask data from witness --
     /// The D Rep3OneHotPolynomials (owned; reused across phases).
@@ -391,7 +396,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         eq_r_cycle_public: &[F],
         lookup_tables: Vec<Option<LookupTables<XLEN>>>,
         is_interleaved_operands: Vec<bool>,
-        lookup_indices: Vec<Rep3RingShare<u128>>,
+        lookup_indices: Vec<Either<u128, Rep3RingShare<u128>>>,
+        right_operand_public_mask: Vec<Option<u64>>,
         io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
         edabits_pool: EdaBitsPool<F>,
@@ -538,6 +544,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             prefix_registry: PrefixRegistry::new(),
             v: ExpandingTable::new(M),
             lookup_indices,
+            right_operand_public_mask,
             one_hot_polys,
             ehat16: None,
             c16: vec![None; num_cycles],
@@ -572,13 +579,17 @@ fn promote_to_trivial_share<F: JoltField>(val: F, party_id: PartyID) -> Rep3Prim
 ///
 /// Generic over `T: Uninterleavable` — callers downcast `u128` suffix bits to
 /// the smallest ring that fits `suffix_len`, reducing EdaBit and communication cost.
+///
+/// Accepts `Either` indices: `Public` entries are evaluated locally (no MPC),
+/// `Shared` entries go through the MPC suffix evaluation path.
 fn eval_and_fulfill_suffixes<T, F, N>(
-    active_bits: &[Rep3RingShare<T>],
+    active_bits: &[Either<u128, Rep3RingShare<T>>],
     needed_suffixes: &[Suffixes],
     suffix_len: usize,
     io_ctx: &mut IoContextPool<N>,
     party_id: PartyID,
     pool: &mut EdaBitsPool<F>,
+    right_operand_public_mask: Option<&[Option<u64>]>,
 ) -> eyre::Result<(Vec<u8>, Vec<Rep3PrimeFieldShare<F>>)>
 where
     T: crate::zkvm::instruction::suffixes::Uninterleavable + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
@@ -596,7 +607,12 @@ where
         std::collections::HashMap::new();
     for &suffix in needed_suffixes {
         let futures = evaluate_suffix_mle_batched(
-            &suffix, active_bits, suffix_len, io_ctx.main(), party_id,
+            &suffix,
+            active_bits,
+            suffix_len,
+            io_ctx.main(),
+            party_id,
+            right_operand_public_mask,
         )?;
         suffix_futures_map.insert(suffix as u8, futures);
     }
@@ -843,13 +859,29 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Only extract suffix bits for active cycles (those with a lookup table).
         // NoOp/padding cycles have no table and never contribute to suffix histograms.
         let num_active = self.table_cycles.len();
-        let active_suffix_bits: Option<Vec<Rep3RingShare<u128>>> = if suffix_len > 0 {
+        let active_suffix_bits: Option<Vec<Either<u128, Rep3RingShare<u128>>>> = if suffix_len > 0 {
             let mask = RingElement((1u128 << suffix_len) - 1);
+            let mask_plain = (1u128 << suffix_len) - 1;
             Some(
                 self.table_cycles
                     .iter()
-                    .map(|&j| self.lookup_indices[j] & mask)
+                    .map(|&j| match &self.lookup_indices[j] {
+                        Either::Public(p) => Either::Public(p & mask_plain),
+                        Either::Shared(s) => Either::Shared(*s & mask),
+                    })
                     .collect(),
+            )
+        } else {
+            None
+        };
+
+        // Build right_operand_public_mask subset aligned to table_cycles.
+        let active_rom = if suffix_len > 0 {
+            Some(
+                self.table_cycles
+                    .iter()
+                    .map(|&j| self.right_operand_public_mask[j])
+                    .collect::<Vec<_>>(),
             )
         } else {
             None
@@ -863,9 +895,12 @@ impl<F: JoltField> ReadRafProverState<F> {
             global_to_active[global] = local;
         }
 
-        // -- Step 1: Collect unique suffix types needed across all tables --
+        // -- Step 1: Collect unique suffix types needed across tables present in trace --
         let mut needed_suffixes: Vec<Suffixes> = Vec::new();
-        for table in LookupTables::<XLEN>::iter() {
+        for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
+            if self.lookup_indices_by_table[table_idx].is_empty() {
+                continue;
+            }
             for suffix in table.suffixes() {
                 if !matches!(suffix, Suffixes::One)
                     && suffix_len > 0
@@ -879,31 +914,44 @@ impl<F: JoltField> ReadRafProverState<F> {
         // -- Step 2: Batch-evaluate each unique suffix over ACTIVE cycles only --
         // Dispatch to the smallest ring type that fits suffix_len bits.
         // Returns (sorted suffix keys, flat field values) for cache construction.
+        let rom_ref = active_rom.as_deref();
         let (suffix_keys, all_field) = if let Some(ref active_bits) = active_suffix_bits {
             match suffix_len {
-                65..=128 => eval_and_fulfill_suffixes::<u128, F, N>(
-                    active_bits, &needed_suffixes, suffix_len,
-                    io_ctx, self.party_id, &mut self.edabits_pool,
-                )?,
+                65..=128 => {
+                    let bits: Vec<Either<u128, Rep3RingShare<u128>>> = active_bits.clone();
+                    eval_and_fulfill_suffixes::<u128, F, N>(
+                        &bits, &needed_suffixes, suffix_len,
+                        io_ctx, self.party_id, &mut self.edabits_pool, rom_ref,
+                    )?
+                }
                 33..=64 => {
-                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u64>(*b)).collect();
+                    let bits: Vec<Either<u128, Rep3RingShare<u64>>> = active_bits.iter().map(|b| match b {
+                        Either::Public(p) => Either::Public(*p),
+                        Either::Shared(s) => Either::Shared(downcast::<u128, u64>(*s)),
+                    }).collect();
                     eval_and_fulfill_suffixes::<u64, F, N>(
                         &bits, &needed_suffixes, suffix_len,
-                        io_ctx, self.party_id, &mut self.edabits_pool,
+                        io_ctx, self.party_id, &mut self.edabits_pool, rom_ref,
                     )?
                 }
                 17..=32 => {
-                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u32>(*b)).collect();
+                    let bits: Vec<Either<u128, Rep3RingShare<u32>>> = active_bits.iter().map(|b| match b {
+                        Either::Public(p) => Either::Public(*p),
+                        Either::Shared(s) => Either::Shared(downcast::<u128, u32>(*s)),
+                    }).collect();
                     eval_and_fulfill_suffixes::<u32, F, N>(
                         &bits, &needed_suffixes, suffix_len,
-                        io_ctx, self.party_id, &mut self.edabits_pool,
+                        io_ctx, self.party_id, &mut self.edabits_pool, rom_ref,
                     )?
                 }
                 1..=16 => {
-                    let bits: Vec<_> = active_bits.iter().map(|b| downcast::<u128, u16>(*b)).collect();
+                    let bits: Vec<Either<u128, Rep3RingShare<u16>>> = active_bits.iter().map(|b| match b {
+                        Either::Public(p) => Either::Public(*p),
+                        Either::Shared(s) => Either::Shared(downcast::<u128, u16>(*s)),
+                    }).collect();
                     eval_and_fulfill_suffixes::<u16, F, N>(
                         &bits, &needed_suffixes, suffix_len,
-                        io_ctx, self.party_id, &mut self.edabits_pool,
+                        io_ctx, self.party_id, &mut self.edabits_pool, rom_ref,
                     )?
                 }
                 _ => unreachable!("suffix_len must be 1..=128"),
@@ -1110,10 +1158,21 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Only compute B2A for non-NoOp cycles. NoOp padding cycles have c16==None
         // and are skipped in the histogram scatter. This includes SD/LD/FENCE/ECALL
         // which have lookup_table()==None but valid c16 entries.
+        // Public indices are unwrapped to trivial shares for operand Q computation
+        // (operand Q always needs Rep3RingShare for B2A conversion).
         let non_noop_lookup_indices: Vec<Rep3RingShare<u128>> = self
             .non_noop_cycles
             .iter()
-            .map(|&j| self.lookup_indices[j])
+            .map(|&j| match &self.lookup_indices[j] {
+                Either::Public(p) => {
+                    // Promote to trivial binary share — the value is already in binary domain.
+                    mpc_core::protocols::rep3_ring::binary::promote_to_trivial_share(
+                        self.party_id,
+                        &RingElement(*p),
+                    )
+                }
+                Either::Shared(s) => *s,
+            })
             .collect();
 
         // Dense mapping: global cycle index → non_noop-local index.
