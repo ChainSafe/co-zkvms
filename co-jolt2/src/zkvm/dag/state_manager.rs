@@ -6,13 +6,14 @@ use crate::host::memory::Rep3Memory;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::utils::types::Either;
 use crate::zkvm::instruction::Rep3Cycle;
+use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
-use jolt2_common::constants::XLEN;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
@@ -61,9 +62,16 @@ pub struct Rep3CycleWitnesses<F: JoltField> {
     pub ram_read_value: Vec<Rep3PrimeFieldShare<F>>,
     pub ram_write_value: Vec<Rep3PrimeFieldShare<F>>,
 
-    /// Full 128-bit lookup indices per cycle (ring-shared).
+    /// Full 128-bit lookup indices per cycle.
+    /// `Either::Public` for control-only instructions (LUI, AUIPC, JAL, VirtualPow2*, etc.),
+    /// `Either::Shared` for instructions with secret operands.
     /// Persisted from witness gen for use in ReadRaf suffix evaluation.
-    pub lookup_indices: Vec<Rep3RingShare<u128>>,
+    pub lookup_indices: Vec<Either<u128, Rep3RingShare<u128>>>,
+
+    /// Per-cycle optional public right-operand bitmask (for SignExtension shortcut).
+    /// `Some(mask)` for VirtualSRA/SRL/SRAI/SRLI cycles where the shift bitmask is public.
+    /// Used by ReadRaf to skip MPC for SignExtension suffix on these cycles.
+    pub right_operand_public_mask: Vec<Option<u64>>,
 
     /// Per-cycle lookup table variant (public; derived from opcode).
     /// `None` for NoOp/padding and tableless instructions (SD/LD/FENCE/ECALL).
@@ -281,7 +289,10 @@ impl<'a, F: JoltField> Rep3CycleWitnessRef<'a, F> {
             // (0, x * y_u64) as a u128 (represented in the field); provided by the caller.
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (zero, promote_to_trivial_share(party_id, F::from_u64(self.advice())))
+            (
+                zero,
+                promote_to_trivial_share(party_id, F::from_u64(self.advice())),
+            )
         } else {
             // Default: operands are the instruction inputs interpreted as (x, y_u64).
             (left_u64, right_u64)

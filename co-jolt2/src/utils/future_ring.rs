@@ -84,6 +84,73 @@ pub trait Rep3RingFutureExt<R: IntRing2k, U, T, Args = ()> {
         MapFn: Fn(U, Args) -> T + Send + Sync;
 }
 
+/// Thread-local buckets for parallel partition of field futures.
+struct FieldBuckets<R: IntRing2k, T, Args> {
+    ready_idx: Vec<usize>,
+    ready_val: Vec<T>,
+
+    bit_idx: Vec<usize>,
+    bit_x: Vec<Rep3RingShare<Bit>>,
+    bit_args: Vec<Args>,
+
+    cast_idx: Vec<usize>,
+    cast_x: Vec<Rep3RingShare<R>>,
+    cast_args: Vec<Args>,
+
+    b2a_idx: Vec<usize>,
+    b2a_x: Vec<Rep3RingShare<R>>,
+    b2a_args: Vec<Args>,
+
+    signed_idx: Vec<usize>,
+    signed_x: Vec<Rep3RingSignedShare<R>>,
+    signed_args: Vec<Args>,
+
+    fulfilled_idx: Vec<usize>,
+    fulfilled_args: Vec<Args>,
+}
+
+impl<R: IntRing2k, T, Args> FieldBuckets<R, T, Args> {
+    fn new() -> Self {
+        Self {
+            ready_idx: Vec::new(),
+            ready_val: Vec::new(),
+            bit_idx: Vec::new(),
+            bit_x: Vec::new(),
+            bit_args: Vec::new(),
+            cast_idx: Vec::new(),
+            cast_x: Vec::new(),
+            cast_args: Vec::new(),
+            b2a_idx: Vec::new(),
+            b2a_x: Vec::new(),
+            b2a_args: Vec::new(),
+            signed_idx: Vec::new(),
+            signed_x: Vec::new(),
+            signed_args: Vec::new(),
+            fulfilled_idx: Vec::new(),
+            fulfilled_args: Vec::new(),
+        }
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.ready_idx.extend(other.ready_idx);
+        self.ready_val.extend(other.ready_val);
+        self.bit_idx.extend(other.bit_idx);
+        self.bit_x.extend(other.bit_x);
+        self.bit_args.extend(other.bit_args);
+        self.cast_idx.extend(other.cast_idx);
+        self.cast_x.extend(other.cast_x);
+        self.cast_args.extend(other.cast_args);
+        self.b2a_idx.extend(other.b2a_idx);
+        self.b2a_x.extend(other.b2a_x);
+        self.b2a_args.extend(other.b2a_args);
+        self.signed_idx.extend(other.signed_idx);
+        self.signed_x.extend(other.signed_x);
+        self.signed_args.extend(other.signed_args);
+        self.fulfilled_idx.extend(other.fulfilled_idx);
+        self.fulfilled_args.extend(other.fulfilled_args);
+    }
+}
+
 impl<R: IntRing2k, F: JoltField, T, Args> Rep3RingFutureExt<R, Rep3PrimeFieldShare<F>, T, Args>
     for Vec<FutureRep3Ring<R, T, Args>>
 where
@@ -104,152 +171,116 @@ where
     where
         MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
     {
-        let mut fufilled = vec![T::default(); self.len()];
-        let (mut bit_inject_x, mut fut_bit_inject, mut bit_inject_args) =
-            (Vec::new(), Vec::new(), Vec::new());
-        let (mut cast_x, mut fut_cast, mut cast_args) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut cast_b2a_x, mut fut_cast_b2a, mut cast_b2a_args) =
-            (Vec::new(), Vec::new(), Vec::new());
-        let (mut cast_signed_x, mut fut_cast_signed, mut cast_signed_args) =
-            (Vec::new(), Vec::new(), Vec::new());
-        let (mut fut_fulfilled, mut fulfilled_index) = (Vec::new(), Vec::new());
+        let len = self.len();
 
-        self.into_iter()
-            .zip_eq(fufilled.iter_mut())
-            .for_each(|(f, fufilled)| match f {
-                FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
-                    bit_inject_x.push(x);
-                    fut_bit_inject.push(fufilled);
-                    bit_inject_args.push(args);
+        // Parallel fold/reduce partition into indexed buckets
+        let buckets: FieldBuckets<R, T, Args> = self
+            .into_par_iter()
+            .enumerate()
+            .fold(FieldBuckets::new, |mut acc, (i, f)| {
+                match f {
+                    FutureRep3Ring::Ready(x) => {
+                        acc.ready_idx.push(i);
+                        acc.ready_val.push(x);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
+                        acc.bit_idx.push(i);
+                        acc.bit_x.push(x);
+                        acc.bit_args.push(args);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::CastToField(x), args) => {
+                        acc.cast_idx.push(i);
+                        acc.cast_x.push(x);
+                        acc.cast_args.push(args);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
+                        acc.b2a_idx.push(i);
+                        acc.b2a_x.push(x);
+                        acc.b2a_args.push(args);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::CastToFieldSigned(x), args) => {
+                        acc.signed_idx.push(i);
+                        acc.signed_x.push(x);
+                        acc.signed_args.push(args);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::Fulfilled, args) => {
+                        acc.fulfilled_idx.push(i);
+                        acc.fulfilled_args.push(args);
+                    }
+                    _ => unimplemented!(),
                 }
-                FutureRep3Ring::Pending(FutureOp::CastToField(x), args) => {
-                    cast_x.push(x);
-                    fut_cast.push(fufilled);
-                    cast_args.push(args);
-                }
-                FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
-                    cast_b2a_x.push(x);
-                    fut_cast_b2a.push(fufilled);
-                    cast_b2a_args.push(args);
-                }
-                FutureRep3Ring::Pending(FutureOp::CastToFieldSigned(x), args) => {
-                    cast_signed_x.push(x);
-                    fut_cast_signed.push(fufilled);
-                    cast_signed_args.push(args);
-                }
-                FutureRep3Ring::Pending(FutureOp::Fulfilled, args) => {
-                    fut_fulfilled.push(fufilled);
-                    fulfilled_index.push(args);
-                }
-                FutureRep3Ring::Ready(x) => {
-                    *fufilled = x;
-                }
-                _ => unimplemented!(),
+                acc
+            })
+            .reduce(FieldBuckets::new, |mut a, b| {
+                a.extend(b);
+                a
             });
 
+        let mut out = vec![T::default(); len];
+
+        // Ready — direct write
+        for k in 0..buckets.ready_idx.len() {
+            out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
+        }
+
         // Bit Inject
-        {
-            let c = if !bit_inject_x.is_empty() {
-                io_ctx.par_chunks(bit_inject_x, None, |bit_inject_x, io_ctx| {
-                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)
-                })?
-            } else {
-                vec![]
-            };
-
-            fut_bit_inject
-                .into_par_iter()
-                .zip_eq(c.into_par_iter())
-                .zip_eq(bit_inject_args)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
-        }
-
-        // Cast
-        {
-            let c = if !cast_x.is_empty() {
-                io_ctx.par_chunks(cast_x, None, |cast_x, io_ctx| {
-                    rep3_ring::casts::ring_to_field_many_selector(&cast_x, io_ctx)
-                })?
-            } else {
-                vec![]
-            };
-
-            fut_cast
-                .into_par_iter()
-                .zip_eq(c.into_par_iter())
-                .zip_eq(cast_args)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
-        }
-
-        // Cast B2A
-        {
-            let shares = if !cast_b2a_x.is_empty() {
-                io_ctx.par_chunks(cast_b2a_x, None, |cast_b2a_x, io_ctx| {
-                    rep3_ring::casts::binary_ring_to_field_many(&cast_b2a_x, io_ctx)
-                })?
-            } else {
-                vec![]
-            };
-
-            fut_cast_b2a
-                .into_par_iter()
-                .zip_eq(shares.into_par_iter())
-                .zip_eq(cast_b2a_args)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
-        }
-
-        // Cast B2A Signed
-        {
-            let shares = if !cast_signed_x.is_empty() {
-                io_ctx.par_chunks(cast_signed_x, None, |chunk, io_ctx| {
-                    rep3_ring::casts::signed_binary_ring_to_field_many(chunk, io_ctx)
-                })?
-            } else {
-                vec![]
-            };
-
-            fut_cast_signed
-                .into_par_iter()
-                .zip_eq(shares.into_par_iter())
-                .zip_eq(cast_signed_args)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
-        }
-
-        // Fulfilled
-        {
-            if !fulfilled_index.is_empty() {
-                fut_fulfilled
-                    .into_par_iter()
-                    .zip_eq(fulfilled_index)
-                    .for_each(|(f, index)| *f = map(Default::default(), index));
+        if !buckets.bit_x.is_empty() {
+            let c = io_ctx.par_chunks(buckets.bit_x, None, |xs, io_ctx| {
+                rep3_ring::conversion::bit_inject_from_bits_to_field_many(&xs, io_ctx)
+            })?;
+            for k in 0..c.len() {
+                out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
             }
         }
 
-        Ok(fufilled)
+        // Cast
+        if !buckets.cast_x.is_empty() {
+            let c = io_ctx.par_chunks(buckets.cast_x, None, |xs, io_ctx| {
+                rep3_ring::casts::ring_to_field_many_selector(&xs, io_ctx)
+            })?;
+            for k in 0..c.len() {
+                out[buckets.cast_idx[k]] = map(c[k], buckets.cast_args[k]);
+            }
+        }
+
+        // Cast B2A
+        if !buckets.b2a_x.is_empty() {
+            let shares = io_ctx.par_chunks(buckets.b2a_x, None, |xs, io_ctx| {
+                rep3_ring::casts::binary_ring_to_field_many(&xs, io_ctx)
+            })?;
+            for k in 0..shares.len() {
+                out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
+            }
+        }
+
+        // Cast B2A Signed
+        if !buckets.signed_x.is_empty() {
+            let shares = io_ctx.par_chunks(buckets.signed_x, None, |chunk, io_ctx| {
+                rep3_ring::casts::signed_binary_ring_to_field_many(chunk, io_ctx)
+            })?;
+            for k in 0..shares.len() {
+                out[buckets.signed_idx[k]] = map(shares[k], buckets.signed_args[k]);
+            }
+        }
+
+        // Fulfilled
+        for k in 0..buckets.fulfilled_idx.len() {
+            out[buckets.fulfilled_idx[k]] = map(Default::default(), buckets.fulfilled_args[k]);
+        }
+
+        Ok(out)
     }
 }
 
 /// Fulfill batched `CastToFieldB2A` futures using an [`EdaBitsPool`] for
-/// Protocol Π₂ conversion (K-bit broadcast + 1 reshare round).
+/// PCG-based B2A conversion (1 binary open round).
 ///
 /// Generic over ring type `R` — callers downcast suffix bits to the smallest
 /// ring that fits, so edaBits use fewer alphas and less communication.
 ///
 /// Only handles `CastToFieldB2A` and `Ready` variants; other `FutureOp`
 /// variants will panic.
-#[tracing::instrument(
-    skip_all,
-    name = "fulfill_batched_with_pool",
-    level = "trace"
-)]
+#[tracing::instrument(skip_all, name = "fulfill_batched_with_pool", level = "trace")]
 pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
     futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
@@ -267,77 +298,108 @@ where
 {
     use mpc_core::protocols::rep3_ring::edabits;
 
-    let mut fulfilled = vec![T::default(); futures.len()];
-    let (mut bit_inject_x, mut fut_bit_inject, mut bit_inject_args) =
-        (Vec::new(), Vec::new(), Vec::new());
-    let (mut cast_b2a_x, mut fut_cast_b2a, mut cast_b2a_args) =
-        (Vec::new(), Vec::new(), Vec::new());
+    let len = futures.len();
 
-    futures
-        .into_iter()
-        .zip_eq(fulfilled.iter_mut())
-        .for_each(|(f, slot)| match f {
-            FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
-                bit_inject_x.push(x);
-                fut_bit_inject.push(slot);
-                bit_inject_args.push(args);
+    // Parallel fold/reduce partition into indexed buckets
+    struct PoolBuckets<R: IntRing2k, T, Args> {
+        ready_idx: Vec<usize>,
+        ready_val: Vec<T>,
+        bit_idx: Vec<usize>,
+        bit_x: Vec<Rep3RingShare<Bit>>,
+        bit_args: Vec<Args>,
+        b2a_idx: Vec<usize>,
+        b2a_x: Vec<Rep3RingShare<R>>,
+        b2a_args: Vec<Args>,
+    }
+
+    impl<R: IntRing2k, T, Args> PoolBuckets<R, T, Args> {
+        fn new() -> Self {
+            Self {
+                ready_idx: Vec::new(),
+                ready_val: Vec::new(),
+                bit_idx: Vec::new(),
+                bit_x: Vec::new(),
+                bit_args: Vec::new(),
+                b2a_idx: Vec::new(),
+                b2a_x: Vec::new(),
+                b2a_args: Vec::new(),
             }
-            FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
-                cast_b2a_x.push(x);
-                fut_cast_b2a.push(slot);
-                cast_b2a_args.push(args);
+        }
+        fn extend(&mut self, other: Self) {
+            self.ready_idx.extend(other.ready_idx);
+            self.ready_val.extend(other.ready_val);
+            self.bit_idx.extend(other.bit_idx);
+            self.bit_x.extend(other.bit_x);
+            self.bit_args.extend(other.bit_args);
+            self.b2a_idx.extend(other.b2a_idx);
+            self.b2a_x.extend(other.b2a_x);
+            self.b2a_args.extend(other.b2a_args);
+        }
+    }
+
+    let buckets: PoolBuckets<R, T, Args> = futures
+        .into_par_iter()
+        .enumerate()
+        .fold(PoolBuckets::new, |mut acc, (i, f)| {
+            match f {
+                FutureRep3Ring::Ready(x) => {
+                    acc.ready_idx.push(i);
+                    acc.ready_val.push(x);
+                }
+                FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
+                    acc.bit_idx.push(i);
+                    acc.bit_x.push(x);
+                    acc.bit_args.push(args);
+                }
+                FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
+                    acc.b2a_idx.push(i);
+                    acc.b2a_x.push(x);
+                    acc.b2a_args.push(args);
+                }
+                other => panic!(
+                    "fulfill_batched_with_pool: unexpected variant {:?}",
+                    std::mem::discriminant(&other)
+                ),
             }
-            FutureRep3Ring::Ready(x) => {
-                *slot = x;
-            }
-            other => panic!(
-                "fulfill_batched_with_pool: unexpected variant {:?}",
-                std::mem::discriminant(&other)
-            ),
+            acc
+        })
+        .reduce(PoolBuckets::new, |mut a, b| {
+            a.extend(b);
+            a
         });
 
-    // Bit Inject (single-bit → field, no edaBits needed)
-    {
-        let c = if !bit_inject_x.is_empty() {
-            io_ctx.par_chunks(bit_inject_x, None, |bit_inject_x, io_ctx| {
-                rep3_ring::conversion::bit_inject_from_bits_to_field_many(&bit_inject_x, io_ctx)
-            })?
-        } else {
-            vec![]
-        };
+    let mut out = vec![T::default(); len];
 
-        fut_bit_inject
-            .into_par_iter()
-            .zip_eq(c.into_par_iter())
-            .zip_eq(bit_inject_args)
-            .for_each(|((f, c), args)| {
-                *f = map(c, args);
-            });
+    // Ready — direct write
+    for k in 0..buckets.ready_idx.len() {
+        out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
+    }
+
+    // Bit Inject (single-bit → field via daBits)
+    if !buckets.bit_x.is_empty() {
+        let dabits = pool.take_dabits(buckets.bit_x.len());
+        let pairs: Vec<_> = buckets.bit_x.into_iter().zip(dabits).collect();
+        let c: Vec<Rep3PrimeFieldShare<F>> =
+            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
+                let (xs, das): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
+                edabits::bit_inject_field_many(&xs, &das, io_ctx)
+            })?;
+        for k in 0..c.len() {
+            out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
+        }
     }
 
     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits
-    {
-        let shares = if !cast_b2a_x.is_empty() {
-            let edas = pool.take_edabits::<R>(cast_b2a_x.len());
-            let pairs: Vec<_> = cast_b2a_x.into_iter().zip(edas).collect();
-            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
-                let (xs, edas): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, edas, io_ctx)
-            })?
-        } else {
-            vec![]
-        };
-
-        fut_cast_b2a
-            .into_par_iter()
-            .zip_eq(shares.into_par_iter())
-            .zip_eq(cast_b2a_args)
-            .for_each(|((f, c), args)| {
-                *f = map(c, args);
-            });
+    if !buckets.b2a_x.is_empty() {
+        let batch = pool.take_edabits::<R>(buckets.b2a_x.len());
+        let shares =
+            edabits::ring_to_field_b2a_many::<R, F, _>(&buckets.b2a_x, &batch, io_ctx.main())?;
+        for k in 0..shares.len() {
+            out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
+        }
     }
 
-    Ok(fulfilled)
+    Ok(out)
 }
 
 impl<R, T, Args> Rep3RingFutureExt<R, Rep3RingShare<R>, T, Args> for Vec<FutureRep3Ring<R, T, Args>>
@@ -360,66 +422,101 @@ where
     where
         MapFn: Fn(Rep3RingShare<R>, Args) -> T + Send + Sync,
     {
-        let mut fufilled = vec![T::default(); self.len()];
-        let (mut mul_a2b_x, mut mul_a2b_y, mut fut_mul_a2b, mut args_mul_a2b) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let (mut a2b_x, mut fut_a2b, mut a2b_args) = (Vec::new(), Vec::new(), Vec::new());
+        let len = self.len();
 
-        self.into_iter()
-            .zip_eq(fufilled.iter_mut())
-            .for_each(|(f, fufilled)| match f {
-                FutureRep3Ring::Pending(FutureOp::RingMulA2B(a, b), args) => {
-                    mul_a2b_x.push(a);
-                    mul_a2b_y.push(b);
-                    fut_mul_a2b.push(fufilled);
-                    args_mul_a2b.push(args);
+        // Parallel fold/reduce partition into indexed buckets
+        struct RingBuckets<R: IntRing2k, T, Args> {
+            ready_idx: Vec<usize>,
+            ready_val: Vec<T>,
+            mul_idx: Vec<usize>,
+            mul_x: Vec<Rep3RingShare<R>>,
+            mul_y: Vec<Rep3RingShare<R>>,
+            mul_args: Vec<Args>,
+            a2b_idx: Vec<usize>,
+            a2b_x: Vec<Rep3RingShare<R>>,
+            a2b_args: Vec<Args>,
+        }
+
+        impl<R: IntRing2k, T, Args> RingBuckets<R, T, Args> {
+            fn new() -> Self {
+                Self {
+                    ready_idx: Vec::new(),
+                    ready_val: Vec::new(),
+                    mul_idx: Vec::new(),
+                    mul_x: Vec::new(),
+                    mul_y: Vec::new(),
+                    mul_args: Vec::new(),
+                    a2b_idx: Vec::new(),
+                    a2b_x: Vec::new(),
+                    a2b_args: Vec::new(),
                 }
-                FutureRep3Ring::Pending(FutureOp::RingA2B(x), args) => {
-                    a2b_x.push(x);
-                    fut_a2b.push(fufilled);
-                    a2b_args.push(args);
+            }
+            fn extend(&mut self, other: Self) {
+                self.ready_idx.extend(other.ready_idx);
+                self.ready_val.extend(other.ready_val);
+                self.mul_idx.extend(other.mul_idx);
+                self.mul_x.extend(other.mul_x);
+                self.mul_y.extend(other.mul_y);
+                self.mul_args.extend(other.mul_args);
+                self.a2b_idx.extend(other.a2b_idx);
+                self.a2b_x.extend(other.a2b_x);
+                self.a2b_args.extend(other.a2b_args);
+            }
+        }
+
+        let buckets: RingBuckets<R, T, Args> = self
+            .into_par_iter()
+            .enumerate()
+            .fold(RingBuckets::new, |mut acc, (i, f)| {
+                match f {
+                    FutureRep3Ring::Ready(x) => {
+                        acc.ready_idx.push(i);
+                        acc.ready_val.push(x);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::RingMulA2B(a, b), args) => {
+                        acc.mul_idx.push(i);
+                        acc.mul_x.push(a);
+                        acc.mul_y.push(b);
+                        acc.mul_args.push(args);
+                    }
+                    FutureRep3Ring::Pending(FutureOp::RingA2B(x), args) => {
+                        acc.a2b_idx.push(i);
+                        acc.a2b_x.push(x);
+                        acc.a2b_args.push(args);
+                    }
+                    _ => unimplemented!(),
                 }
-                FutureRep3Ring::Ready(x) => {
-                    *fufilled = x;
-                }
-                _ => unimplemented!(),
+                acc
+            })
+            .reduce(RingBuckets::new, |mut a, b| {
+                a.extend(b);
+                a
             });
 
-        // Mul + A2B
-        {
-            let c = if !mul_a2b_x.is_empty() && !mul_a2b_y.is_empty() {
-                let t = rep3_ring::arithmetic::mul_vec(&mul_a2b_x, &mul_a2b_y, io_ctx.main())?;
-                rep3_ring::conversion::a2b_many(&t, io_ctx.main())?
-            } else {
-                vec![]
-            };
+        let mut out = vec![T::default(); len];
 
-            fut_mul_a2b
-                .into_par_iter()
-                .zip_eq(c.into_par_iter())
-                .zip_eq(args_mul_a2b)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
+        // Ready — direct write
+        for k in 0..buckets.ready_idx.len() {
+            out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
+        }
+
+        // Mul + A2B
+        if !buckets.mul_x.is_empty() {
+            let t = rep3_ring::arithmetic::mul_vec(&buckets.mul_x, &buckets.mul_y, io_ctx.main())?;
+            let c = rep3_ring::conversion::a2b_many(&t, io_ctx.main())?;
+            for k in 0..c.len() {
+                out[buckets.mul_idx[k]] = map(c[k], buckets.mul_args[k]);
+            }
         }
 
         // A2B
-        {
-            let c = if !a2b_x.is_empty() {
-                rep3_ring::conversion::a2b_many(&a2b_x, io_ctx.main())?
-            } else {
-                vec![]
-            };
-
-            fut_a2b
-                .into_par_iter()
-                .zip_eq(c.into_par_iter())
-                .zip_eq(a2b_args)
-                .for_each(|((f, c), args)| {
-                    *f = map(c, args);
-                });
+        if !buckets.a2b_x.is_empty() {
+            let c = rep3_ring::conversion::a2b_many(&buckets.a2b_x, io_ctx.main())?;
+            for k in 0..c.len() {
+                out[buckets.a2b_idx[k]] = map(c[k], buckets.a2b_args[k]);
+            }
         }
 
-        Ok(fufilled)
+        Ok(out)
     }
 }

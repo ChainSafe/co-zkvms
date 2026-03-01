@@ -31,10 +31,130 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
+use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
+
+/// Compute the plaintext lookup index for cycles with fully-public operands.
+///
+/// Returns `Some(plain_u128)` for instructions where both operands are public
+/// (control-only: LUI, AUIPC, JAL, VirtualPow2*, VirtualShiftRightBitmask*).
+/// These use the "add" path: index = left + right (u128 arithmetic).
+///
+/// Returns `None` for all other instructions (operands may be secret-shared).
+fn compute_public_index(cycle: &Rep3Cycle) -> Option<u128> {
+    let try_public_add = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u128> {
+        let (l, r) = inputs;
+        let l_val = match l {
+            Rep3Operand::Public(v)
+            | Rep3Operand::Shared {
+                public: Some(v), ..
+            } => v,
+            _ => return None,
+        };
+        let r_val = match r {
+            Rep3Operand::Public(v)
+            | Rep3Operand::Shared {
+                public: Some(v), ..
+            } => v,
+            _ => return None,
+        };
+        Some((l_val as u128).wrapping_add(r_val as u128))
+    };
+
+    match cycle {
+        Rep3Cycle::LUI(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::AUIPC(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::JAL(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualPow2(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualPow2I(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualPow2W(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualPow2IW(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualShiftRightBitmask(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualShiftRightBitmaskI(c) => {
+            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        _ => None,
+    }
+}
+
+/// Extract the public right-operand value for instructions with a public right operand.
+///
+/// Returns `Some(value_u64)` for:
+/// - Shift/rotate: VirtualSRA/SRL/SRAI/SRLI (rs2 is public bitmask),
+///   VirtualROTRI/ROTRIW (immediate bitmask)
+/// - Immediate ALU: ADDI, ANDI, ORI, XORI, SLTI, SLTIU, VirtualMULI
+///
+/// Used by ReadRaf to exploit public right operands:
+/// - Skip MPC for And/Xor/Or/shift suffixes when right operand is known
+/// - Compute SignExtension suffix locally
+fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
+    let extract_right = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u64> {
+        match inputs.1 {
+            Rep3Operand::Public(v)
+            | Rep3Operand::Shared {
+                public: Some(v), ..
+            } => Some(v as u64),
+            _ => None,
+        }
+    };
+    match cycle {
+        // Shift/rotate — rs2 is public bitmask
+        Rep3Cycle::VirtualSRA(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualSRL(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualSRAI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualSRLI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualROTRI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualROTRIW(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        // Immediate ALU — right operand is the immediate
+        Rep3Cycle::ADDI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::ANDI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::ORI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::XORI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::SLTI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::SLTIU(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        Rep3Cycle::VirtualMULI(c) => {
+            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
+        }
+        _ => None,
+    }
+}
 
 // ── Rep3WitnessData ─────────────────────────────────────────────────────────
 
@@ -433,8 +553,29 @@ where
             }
         });
 
+    // Classify lookup indices as Either::Public or Either::Shared.
+    // Public indices are for control-only instructions (LUI, AUIPC, JAL, VirtualPow2*, etc.)
+    // where the entire lookup index is deterministic from public instruction fields.
+    let either_indices: Vec<Either<u128, Rep3RingShare<u128>>> = indices
+        .into_par_iter()
+        .zip(trace.par_iter())
+        .map(|(share, cycle)| match compute_public_index(cycle) {
+            Some(plain) => Either::Public(plain),
+            None => Either::Shared(share),
+        })
+        .collect();
+
     // Persist lookup indices for ReadRaf suffix evaluation
-    state.prover_state.cycle_witness.lookup_indices = indices;
+    state.prover_state.cycle_witness.lookup_indices = either_indices;
+
+    // Build right_operand_public_mask for SignExtension shortcut in ReadRaf.
+    // Populated for instructions where the right operand is public:
+    // shift/rotate (VirtualSRA/SRL/SRAI/SRLI/ROTRI/ROTRIW) and
+    // immediate ALU (ADDI/ANDI/ORI/XORI/SLTI/SLTIU/VirtualMULI).
+    state.prover_state.cycle_witness.right_operand_public_mask = trace
+        .par_iter()
+        .map(compute_right_operand_public)
+        .collect();
 
     let mut batch = Arc::try_unwrap(batch_cell)
         .ok()

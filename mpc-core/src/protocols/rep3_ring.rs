@@ -8,6 +8,7 @@ pub mod casts;
 pub mod conversion;
 pub mod edabits;
 mod detail;
+pub mod pcg;
 pub mod gadgets;
 pub mod lut;
 pub mod yao;
