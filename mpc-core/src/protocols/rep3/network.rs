@@ -8,8 +8,12 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
 use mpc_types::field::PrimeField;
+use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use std::iter;
 use std::sync::{Arc, OnceLock};
+
+use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -707,6 +711,60 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .flat_map(|(chunk, mut ctx)| match map(chunk, &mut ctx) {
                 Ok(result) => Either::Left(result.into_par_iter().map(|r| eyre::Ok(r))),
                 Err(err) => Either::Right(rayon::iter::once(Err(eyre::Error::from(err)))),
+            })
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Like `par_chunks` but also splits an `EdaBitsBatch` in lockstep with inputs.
+    /// Each fork receives a sub-batch with matching gammas (1:1 with inputs) and
+    /// alphas_flat (K:1 with inputs, where K = T::K bits per ring element).
+    pub fn par_chunks_preproc<T, R, F, MapFn, Err>(
+        &mut self,
+        inputs: Vec<Rep3RingShare<T>>,
+        batch: EdaBitsBatch<T, F>,
+        chunk_size: Option<usize>,
+        map: MapFn,
+    ) -> eyre::Result<Vec<R>>
+    where
+        T: IntRing2k + Send + Sync,
+        F: PrimeField + Send + Sync,
+        MapFn: Fn(Vec<Rep3RingShare<T>>, EdaBitsBatch<T, F>, &mut IoContext<Network>)
+            -> Result<Vec<R>, Err>
+            + Sync
+            + Send,
+        R: Sync + Send + Clone,
+        eyre::Report: From<Err>,
+        Err: Send + Sync,
+    {
+        let len = inputs.len();
+
+        if self.forks.is_empty() || len == 0 {
+            return Ok(map(inputs, batch, self.main())?);
+        }
+
+        let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
+        assert!(chunk_size != 0);
+        if len <= chunk_size {
+            return Ok(map(inputs, batch, self.main())?);
+        }
+        let num_forks = len.div_ceil(chunk_size);
+        let k = T::K;
+
+        inputs
+            .into_par_iter()
+            .chunks(chunk_size)
+            .zip_eq(batch.gammas.into_par_iter().chunks(chunk_size))
+            .zip_eq(batch.alphas_flat.into_par_iter().chunks(chunk_size * k))
+            .zip_eq(self.forks(num_forks).par_iter_mut())
+            .flat_map(|(((inputs, gammas), alphas), ctx)| {
+                let sub_batch = EdaBitsBatch {
+                    gammas,
+                    alphas_flat: alphas,
+                };
+                match map(inputs, sub_batch, ctx) {
+                    Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
+                    Err(e) => Either::Right(rayon::iter::once(Err(eyre::Error::from(e)))),
+                }
             })
             .collect::<Result<Vec<_>, _>>()
     }

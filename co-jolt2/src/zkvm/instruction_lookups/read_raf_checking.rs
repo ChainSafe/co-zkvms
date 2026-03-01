@@ -51,7 +51,7 @@ pub struct EdaBitBudget {
     pub u128: usize,
 }
 
-/// Compute the exact EdaBit budget needed for the given number of non-noop cycles.
+/// Compute the EdaBit budget needed for the given number of non-noop cycles.
 ///
 /// Pass the un-padded trace length (upper bound on real non-NoOp cycles).
 /// NoOp padding cycles produce `None` in `instruction_ra` / `masked_indices_c`
@@ -59,11 +59,12 @@ pub struct EdaBitBudget {
 /// to cover real instruction cycles.
 ///
 /// Two consumers:
-/// 1. **Suffix eval**: each unique B2A suffix consumes `n` edaBits of the ring type
-///    determined by `suffix_edabit_ring_bits(suffix, T::K, T::Half::K)`. Different
-///    suffixes may need different ring types (e.g. UpperWord may need T, not T::Half).
-/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half (left + right)
-///    per phase.
+/// 1. **Suffix eval** (per-table): each cycle belongs to exactly one table.
+///    For that table, each B2A suffix consumes 1 edaBit of the ring type given
+///    by `suffix_edabit_ring_bits`. The worst case per ring bucket is
+///    `max_over_tables(count_of_B2A_suffixes_in_bucket) × n`.
+/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half
+///    (left + right) per phase.
 ///
 /// Phase ring types: suffix_len = (7 - phase) * 16
 ///   Phase 0-2: T=u128, T::Half=u64
@@ -95,18 +96,27 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> EdaBitBudget {
         add_to_budget(&mut budget, t_k, n);
         add_to_budget(&mut budget, t_half_k, 2 * n);
 
-        // Suffix eval: per unique suffix, n edaBits at the correct ring type.
-        // A cycle belongs to at most one table, so the total consumption per
-        // unique suffix is at most n.
-        let mut seen = std::collections::HashSet::new();
+        // Suffix eval: each cycle belongs to exactly one table, so the per-bucket
+        // consumption is bounded by the table with the most B2A suffixes in that
+        // bucket. Compute max_per_table_count for each ring bucket, then budget
+        // max_count × n.
+        // Buckets: [u8, u16, u32, u64, u128]
+        let mut max_per_bucket = [0usize; 5];
         for table in LookupTables::<XLEN>::iter() {
+            let mut table_counts = [0usize; 5];
             for suffix in table.suffixes() {
                 if let Some(ring_bits) = suffix_edabit_ring_bits(&suffix, t_k, t_half_k) {
-                    let disc = std::mem::discriminant(&suffix);
-                    if seen.insert((disc, ring_bits)) {
-                        add_to_budget(&mut budget, ring_bits, n);
-                    }
+                    table_counts[ring_bucket(ring_bits)] += 1;
                 }
+            }
+            for b in 0..5 {
+                max_per_bucket[b] = max_per_bucket[b].max(table_counts[b]);
+            }
+        }
+        const BUCKET_BITS: [usize; 5] = [8, 16, 32, 64, 128];
+        for (b, &bits) in BUCKET_BITS.iter().enumerate() {
+            if max_per_bucket[b] > 0 {
+                add_to_budget(&mut budget, bits, max_per_bucket[b] * n);
             }
         }
     }
@@ -114,14 +124,25 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> EdaBitBudget {
     budget
 }
 
-fn add_to_budget(budget: &mut EdaBitBudget, ring_bits: usize, count: usize) {
+fn ring_bucket(ring_bits: usize) -> usize {
     match ring_bits {
-        1..=8 => budget.u8 += count,
-        9..=16 => budget.u16 += count,
-        17..=32 => budget.u32 += count,
-        33..=64 => budget.u64 += count,
-        65..=128 => budget.u128 += count,
+        1..=8 => 0,
+        9..=16 => 1,
+        17..=32 => 2,
+        33..=64 => 3,
+        65..=128 => 4,
         _ => unreachable!("unsupported ring bit-width: {}", ring_bits),
+    }
+}
+
+fn add_to_budget(budget: &mut EdaBitBudget, ring_bits: usize, count: usize) {
+    match ring_bucket(ring_bits) {
+        0 => budget.u8 += count,
+        1 => budget.u16 += count,
+        2 => budget.u32 += count,
+        3 => budget.u64 += count,
+        4 => budget.u128 += count,
+        _ => unreachable!(),
     }
 }
 
@@ -839,29 +860,6 @@ fn promote_to_trivial_share<F: JoltField>(val: F, party_id: PartyID) -> Rep3Prim
     Rep3PrimeFieldShare::promote_from_trivial(&val, party_id)
 }
 
-/// Evaluate all needed suffixes for a given ring type, flatten into a single future
-/// batch, fulfill via EdaBits pool, and return (sorted keys, flat field values).
-///
-/// Generic over `T: Uninterleavable` — callers downcast `u128` suffix bits to
-/// Evaluate operand Q suffix evals for a given ring type.
-///
-/// Downcasts the full u128 lookup indices to `T`, computes identity/left/right
-/// operand field values via EdaBits Protocol Π₂, and returns the evals.
-fn eval_operand_q_for_ring<T, F, N>(
-    suffix_bits: &[Rep3RingShare<T>],
-    io_ctx: &mut IoContextPool<N>,
-    pool: &mut EdaBitsPool<F>,
-) -> eyre::Result<crate::zkvm::suffixes::OperandQSuffixEvals<F>>
-where
-    T: crate::zkvm::suffixes::Uninterleavable,
-    T::Half: AsPrimitive<T>,
-    Standard: Distribution<T> + Distribution<T::Half>,
-    F: JoltField,
-    N: Rep3NetworkWorker,
-{
-    crate::zkvm::suffixes::compute_operand_q_suffix_evals(suffix_bits, io_ctx.main(), pool)
-}
-
 impl<F: JoltField> ReadRafProverState<F> {
     /// Initialize a new phase. Computes Ehat16, builds suffix polys and Q polys.
     ///
@@ -1285,212 +1283,265 @@ impl<F: JoltField> ReadRafProverState<F> {
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<()> {
-        use crate::zkvm::suffixes::OperandQSuffixEvals;
+        use crate::zkvm::suffixes::Uninterleavable;
+        use jolt_core::utils::uninterleave_bits;
+        use mpc_core::protocols::rep3_ring::edabits;
+        use rayon::prelude::*;
 
         let ehat16 = self.ehat16.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
-        let num_cycles = self.c16.len();
-        let num_non_noop = self.non_noop_cycles.len();
 
-        // Only compute B2A for non-NoOp cycles. NoOp padding cycles have c16==None
-        // and are skipped in the histogram scatter. This includes SD/LD/FENCE/ECALL
-        // which have lookup_table()==None but valid c16 entries.
-        // Public indices are unwrapped to trivial shares for operand Q computation
-        // (operand Q always needs Rep3RingShare for B2A conversion).
-        let non_noop_lookup_indices: Vec<Rep3RingShare<u128>> = self
-            .non_noop_cycles
-            .iter()
-            .map(|&j| match &self.lookup_indices[j] {
-                Either::Public(p) => {
-                    // Promote to trivial binary share — the value is already in binary domain.
-                    mpc_core::protocols::rep3_ring::binary::promote_to_trivial_share(
-                        self.party_id,
-                        &RingElement(*p),
-                    )
+        // Helper: FWHT unmask a Rep3 histogram against Ehat16.
+        let inv_m = F::from(M as u64).inverse().expect("M invertible");
+        let fwht_unmask = |mut h: Vec<Rep3PrimeFieldShare<F>>| -> AdditiveDensePoly<F> {
+            fwht_rep3_in_place(&mut h);
+            let mut h_k: Vec<AdditiveShare<F>> =
+                h.iter().zip(ehat16.iter()).map(|(&a, &b)| a * b).collect();
+            fwht_additive_in_place(&mut h_k);
+            for v in h_k.iter_mut() {
+                *v = *v * inv_m;
+            }
+            AdditiveDensePoly::new(h_k)
+        };
+
+        if suffix_len == 0 {
+            // All operand suffix values are zero. Only constant shift histograms matter.
+            // histograms[0] == histograms[2], histograms[1,3,5] are zero.
+            let mut hist0 = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+            for &j in &self.interleaved_cycles {
+                if let Some(c) = self.c16[j] {
+                    hist0[c as usize] += self.u_evals[j]; // shift_half_val == 1
                 }
-                Either::Shared(s) => *s,
-            })
-            .collect();
+            }
+            let mut hist4 = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+            for &j in &self.identity_cycles {
+                if let Some(c) = self.c16[j] {
+                    hist4[c as usize] += self.u_evals[j]; // shift_val == 1
+                }
+            }
 
-        // Dense mapping: global cycle index → non_noop-local index.
-        let mut global_to_non_noop = vec![0usize; num_cycles];
-        for (local, &global) in self.non_noop_cycles.iter().enumerate() {
-            global_to_non_noop[global] = local;
+            let _fwht_span = info_span!("q_fwht_unmask").entered();
+            let (q0, q4) = rayon::join(|| fwht_unmask(hist0.clone()), || fwht_unmask(hist4));
+            drop(_fwht_span);
+
+            self.left_operand_q[0] = q0.clone();
+            self.left_operand_q[1] = AdditiveDensePoly::zeros(M);
+            self.right_operand_q[0] = q0;
+            self.right_operand_q[1] = AdditiveDensePoly::zeros(M);
+            self.identity_q[0] = q4;
+            self.identity_q[1] = AdditiveDensePoly::zeros(M);
+            return Ok(());
         }
 
-        // Mask to suffix_len bits and dispatch to smallest ring type.
-        let mask = if suffix_len > 0 && suffix_len < 128 {
-            RingElement((1u128 << suffix_len) - 1)
-        } else if suffix_len >= 128 {
-            RingElement(u128::MAX)
+        // suffix_len > 0: partition non-noop cycles into public (plain F) and shared (need B2A).
+        let mask_u128 = if suffix_len < 128 {
+            (1u128 << suffix_len) - 1
         } else {
-            RingElement(0u128)
+            u128::MAX
         };
-        let masked: Vec<Rep3RingShare<u128>> =
-            non_noop_lookup_indices.iter().map(|b| *b & mask).collect();
+        let mask = RingElement(mask_u128);
 
-        let OperandQSuffixEvals {
-            left_operand,
-            right_operand,
-            identity,
-        } = if suffix_len == 0 {
-            // All zeros — will use constant path below
-            OperandQSuffixEvals {
-                left_operand: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
-                right_operand: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
-                identity: vec![Rep3PrimeFieldShare::zero_share(); num_non_noop],
+        // Public: (non_noop_local_idx, identity_val, left_val, right_val) as plain F
+        // Shared: (non_noop_local_idx, masked u128 share)
+        let mut public_operands: Vec<(usize, F, F, F)> = Vec::new();
+        let mut shared_locals: Vec<usize> = Vec::new();
+        let mut shared_masked: Vec<Rep3RingShare<u128>> = Vec::new();
+        for (local, &j) in self.non_noop_cycles.iter().enumerate() {
+            match &self.lookup_indices[j] {
+                Either::Public(p) => {
+                    let masked = *p & mask_u128;
+                    let (x, y) = uninterleave_bits(masked);
+                    public_operands.push((
+                        local,
+                        F::from_u128(masked),
+                        F::from_u128(x as u128),
+                        F::from_u128(y as u128),
+                    ));
+                }
+                Either::Shared(s) => {
+                    shared_locals.push(local);
+                    shared_masked.push(*s & mask);
+                }
             }
-        } else {
-            match suffix_len {
-                65..=128 => {
-                    eval_operand_q_for_ring::<u128, F, N>(&masked, io_ctx, &mut self.edabits_pool)?
-                }
-                33..=64 => {
-                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u64>(*b)).collect();
-                    eval_operand_q_for_ring::<u64, F, N>(&bits, io_ctx, &mut self.edabits_pool)?
-                }
-                17..=32 => {
-                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u32>(*b)).collect();
-                    eval_operand_q_for_ring::<u32, F, N>(&bits, io_ctx, &mut self.edabits_pool)?
-                }
-                1..=16 => {
-                    let bits: Vec<_> = masked.iter().map(|b| downcast::<u128, u16>(*b)).collect();
-                    eval_operand_q_for_ring::<u16, F, N>(&bits, io_ctx, &mut self.edabits_pool)?
-                }
-                _ => unreachable!("suffix_len must be 1..=128"),
+        }
+
+        // B2A for shared indices: downcast to smallest ring, parallel uninterleave,
+        // two sequential par_chunks_preproc B2A calls.
+        fn b2a_shared<T, F, N>(
+            shared_masked: Vec<Rep3RingShare<u128>>,
+            io_ctx: &mut IoContextPool<N>,
+            pool: &mut EdaBitsPool<F>,
+        ) -> eyre::Result<(
+            Vec<Rep3PrimeFieldShare<F>>,
+            Vec<Rep3PrimeFieldShare<F>>,
+            Vec<Rep3PrimeFieldShare<F>>,
+        )>
+        where
+            T: Uninterleavable,
+            T::Half: AsPrimitive<T>,
+            u128: AsPrimitive<T>,
+            Standard: Distribution<T> + Distribution<T::Half>,
+            F: JoltField,
+            N: Rep3NetworkWorker,
+        {
+            let n = shared_masked.len();
+            if n == 0 {
+                return Ok((vec![], vec![], vec![]));
             }
+
+            // Parallel downcast u128 → T
+            let downcast_bits: Vec<Rep3RingShare<T>> = shared_masked
+                .par_iter()
+                .map(|b| downcast::<u128, T>(*b))
+                .collect();
+
+            // Parallel uninterleave T → (T::Half, T::Half)
+            let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
+                downcast_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+
+            // B2A #1: identity (T-ring)
+            let id_batch = pool.take_edabits::<T>(n);
+            let identity = io_ctx.par_chunks_preproc(
+                downcast_bits,
+                id_batch,
+                None,
+                |shares, batch, ctx| {
+                    edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
+                },
+            )?;
+
+            // B2A #2: left+right batched (T::Half-ring)
+            let mut lr = Vec::with_capacity(2 * n);
+            lr.extend_from_slice(&xs);
+            lr.extend_from_slice(&ys);
+            let lr_batch = pool.take_edabits::<T::Half>(2 * n);
+            let lr_result = io_ctx.par_chunks_preproc(
+                lr,
+                lr_batch,
+                None,
+                |shares, batch, ctx| {
+                    edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
+                },
+            )?;
+            let (left, right) = lr_result.split_at(n);
+
+            Ok((left.to_vec(), right.to_vec(), identity))
+        }
+
+        let (s_left, s_right, s_identity) = match suffix_len {
+            65..=128 => {
+                b2a_shared::<u128, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
+            }
+            33..=64 => {
+                b2a_shared::<u64, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
+            }
+            17..=32 => {
+                b2a_shared::<u32, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
+            }
+            1..=16 => {
+                b2a_shared::<u16, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
+            }
+            _ => unreachable!("suffix_len must be 1..=128"),
         };
 
         // Constant suffix values
-        let shift_half_val = if suffix_len > 0 {
-            F::from_u128(1u128 << (suffix_len / 2))
-        } else {
-            F::one()
-        };
-        let shift_val = if suffix_len > 0 {
-            F::from_u128(1u128 << suffix_len)
-        } else {
-            F::one()
-        };
+        let shift_half_val = F::from_u128(1u128 << (suffix_len / 2));
+        let shift_val = F::from_u128(1u128 << suffix_len);
 
-        // Build 6 histograms: left[0], left[1], right[0], right[1], identity[0], identity[1]
-        let mut histograms: Vec<Vec<Rep3PrimeFieldShare<F>>> = (0..6)
-            .map(|_| vec![Rep3PrimeFieldShare::<F>::zero_share(); M])
-            .collect();
-
-        if suffix_len == 0 {
-            // All suffixes are public constants — no MPC multiplication needed.
-            // ShiftHalf, OperandPoly(Left/Right), Shift, Identity all return constants
-            // when suffix_len == 0 (the bitvector is empty).
-            let left_op_val = F::zero(); // OperandPolynomial::suffix_mle(empty) = u128::from(empty) = 0
-            let right_op_val = F::zero();
-            let identity_val = F::zero(); // IdentityPolynomial::suffix_mle(empty) = 0
-
-            for &j in &self.interleaved_cycles {
-                if let Some(c) = self.c16[j] {
-                    let u = self.u_evals[j];
-                    histograms[0][c as usize] += u * shift_half_val;
-                    if left_op_val != F::zero() {
-                        histograms[1][c as usize] += u * left_op_val;
-                    }
-                    histograms[2][c as usize] += u * shift_half_val;
-                    if right_op_val != F::zero() {
-                        histograms[3][c as usize] += u * right_op_val;
-                    }
-                }
+        // Build histograms. histograms[0] == histograms[2] always (both Σ u * shift_half_val
+        // for interleaved cycles), so we compute it once and clone.
+        // Constant shift histograms (Rep3, no reshare needed).
+        let mut hist_shift_half = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        let mut hist_shift = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        for &j in &self.interleaved_cycles {
+            if let Some(c) = self.c16[j] {
+                hist_shift_half[c as usize] += self.u_evals[j] * shift_half_val;
             }
-
-            for &j in &self.identity_cycles {
-                if let Some(c) = self.c16[j] {
-                    let u = self.u_evals[j];
-                    histograms[4][c as usize] += u * shift_val;
-                    if identity_val != F::zero() {
-                        histograms[5][c as usize] += u * identity_val;
-                    }
-                }
-            }
-        } else {
-            // suffix_len > 0: secret suffix values for operand/identity suffixes.
-            // left[0], right[0] are constant (ShiftHalf), identity[0] is constant (Shift).
-            // left[1], right[1], identity[1] are secret (need Rep3 × Rep3 → Additive).
-            //
-            // Use local multiply into additive histograms + reshare (O(3M) communication)
-            // instead of 3 × mul_vec (3 × O(N) communication).
-
-            let mut additive_hists: Vec<Vec<AdditiveShare<F>>> = (0..3)
-                .map(|_| vec![AdditiveShare::<F>::zero(); M])
-                .collect();
-
-            for &j in &self.interleaved_cycles {
-                if let Some(c) = self.c16[j] {
-                    let u = self.u_evals[j];
-                    let ci = c as usize;
-                    let local = global_to_non_noop[j];
-                    histograms[0][ci] += u * shift_half_val;
-                    histograms[2][ci] += u * shift_half_val;
-                    // Local Rep3 × Rep3 → Additive
-                    additive_hists[0][ci] = additive_hists[0][ci] + (u * left_operand[local]);
-                    additive_hists[1][ci] = additive_hists[1][ci] + (u * right_operand[local]);
-                }
-            }
-
-            for &j in &self.identity_cycles {
-                if let Some(c) = self.c16[j] {
-                    let u = self.u_evals[j];
-                    let ci = c as usize;
-                    let local = global_to_non_noop[j];
-                    histograms[4][ci] += u * shift_val;
-                    additive_hists[2][ci] = additive_hists[2][ci] + (u * identity[local]);
-                }
-            }
-
-            // Batch reshare: flatten 3 additive histograms, reshare in one round
-            let _reshare = info_span!("q_reshare").entered();
-            let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
-            for h in &additive_hists {
-                flat.extend_from_slice(h);
-            }
-            let flat_rep3 = rep3_arith::reshare_additive_many(&flat, io_ctx.main())?;
-            drop(_reshare);
-
-            // Scatter reshared histograms into the Rep3 histogram slots
-            let left_hist = &flat_rep3[0..M];
-            let right_hist = &flat_rep3[M..2 * M];
-            let identity_hist = &flat_rep3[2 * M..3 * M];
-
-            for i in 0..M {
-                histograms[1][i] = left_hist[i];
-                histograms[3][i] = right_hist[i];
-                histograms[5][i] = identity_hist[i];
+        }
+        for &j in &self.identity_cycles {
+            if let Some(c) = self.c16[j] {
+                hist_shift[c as usize] += self.u_evals[j] * shift_val;
             }
         }
 
-        // FWHT + local pointwise multiply with Ehat16 + inverse FWHT (parallel)
-        use rayon::prelude::*;
-        let inv_m = F::from(M as u64).inverse().expect("M invertible");
-        let _fwht_span = info_span!("q_fwht_unmask").entered();
-        let q_polys: Vec<AdditiveDensePoly<F>> = histograms
-            .into_par_iter()
-            .map(|mut h| {
-                fwht_rep3_in_place(&mut h);
-                let mut h_k: Vec<AdditiveShare<F>> =
-                    h.iter().zip(ehat16.iter()).map(|(&a, &b)| a * b).collect();
-                fwht_additive_in_place(&mut h_k);
-                for v in h_k.iter_mut() {
-                    *v = *v * inv_m;
+        // Operand histograms: 3 additive histograms (left, right, identity).
+        // Public operands: Rep3 × F → Rep3, scatter directly.
+        // Shared operands: Rep3 × Rep3 → Additive, needs reshare.
+        let mut hist_left = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        let mut hist_right = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        let mut hist_identity = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+
+        let mut add_left = vec![AdditiveShare::<F>::zero(); M];
+        let mut add_right = vec![AdditiveShare::<F>::zero(); M];
+        let mut add_identity = vec![AdditiveShare::<F>::zero(); M];
+
+        // Public operand contributions → scatter into Rep3 histograms directly
+        for &(local, id_val, left_val, right_val) in &public_operands {
+            let j = self.non_noop_cycles[local];
+            if self.is_interleaved_operands[j] {
+                if let Some(c) = self.c16[j] {
+                    let u = self.u_evals[j];
+                    hist_left[c as usize] += u * left_val;
+                    hist_right[c as usize] += u * right_val;
                 }
-                AdditiveDensePoly::new(h_k)
-            })
-            .collect();
+            } else if let Some(c) = self.c16[j] {
+                hist_identity[c as usize] += self.u_evals[j] * id_val;
+            }
+        }
+
+        // Shared operand contributions → additive histograms (Rep3 × Rep3 → Additive)
+        for (i, &local) in shared_locals.iter().enumerate() {
+            let j = self.non_noop_cycles[local];
+            if self.is_interleaved_operands[j] {
+                if let Some(c) = self.c16[j] {
+                    let u = self.u_evals[j];
+                    let ci = c as usize;
+                    add_left[ci] = add_left[ci] + (u * s_left[i]);
+                    add_right[ci] = add_right[ci] + (u * s_right[i]);
+                }
+            } else if let Some(c) = self.c16[j] {
+                let ci = c as usize;
+                add_identity[ci] = add_identity[ci] + (self.u_evals[j] * s_identity[i]);
+            }
+        }
+
+        // Batch reshare additive → Rep3, merge into operand histograms
+        let _reshare = info_span!("q_reshare").entered();
+        let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
+        flat.extend_from_slice(&add_left);
+        flat.extend_from_slice(&add_right);
+        flat.extend_from_slice(&add_identity);
+        let flat_rep3 = rep3_arith::reshare_additive_many(&flat, io_ctx.main())?;
+        drop(_reshare);
+
+        for i in 0..M {
+            hist_left[i] += flat_rep3[i];
+            hist_right[i] += flat_rep3[M + i];
+            hist_identity[i] += flat_rep3[2 * M + i];
+        }
+
+        // FWHT unmask. histograms[0]==[2] → 5 unique FWHTs.
+        let _fwht_span = info_span!("q_fwht_unmask").entered();
+        let q02 = fwht_unmask(hist_shift_half);
+        let (q1, q3, q4, q5) = {
+            let (q1, q3) = rayon::join(
+                || fwht_unmask(hist_left),
+                || fwht_unmask(hist_right),
+            );
+            let (q4, q5) = rayon::join(
+                || fwht_unmask(hist_shift),
+                || fwht_unmask(hist_identity),
+            );
+            (q1, q3, q4, q5)
+        };
         drop(_fwht_span);
 
-        let mut q_iter = q_polys.into_iter();
-        self.left_operand_q[0] = q_iter.next().unwrap();
-        self.left_operand_q[1] = q_iter.next().unwrap();
-        self.right_operand_q[0] = q_iter.next().unwrap();
-        self.right_operand_q[1] = q_iter.next().unwrap();
-        self.identity_q[0] = q_iter.next().unwrap();
-        self.identity_q[1] = q_iter.next().unwrap();
+        self.left_operand_q[0] = q02.clone();
+        self.left_operand_q[1] = q1;
+        self.right_operand_q[0] = q02;
+        self.right_operand_q[1] = q3;
+        self.identity_q[0] = q4;
+        self.identity_q[1] = q5;
 
         Ok(())
     }

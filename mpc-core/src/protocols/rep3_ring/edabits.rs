@@ -899,6 +899,7 @@ where
             .zip(&batch.gammas)
             .map(|(x, gamma)| x.a ^ x.b ^ *gamma)
             .collect();
+        // TODO: is this secure??
         io.network.send_many(PartyID::ID1, &ms)?;
         io.network.send_many(PartyID::ID2, &ms)?;
         ms
