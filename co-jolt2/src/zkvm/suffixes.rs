@@ -423,7 +423,10 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         // BitInject — single-bit → field via daBits
         if !self.bitinject.is_empty() {
             let dabits = pool.take_dabits(self.bitinject.len());
+            let _span =
+                tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
             let fields = edabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
+            drop(_span);
             scatter.extend(
                 self.bitinject_idx
                     .into_iter()
@@ -444,11 +447,14 @@ impl<F: JoltField> SuffixFutureBatch<F> {
             ($ring:ty, $idx:ident, $val:ident) => {
                 if !self.$val.is_empty() {
                     let batch = pool.take_edabits::<$ring>(self.$val.len());
+                    let _span = tracing::info_span!("ring_to_field_b2a_many", n = self.$val.len())
+                        .entered();
                     let fields = edabits::ring_to_field_b2a_many::<$ring, F, _>(
                         &self.$val,
                         &batch,
                         io_ctx.main(),
                     )?;
+                    drop(_span);
                     scatter.extend(
                         self.$idx
                             .into_iter()
@@ -457,6 +463,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                 }
             };
         }
+        // TODO: batch across rings?
         fulfill_b2a!(u8, b2a_u8_idx, b2a_u8);
         fulfill_b2a!(u16, b2a_u16_idx, b2a_u16);
         fulfill_b2a!(u32, b2a_u32_idx, b2a_u32);
@@ -919,9 +926,7 @@ where
                         Either::Public(yp) => {
                             out.extend_ready(
                                 std::iter::once(base + i),
-                                std::iter::once(Rep3Value::Public(F::from_u64(
-                                    *yp & 0xFFFF_FFFF,
-                                ))),
+                                std::iter::once(Rep3Value::Public(F::from_u64(*yp & 0xFFFF_FFFF))),
                             );
                         }
                         Either::Shared(y) => {
@@ -1091,8 +1096,7 @@ where
             let mut combined = Vec::with_capacity(split + q_xor.len());
             combined.extend_from_slice(xs);
             combined.extend_from_slice(&q_xor);
-            let combined_result =
-                rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
+            let combined_result = rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
             let (divisor_zero, quotient_all_ones) = combined_result.split_at(split);
             let result =
                 rep3_ring::binary::and_many::<Bit, _>(divisor_zero, quotient_all_ones, io_ctx)?;
@@ -1127,8 +1131,7 @@ where
             let mut combined = Vec::with_capacity(split + xs.len());
             combined.extend_from_slice(&y_xor);
             combined.extend_from_slice(xs);
-            let combined_result =
-                rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
+            let combined_result = rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
             let (y_eq_all_ones, x_eq_zero) = combined_result.split_at(split);
             let result = rep3_ring::binary::and_many::<Bit, _>(y_eq_all_ones, x_eq_zero, io_ctx)?;
             out.extend_bitinject(indices_iter, result.into_iter());
@@ -1709,8 +1712,7 @@ where
 
     // AND for shared-y elements only (1 communication round, smaller batch)
     if !shared_a.is_empty() {
-        let and_results =
-            rep3_ring::binary::and_many::<T::Half, _>(&shared_a, &shared_b, io_ctx)?;
+        let and_results = rep3_ring::binary::and_many::<T::Half, _>(&shared_a, &shared_b, io_ctx)?;
         for (k, &pos) in shared_pos.iter().enumerate() {
             g[pos] = and_results[k];
         }
@@ -1723,8 +1725,7 @@ where
     }
 
     // Kogge-Stone carry tree (log2(K) rounds)
-    let carries =
-        rep3_ring::arithmetic::kogge_stone_carries_many::<T::Half, _>(p, g, io_ctx)?;
+    let carries = rep3_ring::arithmetic::kogge_stone_carries_many::<T::Half, _>(p, g, io_ctx)?;
     Ok(carries)
 }
 
@@ -1934,7 +1935,6 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
 pub fn suffix_uses_b2a_edabits(suffix: &Suffixes) -> bool {
     suffix_edabit_ring_bits(suffix, 128, 64).is_some()
 }
-
 
 #[cfg(test)]
 mod tests {

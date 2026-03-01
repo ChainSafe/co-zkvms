@@ -20,12 +20,12 @@ use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::bytecode::BytecodeDag;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
 use jolt_core::zkvm::dag::state_manager::{
     ProofData, ProofKeys, StateManager as VanillaStateManager,
 };
-use jolt_core::zkvm::bytecode::BytecodeDag;
 use jolt_core::zkvm::instruction_lookups::LookupsDag;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::ram::RamDag;
@@ -311,11 +311,17 @@ fn dag_correct() {
                 let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
                 let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
                 let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
-                let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
+                let lazy_u128 =
+                    edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
                 let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(&mut io_ctx)?;
                 edabits::EdaBitsPool::new(
-                    lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128,
-                    dabit_setup, 512 * trace.len(),
+                    lazy_u8,
+                    lazy_u16,
+                    lazy_u32,
+                    lazy_u64,
+                    lazy_u128,
+                    dabit_setup,
+                    512 * trace.len(),
                 )
             };
 
@@ -328,7 +334,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, io_ctx, edabits_pool)
+            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, edabits_pool)
         },
         move |input, net| {
             let (verifier_preprocessing, program_io, ram_K) = input;

@@ -42,13 +42,22 @@ use tracing::info_span;
 /// Per-ring-type EdaBit counts needed for the ReadRaf sumcheck.
 ///
 /// Computed from the actual lookup table structure, not hardcoded multipliers.
-#[derive(Debug, Clone, Default)]
-pub struct EdaBitBudget {
+#[derive(Clone, Default)]
+pub struct PreprocessingBudget {
     pub u8: usize,
     pub u16: usize,
     pub u32: usize,
     pub u64: usize,
     pub u128: usize,
+}
+
+impl std::fmt::Debug for PreprocessingBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}",
+            self.u8, self.u16, self.u32, self.u64, self.u128
+        ))
+    }
 }
 
 /// Compute the EdaBit budget needed for the given number of non-noop cycles.
@@ -72,11 +81,11 @@ pub struct EdaBitBudget {
 ///   Phase 5:   T=u32,  T::Half=u16
 ///   Phase 6:   T=u16,  T::Half=u8
 ///   Phase 7:   suffix_len=0, no B2A needed
-pub fn compute_edabit_budget(non_noop_cycles: usize) -> EdaBitBudget {
+pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
     use crate::zkvm::suffixes::suffix_edabit_ring_bits;
 
     let n = non_noop_cycles;
-    let mut budget = EdaBitBudget::default();
+    let mut budget = PreprocessingBudget::default();
 
     for phase in 0..PHASES {
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -135,7 +144,7 @@ fn ring_bucket(ring_bits: usize) -> usize {
     }
 }
 
-fn add_to_budget(budget: &mut EdaBitBudget, ring_bits: usize, count: usize) {
+fn add_to_budget(budget: &mut PreprocessingBudget, ring_bits: usize, count: usize) {
     match ring_bucket(ring_bits) {
         0 => budget.u8 += count,
         1 => budget.u16 += count,
@@ -312,7 +321,7 @@ struct EvalSegment {
 ///
 /// Returns `(segments, all_field)` where each segment maps `(table_idx, suffix_idx)`
 /// to a `[base..base+n)` slice of `all_field`.
-fn do_per_table_suffix_eval<T, F, N>(
+fn table_suffixes_mle<T, F, N>(
     lookup_indices: &[Either<u128, Rep3RingShare<u128>>],
     lookup_indices_by_table: &[Vec<usize>],
     right_operand_public_mask: &[Option<u64>],
@@ -346,7 +355,7 @@ where
 
     let mut batch = SuffixFutureBatch::<F>::new();
     let mut segments = Vec::new();
-    let _span = info_span!("suffix_mle").entered();
+    let _span = info_span!("suffixes_mle", n = lookup_indices.len()).entered();
 
     for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
         let table_cycles = &lookup_indices_by_table[table_idx];
@@ -821,7 +830,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// Initialize a new phase. Computes Ehat16, builds suffix polys and Q polys.
     ///
     /// For phase > 0, also does the condensation update on u_evals.
-    #[tracing::instrument(skip_all, name = "ReadRaf::init_phase", fields(phase))]
+    #[tracing::instrument(skip(self, io_ctx), name = "ReadRaf::init_phase", fields(phase))]
     fn init_phase<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
@@ -849,7 +858,9 @@ impl<F: JoltField> ReadRafProverState<F> {
         );
         self.current_phase_pair = (hi, lo);
 
-        // -- Step G1: derive c16 --
+        let _ehat_span = tracing::info_span!("prefix_tensor_prod").entered();
+
+        // derive c16
         for j in 0..self.c16.len() {
             let c_hi = self.one_hot_polys[hi].masked_indices_c[j];
             let c_lo = self.one_hot_polys[lo].masked_indices_c[j];
@@ -859,11 +870,9 @@ impl<F: JoltField> ReadRafProverState<F> {
             };
         }
 
-        // -- Step F: compute Ehat16 via tensor product --
-        // Save the previous ehat16 for condensation (avoids recomputing it).
+        // compute Ehat16 via tensor product
         let ehat16_prev = self.ehat16.take();
 
-        let _ehat_span = tracing::info_span!("ehat16_tensor_product").entered();
         let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
             self.one_hot_polys[hi].rand_ohv_e_field.as_ref().clone();
         let mut ehat8_lo: Vec<Rep3PrimeFieldShare<F>> =
@@ -938,8 +947,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             match &self.u_evals {
                 Either::Public(u_pub) => {
                     // Phase 0→1: pub * shared → Shared (local, no mul_vec — saves 1 round)
-                    let mut u_shared =
-                        vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
+                    let mut u_shared = vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
                     for &j in &active_indices {
                         u_shared[j] = rep3_arith::mul_public(
                             eq_shifted[c16_prev[j].unwrap() as usize],
@@ -958,11 +966,9 @@ impl<F: JoltField> ReadRafProverState<F> {
                             .map(|&j| eq_shifted[c16_prev[j].unwrap() as usize])
                             .collect();
 
-                        let products =
-                            rep3_arith::mul_vec(&u_active, &eq_active, io_ctx.main())?;
+                        let products = rep3_arith::mul_vec(&u_active, &eq_active, io_ctx.main())?;
 
-                        let mut new_u =
-                            vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
+                        let mut new_u = vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
                         for (idx, &j) in active_indices.iter().enumerate() {
                             new_u[j] = products[idx];
                         }
@@ -1034,66 +1040,68 @@ impl<F: JoltField> ReadRafProverState<F> {
         // -- Step 1: Per-table suffix evaluation --
         // Dispatch to smallest ring type, build SuffixBitsBatch per table,
         // evaluate suffixes per table, fulfill all B2A conversions in one batch.
-        let (eval_segments, all_field): (Vec<EvalSegment>, Vec<Rep3Value<F>>) =
-            if suffix_len > 0 {
-                match suffix_len {
-                    65..=128 => do_per_table_suffix_eval::<u128, F, N>(
-                        &self.lookup_indices,
-                        &self.lookup_indices_by_table,
-                        &self.right_operand_public_mask,
-                        suffix_len,
-                        io_ctx,
-                        self.party_id,
-                        &mut self.edabits_pool,
-                    )?,
-                    33..=64 => do_per_table_suffix_eval::<u64, F, N>(
-                        &self.lookup_indices,
-                        &self.lookup_indices_by_table,
-                        &self.right_operand_public_mask,
-                        suffix_len,
-                        io_ctx,
-                        self.party_id,
-                        &mut self.edabits_pool,
-                    )?,
-                    17..=32 => do_per_table_suffix_eval::<u32, F, N>(
-                        &self.lookup_indices,
-                        &self.lookup_indices_by_table,
-                        &self.right_operand_public_mask,
-                        suffix_len,
-                        io_ctx,
-                        self.party_id,
-                        &mut self.edabits_pool,
-                    )?,
-                    1..=16 => do_per_table_suffix_eval::<u16, F, N>(
-                        &self.lookup_indices,
-                        &self.lookup_indices_by_table,
-                        &self.right_operand_public_mask,
-                        suffix_len,
-                        io_ctx,
-                        self.party_id,
-                        &mut self.edabits_pool,
-                    )?,
-                    _ => unreachable!("suffix_len must be 1..=128"),
-                }
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let (eval_segments, all_field): (Vec<EvalSegment>, Vec<Rep3Value<F>>) = if suffix_len > 0 {
+            match suffix_len {
+                65..=128 => table_suffixes_mle::<u128, F, N>(
+                    &self.lookup_indices,
+                    &self.lookup_indices_by_table,
+                    &self.right_operand_public_mask,
+                    suffix_len,
+                    io_ctx,
+                    self.party_id,
+                    &mut self.edabits_pool,
+                )?,
+                33..=64 => table_suffixes_mle::<u64, F, N>(
+                    &self.lookup_indices,
+                    &self.lookup_indices_by_table,
+                    &self.right_operand_public_mask,
+                    suffix_len,
+                    io_ctx,
+                    self.party_id,
+                    &mut self.edabits_pool,
+                )?,
+                17..=32 => table_suffixes_mle::<u32, F, N>(
+                    &self.lookup_indices,
+                    &self.lookup_indices_by_table,
+                    &self.right_operand_public_mask,
+                    suffix_len,
+                    io_ctx,
+                    self.party_id,
+                    &mut self.edabits_pool,
+                )?,
+                1..=16 => table_suffixes_mle::<u16, F, N>(
+                    &self.lookup_indices,
+                    &self.lookup_indices_by_table,
+                    &self.right_operand_public_mask,
+                    suffix_len,
+                    io_ctx,
+                    self.party_id,
+                    &mut self.edabits_pool,
+                )?,
+                _ => unreachable!("suffix_len must be 1..=128"),
+            }
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
 
         // Build lookup: (table_idx, suffix_idx) → segment in all_field
         let segment_lookup: std::collections::HashMap<(usize, usize), (usize, usize)> =
             eval_segments
-                .iter()
+                .par_iter()
                 .map(|seg| ((seg.table_idx, seg.suffix_idx), (seg.base, seg.n)))
                 .collect();
 
         // -- Step 2: Build histograms in parallel --
-        let _span = info_span!("build_histograms").entered();
 
         struct WorkItem {
             table_idx: usize,
             suffix_idx: usize,
             suffix: Suffixes,
         }
+
+        // TODO: parallelize & maybe merge into hist_results match
         let mut work_items: Vec<WorkItem> = Vec::new();
         for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
             for (suffix_idx, suffix) in table.suffixes().into_iter().enumerate() {
@@ -1231,8 +1239,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                 .all(|v| matches!(v, Rep3Value::Public(_)));
                             if all_suffix_public {
                                 // shared * public → Rep3 (no reshare needed)
-                                let mut h_c =
-                                    vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                                let mut h_c = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
                                 for (local, &j) in table_cycles.iter().enumerate() {
                                     if let Some(c) = c16[j] {
                                         let f = suffix_evals[local].as_public();
@@ -1246,9 +1253,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                 for (local, &j) in table_cycles.iter().enumerate() {
                                     if let Some(c) = c16[j] {
                                         let w: AdditiveShare<F> = match suffix_evals[local] {
-                                            Rep3Value::Public(f) => {
-                                                u_shared[j].into_additive() * f
-                                            }
+                                            Rep3Value::Public(f) => u_shared[j].into_additive() * f,
                                             Rep3Value::Shared(s) => u_shared[j] * s,
                                             Rep3Value::Additive(_) => unreachable!(),
                                         };
@@ -1266,6 +1271,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Partition into rep3 vs additive, and handle zero polys
         let mut rep3_hist_entries: Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)> = Vec::new();
         let mut hist_entries_to_reshare: Vec<(usize, usize, Vec<AdditiveShare<F>>)> = Vec::new();
+        // TODO: parallelize
         for result in hist_results {
             match result {
                 HistResult::Rep3(ti, si, h) => rep3_hist_entries.push((ti, si, h)),
@@ -1324,6 +1330,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             })
             .collect();
 
+        // TODO: merge with parallel loop above
         for (table_idx, suffix_idx, poly) in all_polys {
             self.suffix_polys[table_idx][suffix_idx] = poly;
         }
@@ -1351,7 +1358,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For suffix_len == 0 (final phase), all are public constants.
     /// For suffix_len > 0, the secret operand/identity values are computed via
     /// FWHT-shifted table lookups on the future one-hot chunks.
-    #[tracing::instrument(skip_all, name = "ReadRaf::init_operand_q_polys", fields(phase))]
+    #[tracing::instrument(skip_all, name = "init_operand_q_polys", fields(phase))]
     fn init_operand_q_polys<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
@@ -1381,6 +1388,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         if suffix_len == 0 {
             // All operand suffix values are zero. Only constant shift histograms matter.
             // histograms[0] == histograms[2], histograms[1,3,5] are zero.
+            let _span = info_span!("build_histograms_final", phase).entered();
             let (hist0, hist4) = match &self.u_evals {
                 Either::Public(u_pub) => {
                     let mut h0_f = vec![F::zero(); M];
@@ -1397,6 +1405,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     }
                     let party_id = self.party_id;
                     (
+                        // TODO: avoid promoting to trivial shares
                         h0_f.into_iter()
                             .map(|f| promote_to_trivial_share(f, party_id))
                             .collect(),
@@ -1421,8 +1430,9 @@ impl<F: JoltField> ReadRafProverState<F> {
                     (hist0, hist4)
                 }
             };
+            drop(_span);
 
-            let _fwht_span = info_span!("q_fwht_unmask").entered();
+            let _fwht_span = info_span!("fwht_unmask_final", phase).entered();
             let hists = vec![hist0, hist4];
             let q_polys: Vec<_> = hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
             let [q0, q4]: [AdditiveDensePoly<F>; 2] = q_polys.try_into().unwrap();
@@ -1436,6 +1446,8 @@ impl<F: JoltField> ReadRafProverState<F> {
             self.identity_q[1] = AdditiveDensePoly::zeros(M);
             return Ok(());
         }
+
+        let _span = info_span!("build_histograms", phase).entered();
 
         // suffix_len > 0: classify cycles by group (interleaved vs identity)
         // and by secrecy (public vs shared).
@@ -1539,14 +1551,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                 lr.extend_from_slice(&xs);
                 lr.extend_from_slice(&ys);
                 let lr_batch = pool.take_edabits::<T::Half>(2 * n_il);
-                let mut lr_result = io_ctx.par_chunks_preproc(
-                    lr,
-                    lr_batch,
-                    None,
-                    |shares, batch, ctx| {
+                let mut lr_result =
+                    io_ctx.par_chunks_preproc(lr, lr_batch, None, |shares, batch, ctx| {
                         edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
-                    },
-                )?;
+                    })?;
                 s_right = lr_result.split_off(n_il);
                 s_left = lr_result;
             } else {
@@ -1743,10 +1751,17 @@ impl<F: JoltField> ReadRafProverState<F> {
                 }
             }
         }
+        drop(_span);
 
         // FWHT unmask. histograms[0]==[2] → 5 unique FWHTs (all independent).
-        let _fwht_span = info_span!("q_fwht_unmask").entered();
-        let hists = vec![hist_shift_half, hist_left, hist_right, hist_shift, hist_identity];
+        let _fwht_span = info_span!("fwht_unmask", phase).entered();
+        let hists = vec![
+            hist_shift_half,
+            hist_left,
+            hist_right,
+            hist_shift,
+            hist_identity,
+        ];
         let q_polys: Vec<_> = hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
         let [q02, q1, q3, q4, q5]: [AdditiveDensePoly<F>; 5] = q_polys.try_into().unwrap();
         drop(_fwht_span);
@@ -1811,8 +1826,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
                     let products = rep3_arith::mul_vec(&ra_active, &v_active, io_ctx.main())?;
 
-                    let mut new_ra =
-                        vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
+                    let mut new_ra = vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
                     for (idx, &j) in active_indices.iter().enumerate() {
                         new_ra[j] = products[idx];
                     }
@@ -1838,16 +1852,14 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         // Precompute per-group RAF constants
         let left_right_contrib = gamma
-            * self.prefix_registry.checkpoints
-                [jolt_core::poly::prefix_suffix::Prefix::LeftOperand]
+            * self.prefix_registry.checkpoints[jolt_core::poly::prefix_suffix::Prefix::LeftOperand]
                 .unwrap()
             + gamma_squared
                 * self.prefix_registry.checkpoints
                     [jolt_core::poly::prefix_suffix::Prefix::RightOperand]
                     .unwrap();
         let identity_contrib = gamma_squared
-            * self.prefix_registry.checkpoints
-                [jolt_core::poly::prefix_suffix::Prefix::Identity]
+            * self.prefix_registry.checkpoints[jolt_core::poly::prefix_suffix::Prefix::Identity]
                 .unwrap();
 
         // Must iterate ALL cycles (including padding) because padding values
@@ -2189,9 +2201,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 let mut e2l = AdditiveShare::<F>::zero();
                 let mut e2r = AdditiveShare::<F>::zero();
 
-                for (table, suffixes) in
-                    LookupTables::<XLEN>::iter().zip(ps.suffix_polys.iter())
-                {
+                for (table, suffixes) in LookupTables::<XLEN>::iter().zip(ps.suffix_polys.iter()) {
                     let table = &table;
                     let suffixes_left: Vec<AdditiveShare<F>> =
                         suffixes.iter().map(|s| s.get_coeff(b)).collect();

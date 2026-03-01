@@ -53,7 +53,7 @@ impl Rep3JoltDAGWorker {
     #[tracing::instrument(skip_all, name = "Rep3JoltDAGWorker::prove")]
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS>,
-        mut io_ctx: IoContextPool<N>,
+        mut io_ctx: &mut IoContextPool<N>,
         edabits_pool: mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
     ) -> eyre::Result<()>
     where

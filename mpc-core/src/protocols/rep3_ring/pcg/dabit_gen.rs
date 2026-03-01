@@ -115,7 +115,6 @@ pub fn dealer_setup(rng: &mut impl rand::RngCore) -> DealerOutput {
 /// from their 3 seeds. P1 applies zero correction.
 ///
 /// Uses AES-NI PRG for ~10x speedup over SHA3.
-#[tracing::instrument(skip(setup, start))]
 pub fn expand_dabits<F: PrimeField>(
     setup: &PcgDaBitSetup,
     start: usize,

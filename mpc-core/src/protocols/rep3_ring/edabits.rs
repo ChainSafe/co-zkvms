@@ -534,7 +534,6 @@ where
     /// Like `take()`, but returns a flat `EdaBitsBatch` with zero per-edaBit allocations.
     ///
     /// Two allocations total: `gammas` (len n) + `alphas_flat` (len n*K).
-    #[tracing::instrument(skip_all, name = "EdaBits::take_batch", fields(n))]
     pub fn take_batch(&mut self, n: usize) -> EdaBitsBatch<T, F> {
         assert!(
             self.cursor + n <= self.total,
