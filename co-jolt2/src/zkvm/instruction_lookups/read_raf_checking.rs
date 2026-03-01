@@ -37,200 +37,17 @@ use rand::prelude::Distribution;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::info_span;
 
-// ---------------------------------------------------------------------------
-// EdaBit budget computation
-// ---------------------------------------------------------------------------
-
-/// Per-ring-type EdaBit counts needed for the ReadRaf sumcheck.
-///
-/// Computed from the actual lookup table structure, not hardcoded multipliers.
-#[derive(Clone, Default)]
-pub struct PreprocessingBudget {
-    pub u8: usize,
-    pub u16: usize,
-    pub u32: usize,
-    pub u64: usize,
-    pub u128: usize,
-}
-
-impl std::fmt::Debug for PreprocessingBudget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}",
-            self.u8, self.u16, self.u32, self.u64, self.u128
-        ))
-    }
-}
-
-/// Compute the EdaBit budget needed for the given number of non-noop cycles.
-///
-/// Pass the un-padded trace length (upper bound on real non-NoOp cycles).
-/// NoOp padding cycles produce `None` in `instruction_ra` / `masked_indices_c`
-/// and are excluded from `non_noop_cycles` in ReadRaf, so the budget only needs
-/// to cover real instruction cycles.
-///
-/// Two consumers:
-/// 1. **Suffix eval** (per-table): each cycle belongs to exactly one table.
-///    For that table, each B2A suffix consumes 1 edaBit of the ring type given
-///    by `suffix_edabit_ring_bits`. The worst case per ring bucket is
-///    `max_over_tables(count_of_B2A_suffixes_in_bucket) × n`.
-/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half
-///    (left + right) per phase.
-///
-/// Phase ring types: suffix_len = (7 - phase) * 16
-///   Phase 0-2: T=u128, T::Half=u64
-///   Phase 3-4: T=u64,  T::Half=u32
-///   Phase 5:   T=u32,  T::Half=u16
-///   Phase 6:   T=u16,  T::Half=u8
-///   Phase 7:   suffix_len=0, no B2A needed
-pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
-    use crate::zkvm::suffixes::suffix_edabit_ring_bits;
-
-    let n = non_noop_cycles;
-    let mut budget = PreprocessingBudget::default();
-
-    for phase in 0..PHASES {
-        let suffix_len = (PHASES - 1 - phase) * LOG_M;
-        if suffix_len == 0 {
-            continue;
-        }
-
-        let (t_k, t_half_k) = match suffix_len {
-            65..=128 => (128usize, 64usize),
-            33..=64 => (64, 32),
-            17..=32 => (32, 16),
-            1..=16 => (16, 8),
-            _ => unreachable!(),
-        };
-
-        // Operand Q: n × T + 2n × T::Half
-        add_to_budget(&mut budget, t_k, n);
-        add_to_budget(&mut budget, t_half_k, 2 * n);
-
-        // Suffix eval: each cycle belongs to exactly one table, so the per-bucket
-        // consumption is bounded by the table with the most B2A suffixes in that
-        // bucket. Compute max_per_table_count for each ring bucket, then budget
-        // max_count × n.
-        // Buckets: [u8, u16, u32, u64, u128]
-        let mut max_per_bucket = [0usize; 5];
-        for table in LookupTables::<XLEN>::iter() {
-            let mut table_counts = [0usize; 5];
-            for suffix in table.suffixes() {
-                if let Some(ring_bits) = suffix_edabit_ring_bits(&suffix, t_k, t_half_k) {
-                    table_counts[ring_bucket(ring_bits)] += 1;
-                }
-            }
-            for b in 0..5 {
-                max_per_bucket[b] = max_per_bucket[b].max(table_counts[b]);
-            }
-        }
-        const BUCKET_BITS: [usize; 5] = [8, 16, 32, 64, 128];
-        for (b, &bits) in BUCKET_BITS.iter().enumerate() {
-            if max_per_bucket[b] > 0 {
-                add_to_budget(&mut budget, bits, max_per_bucket[b] * n);
-            }
-        }
-    }
-
-    budget
-}
-
-fn ring_bucket(ring_bits: usize) -> usize {
-    match ring_bits {
-        1..=8 => 0,
-        9..=16 => 1,
-        17..=32 => 2,
-        33..=64 => 3,
-        65..=128 => 4,
-        _ => unreachable!("unsupported ring bit-width: {}", ring_bits),
-    }
-}
-
-fn add_to_budget(budget: &mut PreprocessingBudget, ring_bits: usize, count: usize) {
-    match ring_bucket(ring_bits) {
-        0 => budget.u8 += count,
-        1 => budget.u16 += count,
-        2 => budget.u32 += count,
-        3 => budget.u64 += count,
-        4 => budget.u128 += count,
-        _ => unreachable!(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Additive dense polynomial — lightweight wrapper for suffix/Q polys
-// ---------------------------------------------------------------------------
-
-/// A dense multilinear polynomial stored as additive shares.
-///
-/// Used for suffix polys and operand Q polys where all downstream operations
-/// are linear (bind with public challenge, read coefficients, scalar mult).
-/// This avoids the `mul_vec` reshare cost — the FWHT pointwise product
-/// `Rep3 * Rep3 → Additive` is computed locally with zero communication.
-#[derive(Clone, Debug)]
-struct AdditiveDensePoly<F: JoltField> {
-    coeffs: Vec<AdditiveShare<F>>,
-    /// After first bind, subsequent binds work on bound_coeffs.
-    bound: Vec<AdditiveShare<F>>,
-    /// Current logical length (halves on each bind).
-    current_len: usize,
-    is_bound: bool,
-}
-
-impl<F: JoltField> AdditiveDensePoly<F> {
-    fn new(coeffs: Vec<AdditiveShare<F>>) -> Self {
-        let len = coeffs.len();
-        Self {
-            coeffs,
-            bound: Vec::new(), // deferred — allocated on first bind()
-            current_len: len,
-            is_bound: false,
-        }
-    }
-
-    fn zeros(len: usize) -> Self {
-        Self::new(vec![AdditiveShare::zero(); len])
-    }
-
-    fn len(&self) -> usize {
-        self.current_len
-    }
-
-    fn get_coeff(&self, index: usize) -> AdditiveShare<F> {
-        if self.is_bound {
-            self.bound[index]
-        } else {
-            self.coeffs[index]
-        }
-    }
-
-    /// Bind the high variable with a public challenge (HighToLow order).
-    /// Halves the polynomial: new[i] = left[i] + r * (right[i] - left[i]).
-    fn bind(&mut self, r: F) {
-        let n = self.current_len / 2;
-        if self.is_bound {
-            for i in 0..n {
-                let left = self.bound[i];
-                let right = self.bound[i + n];
-                self.bound[i] = left + (right - left) * r;
-            }
-        } else {
-            // Allocate bound buffer on first bind (deferred from new())
-            if self.bound.len() < n {
-                self.bound.resize(n, AdditiveShare::zero());
-            }
-            for i in 0..n {
-                let left = self.coeffs[i];
-                let right = self.coeffs[i + n];
-                self.bound[i] = left + (right - left) * r;
-            }
-            self.is_bound = true;
-        }
-        self.current_len = n;
-    }
-}
+use crate::poly::additive_dense_poly::AdditiveDensePoly;
+use crate::utils::lagrange_interp_4;
 
 const LOG_K: usize = XLEN * 2; // 128
+const PHASES: usize = 8;
+const M: usize = 1 << LOG_M; // 65536
+const DEGREE: usize = 3;
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
 
 /// MPC-compatible version of `LookupTables::combine`.
 ///
@@ -244,8 +61,6 @@ fn combine_shared<F: JoltField>(
 ) -> AdditiveShare<F> {
     let n = shared_suffixes.len();
     debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
-    // Extract all weights in one pass using a reusable stack buffer.
-    // n is always small (1-5 for all lookup tables), so a fixed-size array avoids heap allocs.
     let mut unit = [F::zero(); 8];
     let mut result = AdditiveShare::<F>::zero();
     for i in 0..n {
@@ -256,9 +71,6 @@ fn combine_shared<F: JoltField>(
     }
     result
 }
-const PHASES: usize = 8;
-const M: usize = 1 << LOG_M; // 65536
-const DEGREE: usize = 3;
 
 /// MPC version of `PrefixSuffixDecomposition::sumcheck_evals`.
 ///
@@ -370,79 +182,40 @@ where
 
         // Build SuffixBitsBatch for this table
         let data: SuffixBitsBatch<T> = if uses_interleaved {
-            // Interleaved: collect raw masked lookup_indices for this table's cycles
-            let mut all_public = true;
-            let mut all_shared = true;
-            let mut entries: Vec<Either<u128, Rep3RingShare<T>>> =
-                Vec::with_capacity(table_cycles.len());
-            for &j in table_cycles {
-                match &lookup_indices[j] {
-                    Either::Public(p) => {
-                        all_shared = false;
-                        entries.push(Either::Public(*p & suffix_mask));
-                    }
+            let entries: Vec<Either<u128, Rep3RingShare<T>>> = table_cycles
+                .iter()
+                .map(|&j| match &lookup_indices[j] {
+                    Either::Public(p) => Either::Public(*p & suffix_mask),
                     Either::Shared(s) => {
-                        all_public = false;
                         let masked = *s & RingElement(suffix_mask);
-                        entries.push(Either::Shared(Rep3RingShare {
+                        Either::Shared(Rep3RingShare {
                             a: RingElement(
                                 T::try_from(masked.a.0).unwrap_or_else(|_| unreachable!()),
                             ),
                             b: RingElement(
                                 T::try_from(masked.b.0).unwrap_or_else(|_| unreachable!()),
                             ),
-                        }));
+                        })
                     }
-                }
-            }
-            let mixed_batch = if all_public {
-                MixedBatch::Public(
-                    entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Public(p) => p,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else if all_shared {
-                MixedBatch::Shared(
-                    entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Shared(s) => s,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else {
-                MixedBatch::Mixed(entries)
-            };
-            SuffixBitsBatch::Interleaved(mixed_batch)
+                })
+                .collect();
+            SuffixBitsBatch::Interleaved(MixedBatch::classify(entries))
         } else {
-            // Uninterleaved: Morton-decode shared indices, check right_operand_public_mask
+            // Uninterleaved: split into left/right, check right_operand_public_mask
             let n = table_cycles.len();
             let mut left_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
             let mut right_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
-            let mut all_left_public = true;
-            let mut all_left_shared = true;
-            let mut all_right_public = true;
-            let mut all_right_shared = true;
 
             for &j in table_cycles {
                 match &lookup_indices[j] {
                     Either::Public(p) => {
-                        // Both operands are public
                         let masked = *p & suffix_mask;
-                        // Uninterleave plaintext: odd bits → x (left), even bits → y (right)
                         let mut x = 0u64;
                         let mut y = 0u64;
                         for i in 0..half_bits {
                             x |= ((masked >> (2 * i + 1)) & 1) as u64 >> 0 << i;
                             y |= ((masked >> (2 * i)) & 1) as u64 >> 0 << i;
                         }
-                        all_left_shared = false;
-                        all_right_shared = false;
                         left_entries.push(Either::Public(x));
                         right_entries.push(Either::Public(y));
                     }
@@ -457,79 +230,26 @@ where
                             ),
                         };
                         let (x_share, y_share) = T::uninterleave(masked_t);
-
-                        all_left_public = false;
                         left_entries.push(Either::Shared(x_share));
 
-                        // Check if right operand is public for this cycle
                         if let Some(mask_val) = right_operand_public_mask[j] {
-                            // Right operand is public — extract from mask
                             let y_pub = if half_bits >= 64 {
                                 mask_val
                             } else {
                                 mask_val & ((1u64 << half_bits) - 1)
                             };
-                            all_right_shared = false;
                             right_entries.push(Either::Public(y_pub));
                         } else {
-                            all_right_public = false;
                             right_entries.push(Either::Shared(y_share));
                         }
                     }
                 }
             }
 
-            // Classify left batch
-            let left_batch: MixedBatch<u64, H<T>> = if all_left_public {
-                MixedBatch::Public(
-                    left_entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Public(p) => p,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else if all_left_shared {
-                MixedBatch::Shared(
-                    left_entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Shared(s) => s,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else {
-                MixedBatch::Mixed(left_entries)
-            };
-
-            // Classify right batch
-            let right_batch: MixedBatch<u64, H<T>> = if all_right_public {
-                MixedBatch::Public(
-                    right_entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Public(p) => p,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else if all_right_shared {
-                MixedBatch::Shared(
-                    right_entries
-                        .into_iter()
-                        .map(|e| match e {
-                            Either::Shared(s) => s,
-                            _ => unreachable!(),
-                        })
-                        .collect(),
-                )
-            } else {
-                MixedBatch::Mixed(right_entries)
-            };
-
-            SuffixBitsBatch::Uninterleaved(left_batch, right_batch)
+            SuffixBitsBatch::Uninterleaved(
+                MixedBatch::classify(left_entries),
+                MixedBatch::classify(right_entries),
+            )
         };
 
         // Evaluate each non-One suffix for this table
@@ -632,9 +352,6 @@ struct ReadRafProverState<F: JoltField> {
     ehat16: Option<Vec<Rep3PrimeFieldShare<F>>>,
     /// Per-phase cached c16[j] (public masked 16-bit keys). None means inactive cycle.
     c16: Vec<Option<u16>>,
-    /// Per-phase: which pair of one_hot_polys indices (hi, lo) form the 16-bit key.
-    current_phase_pair: (usize, usize),
-
     // -- Cycle-round data (built after LOG_K rounds) --
     eq_r_cycle: MultilinearPolynomial<F>,
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
@@ -802,7 +519,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             one_hot_polys,
             ehat16: None,
             c16: vec![None; num_cycles],
-            current_phase_pair: (0, 0),
             eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle_public.to_vec()),
             combined_val_polynomial: None,
             edabits_pool,
@@ -858,8 +574,6 @@ impl<F: JoltField> ReadRafProverState<F> {
             self.one_hot_polys[lo].rand_ohv_e_field.len() == 256,
             "one_hot_polys[{lo}].rand_ohv_e_field must have length 256"
         );
-        self.current_phase_pair = (hi, lo);
-
         let _ehat_span = tracing::info_span!("prefix_tensor_prod").entered();
 
         // derive c16
@@ -2384,34 +2098,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             left_2 * gamma + right_2 * gamma_squared,
         ]
     }
-}
-
-/// Lagrange interpolation through 4 points (0, y0), (1, y1), (2, y2), (3, y3) at x.
-///
-/// Denominators are constants: -6, 2, -2, 6. Their inverses are precomputed.
-fn lagrange_interp_4<F: JoltField>(
-    y0: AdditiveShare<F>,
-    y1: AdditiveShare<F>,
-    y2: AdditiveShare<F>,
-    y3: AdditiveShare<F>,
-    x: F,
-) -> AdditiveShare<F> {
-    // Precomputed inverse denominators: 1/(-6), 1/2, 1/(-2), 1/6
-    let inv6 = F::from(6u64).inverse().unwrap();
-    let inv2 = F::TWO_INV;
-    let inv_neg6 = -inv6; // 1/(-6)
-    let inv_neg2 = -inv2; // 1/(-2)
-
-    let xm1 = x - F::one();
-    let xm2 = x - F::from(2u64);
-    let xm3 = x - F::from(3u64);
-
-    let l0 = xm1 * xm2 * xm3 * inv_neg6;
-    let l1 = x * xm2 * xm3 * inv2;
-    let l2 = x * xm1 * xm3 * inv_neg2;
-    let l3 = x * xm1 * xm2 * inv6;
-
-    y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3
 }
 
 // ---------------------------------------------------------------------------

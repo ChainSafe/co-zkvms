@@ -214,6 +214,41 @@ impl<P: Copy, S: IntRing2k> MixedBatch<P, S> {
     pub fn is_public(&self) -> bool {
         matches!(self, Self::Public(_))
     }
+
+    /// Classify a vec of `Either<P, Rep3RingShare<S>>` into Public/Shared/Mixed.
+    pub fn classify(entries: Vec<Either<P, Rep3RingShare<S>>>) -> Self {
+        let mut all_public = true;
+        let mut all_shared = true;
+        for e in &entries {
+            match e {
+                Either::Public(_) => all_shared = false,
+                Either::Shared(_) => all_public = false,
+            }
+        }
+        if all_public {
+            MixedBatch::Public(
+                entries
+                    .into_iter()
+                    .map(|e| match e {
+                        Either::Public(p) => p,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        } else if all_shared {
+            MixedBatch::Shared(
+                entries
+                    .into_iter()
+                    .map(|e| match e {
+                        Either::Shared(s) => s,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        } else {
+            MixedBatch::Mixed(entries)
+        }
+    }
 }
 
 /// Per-table suffix bits, either interleaved or split into left/right operands.

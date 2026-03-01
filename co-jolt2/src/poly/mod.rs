@@ -1,3 +1,4 @@
+pub mod additive_dense_poly;
 pub mod commitment;
 pub mod compact_polynomial;
 pub mod dense_mlpoly;

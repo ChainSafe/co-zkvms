@@ -286,7 +286,7 @@ mod tests {
 
                 // Preprocessing: create EdaBits pool for B2A conversions.
                 let edabits_pool = {
-                    use crate::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
+                    use crate::zkvm::dag::preproc_budget::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
                     use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
                     let budget = compute_edabit_budget(trace.len());
