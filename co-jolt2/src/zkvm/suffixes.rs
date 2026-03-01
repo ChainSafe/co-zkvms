@@ -722,101 +722,29 @@ where
         Suffixes::One => unreachable!("handled above"),
 
         // --- B2A(H): bitwise ops (right can be public or shared) ---
-        Suffixes::And => match right {
-            MixedBatch::Public(y_pubs) => {
-                out.extend_b2a_ring::<T::Half>(
-                    indices_iter,
-                    xs.iter().enumerate().map(|(j, x)| {
-                        let yp = y_pubs[orig(j)];
-                        *x & RingElement(
-                            T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()),
-                        )
-                    }),
-                );
-            }
-            MixedBatch::Shared(ys) => {
-                let result = rep3_ring::binary::and_many::<T::Half, _>(xs, ys, io_ctx)?;
-                out.extend_b2a_ring::<T::Half>(indices_iter, result.into_iter());
-            }
-            MixedBatch::Mixed(mixed) => {
-                let mut local_idx = Vec::new();
-                let mut local_vals = Vec::new();
-                let mut mpc_idx = Vec::new();
-                let mut mpc_xs = Vec::new();
-                let mut mpc_ys = Vec::new();
-                for (j, x) in xs.iter().enumerate() {
-                    let i = orig(j);
-                    match &mixed[i] {
-                        Either::Public(yp) => {
-                            let mask = RingElement(
-                                T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
-                            );
-                            local_idx.push(base + i);
-                            local_vals.push(*x & mask);
-                        }
-                        Either::Shared(y) => {
-                            mpc_idx.push(base + i);
-                            mpc_xs.push(*x);
-                            mpc_ys.push(*y);
-                        }
-                    }
-                }
-                out.extend_b2a_ring::<T::Half>(local_idx.into_iter(), local_vals.into_iter());
-                if !mpc_xs.is_empty() {
-                    let result =
-                        rep3_ring::binary::and_many::<T::Half, _>(&mpc_xs, &mpc_ys, io_ctx)?;
-                    out.extend_b2a_ring::<T::Half>(mpc_idx.into_iter(), result.into_iter());
-                }
-            }
-        },
-        Suffixes::NotAnd => match right {
-            MixedBatch::Public(y_pubs) => {
-                out.extend_b2a_ring::<T::Half>(
-                    indices_iter,
-                    xs.iter().enumerate().map(|(j, x)| {
-                        let yp = y_pubs[orig(j)];
-                        *x & RingElement(
-                            !T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()),
-                        )
-                    }),
-                );
-            }
-            MixedBatch::Shared(ys) => {
-                let not_ys: Vec<_> = ys.iter().map(|y| !y).collect();
-                let result = rep3_ring::binary::and_many::<T::Half, _>(xs, &not_ys, io_ctx)?;
-                out.extend_b2a_ring::<T::Half>(indices_iter, result.into_iter());
-            }
-            MixedBatch::Mixed(mixed) => {
-                let mut local_idx = Vec::new();
-                let mut local_vals = Vec::new();
-                let mut mpc_idx = Vec::new();
-                let mut mpc_xs = Vec::new();
-                let mut mpc_ys = Vec::new();
-                for (j, x) in xs.iter().enumerate() {
-                    let i = orig(j);
-                    match &mixed[i] {
-                        Either::Public(yp) => {
-                            let mask = RingElement(
-                                !T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
-                            );
-                            local_idx.push(base + i);
-                            local_vals.push(*x & mask);
-                        }
-                        Either::Shared(y) => {
-                            mpc_idx.push(base + i);
-                            mpc_xs.push(*x);
-                            mpc_ys.push(!y);
-                        }
-                    }
-                }
-                out.extend_b2a_ring::<T::Half>(local_idx.into_iter(), local_vals.into_iter());
-                if !mpc_xs.is_empty() {
-                    let result =
-                        rep3_ring::binary::and_many::<T::Half, _>(&mpc_xs, &mpc_ys, io_ctx)?;
-                    out.extend_b2a_ring::<T::Half>(mpc_idx.into_iter(), result.into_iter());
-                }
-            }
-        },
+        Suffixes::And => {
+            eval_bitwise_mixed::<T, F, N>(
+                xs, right, base, orig, io_ctx, out,
+                |x, yp| {
+                    let mask = RingElement(T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
+                    *x & mask
+                },
+                |xs, ys, ctx| rep3_ring::binary::and_many::<T::Half, _>(xs, ys, ctx),
+            )?;
+        }
+        Suffixes::NotAnd => {
+            eval_bitwise_mixed::<T, F, N>(
+                xs, right, base, &orig, io_ctx, out,
+                |x, yp| {
+                    let mask = RingElement(!T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
+                    *x & mask
+                },
+                |xs, ys, ctx| {
+                    let not_ys: Vec<_> = ys.iter().map(|y| !y).collect();
+                    rep3_ring::binary::and_many::<T::Half, _>(xs, &not_ys, ctx)
+                },
+            )?;
+        }
         Suffixes::Xor => {
             // XOR is always local — no MPC for any variant
             out.extend_b2a_ring::<T::Half>(
@@ -847,61 +775,14 @@ where
             );
         }
         Suffixes::Or => {
-            match right {
-                MixedBatch::Public(y_pubs) => {
-                    // x | pub = (x & !pub) ^ pub  (local)
-                    out.extend_b2a_ring::<T::Half>(
-                        indices_iter,
-                        xs.iter().enumerate().map(|(j, x)| {
-                            let mask = RingElement(
-                                T::Half::try_from(y_pubs[orig(j)] as u128)
-                                    .unwrap_or_else(|_| unreachable!()),
-                            );
-                            let x_and_not_mask = *x & RingElement(!mask.0);
-                            rep3_ring::binary::xor_public(&x_and_not_mask, &mask, party_id)
-                        }),
-                    );
-                }
-                MixedBatch::Shared(ys) => {
-                    let result = rep3_ring::binary::or_many::<T::Half, _>(xs, ys, io_ctx)?;
-                    out.extend_b2a_ring::<T::Half>(indices_iter, result.into_iter());
-                }
-                MixedBatch::Mixed(mixed) => {
-                    let mut local_idx = Vec::new();
-                    let mut local_vals = Vec::new();
-                    let mut mpc_idx = Vec::new();
-                    let mut mpc_xs = Vec::new();
-                    let mut mpc_ys = Vec::new();
-                    for (j, x) in xs.iter().enumerate() {
-                        let i = orig(j);
-                        match &mixed[i] {
-                            Either::Public(yp) => {
-                                let mask = RingElement(
-                                    T::Half::try_from(*yp as u128)
-                                        .unwrap_or_else(|_| unreachable!()),
-                                );
-                                local_idx.push(base + i);
-                                local_vals.push(rep3_ring::binary::xor_public(
-                                    &(*x & RingElement(!mask.0)),
-                                    &mask,
-                                    party_id,
-                                ));
-                            }
-                            Either::Shared(y) => {
-                                mpc_idx.push(base + i);
-                                mpc_xs.push(*x);
-                                mpc_ys.push(*y);
-                            }
-                        }
-                    }
-                    out.extend_b2a_ring::<T::Half>(local_idx.into_iter(), local_vals.into_iter());
-                    if !mpc_xs.is_empty() {
-                        let result =
-                            rep3_ring::binary::or_many::<T::Half, _>(&mpc_xs, &mpc_ys, io_ctx)?;
-                        out.extend_b2a_ring::<T::Half>(mpc_idx.into_iter(), result.into_iter());
-                    }
-                }
-            }
+            eval_bitwise_mixed::<T, F, N>(
+                xs, right, base, &orig, io_ctx, out,
+                |x, yp| {
+                    let mask = RingElement(T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
+                    rep3_ring::binary::xor_public(&(*x & RingElement(!mask.0)), &mask, party_id)
+                },
+                |xs, ys, ctx| rep3_ring::binary::or_many::<T::Half, _>(xs, ys, ctx),
+            )?;
         }
 
         // --- B2A(H): value extraction (right can be public or shared) ---
@@ -1448,6 +1329,76 @@ where
         }
     }
 
+    Ok(())
+}
+
+/// Shared 3-way MixedBatch dispatch for And, NotAnd, Or suffix variants.
+///
+/// Handles Public (local), Shared (MPC), and Mixed (split + recombine) cases.
+/// `prep_y_pub` transforms the public y value before AND (identity for And, NOT for NotAnd).
+/// `prep_y_shared` transforms shared y values before MPC AND (identity for And, NOT for NotAnd).
+/// `mpc_fn` is the MPC operation for fully-shared batches (and_many or or_many).
+/// `local_fn` computes the per-element result for public y values.
+fn eval_bitwise_mixed<T, F, N>(
+    xs: &[Rep3RingShare<T::Half>],
+    right: &MixedBatch<u64, T::Half>,
+    base: usize,
+    orig: impl Fn(usize) -> usize,
+    io_ctx: &mut IoContext<N>,
+    out: &mut SuffixFutureBatch<F>,
+    local_fn: impl Fn(&Rep3RingShare<T::Half>, u64) -> Rep3RingShare<T::Half>,
+    mpc_fn: impl FnOnce(
+        &[Rep3RingShare<T::Half>],
+        &[Rep3RingShare<T::Half>],
+        &mut IoContext<N>,
+    ) -> std::io::Result<Vec<Rep3RingShare<T::Half>>>,
+) -> eyre::Result<()>
+where
+    T: Uninterleavable,
+    T::Half: B2ABucketExtend,
+    F: JoltField,
+    N: Rep3Network,
+{
+    let n = xs.len();
+    let indices_iter = (0..n).map(|j| base + orig(j));
+    match right {
+        MixedBatch::Public(y_pubs) => {
+            out.extend_b2a_ring::<T::Half>(
+                indices_iter,
+                xs.iter().enumerate().map(|(j, x)| local_fn(x, y_pubs[orig(j)])),
+            );
+        }
+        MixedBatch::Shared(ys) => {
+            let result = mpc_fn(xs, ys, io_ctx)?;
+            out.extend_b2a_ring::<T::Half>(indices_iter, result.into_iter());
+        }
+        MixedBatch::Mixed(mixed) => {
+            let mut local_idx = Vec::new();
+            let mut local_vals = Vec::new();
+            let mut mpc_idx = Vec::new();
+            let mut mpc_xs = Vec::new();
+            let mut mpc_ys = Vec::new();
+            for (j, x) in xs.iter().enumerate() {
+                let i = orig(j);
+                match &mixed[i] {
+                    Either::Public(yp) => {
+                        local_idx.push(base + i);
+                        local_vals.push(local_fn(x, *yp));
+                    }
+                    Either::Shared(y) => {
+                        mpc_idx.push(base + i);
+                        mpc_xs.push(*x);
+                        mpc_ys.push(*y);
+                    }
+                }
+            }
+            out.extend_b2a_ring::<T::Half>(local_idx.into_iter(), local_vals.into_iter());
+            if !mpc_xs.is_empty() {
+                let result = mpc_fn(&mpc_xs, &mpc_ys, io_ctx)?;
+                out.extend_b2a_ring::<T::Half>(mpc_idx.into_iter(), result.into_iter());
+            }
+        }
+    }
     Ok(())
 }
 

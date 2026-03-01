@@ -263,7 +263,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Preprocessing: create EdaBits pool for B2A conversions
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
     let edabits_pool = {
-        use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
+        use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
         use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
         let budget = compute_edabit_budget(trace_len);

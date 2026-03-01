@@ -303,7 +303,7 @@ fn dag_correct() {
 
             // Preprocessing: create EdaBits pool for B2A conversions.
             let edabits_pool = {
-                use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
+                use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
                 let budget = compute_edabit_budget(trace.len());
