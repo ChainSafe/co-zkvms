@@ -41,6 +41,7 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
         round: usize,
         previous_claim: AdditiveShare<F>,
         max_degree: usize,
+        io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>>;
 
     /// Bind the sumcheck variable for this round to challenge `r_j`.
@@ -448,6 +449,7 @@ impl Rep3BatchedSumcheckWorker {
                     local_round,
                     individual_claims[i],
                     max_degree,
+                    io_ctx,
                 );
                 eyre::ensure!(
                     msg.len() == max_degree,
@@ -755,7 +757,7 @@ impl HybridBatchedSumcheckWorker {
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
                         let prev = secret_claims[i].unwrap();
-                        let msg = s.compute_prover_message_share(local_round, prev, max_degree);
+                        let msg = s.compute_prover_message_share(local_round, prev, max_degree, io_ctx);
                         eyre::ensure!(
                             msg.len() == max_degree,
                             "instance message len mismatch: expected {max_degree}, got {}",
@@ -1198,6 +1200,7 @@ mod tests {
             _round: usize,
             previous_claim: AdditiveShare<Fr>,
             max_degree: usize,
+            _io_ctx: &mut IoContextPool<N>,
         ) -> Vec<AdditiveShare<Fr>> {
             let c = previous_claim * Fr::TWO_INV;
             vec![c; max_degree]

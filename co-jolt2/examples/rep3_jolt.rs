@@ -267,6 +267,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         use mpc_core::protocols::rep3_ring::edabits;
         use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
         let budget = compute_edabit_budget(trace_len);
+        tracing::info!("budget: {:?}", budget);
         let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
         let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
         let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
@@ -291,11 +292,13 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         trace,
         io_device,
         memory,
-        io_ctx,
+        &mut io_ctx,
         ram_k,
         Some(program_io_share),
         edabits_pool,
     )?;
+
+    io_ctx.network().log_connection_stats();
 
     Ok(())
 }

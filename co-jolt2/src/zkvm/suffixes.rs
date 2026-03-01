@@ -16,6 +16,7 @@
 //! and batched by the caller using `fulfill_batched`.
 
 use crate::field::JoltField;
+use crate::utils::types::rep3_value::Rep3Value;
 use crate::utils::types::Either;
 use jolt2_common::constants::XLEN;
 use jolt_core::utils::interleave_bits;
@@ -314,8 +315,11 @@ pub struct SuffixFutureBatch<F: JoltField> {
     b2a_u128_idx: Vec<usize>,
 
     // Values
-    ready: Vec<Rep3PrimeFieldShare<F>>,
+    ready: Vec<Rep3Value<F>>,
     bitinject: Vec<Rep3RingShare<Bit>>,
+    /// Sparse map: bitinject position → post-injection scalar.
+    /// Entries absent from this map get weight 1 (no scaling).
+    bitinject_scalars: std::collections::BTreeMap<usize, F>,
     b2a_u8: Vec<Rep3RingShare<u8>>,
     b2a_u16: Vec<Rep3RingShare<u16>>,
     b2a_u32: Vec<Rep3RingShare<u32>>,
@@ -336,6 +340,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
             b2a_u128_idx: Vec::new(),
             ready: Vec::new(),
             bitinject: Vec::new(),
+            bitinject_scalars: std::collections::BTreeMap::new(),
             b2a_u8: Vec::new(),
             b2a_u16: Vec::new(),
             b2a_u32: Vec::new(),
@@ -355,7 +360,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
     pub fn extend_ready(
         &mut self,
         indices: impl IntoIterator<Item = usize>,
-        vals: impl IntoIterator<Item = Rep3PrimeFieldShare<F>>,
+        vals: impl IntoIterator<Item = Rep3Value<F>>,
     ) {
         self.ready_idx.extend(indices);
         self.ready.extend(vals);
@@ -369,6 +374,23 @@ impl<F: JoltField> SuffixFutureBatch<F> {
     ) {
         self.bitinject_idx.extend(indices);
         self.bitinject.extend(vals);
+    }
+
+    /// Push BitInject values that will be scaled by a public field element after injection.
+    /// All bits in this call share the same scalar. Uses the same bitinject bucket
+    /// with a sparse scalar map for the scaled entries.
+    pub fn extend_bitinject_scaled(
+        &mut self,
+        indices: impl IntoIterator<Item = usize>,
+        vals: impl IntoIterator<Item = Rep3RingShare<Bit>>,
+        scalar: F,
+    ) {
+        let start = self.bitinject.len();
+        self.bitinject_idx.extend(indices);
+        self.bitinject.extend(vals);
+        for pos in start..self.bitinject.len() {
+            self.bitinject_scalars.insert(pos, scalar);
+        }
     }
 
     /// Push B2A values into the correct typed bucket via compile-time dispatch.
@@ -386,23 +408,38 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         self,
         io_ctx: &mut IoContextPool<N>,
         pool: &mut EdaBitsPool<F>,
-    ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    ) -> eyre::Result<Vec<Rep3Value<F>>> {
         use mpc_core::protocols::rep3_ring::edabits;
         use rayon::prelude::*;
 
-        let mut out = vec![Rep3PrimeFieldShare::default(); self.len];
+        let mut out = vec![Rep3Value::zero_share(); self.len];
 
         // Phase 1: Sequential conversions, collect all (idx, val) pairs.
-        let mut scatter: Vec<(usize, Rep3PrimeFieldShare<F>)> = Vec::with_capacity(self.len);
+        let mut scatter: Vec<(usize, Rep3Value<F>)> = Vec::with_capacity(self.len);
 
-        // Ready — direct
+        // Ready — direct (already Rep3Value)
         scatter.extend(self.ready_idx.into_iter().zip(self.ready.into_iter()));
 
         // BitInject — single-bit → field via daBits
         if !self.bitinject.is_empty() {
             let dabits = pool.take_dabits(self.bitinject.len());
+            let _span =
+                tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
             let fields = edabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
-            scatter.extend(self.bitinject_idx.into_iter().zip(fields.into_iter()));
+            drop(_span);
+            scatter.extend(
+                self.bitinject_idx
+                    .into_iter()
+                    .enumerate()
+                    .zip(fields.into_iter())
+                    .map(|((pos, idx), f)| {
+                        let val = match self.bitinject_scalars.get(&pos) {
+                            Some(&w) => f * w,
+                            None => f,
+                        };
+                        (idx, Rep3Value::Shared(val))
+                    }),
+            );
         }
 
         // B2A per ring type
@@ -410,15 +447,23 @@ impl<F: JoltField> SuffixFutureBatch<F> {
             ($ring:ty, $idx:ident, $val:ident) => {
                 if !self.$val.is_empty() {
                     let batch = pool.take_edabits::<$ring>(self.$val.len());
+                    let _span = tracing::info_span!("ring_to_field_b2a_many", n = self.$val.len())
+                        .entered();
                     let fields = edabits::ring_to_field_b2a_many::<$ring, F, _>(
                         &self.$val,
                         &batch,
                         io_ctx.main(),
                     )?;
-                    scatter.extend(self.$idx.into_iter().zip(fields.into_iter()));
+                    drop(_span);
+                    scatter.extend(
+                        self.$idx
+                            .into_iter()
+                            .zip(fields.into_iter().map(Rep3Value::Shared)),
+                    );
                 }
             };
         }
+        // TODO: batch across rings?
         fulfill_b2a!(u8, b2a_u8_idx, b2a_u8);
         fulfill_b2a!(u16, b2a_u16_idx, b2a_u16);
         fulfill_b2a!(u32, b2a_u32_idx, b2a_u32);
@@ -426,17 +471,12 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         fulfill_b2a!(u128, b2a_u128_idx, b2a_u128);
 
         // Phase 2: Parallel scatter — all indices are disjoint by construction.
-        #[derive(Copy, Clone)]
-        struct SendPtr<T>(*mut T);
-        // SAFETY: indices are unique (each output position reserved by exactly one segment),
-        // so distinct threads write to distinct memory locations.
-        unsafe impl<T: Send> Send for SendPtr<T> {}
-        unsafe impl<T: Send> Sync for SendPtr<T> {}
+        use crate::utils::send_ptr::SendPtr;
 
         let ptr = SendPtr(out.as_mut_ptr());
         scatter.into_par_iter().for_each(|(idx, val)| {
             let p = ptr; // force capture of SendPtr wrapper, not the raw *mut field
-                         // SAFETY: idx is unique across all entries; Rep3PrimeFieldShare<F> is Copy.
+                         // SAFETY: idx is unique across all entries; Rep3Value<F> is Copy.
             unsafe {
                 p.0.add(idx).write(val);
             }
@@ -480,8 +520,10 @@ where
 
     // One suffix: constant 1 for all cycles
     if matches!(suffix, Suffixes::One) {
-        let one = Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
-        out.extend_ready(base..base + n, std::iter::repeat(one).take(n));
+        out.extend_ready(
+            base..base + n,
+            std::iter::repeat(Rep3Value::Public(F::one())).take(n),
+        );
         return Ok(());
     }
 
@@ -524,10 +566,7 @@ where
                 let val = suffix.suffix_mle::<XLEN>(LookupBits::new(p & mask, suffix_len));
                 out.extend_ready(
                     std::iter::once(base + i),
-                    std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                        &F::from_u64(val),
-                        party_id,
-                    )),
+                    std::iter::once(Rep3Value::Public(F::from_u64(val))),
                 );
             }
             (Vec::new(), Vec::new())
@@ -541,10 +580,7 @@ where
                         let val = suffix.suffix_mle::<XLEN>(LookupBits::new(*p & mask, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
-                            std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                &F::from_u64(val),
-                                party_id,
-                            )),
+                            std::iter::once(Rep3Value::Public(F::from_u64(val))),
                         );
                     }
                     Either::Shared(s) => {
@@ -588,10 +624,7 @@ where
             let val = suffix.suffix_mle::<XLEN>(LookupBits::new(interleaved, suffix_len));
             out.extend_ready(
                 std::iter::once(base + i),
-                std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                    &F::from_u64(val),
-                    party_id,
-                )),
+                std::iter::once(Rep3Value::Public(F::from_u64(val))),
             );
         }
         return Ok(());
@@ -624,10 +657,7 @@ where
                             suffix.suffix_mle::<XLEN>(LookupBits::new(interleaved, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
-                            std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                &F::from_u64(val),
-                                party_id,
-                            )),
+                            std::iter::once(Rep3Value::Public(F::from_u64(val))),
                         );
                     }
                     Either::Shared(s) => {
@@ -844,12 +874,7 @@ where
             MixedBatch::Public(y_pubs) => {
                 out.extend_ready(
                     indices_iter,
-                    (0..n).map(|j| {
-                        Rep3PrimeFieldShare::promote_from_trivial(
-                            &F::from_u64(y_pubs[orig(j)]),
-                            party_id,
-                        )
-                    }),
+                    (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)]))),
                 );
             }
             MixedBatch::Shared(ys) => {
@@ -862,10 +887,7 @@ where
                         Either::Public(yp) => {
                             out.extend_ready(
                                 std::iter::once(base + i),
-                                std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                    &F::from_u64(*yp),
-                                    party_id,
-                                )),
+                                std::iter::once(Rep3Value::Public(F::from_u64(*yp))),
                             );
                         }
                         Either::Shared(y) => {
@@ -882,12 +904,7 @@ where
             MixedBatch::Public(y_pubs) => {
                 out.extend_ready(
                     indices_iter,
-                    (0..n).map(|j| {
-                        Rep3PrimeFieldShare::promote_from_trivial(
-                            &F::from_u64(y_pubs[orig(j)] & 0xFFFF_FFFF),
-                            party_id,
-                        )
-                    }),
+                    (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)] & 0xFFFF_FFFF))),
                 );
             }
             MixedBatch::Shared(ys) => {
@@ -909,10 +926,7 @@ where
                         Either::Public(yp) => {
                             out.extend_ready(
                                 std::iter::once(base + i),
-                                std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                    &F::from_u64(*yp & 0xFFFF_FFFF),
-                                    party_id,
-                                )),
+                                std::iter::once(Rep3Value::Public(F::from_u64(*yp & 0xFFFF_FFFF))),
                             );
                         }
                         Either::Shared(y) => {
@@ -939,19 +953,13 @@ where
             MixedBatch::Public(y_pubs) => {
                 out.extend_ready(
                     indices_iter,
-                    (0..n).map(|j| {
-                        Rep3PrimeFieldShare::promote_from_trivial(
-                            &F::from_u64(y_pubs[orig(j)] & 1),
-                            party_id,
-                        )
-                    }),
+                    (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)] & 1))),
                 );
             }
             MixedBatch::Shared(ys) => {
-                let one = T::Half::try_from(1u128).unwrap_or_else(|_| unreachable!());
-                out.extend_b2a_ring::<T::Half>(
+                out.extend_bitinject(
                     indices_iter,
-                    ys.iter().map(|y| *y & RingElement(one)),
+                    ys.iter().map(|y| downcast::<T::Half, Bit>(*y)),
                 );
             }
             MixedBatch::Mixed(mixed) => {
@@ -961,17 +969,13 @@ where
                         Either::Public(yp) => {
                             out.extend_ready(
                                 std::iter::once(base + i),
-                                std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                    &F::from_u64(*yp & 1),
-                                    party_id,
-                                )),
+                                std::iter::once(Rep3Value::Public(F::from_u64(*yp & 1))),
                             );
                         }
                         Either::Shared(y) => {
-                            let one = T::Half::try_from(1u128).unwrap_or_else(|_| unreachable!());
-                            out.extend_b2a_ring::<T::Half>(
+                            out.extend_bitinject(
                                 std::iter::once(base + i),
-                                std::iter::once(*y & RingElement(one)),
+                                std::iter::once(downcast::<T::Half, Bit>(*y)),
                             );
                         }
                     }
@@ -979,64 +983,18 @@ where
             }
         },
 
-        // --- BitInject: comparisons (always need shared ys for MPC) ---
+        // --- BitInject: comparisons ---
+        // Uses ge_many_mixed: computes (p, g) locally for public y elements,
+        // and_many only for shared y elements, then a single Kogge-Stone tree.
         Suffixes::LessThan => {
-            let ys: Vec<Rep3RingShare<T::Half>> = (0..n)
-                .map(|j| {
-                    let i = orig(j);
-                    match right {
-                        MixedBatch::Shared(ys) => ys[i],
-                        MixedBatch::Public(y_pubs) => {
-                            let h = T::Half::try_from(y_pubs[i] as u128)
-                                .unwrap_or_else(|_| unreachable!());
-                            rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(h))
-                        }
-                        MixedBatch::Mixed(mixed) => match &mixed[i] {
-                            Either::Shared(y) => *y,
-                            Either::Public(yp) => {
-                                let h = T::Half::try_from(*yp as u128)
-                                    .unwrap_or_else(|_| unreachable!());
-                                rep3_ring::binary::promote_to_trivial_share(
-                                    party_id,
-                                    &RingElement(h),
-                                )
-                            }
-                        },
-                    }
-                })
-                .collect();
-            let ge_bits: Vec<Rep3RingShare<Bit>> =
-                rep3_ring::arithmetic::ge_many::<T::Half, _>(xs, &ys, io_ctx)?;
+            // lt(x, y) = !(x >= y)
+            let ge_bits = ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, false)?;
             let lt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, lt_bits.into_iter());
         }
         Suffixes::GreaterThan => {
-            let ys: Vec<Rep3RingShare<T::Half>> = (0..n)
-                .map(|j| {
-                    let i = orig(j);
-                    match right {
-                        MixedBatch::Shared(ys) => ys[i],
-                        MixedBatch::Public(y_pubs) => {
-                            let h = T::Half::try_from(y_pubs[i] as u128)
-                                .unwrap_or_else(|_| unreachable!());
-                            rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(h))
-                        }
-                        MixedBatch::Mixed(mixed) => match &mixed[i] {
-                            Either::Shared(y) => *y,
-                            Either::Public(yp) => {
-                                let h = T::Half::try_from(*yp as u128)
-                                    .unwrap_or_else(|_| unreachable!());
-                                rep3_ring::binary::promote_to_trivial_share(
-                                    party_id,
-                                    &RingElement(h),
-                                )
-                            }
-                        },
-                    }
-                })
-                .collect();
-            let ge_bits: Vec<Rep3RingShare<Bit>> =
-                rep3_ring::arithmetic::ge_many::<T::Half, _>(&ys, xs, io_ctx)?;
+            // gt(x, y) = !(y >= x)
+            let ge_bits = ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, true)?;
             let gt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, gt_bits.into_iter());
         }
@@ -1083,7 +1041,7 @@ where
                     indices_iter,
                     (0..n).map(|j| {
                         let val = if y_pubs[orig(j)] == 0 { 1u64 } else { 0u64 };
-                        Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id)
+                        Rep3Value::Public(F::from_u64(val))
                     }),
                 );
             }
@@ -1102,10 +1060,7 @@ where
                             let val = if *yp == 0 { 1u64 } else { 0u64 };
                             out.extend_ready(
                                 std::iter::once(base + i),
-                                std::iter::once(Rep3PrimeFieldShare::promote_from_trivial(
-                                    &F::from_u64(val),
-                                    party_id,
-                                )),
+                                std::iter::once(Rep3Value::Public(F::from_u64(val))),
                             );
                         }
                         Either::Shared(y) => {
@@ -1136,10 +1091,15 @@ where
                 .iter()
                 .map(|q| rep3_ring::binary::xor_public(q, &all_ones_mask, party_id))
                 .collect();
-            let divisor_zero = rep3_ring::binary::is_zero_many::<T::Half, _>(xs, io_ctx)?;
-            let quotient_all_ones = rep3_ring::binary::is_zero_many::<T::Half, _>(&q_xor, io_ctx)?;
+            // Batch both is_zero_many calls into one (halves rounds)
+            let split = xs.len();
+            let mut combined = Vec::with_capacity(split + q_xor.len());
+            combined.extend_from_slice(xs);
+            combined.extend_from_slice(&q_xor);
+            let combined_result = rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
+            let (divisor_zero, quotient_all_ones) = combined_result.split_at(split);
             let result =
-                rep3_ring::binary::and_many::<Bit, _>(&divisor_zero, &quotient_all_ones, io_ctx)?;
+                rep3_ring::binary::and_many::<Bit, _>(divisor_zero, quotient_all_ones, io_ctx)?;
             out.extend_bitinject(indices_iter, result.into_iter());
         }
         Suffixes::TwoLsb => {
@@ -1166,9 +1126,14 @@ where
                 .iter()
                 .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
                 .collect();
-            let y_eq_all_ones = rep3_ring::binary::is_zero_many::<T::Half, _>(&y_xor, io_ctx)?;
-            let x_eq_zero = rep3_ring::binary::is_zero_many::<T::Half, _>(xs, io_ctx)?;
-            let result = rep3_ring::binary::and_many::<Bit, _>(&y_eq_all_ones, &x_eq_zero, io_ctx)?;
+            // Batch both is_zero_many calls into one (halves rounds)
+            let split = y_xor.len();
+            let mut combined = Vec::with_capacity(split + xs.len());
+            combined.extend_from_slice(&y_xor);
+            combined.extend_from_slice(xs);
+            let combined_result = rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
+            let (y_eq_all_ones, x_eq_zero) = combined_result.split_at(split);
+            let result = rep3_ring::binary::and_many::<Bit, _>(y_eq_all_ones, x_eq_zero, io_ctx)?;
             out.extend_bitinject(indices_iter, result.into_iter());
         }
         Suffixes::ChangeDivisorW => {
@@ -1185,9 +1150,14 @@ where
                 .iter()
                 .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
                 .collect();
-            let y_eq_all_ones = rep3_ring::binary::is_zero_many::<u32, _>(&y_xor, io_ctx)?;
-            let x_eq_zero = rep3_ring::binary::is_zero_many::<u32, _>(&xs32, io_ctx)?;
-            let result = rep3_ring::binary::and_many::<Bit, _>(&y_eq_all_ones, &x_eq_zero, io_ctx)?;
+            // Batch both is_zero_many calls into one (halves rounds)
+            let split = y_xor.len();
+            let mut combined = Vec::with_capacity(split + xs32.len());
+            combined.extend_from_slice(&y_xor);
+            combined.extend_from_slice(&xs32);
+            let combined_result = rep3_ring::binary::is_zero_many::<u32, _>(&combined, io_ctx)?;
+            let (y_eq_all_ones, x_eq_zero) = combined_result.split_at(split);
+            let result = rep3_ring::binary::and_many::<Bit, _>(y_eq_all_ones, x_eq_zero, io_ctx)?;
             out.extend_bitinject(indices_iter, result.into_iter());
         }
 
@@ -1198,55 +1168,68 @@ where
                 indices_iter,
                 (0..n).map(|j| {
                     let val = compute_sign_extension_from_mask(y_pubs[orig(j)], suffix_len);
-                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id)
+                    Rep3Value::Public(F::from_u64(val))
                 }),
             );
         }
         Suffixes::SignExtensionRightOperand => {
             if suffix_len < XLEN {
-                let one = Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
-                out.extend_ready(indices_iter, std::iter::repeat(one).take(n));
-            } else {
-                // Need shared ys for sign bit extraction — promote inline
-                let ys: Vec<Rep3RingShare<T::Half>> = (0..n)
-                    .map(|j| {
-                        let i = orig(j);
-                        match right {
-                            MixedBatch::Shared(ys) => ys[i],
-                            MixedBatch::Public(y_pubs) => {
-                                let h = T::Half::try_from(y_pubs[i] as u128)
-                                    .unwrap_or_else(|_| unreachable!());
-                                rep3_ring::binary::promote_to_trivial_share(
-                                    party_id,
-                                    &RingElement(h),
-                                )
-                            }
-                            MixedBatch::Mixed(mixed) => match &mixed[i] {
-                                Either::Shared(y) => *y,
-                                Either::Public(yp) => {
-                                    let h = T::Half::try_from(*yp as u128)
-                                        .unwrap_or_else(|_| unreachable!());
-                                    rep3_ring::binary::promote_to_trivial_share(
-                                        party_id,
-                                        &RingElement(h),
-                                    )
-                                }
-                            },
-                        }
-                    })
-                    .collect();
-                let sign_bit_pos = XLEN / 2 - 1;
-                let sign_bits: Vec<Rep3RingShare<Bit>> = ys
-                    .iter()
-                    .map(|y| downcast::<T::Half, Bit>(*y >> sign_bit_pos))
-                    .collect();
-                let weight = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2)));
-                let sign_field: Vec<Rep3PrimeFieldShare<F>> =
-                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(&sign_bits, io_ctx)?;
                 out.extend_ready(
                     indices_iter,
-                    sign_field.into_iter().map(move |s| s * weight),
+                    std::iter::repeat(Rep3Value::Public(F::one())).take(n),
                 );
+            } else {
+                let sign_bit_pos = XLEN / 2 - 1;
+                let weight = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2)));
+                // Public y → sign bit is known → Public result (no MPC).
+                // Shared y → extract sign bit → deferred bitinject with weight scaling.
+                match right {
+                    MixedBatch::Public(y_pubs) => {
+                        out.extend_ready(
+                            indices_iter,
+                            (0..n).map(|j| {
+                                let sign = (y_pubs[orig(j)] >> sign_bit_pos) & 1;
+                                Rep3Value::Public(if sign == 1 { weight } else { F::zero() })
+                            }),
+                        );
+                    }
+                    MixedBatch::Shared(ys) => {
+                        out.extend_bitinject_scaled(
+                            indices_iter,
+                            ys.iter()
+                                .map(|y| downcast::<T::Half, Bit>(*y >> sign_bit_pos)),
+                            weight,
+                        );
+                    }
+                    MixedBatch::Mixed(mixed) => {
+                        for j in 0..n {
+                            let i = orig(j);
+                            let idx = base + i;
+                            match &mixed[i] {
+                                Either::Public(yp) => {
+                                    let sign = (*yp >> sign_bit_pos) & 1;
+                                    out.extend_ready(
+                                        std::iter::once(idx),
+                                        std::iter::once(Rep3Value::Public(if sign == 1 {
+                                            weight
+                                        } else {
+                                            F::zero()
+                                        })),
+                                    );
+                                }
+                                Either::Shared(y) => {
+                                    out.extend_bitinject_scaled(
+                                        std::iter::once(idx),
+                                        std::iter::once(downcast::<T::Half, Bit>(
+                                            *y >> sign_bit_pos,
+                                        )),
+                                        weight,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1304,7 +1287,7 @@ where
                     let yp = y_pubs[orig(j)];
                     let lo = LookupBits::new(yp as u128, y_len).leading_ones() as u64;
                     let val = 1u64 << lo;
-                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id)
+                    Rep3Value::Public(F::from_u64(val))
                 }),
             );
         }
@@ -1318,7 +1301,7 @@ where
                     let shift_mask = (1u64 << log_xlen.min(suffix_len / 2)) - 1;
                     let shift = (yp & shift_mask) as usize;
                     let val = 1u128 << (XLEN - 1 - shift);
-                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u128(val), party_id)
+                    Rep3Value::Public(F::from_u128(val))
                 }),
             );
         }
@@ -1371,7 +1354,7 @@ where
                     let y_truncated = LookupBits::new(yp as u128, y_bits);
                     let lo = y_truncated.leading_ones() as u64;
                     let val = 1u64 << lo;
-                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id)
+                    Rep3Value::Public(F::from_u64(val))
                 }),
             );
         }
@@ -1409,7 +1392,7 @@ where
                     let yp = y_pubs[orig(j)];
                     let lo = LookupBits::new(yp as u128, suffix_len / 2).leading_ones() as u64;
                     let val = (1u64 << lo) as u32 as u64;
-                    Rep3PrimeFieldShare::promote_from_trivial(&F::from_u64(val), party_id)
+                    Rep3Value::Public(F::from_u64(val))
                 }),
             );
         }
@@ -1467,7 +1450,7 @@ where
                 // All bits below XLEN → zero
                 out.extend_ready(
                     indices,
-                    std::iter::repeat(Rep3PrimeFieldShare::zero_share()).take(shared_bits.len()),
+                    std::iter::repeat(Rep3Value::Public(F::zero())).take(shared_bits.len()),
                 );
             } else {
                 let result_bits = T::K - XLEN;
@@ -1586,7 +1569,7 @@ where
                 .collect();
             let result =
                 eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
-            out.extend_ready(indices, result.into_iter());
+            out.extend_ready(indices, result.into_iter().map(Rep3Value::Shared));
         }
         Suffixes::Pow2W => {
             let num_bits = 5usize.min(suffix_len);
@@ -1598,33 +1581,33 @@ where
                 .collect();
             let result =
                 eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
-            out.extend_ready(indices, result.into_iter());
+            out.extend_ready(indices, result.into_iter().map(Rep3Value::Shared));
         }
         Suffixes::SignExtensionUpperHalf => {
             let half = XLEN / 2;
             if suffix_len < half {
-                let one = Rep3PrimeFieldShare::promote_from_trivial(&F::one(), party_id);
-                out.extend_ready(indices, std::iter::repeat(one).take(shared_bits.len()));
+                out.extend_ready(
+                    indices,
+                    std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()),
+                );
             } else {
                 let sign_bit_pos = half - 1;
-                let sign_bits: Vec<Rep3RingShare<Bit>> = shared_bits
-                    .iter()
-                    .map(|b| downcast::<T, Bit>(*b >> sign_bit_pos))
-                    .collect();
                 let weight = F::from_u128(((1u64 << half) - 1) as u128 * (1u128 << half));
-                let sign_field: Vec<Rep3PrimeFieldShare<F>> =
-                    rep3_ring::conversion::bit_inject_from_bits_to_field_many(&sign_bits, io_ctx)?;
-                let result: Vec<_> = sign_field.into_iter().map(|s| s * weight).collect();
-                out.extend_ready(indices, result.into_iter());
+                out.extend_bitinject_scaled(
+                    indices,
+                    shared_bits
+                        .iter()
+                        .map(|b| downcast::<T, Bit>(*b >> sign_bit_pos)),
+                    weight,
+                );
             }
         }
         Suffixes::OverflowBitsZero => {
             if T::K <= XLEN {
-                let one_bit = rep3_ring::binary::promote_to_trivial_share(
-                    PartyID::ID0,
-                    &RingElement(Bit::one()),
+                out.extend_ready(
+                    indices,
+                    std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()),
                 );
-                out.extend_bitinject(indices, std::iter::repeat(one_bit).take(shared_bits.len()));
             } else {
                 let upper: Vec<Rep3RingShare<T>> = shared_bits.iter().map(|b| *b >> XLEN).collect();
                 let eq_bits = rep3_ring::binary::is_zero_many::<T, _>(&upper, io_ctx)?;
@@ -1645,7 +1628,109 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Helpers for sign extension and XOR-rotate
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Batched comparison with mixed public/shared right operand.
+/// Computes `x >= y` (swap=false) or `y >= x` (swap=true) without promoting
+/// public y values to trivial shares. Instead:
+/// - Public y: compute propagate/generate bits locally (no communication)
+/// - Shared y: compute propagate locally, generate via `and_many` (1 round)
+/// - Single Kogge-Stone carry tree for all elements (log2(K) rounds)
+///
+/// Total: 1 + log2(K) rounds (same as `ge_many`), but the AND round only
+/// processes shared-y elements, and public-y elements contribute zero AND cost.
+fn ge_many_mixed<T: Uninterleavable, N: Rep3Network>(
+    xs: &[Rep3RingShare<T::Half>],
+    right: &MixedBatch<u64, T::Half>,
+    n: usize,
+    orig: &dyn Fn(usize) -> usize,
+    party_id: PartyID,
+    io_ctx: &mut IoContext<N>,
+    swap: bool,
+) -> eyre::Result<Vec<Rep3RingShare<Bit>>>
+where
+    Standard: Distribution<T::Half>,
+{
+    let mut p = vec![Rep3RingShare::<T::Half>::zero_share(); n];
+    let mut g = vec![Rep3RingShare::<T::Half>::zero_share(); n];
+
+    // Shared-y elements that need and_many for generate bits
+    let mut shared_a: Vec<Rep3RingShare<T::Half>> = Vec::new();
+    let mut shared_b: Vec<Rep3RingShare<T::Half>> = Vec::new();
+    let mut shared_pos: Vec<usize> = Vec::new();
+
+    for j in 0..n {
+        let i = orig(j);
+
+        // Extract y as public constant or shared value
+        let y_val: Either<RingElement<T::Half>, Rep3RingShare<T::Half>> = match right {
+            MixedBatch::Public(y_pubs) => Either::Public(RingElement(
+                T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
+            )),
+            MixedBatch::Shared(ys) => Either::Shared(ys[i]),
+            MixedBatch::Mixed(mixed) => match &mixed[i] {
+                Either::Public(yp) => Either::Public(RingElement(
+                    T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
+                )),
+                Either::Shared(y) => Either::Shared(*y),
+            },
+        };
+
+        match y_val {
+            Either::Public(y_const) => {
+                if swap {
+                    // y_const - x: a=y_const, b'=~x
+                    let x_neg = !xs[j];
+                    p[j] = rep3_ring::binary::xor_public(&x_neg, &y_const, party_id);
+                    g[j] = &x_neg & &y_const;
+                } else {
+                    // x - y_const: a=x, b'=~y_const
+                    let y_neg = !y_const;
+                    p[j] = rep3_ring::binary::xor_public(&xs[j], &y_neg, party_id);
+                    g[j] = &xs[j] & &y_neg;
+                }
+            }
+            Either::Shared(y_shared) => {
+                if swap {
+                    // y - x: a=y, b'=~x
+                    let x_neg = !xs[j];
+                    p[j] = y_shared ^ x_neg;
+                    shared_a.push(y_shared);
+                    shared_b.push(x_neg);
+                } else {
+                    // x - y: a=x, b'=~y
+                    let y_neg = !y_shared;
+                    p[j] = xs[j] ^ y_neg;
+                    shared_a.push(xs[j]);
+                    shared_b.push(y_neg);
+                }
+                shared_pos.push(j);
+            }
+        }
+    }
+
+    // AND for shared-y elements only (1 communication round, smaller batch)
+    if !shared_a.is_empty() {
+        let and_results = rep3_ring::binary::and_many::<T::Half, _>(&shared_a, &shared_b, io_ctx)?;
+        for (k, &pos) in shared_pos.iter().enumerate() {
+            g[pos] = and_results[k];
+        }
+    }
+
+    // carry_in = 1: g ^= p & 1
+    let one = RingElement(T::Half::try_from(1u128).unwrap_or_else(|_| unreachable!()));
+    for (gi, pi) in g.iter_mut().zip(p.iter()) {
+        *gi ^= *pi & one;
+    }
+
+    // Kogge-Stone carry tree (log2(K) rounds)
+    let carries = rep3_ring::arithmetic::kogge_stone_carries_many::<T::Half, _>(p, g, io_ctx)?;
+    Ok(carries)
+}
+
+// ---------------------------------------------------------------------------
+// XOR-rotate helpers
 // ---------------------------------------------------------------------------
 
 /// XorRot with pre-uninterleaved operands: (x ^ y) rotate_right by ROTATION
@@ -1763,7 +1848,6 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
         | Suffixes::Xor
         | Suffixes::Or
         | Suffixes::RightOperand
-        | Suffixes::Lsb
         | Suffixes::XorRot16
         | Suffixes::XorRot24
         | Suffixes::XorRot32
@@ -1832,7 +1916,8 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
         | Suffixes::LeftShiftWHelper => None,
 
         // --- BitInject (daBits, not edaBits) ---
-        Suffixes::TwoLsb
+        Suffixes::Lsb
+        | Suffixes::TwoLsb
         | Suffixes::LessThan
         | Suffixes::GreaterThan
         | Suffixes::Eq
@@ -1850,7 +1935,6 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
 pub fn suffix_uses_b2a_edabits(suffix: &Suffixes) -> bool {
     suffix_edabit_ring_bits(suffix, 128, 64).is_some()
 }
-
 
 #[cfg(test)]
 mod tests {

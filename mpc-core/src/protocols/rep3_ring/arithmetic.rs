@@ -512,6 +512,46 @@ where
     detail::unsigned_ge_const_rhs(lhs, rhs, io_context)
 }
 
+/// Run the Kogge-Stone carry tree on pre-computed propagate/generate bit vectors.
+/// Returns carry-out bits. Use when the caller has already computed (p, g) with
+/// a mix of local and MPC operations.
+pub fn kogge_stone_carries_many<T: IntRing2k, N: Rep3Network>(
+    p: Vec<RingShare<T>>,
+    g: Vec<RingShare<T>>,
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    detail::kogge_stone_carries_many(p, g, io_context)
+}
+
+/// Batched comparison: \[lhs_i\] >= rhs_i, where rhs values are public constants.
+/// Inputs must be in binary (XOR) domain. Saves one AND round vs `ge_many`.
+pub fn ge_const_rhs_many<T: IntRing2k, N: Rep3Network>(
+    lhs: &[RingShare<T>],
+    rhs: &[RingElement<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    detail::unsigned_ge_const_rhs_many(lhs, rhs, io_context)
+}
+
+/// Batched comparison: lhs_i >= \[rhs_i\], where lhs values are public constants.
+/// Inputs must be in binary (XOR) domain. Saves one AND round vs `ge_many`.
+pub fn ge_const_lhs_many<T: IntRing2k, N: Rep3Network>(
+    lhs: &[RingElement<T>],
+    rhs: &[RingShare<T>],
+    io_context: &mut IoContext<N>,
+) -> IoResult<Vec<RingShare<Bit>>>
+where
+    Standard: Distribution<T>,
+{
+    detail::unsigned_ge_const_lhs_many(lhs, rhs, io_context)
+}
+
 /// Checks if a shared value is equal to a public value. The result is a shared value that has value 1 if the two values are equal and 0 otherwise.
 pub fn eq_public<T: IntRing2k, N: Rep3Network>(
     shared: RingShare<T>,

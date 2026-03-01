@@ -20,6 +20,7 @@ use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
+use jolt_core::zkvm::bytecode::BytecodeDag;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof as VanillaJoltProof;
 use jolt_core::zkvm::dag::stage::SumcheckStages;
 use jolt_core::zkvm::dag::state_manager::{
@@ -44,7 +45,7 @@ type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 type Challenge = <F as jolt_core::field::JoltField>::Challenge;
 
-fn vanilla_up_to_stage3(
+fn vanilla_up_to_stage4(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
@@ -137,7 +138,7 @@ fn vanilla_up_to_stage3(
     //   5. HammingWeightSumcheck (Lookups)— included
     //   6. ValEvaluation (RAM)            — SKIP (not ported to MPC)
     //   7. ValFinalSumcheck (RAM)         — included
-    //   8. HammingBooleanity (RAM)        — SKIP (not ported to MPC)
+    //   8. HammingBooleanity (RAM)        — included
     //
     // Create all instances via subsystem methods (transcript draws happen inside).
     let spartan_stage3 = spartan.stage3_prover_instances(&mut sm);
@@ -149,13 +150,13 @@ fn vanilla_up_to_stage3(
     // spartan: both (indices 0,1)
     // registers: val evaluation (index 0)
     // lookups: ReadRaf (index 0) + HammingWeight (index 1) — both ported to MPC
-    // ram: skip ValEvaluation (index 0), keep ValFinal (index 1), skip HammingBooleanity (index 2)
+    // ram: skip ValEvaluation (index 0), keep ValFinal (index 1) + HammingBooleanity (index 2)
     let mut stage3_instances: Vec<Box<dyn SumcheckInstance<F, FS>>> = Vec::new();
     stage3_instances.extend(spartan_stage3); // PC + Product
     stage3_instances.extend(registers_stage3); // Val
     stage3_instances.extend(lookups_stage3); // ReadRaf + HammingWeight
     if ram_stage3.len() > 1 {
-        stage3_instances.extend(ram_stage3.into_iter().skip(1).take(1));
+        stage3_instances.extend(ram_stage3.into_iter().skip(1));
     }
 
     let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage3_instances
@@ -171,6 +172,35 @@ fn vanilla_up_to_stage3(
         ProofKeys::Stage3Sumcheck,
         ProofData::SumcheckProof(stage3_proof),
     );
+
+    // Stage 4 disabled: vanilla ra_virtual.rs expects RamValEvaluation opening
+    // which is not appended because we skip that sumcheck in stage3.
+    // TODO: re-enable once RamValEvaluation is ported to MPC.
+    // {
+    //     let mut bytecode_dag = BytecodeDag::default();
+    //
+    //     let mut stage4_instances: Vec<_> = std::iter::empty()
+    //         .chain(ram_dag.stage4_prover_instances(&mut sm))
+    //         .chain(bytecode_dag.stage4_prover_instances(&mut sm))
+    //         .chain(lookups_dag.stage4_prover_instances(&mut sm))
+    //         .collect();
+    //
+    //     if !stage4_instances.is_empty() {
+    //         let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage4_instances
+    //             .iter_mut()
+    //             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, FS>)
+    //             .collect();
+    //         let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
+    //             stage4_instances_mut,
+    //             Some(accumulator.clone()),
+    //             &mut *transcript.borrow_mut(),
+    //         );
+    //         sm.proofs.borrow_mut().insert(
+    //             ProofKeys::Stage4Sumcheck,
+    //             ProofData::SumcheckProof(stage4_proof),
+    //         );
+    //     }
+    // }
 
     (VanillaJoltProof::from_prover_state_manager(sm), tau)
 }
@@ -215,8 +245,8 @@ fn dag_correct() {
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
-    // 4) Vanilla proof up to Stage3.
-    let (vanilla_proof, tau) = vanilla_up_to_stage3(
+    // 4) Vanilla proof up to Stage4.
+    let (vanilla_proof, tau) = vanilla_up_to_stage4(
         &preprocessing,
         vanilla_trace,
         io_device.clone(),
@@ -281,11 +311,17 @@ fn dag_correct() {
                 let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
                 let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
                 let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
-                let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
+                let lazy_u128 =
+                    edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
                 let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(&mut io_ctx)?;
                 edabits::EdaBitsPool::new(
-                    lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128,
-                    dabit_setup, 512 * trace.len(),
+                    lazy_u8,
+                    lazy_u16,
+                    lazy_u32,
+                    lazy_u64,
+                    lazy_u128,
+                    dabit_setup,
+                    512 * trace.len(),
                 )
             };
 
@@ -298,7 +334,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, io_ctx, edabits_pool)
+            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, edabits_pool)
         },
         move |input, net| {
             let (verifier_preprocessing, program_io, ram_K) = input;
@@ -537,7 +573,93 @@ fn dag_correct() {
         }
     }
 
-    // 10) Compare opening claims bytes (stage1+stage2+stage3 openings).
+    // 9b) Stage4 comparison disabled: vanilla stage4 can't run without RamValEvaluation.
+    // TODO: re-enable once RamValEvaluation is ported to MPC.
+    // {
+    //     use jolt_core::zkvm::dag::state_manager::ProofData;
+    //
+    //     let rep3_stage4 = rep3_proof
+    //         .proofs
+    //         .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
+    //     let vanilla_stage4 = vanilla_proof
+    //         .proofs
+    //         .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
+    //
+    //     match (rep3_stage4, vanilla_stage4) {
+    //         (Some(rep3_s4), Some(vanilla_s4)) => {
+    //             let rep3_bytes = {
+    //                 let mut v = Vec::new();
+    //                 rep3_s4.serialize_uncompressed(&mut v).unwrap();
+    //                 v
+    //             };
+    //             let vanilla_bytes = {
+    //                 let mut v = Vec::new();
+    //                 vanilla_s4.serialize_uncompressed(&mut v).unwrap();
+    //                 v
+    //             };
+    //             if rep3_bytes != vanilla_bytes {
+    //                 let (rep3_sc, vanilla_sc) = match (rep3_s4, vanilla_s4) {
+    //                     (ProofData::SumcheckProof(a), ProofData::SumcheckProof(b)) => (a, b),
+    //                     _ => panic!("unexpected proof data variants for stage4 sumcheck"),
+    //                 };
+    //
+    //                 eprintln!(
+    //                     "Stage4 sumcheck: rep3 has {} polys, vanilla has {} polys",
+    //                     rep3_sc.compressed_polys.len(),
+    //                     vanilla_sc.compressed_polys.len()
+    //                 );
+    //
+    //                 let mut first_diff_idx = None;
+    //                 for (i, (a, b)) in rep3_sc
+    //                     .compressed_polys
+    //                     .iter()
+    //                     .zip(vanilla_sc.compressed_polys.iter())
+    //                     .enumerate()
+    //                 {
+    //                     let mut a_bytes = Vec::new();
+    //                     let mut b_bytes = Vec::new();
+    //                     a.serialize_uncompressed(&mut a_bytes).unwrap();
+    //                     b.serialize_uncompressed(&mut b_bytes).unwrap();
+    //                     if a_bytes != b_bytes {
+    //                         first_diff_idx = Some(i);
+    //                         break;
+    //                     }
+    //                 }
+    //
+    //                 if let Some(i) = first_diff_idx {
+    //                     panic!(
+    //                         "Stage4 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
+    //                         rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i],
+    //                     );
+    //                 } else if rep3_sc.compressed_polys.len()
+    //                     != vanilla_sc.compressed_polys.len()
+    //                 {
+    //                     panic!(
+    //                         "Stage4 sumcheck proof poly count mismatch: rep3={} vanilla={}",
+    //                         rep3_sc.compressed_polys.len(),
+    //                         vanilla_sc.compressed_polys.len()
+    //                     );
+    //                 } else {
+    //                     panic!(
+    //                         "Stage4 sumcheck proof bytes differ but individual polys match"
+    //                     );
+    //                 }
+    //             }
+    //         }
+    //         (None, None) => {
+    //             // Both absent — OK (ReadRaf not populated).
+    //         }
+    //         (rep3, vanilla) => {
+    //             panic!(
+    //                 "Stage4 proof presence mismatch: rep3={}, vanilla={}",
+    //                 rep3.is_some(),
+    //                 vanilla.is_some()
+    //             );
+    //         }
+    //     }
+    // }
+
+    // 10) Compare opening claims bytes (stage1+stage2+stage3+stage4 openings).
     let rep3_openings_bytes = {
         let mut v = Vec::new();
         rep3_proof

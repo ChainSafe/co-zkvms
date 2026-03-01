@@ -51,7 +51,7 @@ where
         trace: Vec<Rep3Cycle>,
         program_io: JoltDevice,
         final_memory_state: Rep3Memory,
-        io_ctx: IoContextPool<N>,
+        io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
         edabits_pool: EdaBitsPool<F>,
@@ -104,7 +104,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         trace: Vec<Rep3Cycle>,
         program_io: JoltDevice,
         final_memory_state: Rep3Memory,
-        io_ctx: IoContextPool<N>,
+        io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
         edabits_pool: EdaBitsPool<Fr>,
@@ -291,14 +291,23 @@ mod tests {
                     use mpc_core::protocols::rep3_ring::pcg::edabits_pcg;
                     let budget = compute_edabit_budget(trace.len());
                     let lazy_u8 = edabits::random_edabits_lazy::<u8, F, _>(budget.u8, &mut io_ctx)?;
-                    let lazy_u16 = edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
-                    let lazy_u32 = edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
-                    let lazy_u64 = edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
-                    let lazy_u128 = edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
+                    let lazy_u16 =
+                        edabits::random_edabits_lazy::<u16, F, _>(budget.u16, &mut io_ctx)?;
+                    let lazy_u32 =
+                        edabits::random_edabits_lazy::<u32, F, _>(budget.u32, &mut io_ctx)?;
+                    let lazy_u64 =
+                        edabits::random_edabits_lazy::<u64, F, _>(budget.u64, &mut io_ctx)?;
+                    let lazy_u128 =
+                        edabits::random_edabits_lazy::<u128, F, _>(budget.u128, &mut io_ctx)?;
                     let dabit_setup = edabits_pcg::random_pcg_dabit_setup::<F, _>(&mut io_ctx)?;
                     edabits::EdaBitsPool::new(
-                        lazy_u8, lazy_u16, lazy_u32, lazy_u64, lazy_u128,
-                        dabit_setup, 512 * trace.len(),
+                        lazy_u8,
+                        lazy_u16,
+                        lazy_u32,
+                        lazy_u64,
+                        lazy_u128,
+                        dabit_setup,
+                        512 * trace.len(),
                     )
                 };
 

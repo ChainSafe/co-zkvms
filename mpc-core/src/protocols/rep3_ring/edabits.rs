@@ -26,7 +26,6 @@ use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rayon::prelude::*;
 use std::marker::PhantomData;
-use tracing::info_span;
 
 /// An edaBits *mask-only* value linking the same random `r` across:
 /// - `r_ring`: arithmetic sharing over `Z_{2^K}`
@@ -184,7 +183,7 @@ where
     let mut gammas = Vec::with_capacity(num);
     let mut all_alphas = Vec::with_capacity(num);
 
-    let _span = info_span!("gen_gamma_alphas").entered();
+    let _span = tracing::trace_span!("gen_gamma_alphas").entered();
     for _ in 0..num {
         // Generate gamma: XOR of both correlated RNG outputs → private to P0.
         let (g1, g2): (T, T) = io.main().random_elements();
@@ -213,7 +212,7 @@ where
     }
     drop(_span);
 
-    let _span = info_span!("reshare").entered();
+    let _span = tracing::trace_span!("reshare").entered();
 
     // P0 → P2: send alpha_2 = F::from(gamma_bit) - alpha_1 for each bit.
     if io.party_id() == PartyID::ID0 {
@@ -456,7 +455,7 @@ where
         // P1 needs: alpha from seed2 only (no gamma).
         let (g1_bytes, g2_bytes, alpha_bytes);
         if party_id == PartyID::ID0 {
-            let _span = info_span!("gen_gamma_alpha").entered();
+            let _span = tracing::trace_span!("gen_gamma_alpha").entered();
             let (g1, (g2, a1)) = rayon::join(
                 || seek_and_generate(self.seed1, self.pos1, gamma_byte_offset, gamma_total_bytes),
                 || {
@@ -485,14 +484,14 @@ where
             alpha_bytes = a1;
         } else {
             // P1: only needs alpha from seed2 (= P0's seed1).
-            let _span = info_span!("gen_alpha").entered();
+            let _span = tracing::trace_span!("gen_alpha").entered();
             g1_bytes = Vec::new();
             g2_bytes = Vec::new();
             alpha_bytes =
                 seek_and_generate(self.seed2, self.pos2, alpha_byte_offset, alpha_total_bytes);
         }
 
-        let _span = info_span!("parse_gamma_alpha").entered();
+        let _span = tracing::trace_span!("parse_gamma_alpha").entered();
         let result: Vec<EdaBits<T, F>> = (0..n)
             .into_par_iter()
             .with_min_len(256)
@@ -535,7 +534,6 @@ where
     /// Like `take()`, but returns a flat `EdaBitsBatch` with zero per-edaBit allocations.
     ///
     /// Two allocations total: `gammas` (len n) + `alphas_flat` (len n*K).
-    #[tracing::instrument(skip_all, name = "EdaBits::take_batch", fields(n))]
     pub fn take_batch(&mut self, n: usize) -> EdaBitsBatch<T, F> {
         assert!(
             self.cursor + n <= self.total,
@@ -616,7 +614,7 @@ where
 
         let (g1_bytes, g2_bytes, alpha_bytes);
         if party_id == PartyID::ID0 {
-            let _span = info_span!("gen_gamma_alpha").entered();
+            let _span = tracing::trace_span!("gen_gamma_alpha").entered();
             let (g1, (g2, a1)) = rayon::join(
                 || seek_and_generate(self.seed1, self.pos1, gamma_byte_offset, gamma_total_bytes),
                 || {
@@ -644,7 +642,7 @@ where
             g2_bytes = g2;
             alpha_bytes = a1;
         } else {
-            let _span = info_span!("gen_alpha").entered();
+            let _span = tracing::trace_span!("gen_alpha").entered();
             g1_bytes = Vec::new();
             g2_bytes = Vec::new();
             alpha_bytes =
@@ -652,7 +650,7 @@ where
         }
 
         // Build flat arrays: one gammas vec + one alphas_flat vec.
-        let _span = info_span!("build_batch").entered();
+        let _span = tracing::trace_span!("build_batch").entered();
         let gammas: Vec<RingElement<T>> = if party_id == PartyID::ID0 {
             (0..n)
                 .into_par_iter()
@@ -722,7 +720,7 @@ where
     // P0 → P2: send alpha_2 = F::from(gamma_bit) - alpha_1.
     // Only P0 needs RNG bytes; P1/P2 skip generation entirely.
     if party_id == PartyID::ID0 {
-        let _span = info_span!("gen_rng_bytes").entered();
+        let _span = tracing::trace_span!("gen_rng_bytes").entered();
         // P0 needs: gamma from both seeds (for XOR) + alpha from seed1 only.
         // rng1: generate gamma + alpha contiguously. rng2: gamma only.
         let (all_bytes1, g2_bytes) = {
@@ -738,7 +736,7 @@ where
         let a1_bytes = &all_bytes1[gamma_total_bytes..];
         drop(_span);
 
-        let _span = info_span!("compute_send_alpha2").entered();
+        let _span = tracing::trace_span!("compute_send_alpha2").entered();
         let mut alpha_2_all = vec![F::zero(); num * k];
         alpha_2_all
             .par_chunks_mut(k)
@@ -763,7 +761,7 @@ where
     }
 
     let alpha2_flat: Vec<F> = if party_id == PartyID::ID2 {
-        let _span = info_span!("recv_alpha2").entered();
+        let _span = tracing::trace_span!("recv_alpha2").entered();
         let alpha_2_all: Vec<F> = io.network().recv_many(PartyID::ID0)?;
         debug_assert_eq!(alpha_2_all.len(), num * k);
         alpha_2_all
