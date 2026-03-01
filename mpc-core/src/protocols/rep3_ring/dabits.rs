@@ -1,0 +1,602 @@
+//! Cheng23 Protocol Π₁ daBits: single-bit Boolean→Arithmetic conversion.
+//!
+//! Provides partial-lazy storage for daBit correlated tuples, with:
+//! - P0 storing 1 field element per daBit (received s₂₀)
+//! - P1 storing nothing (fully seed-regenerable)
+//! - P2 storing 2 field elements per daBit (s₂₀ + s₁₂)
+//!
+//! Online cost: 3 bits / 1 round (same as standard bit injection).
+
+use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use crate::protocols::rep3::{
+    PartyID, Rep3PrimeFieldShare,
+    network::{IoContext, Rep3Network},
+};
+use mpc_types::field::PrimeField;
+use mpc_types::protocols::rep3_ring::{
+    Rep3RingShare,
+    ring::bit::Bit,
+};
+use rand::{RngCore, SeedableRng};
+use rayon::prelude::*;
+
+/// Batch of Cheng23 Π₁ correlated tuples for single-bit B2A (bit injection).
+///
+/// Each tuple contains:
+/// - `gammas[i]`: random bit γ known to P0 only (false for P1/P2)
+/// - `thetas[i]`: random bit θ known to P1 and P2 (false for P0)
+/// - `v_shares[i]`: replicated arithmetic sharing of v = (−1)^θ · γ
+pub struct DaBitBatch<F: PrimeField> {
+    pub gammas: Vec<bool>,
+    pub thetas: Vec<bool>,
+    pub v_shares: Vec<Rep3PrimeFieldShare<F>>,
+}
+
+// ---------------------------------------------------------------------------
+// LazyDaBits: Cheng23 Π₁ partial-lazy daBit storage
+// ---------------------------------------------------------------------------
+
+/// Partial-lazy storage for Π₁ daBit tuples.
+///
+/// After preprocessing (`random_dabits_lazy`), stores:
+/// - P0: seed snapshots + `total` field elements (s₂₀ received from P2)
+/// - P1: seed snapshots only (fully regenerable from P0↔P1 and P1↔P2 seeds)
+/// - P2: seed snapshot + `2*total` field elements (interleaved s₂₀, s₁₂)
+///
+/// `take_batch(n)` regenerates daBit tuples on demand from the stored seeds
+/// and received field elements.
+pub struct LazyDaBits<F: PrimeField> {
+    /// Snapshot of pairwise RNG shared with NEXT party.
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    /// Snapshot of pairwise RNG shared with PREV party.
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+    /// Bytes per field element: ceil(MODULUS_BIT_SIZE / 8).
+    field_bytes: usize,
+    party_id: PartyID,
+    total: usize,
+    cursor: usize,
+    /// Received field elements that cannot be regenerated from seeds.
+    ///
+    /// - P0: `[s₂₀_0, s₂₀_1, …]` — length `total`
+    /// - P1: `[]` — empty
+    /// - P2: `[s₂₀_0, s₁₂_0, s₂₀_1, s₁₂_1, …]` — interleaved, length `2*total`
+    stored: Vec<F>,
+}
+
+impl<F: PrimeField> LazyDaBits<F> {
+    pub fn empty(party_id: PartyID) -> Self {
+        Self {
+            seed1: [0u8; crate::SEED_SIZE],
+            pos1: 0,
+            seed2: [0u8; crate::SEED_SIZE],
+            pos2: 0,
+            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE)
+                .expect("u32 fits into usize")
+                .div_ceil(8),
+            party_id,
+            total: 0,
+            cursor: 0,
+            stored: Vec::new(),
+        }
+    }
+
+    pub fn new(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        total: usize,
+        stored: Vec<F>,
+        party_id: PartyID,
+    ) -> Self {
+        Self {
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE)
+                .expect("u32 fits into usize")
+                .div_ceil(8),
+            party_id,
+            total,
+            cursor: 0,
+            stored,
+        }
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.total - self.cursor
+    }
+
+    /// Drain `n` daBit tuples from the pool.
+    pub fn take_batch(&mut self, n: usize) -> DaBitBatch<F> {
+        assert!(
+            self.cursor + n <= self.total,
+            "LazyDaBits: need {n}, have {}",
+            self.total - self.cursor
+        );
+
+        let fb = self.field_bytes;
+        let cursor_base = self.cursor;
+
+        let party_id = self.party_id;
+
+        // P2: stored values only, no RNG regeneration needed for v_shares.
+        if party_id == PartyID::ID2 {
+            // Regenerate theta from seed2 (P2↔P1 stream).
+            let theta_offset = cursor_base; // 1 byte per daBit
+            let theta_bytes = seek_and_generate(self.seed2, self.pos2, theta_offset, n);
+            let thetas: Vec<bool> = theta_bytes.iter().map(|b| (b & 1) != 0).collect();
+
+            // Stored layout: [s₂₀_0, s₁₂_0, s₂₀_1, s₁₂_1, …]
+            let store_base = cursor_base * 2;
+            let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
+                .map(|i| {
+                    let s20 = self.stored[store_base + 2 * i]; // v.a for P2
+                    let s12 = self.stored[store_base + 2 * i + 1]; // v.b for P2
+                    Rep3PrimeFieldShare::new(s20, s12)
+                })
+                .collect();
+
+            self.cursor += n;
+            return DaBitBatch {
+                gammas: vec![false; n],
+                thetas,
+                v_shares,
+            };
+        }
+
+        // P0 and P1: regenerate from seeds.
+        // P0↔P1 stream offsets:
+        let gamma_g1_offset = cursor_base; // 1 byte per daBit
+        let alpha1_offset = self.total + cursor_base * fb; // after all gamma bytes
+        let r1_offset = self.total + self.total * fb + cursor_base * fb; // after all alpha bytes
+
+        let gamma_g1_needed = n;
+        let alpha1_needed = n * fb;
+        let r1_needed = n * fb;
+
+        match party_id {
+            PartyID::ID0 => {
+                // seed1 = P0↔P1, seed2 = P0↔P2
+                let g1_bytes =
+                    seek_and_generate(self.seed1, self.pos1, gamma_g1_offset, gamma_g1_needed);
+                // r1 from same stream (seed1), at r1 offset (skip past alpha1 region).
+                let r1_bytes = seek_and_generate(self.seed1, self.pos1, r1_offset, r1_needed);
+                // g2 from seed2 (P0↔P2 stream)
+                let g2_bytes = seek_and_generate(self.seed2, self.pos2, cursor_base, n);
+
+                let gammas: Vec<bool> = g1_bytes
+                    .iter()
+                    .zip(g2_bytes.iter())
+                    .map(|(a, b)| ((a ^ b) & 1) != 0)
+                    .collect();
+
+                let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
+                    .map(|i| {
+                        let r1: F = parse_field(&r1_bytes, i * fb);
+                        let s20 = self.stored[cursor_base + i]; // received from P2
+                        Rep3PrimeFieldShare::new(r1, s20) // (.a=s₀₁=r₁, .b=s₂₀)
+                    })
+                    .collect();
+
+                self.cursor += n;
+                DaBitBatch {
+                    gammas,
+                    thetas: vec![false; n],
+                    v_shares,
+                }
+            }
+            PartyID::ID1 => {
+                // seed1 = P1↔P2, seed2 = P1↔P0 (same stream as P0's seed1)
+                // Theta from seed1 (P1↔P2)
+                let theta_offset = cursor_base;
+                let theta_bytes = seek_and_generate(self.seed1, self.pos1, theta_offset, n);
+                let thetas: Vec<bool> = theta_bytes.iter().map(|b| (b & 1) != 0).collect();
+
+                // alpha1, r1 from seed2 (P1↔P0 = P0↔P1 stream)
+                let a1_bytes =
+                    seek_and_generate(self.seed2, self.pos2, alpha1_offset, alpha1_needed);
+                let r1_bytes = seek_and_generate(self.seed2, self.pos2, r1_offset, r1_needed);
+
+                let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
+                    .map(|i| {
+                        let alpha1: F = parse_field(&a1_bytes, i * fb);
+                        let r1: F = parse_field(&r1_bytes, i * fb);
+                        let theta = thetas[i];
+                        let neg1_theta = if theta { -F::one() } else { F::one() };
+                        let v1 = neg1_theta * alpha1;
+                        let s12 = v1 - r1;
+                        Rep3PrimeFieldShare::new(s12, r1) // (.a=s₁₂, .b=s₀₁=r₁)
+                    })
+                    .collect();
+
+                self.cursor += n;
+                DaBitBatch {
+                    gammas: vec![false; n],
+                    thetas,
+                    v_shares,
+                }
+            }
+            PartyID::ID2 => unreachable!(), // handled above
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessing: random_dabits_lazy
+// ---------------------------------------------------------------------------
+
+/// Generate Cheng23 Π₁ daBit tuples with partial-lazy storage.
+///
+/// Produces correlated tuples {γ, θ, ⟦v⟧^A} where v = (−1)^θ·γ, with:
+/// - P0/P1 storing only RNG seeds (P1 fully regenerable)
+/// - P0 additionally storing 1 field element per daBit (received from P2)
+/// - P2 storing 2 field elements per daBit
+///
+/// **Communication:** 2 rounds. Round 1: P0→P2 (n F), P1→P2 (n F). Round 2: P2→P0 (n F).
+#[tracing::instrument(skip_all, name = "dabits_preprocess_lazy")]
+pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
+    num: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<LazyDaBits<F>> {
+    let party_id = io.party_id();
+    if num == 0 {
+        return Ok(LazyDaBits::empty(party_id));
+    }
+
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
+        .expect("u32 fits into usize")
+        .div_ceil(8);
+
+    // Fork a dedicated Rep3Rand and snapshot state BEFORE generating bytes.
+    let mut eda_rand = io.main().rngs.rand.fork();
+    let (seed1, pos1, seed2, pos2) = eda_rand.snapshot();
+
+    // Byte budget per stream:
+    // P0↔P1 (rng1 for P0, rng2 for P1): num + num*fb (alpha) + num*fb (r1)
+    // P0↔P2 (rng2 for P0, rng1 for P2): num (gamma g2)
+    // P1↔P2 (rng1 for P1, rng2 for P2): num (theta)
+
+    let stored: Vec<F> = match party_id {
+        PartyID::ID0 => {
+            // Generate g1, alpha1, r1 from rng1 (P0↔P1). g2 from rng2 (P0↔P2).
+            let stream1_len = num + num * fb + num * fb;
+            let stream2_len = num;
+            let (stream1, stream2) = {
+                let mut s1 = vec![0u8; stream1_len];
+                let mut s2 = vec![0u8; stream2_len];
+                rayon::join(
+                    || eda_rand.rng1.fill_bytes(&mut s1),
+                    || eda_rand.rng2.fill_bytes(&mut s2),
+                );
+                (s1, s2)
+            };
+            let g1_bytes = &stream1[..num];
+            let a1_bytes = &stream1[num..num + num * fb];
+            let r1_bytes = &stream1[num + num * fb..];
+            let g2_bytes = &stream2;
+
+            // Compute alpha2 = F(gamma) - alpha1 for each daBit, and send to P2.
+            let alpha2: Vec<F> = (0..num)
+                .into_par_iter()
+                .with_min_len(256)
+                .map(|i| {
+                    let gamma_bit = ((g1_bytes[i] ^ g2_bytes[i]) & 1) != 0;
+                    let lo = u64::from_le_bytes(a1_bytes[i * fb..i * fb + 8].try_into().unwrap());
+                    let hi =
+                        u64::from_le_bytes(a1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
+                    let alpha1 = F::from((hi as u128) << 64 | lo as u128);
+                    F::from(gamma_bit as u64) - alpha1
+                })
+                .collect();
+
+            // Round 1: P0 → P2 sends alpha2
+            io.network().send_many(PartyID::ID2, &alpha2)?;
+            // Round 2: P0 ← P2 receives s20
+            let s20: Vec<F> = io.network().recv_many(PartyID::ID2)?;
+            debug_assert_eq!(s20.len(), num);
+            drop(alpha2);
+            let _ = r1_bytes; // r1 regenerated during take_batch
+            s20
+        }
+        PartyID::ID1 => {
+            // Generate from rng2 (P1↔P0): g1, alpha1, r1
+            // Generate from rng1 (P1↔P2): theta
+            let stream2_len = num + num * fb + num * fb; // P1↔P0 stream
+            let stream1_len = num; // P1↔P2 stream
+            let (stream2, stream1) = {
+                let mut s2 = vec![0u8; stream2_len];
+                let mut s1 = vec![0u8; stream1_len];
+                rayon::join(
+                    || eda_rand.rng2.fill_bytes(&mut s2),
+                    || eda_rand.rng1.fill_bytes(&mut s1),
+                );
+                (s2, s1)
+            };
+            let a1_bytes = &stream2[num..num + num * fb];
+            let r1_bytes = &stream2[num + num * fb..];
+            let theta_bytes = &stream1;
+
+            // Compute s12 = v1 - r1 for each daBit, and send to P2.
+            let s12: Vec<F> = (0..num)
+                .into_par_iter()
+                .with_min_len(256)
+                .map(|i| {
+                    let theta = (theta_bytes[i] & 1) != 0;
+                    let neg1_theta = if theta { -F::one() } else { F::one() };
+                    let lo = u64::from_le_bytes(a1_bytes[i * fb..i * fb + 8].try_into().unwrap());
+                    let hi =
+                        u64::from_le_bytes(a1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
+                    let alpha1 = F::from((hi as u128) << 64 | lo as u128);
+                    let lo = u64::from_le_bytes(r1_bytes[i * fb..i * fb + 8].try_into().unwrap());
+                    let hi =
+                        u64::from_le_bytes(r1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
+                    let r1 = F::from((hi as u128) << 64 | lo as u128);
+                    let v1 = neg1_theta * alpha1;
+                    v1 - r1
+                })
+                .collect();
+
+            // Round 1: P1 → P2 sends s12
+            io.network().send_many(PartyID::ID2, &s12)?;
+            // P1 stores nothing
+            Vec::new()
+        }
+        PartyID::ID2 => {
+            // Generate from rng2 (P2↔P1): theta
+            // Advance rng1 (P2↔P0) by num bytes to keep in sync.
+            let stream2_len = num; // theta
+            let stream1_len = num; // g2 (not used, just advance RNG)
+            let (stream2, _stream1) = {
+                let mut s2 = vec![0u8; stream2_len];
+                let mut s1 = vec![0u8; stream1_len];
+                rayon::join(
+                    || eda_rand.rng2.fill_bytes(&mut s2),
+                    || eda_rand.rng1.fill_bytes(&mut s1),
+                );
+                (s2, s1)
+            };
+            let theta_bytes = &stream2;
+
+            // Round 1: receive alpha2 from P0 and s12 from P1.
+            let alpha2: Vec<F> = io.network().recv_many(PartyID::ID0)?;
+            let s12_recv: Vec<F> = io.network().recv_many(PartyID::ID1)?;
+            debug_assert_eq!(alpha2.len(), num);
+            debug_assert_eq!(s12_recv.len(), num);
+
+            // Compute s20 = v2 = (-1)^theta * alpha2 and send to P0.
+            let s20: Vec<F> = (0..num)
+                .into_par_iter()
+                .with_min_len(256)
+                .map(|i| {
+                    let theta = (theta_bytes[i] & 1) != 0;
+                    let neg1_theta = if theta { -F::one() } else { F::one() };
+                    neg1_theta * alpha2[i]
+                })
+                .collect();
+
+            // Round 2: P2 → P0 sends s20
+            io.network().send_many(PartyID::ID0, &s20)?;
+
+            // Store interleaved [s20_0, s12_0, s20_1, s12_1, ...]
+            let mut stored = Vec::with_capacity(2 * num);
+            for i in 0..num {
+                stored.push(s20[i]);
+                stored.push(s12_recv[i]);
+            }
+            stored
+        }
+    };
+
+    Ok(LazyDaBits::new(
+        seed1, pos1, seed2, pos2, num, stored, party_id,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Online: bit_inject_field_many (Π₁)
+// ---------------------------------------------------------------------------
+
+/// Convert binary Rep3 bit shares to arithmetic field shares using Π₁ daBits.
+///
+/// **Protocol (1 round, 3 bits):**
+/// 1. P0 broadcasts m₀ = b.a ⊕ b.b ⊕ γ to P1,P2
+/// 2. P1 sends m₁ = θ ⊕ b.a to P0
+/// 3. All compute σ, then ⟦b⟧^A = (−1)^σ · ⟦v⟧^A + ⟦β⟧^A_{G₁}
+pub fn bit_inject_field_many<F: PrimeField, N: Rep3Network>(
+    x: &[Rep3RingShare<Bit>],
+    batch: &DaBitBatch<F>,
+    io: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    let n = x.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    debug_assert_eq!(batch.gammas.len(), n);
+    debug_assert_eq!(batch.thetas.len(), n);
+    debug_assert_eq!(batch.v_shares.len(), n);
+
+    let party_id = io.id;
+
+    // --- Round 1: P0 broadcasts m₀, P1 sends m₁ ---
+    // Use u8 for network (Bit lacks CanonicalSerialize).
+    let (m0s, m1s): (Vec<u8>, Vec<u8>) = match party_id {
+        PartyID::ID0 => {
+            // m₀ = x.a ⊕ x.b ⊕ γ
+            let m0s: Vec<u8> = x
+                .iter()
+                .zip(&batch.gammas)
+                .map(|(xi, &gamma)| (xi.a.0.convert() ^ xi.b.0.convert() ^ gamma) as u8)
+                .collect();
+            io.network.send_many(PartyID::ID1, &m0s)?;
+            io.network.send_many(PartyID::ID2, &m0s)?;
+            let m1s: Vec<u8> = io.network.recv_many(PartyID::ID1)?;
+            (m0s, m1s)
+        }
+        PartyID::ID1 => {
+            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
+            // m₁ = θ ⊕ x.a (P1.a = s₁₂)
+            let m1s: Vec<u8> = x
+                .iter()
+                .zip(&batch.thetas)
+                .map(|(xi, &theta)| (xi.a.0.convert() ^ theta) as u8)
+                .collect();
+            io.network.send_many(PartyID::ID0, &m1s)?;
+            (m0s, m1s)
+        }
+        PartyID::ID2 => {
+            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
+            (m0s, vec![])
+        }
+    };
+
+    // --- Local computation ---
+    let results: Vec<Rep3PrimeFieldShare<F>> = match party_id {
+        PartyID::ID0 => {
+            x.iter()
+                .zip(m0s.iter())
+                .zip(m1s.iter())
+                .zip(batch.gammas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|((((xi, &_m0), &m1), &gamma), v)| {
+                    // σ = m₁ ⊕ x.a ⊕ x.b ⊕ γ
+                    let sigma =
+                        (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    // P0: no β addition (β unknown to P0)
+                    Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
+                })
+                .collect()
+        }
+        PartyID::ID1 => {
+            m0s.iter()
+                .zip(x.iter())
+                .zip(batch.thetas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|(((&m0, xi), &theta), v)| {
+                    // β = m₀ ⊕ x.a (P1.a = s₁₂)
+                    let beta = (m0 != 0) ^ xi.a.0.convert();
+                    let sigma = beta ^ theta;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    // P1: add β to .a (s₁₂ component)
+                    Rep3PrimeFieldShare::new(
+                        v.a * neg1_sigma + F::from(beta as u64),
+                        v.b * neg1_sigma,
+                    )
+                })
+                .collect()
+        }
+        PartyID::ID2 => {
+            m0s.iter()
+                .zip(x.iter())
+                .zip(batch.thetas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|(((&m0, xi), &theta), v)| {
+                    // β = m₀ ⊕ x.b (P2.b = s₁₂)
+                    let beta = (m0 != 0) ^ xi.b.0.convert();
+                    let sigma = beta ^ theta;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    // P2: add β to .b (s₁₂ component)
+                    Rep3PrimeFieldShare::new(
+                        v.a * neg1_sigma,
+                        v.b * neg1_sigma + F::from(beta as u64),
+                    )
+                })
+                .collect()
+        }
+    };
+
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers (shared with edabits.rs)
+// ---------------------------------------------------------------------------
+
+/// Seek RNG to `byte_offset` from snapshotted position and generate `needed` bytes.
+pub(crate) fn seek_and_generate(
+    seed: [u8; crate::SEED_SIZE],
+    base_pos: u128,
+    byte_offset: usize,
+    needed: usize,
+) -> Vec<u8> {
+    use rand::RngCore;
+    let word_offset = (byte_offset as u128) / 4;
+    let skip = byte_offset % 4;
+    let mut rng = crate::RngType::from_seed(seed);
+    rng.set_word_pos(base_pos + word_offset);
+    let mut buf = vec![0u8; needed + skip];
+    rng.fill_bytes(&mut buf);
+    if skip > 0 {
+        buf.drain(..skip);
+    }
+    buf
+}
+
+/// Parse a field element from 16 raw bytes at `start` offset (128-bit entropy).
+pub(crate) fn parse_field<Fp: PrimeField>(bytes: &[u8], start: usize) -> Fp {
+    let lo = u64::from_le_bytes(bytes[start..start + 8].try_into().unwrap());
+    let hi = u64::from_le_bytes(bytes[start + 8..start + 16].try_into().unwrap());
+    Fp::from((hi as u128) << 64 | lo as u128)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "test-utils"))]
+mod tests {
+    use super::*;
+    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use mpc_types::protocols::rep3::combine_field_elements;
+    use ark_bn254::Fr;
+    use mpc_types::protocols::rep3_ring::{
+        ring::{bit::Bit as RingBit, ring_impl::RingElement},
+        share_ring_element,
+    };
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+
+    type Rep3RingShare<T> = mpc_types::protocols::rep3_ring::Rep3RingShare<T>;
+
+    #[test]
+    fn random_dabits_lazy_roundtrip() {
+        const NBITS: usize = 64;
+        let mut rng = ChaCha20Rng::seed_from_u64(0xDAB1_3001);
+        let bits = (0..NBITS)
+            .map(|_| (rng.next_u32() & 1) == 1)
+            .collect::<Vec<_>>();
+
+        let per_bit_shares = bits
+            .iter()
+            .map(|&b| share_ring_element::<RingBit, _>(RingElement(RingBit::new(b)), &mut rng))
+            .collect::<Vec<_>>();
+        let x_bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] =
+            std::array::from_fn(|pid| per_bit_shares.iter().map(|s| s[pid]).collect());
+
+        let outputs: [Vec<Rep3PrimeFieldShare<Fr>>; 3] = run_rep3_local_test_with_coordinator(
+            1,
+            |i| x_bit_shares[i].clone(),
+            || (),
+            |x_shares: Vec<Rep3RingShare<RingBit>>, mut io_ctx| {
+                let n = x_shares.len();
+                let mut lazy = random_dabits_lazy::<Fr, _>(n, &mut io_ctx)?;
+                let batch = lazy.take_batch(n);
+                bit_inject_field_many::<Fr, _>(&x_shares, &batch, io_ctx.main())
+                    .map_err(Into::into)
+            },
+            |(): (), _net| Ok(()),
+        )
+        .0;
+
+        let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
+        let expected = bits
+            .into_iter()
+            .map(|b| Fr::from(b as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(combined, expected);
+    }
+}

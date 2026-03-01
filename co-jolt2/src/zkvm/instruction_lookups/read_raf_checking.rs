@@ -1580,6 +1580,13 @@ impl<F: JoltField> ReadRafProverState<F> {
             Ok((s_left, s_right, s_identity))
         }
 
+        tracing::info!(
+            "identity (pub: {}, priv: {}); operands (pub: {}, priv: {})",
+            pub_identity.len(),
+            shared_identity_js.len(),
+            pub_interleaved.len(),
+            shared_interleaved_js.len()
+        );
         let (s_left, s_right, s_identity) = match suffix_len {
             65..=128 => b2a_both::<u128, F, N>(
                 shared_interleaved_masked,
