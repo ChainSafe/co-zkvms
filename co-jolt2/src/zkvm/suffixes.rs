@@ -159,16 +159,6 @@ fn to_u32_share<H: IntRing2k>(s: Rep3RingShare<H>) -> Rep3RingShare<u32> {
     }
 }
 
-/// Batch uninterleave: local, no communication.
-fn uninterleave_batch<T: Uninterleavable>(
-    bits: &[Rep3RingShare<T>],
-) -> (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>)
-where
-    Standard: Distribution<T::Half>,
-{
-    bits.iter().map(|b| T::uninterleave(*b)).unzip()
-}
-
 // ---------------------------------------------------------------------------
 // MixedBatch / SuffixBitsBatch — per-table operand data
 // ---------------------------------------------------------------------------
@@ -1861,67 +1851,6 @@ pub fn suffix_uses_b2a_edabits(suffix: &Suffixes) -> bool {
     suffix_edabit_ring_bits(suffix, 128, 64).is_some()
 }
 
-// ---------------------------------------------------------------------------
-// Operand Q suffix evaluations
-// ---------------------------------------------------------------------------
-
-/// Per-cycle suffix values for the operand Q polynomials.
-pub struct OperandQSuffixEvals<F: JoltField> {
-    pub left_operand: Vec<Rep3PrimeFieldShare<F>>,
-    pub right_operand: Vec<Rep3PrimeFieldShare<F>>,
-    pub identity: Vec<Rep3PrimeFieldShare<F>>,
-}
-
-/// Compute per-cycle suffix values for the operand Q polynomials.
-///
-/// Generic over `T: Uninterleavable` — the caller downcasts lookup_indices to the
-/// smallest ring fitting `suffix_len` bits, so the EdaBits and B2A use fewer bits.
-///
-/// For suffix_len > 0, computes:
-///   - left_operand[j] = uninterleave(suffix_bits_j).0 as field (T::Half ring B2A)
-///   - right_operand[j] = uninterleave(suffix_bits_j).1 as field (T::Half ring B2A)
-///   - identity[j] = suffix_bits_j as field (T ring B2A)
-///
-/// Input `suffix_bits` are pre-masked and downcast to `T` in **binary (XOR) domain**.
-#[tracing::instrument(skip_all, name = "compute_operand_q_suffix_evals", fields(phase))]
-pub fn compute_operand_q_suffix_evals<T, F, N>(
-    suffix_bits: &[Rep3RingShare<T>],
-    io_ctx: &mut IoContext<N>,
-    pool: &mut mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
-) -> eyre::Result<OperandQSuffixEvals<F>>
-where
-    T: Uninterleavable,
-    Standard: Distribution<T> + Distribution<T::Half>,
-    T::Half: AsPrimitive<T>,
-    F: JoltField,
-    N: Rep3Network,
-{
-    use mpc_core::protocols::rep3_ring::edabits;
-
-    // Identity: suffix_bits as field (T ring B2A via edaBits)
-    let identity = {
-        let batch = pool.take_edabits::<T>(suffix_bits.len());
-        let xs: Vec<_> = suffix_bits.iter().copied().collect();
-        edabits::ring_to_field_b2a_many::<T, F, _>(&xs, &batch, io_ctx)?
-    };
-
-    // Uninterleave (local) for left/right operands, then B2A via edaBits (T::Half ring)
-    let (xs, ys) = uninterleave_batch(suffix_bits);
-    let left_operand = {
-        let batch = pool.take_edabits::<T::Half>(xs.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&xs, &batch, io_ctx)?
-    };
-    let right_operand = {
-        let batch = pool.take_edabits::<T::Half>(ys.len());
-        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&ys, &batch, io_ctx)?
-    };
-
-    Ok(OperandQSuffixEvals {
-        left_operand,
-        right_operand,
-        identity,
-    })
-}
 
 #[cfg(test)]
 mod tests {
