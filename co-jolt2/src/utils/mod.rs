@@ -2,6 +2,7 @@ pub mod fwht;
 pub mod future;
 pub mod future_ring;
 pub mod instruction_utils;
+pub(crate) mod send_ptr;
 pub mod tracing;
 pub mod types;
 

@@ -531,29 +531,15 @@ where
                 base,
                 n,
             });
-            if !matches!(suffix, Suffixes::One) {
-                evaluate_suffix_for_table::<T, F, _>(
-                    suffix,
-                    &data,
-                    suffix_len,
-                    io_ctx.main(),
-                    party_id,
-                    base,
-                    &mut batch,
-                )?;
-            } else {
-                // One suffix: constant 1 for all cycles (handled inside evaluate_suffix_for_table
-                // but we call it anyway for uniformity)
-                evaluate_suffix_for_table::<T, F, _>(
-                    suffix,
-                    &data,
-                    suffix_len,
-                    io_ctx.main(),
-                    party_id,
-                    base,
-                    &mut batch,
-                )?;
-            }
+            evaluate_suffix_for_table::<T, F, _>(
+                suffix,
+                &data,
+                suffix_len,
+                io_ctx.main(),
+                party_id,
+                base,
+                &mut batch,
+            )?;
         }
     }
     drop(_span);
@@ -580,14 +566,13 @@ struct ReadRafProverState<F: JoltField> {
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
     /// Indices of cycles grouped by table type.
     lookup_indices_by_table: Vec<Vec<usize>>,
-    /// Sorted indices of all non-NoOp cycles (real instructions including SD/LD/FENCE/ECALL).
-    /// Used to filter operand Q B2A inputs.
-    non_noop_cycles: Vec<usize>,
     /// Indices of cycles using interleaved operands (raf path).
     interleaved_cycles: Vec<usize>,
     /// Indices of cycles NOT using interleaved operands (identity path).
     identity_cycles: Vec<usize>,
-    /// Per-cycle: true if operands are interleaved.
+    /// Per-cycle interleaved flag — used only in init_log_t_rounds for padding cycles
+    /// that are outside interleaved_cycles/identity_cycles but still need combined_val_poly
+    /// RAF contributions (because they may be paired with real cycles during sumcheck eval).
     is_interleaved_operands: Vec<bool>,
 
     // -- Shared per-cycle accumulators --
@@ -741,15 +726,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 }
             }
         }
-        // Non-NoOp cycles: derived from the first one_hot_poly's masked_indices_c.
-        // A cycle is NoOp iff masked_indices_c[j] == None (no instruction → no OHV).
-        // This includes SD/LD/FENCE/ECALL which have lookup_table()==None but valid OHVs.
-        let non_noop_cycles: Vec<usize> = one_hot_polys[0]
-            .masked_indices_c
-            .iter()
-            .enumerate()
-            .filter_map(|(j, opt)| opt.map(|_| j))
-            .collect();
 
         // -- Initialize u_evals and ra_acc --
         // NoOp padding cycles get zero so they contribute nothing to the sumcheck.
@@ -794,7 +770,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
             lookup_indices_by_table,
-            non_noop_cycles,
             interleaved_cycles,
             identity_cycles,
             is_interleaved_operands,
@@ -1462,7 +1437,8 @@ impl<F: JoltField> ReadRafProverState<F> {
             return Ok(());
         }
 
-        // suffix_len > 0: partition non-noop cycles into public (plain F) and shared (need B2A).
+        // suffix_len > 0: classify cycles by group (interleaved vs identity)
+        // and by secrecy (public vs shared).
         let mask_u128 = if suffix_len < 128 {
             (1u128 << suffix_len) - 1
         } else {
@@ -1470,34 +1446,63 @@ impl<F: JoltField> ReadRafProverState<F> {
         };
         let mask = RingElement(mask_u128);
 
-        // Public: (non_noop_local_idx, identity_val, left_val, right_val) as plain F
-        // Shared: (non_noop_local_idx, masked u128 share)
-        let mut public_operands: Vec<(usize, F, F, F)> = Vec::new();
-        let mut shared_locals: Vec<usize> = Vec::new();
-        let mut shared_masked: Vec<Rep3RingShare<u128>> = Vec::new();
-        for (local, &j) in self.non_noop_cycles.iter().enumerate() {
+        // Interleaved group: public → (j, left_val, right_val), shared → masked u128
+        let mut pub_interleaved: Vec<(usize, F, F)> = Vec::new();
+        let mut shared_interleaved_js: Vec<usize> = Vec::new();
+        let mut shared_interleaved_masked: Vec<Rep3RingShare<u128>> = Vec::new();
+
+        for &j in &self.interleaved_cycles {
             match &self.lookup_indices[j] {
                 Either::Public(p) => {
                     let masked = *p & mask_u128;
                     let (x, y) = uninterleave_bits(masked);
-                    public_operands.push((
-                        local,
-                        F::from_u128(masked),
-                        F::from_u128(x as u128),
-                        F::from_u128(y as u128),
-                    ));
+                    pub_interleaved.push((j, F::from_u128(x as u128), F::from_u128(y as u128)));
                 }
                 Either::Shared(s) => {
-                    shared_locals.push(local);
-                    shared_masked.push(*s & mask);
+                    shared_interleaved_js.push(j);
+                    shared_interleaved_masked.push(*s & mask);
                 }
             }
         }
 
-        // B2A for shared indices: downcast to smallest ring, parallel uninterleave,
-        // two sequential par_chunks_preproc B2A calls.
-        fn b2a_shared<T, F, N>(
-            shared_masked: Vec<Rep3RingShare<u128>>,
+        // Identity group: public → (j, id_val), shared → masked u128
+        let (pub_identity, shared_identity_js, shared_identity_masked): (
+            Vec<(usize, F)>,
+            Vec<usize>,
+            Vec<Rep3RingShare<u128>>,
+        ) = self
+            .identity_cycles
+            .par_iter()
+            .fold(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut pubs, mut js, mut masked), &j| {
+                    match &self.lookup_indices[j] {
+                        Either::Public(p) => {
+                            pubs.push((j, F::from_u128(*p & mask_u128)));
+                        }
+                        Either::Shared(s) => {
+                            js.push(j);
+                            masked.push(*s & mask);
+                        }
+                    }
+                    (pubs, js, masked)
+                },
+            )
+            .reduce(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut a, mut b, mut c), (x, y, z)| {
+                    a.extend(x);
+                    b.extend(y);
+                    c.extend(z);
+                    (a, b, c)
+                },
+            );
+
+        // Split B2A: interleaved needs T::Half (left+right), identity needs T.
+        // Both share the u128→T downcast step.
+        fn b2a_both<T, F, N>(
+            interleaved_u128: Vec<Rep3RingShare<u128>>,
+            identity_u128: Vec<Rep3RingShare<u128>>,
             io_ctx: &mut IoContextPool<N>,
             pool: &mut EdaBitsPool<F>,
         ) -> eyre::Result<(
@@ -1513,63 +1518,85 @@ impl<F: JoltField> ReadRafProverState<F> {
             F: JoltField,
             N: Rep3NetworkWorker,
         {
-            let n = shared_masked.len();
-            if n == 0 {
-                return Ok((vec![], vec![], vec![]));
-            }
+            let n_il = interleaved_u128.len();
+            let n_id = identity_u128.len();
 
-            // Parallel downcast u128 → T
-            let downcast_bits: Vec<Rep3RingShare<T>> = shared_masked
+            // Single downcast pass over combined input
+            let all_downcast: Vec<Rep3RingShare<T>> = interleaved_u128
                 .par_iter()
+                .chain(identity_u128.par_iter())
                 .map(|b| downcast::<u128, T>(*b))
                 .collect();
+            let (il_bits, id_bits) = all_downcast.split_at(n_il);
 
-            // Parallel uninterleave T → (T::Half, T::Half)
-            let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
-                downcast_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+            // Interleaved path: uninterleave → T::Half B2A
+            let s_left;
+            let s_right;
+            if n_il > 0 {
+                let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
+                    il_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+                let mut lr = Vec::with_capacity(2 * n_il);
+                lr.extend_from_slice(&xs);
+                lr.extend_from_slice(&ys);
+                let lr_batch = pool.take_edabits::<T::Half>(2 * n_il);
+                let mut lr_result = io_ctx.par_chunks_preproc(
+                    lr,
+                    lr_batch,
+                    None,
+                    |shares, batch, ctx| {
+                        edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
+                    },
+                )?;
+                s_right = lr_result.split_off(n_il);
+                s_left = lr_result;
+            } else {
+                s_left = vec![];
+                s_right = vec![];
+            }
 
-            // B2A #1: identity (T-ring)
-            let id_batch = pool.take_edabits::<T>(n);
-            let identity = io_ctx.par_chunks_preproc(
-                downcast_bits,
-                id_batch,
-                None,
-                |shares, batch, ctx| {
-                    edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
-                },
-            )?;
+            // Identity path: T-ring B2A
+            let s_identity = if n_id > 0 {
+                let id_batch = pool.take_edabits::<T>(n_id);
+                io_ctx.par_chunks_preproc(
+                    id_bits.to_vec(),
+                    id_batch,
+                    None,
+                    |shares, batch, ctx| {
+                        edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
+                    },
+                )?
+            } else {
+                vec![]
+            };
 
-            // B2A #2: left+right batched (T::Half-ring)
-            let mut lr = Vec::with_capacity(2 * n);
-            lr.extend_from_slice(&xs);
-            lr.extend_from_slice(&ys);
-            let lr_batch = pool.take_edabits::<T::Half>(2 * n);
-            let lr_result = io_ctx.par_chunks_preproc(
-                lr,
-                lr_batch,
-                None,
-                |shares, batch, ctx| {
-                    edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
-                },
-            )?;
-            let (left, right) = lr_result.split_at(n);
-
-            Ok((left.to_vec(), right.to_vec(), identity))
+            Ok((s_left, s_right, s_identity))
         }
 
         let (s_left, s_right, s_identity) = match suffix_len {
-            65..=128 => {
-                b2a_shared::<u128, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
-            }
-            33..=64 => {
-                b2a_shared::<u64, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
-            }
-            17..=32 => {
-                b2a_shared::<u32, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
-            }
-            1..=16 => {
-                b2a_shared::<u16, F, N>(shared_masked, io_ctx, &mut self.edabits_pool)?
-            }
+            65..=128 => b2a_both::<u128, F, N>(
+                shared_interleaved_masked,
+                shared_identity_masked,
+                io_ctx,
+                &mut self.edabits_pool,
+            )?,
+            33..=64 => b2a_both::<u64, F, N>(
+                shared_interleaved_masked,
+                shared_identity_masked,
+                io_ctx,
+                &mut self.edabits_pool,
+            )?,
+            17..=32 => b2a_both::<u32, F, N>(
+                shared_interleaved_masked,
+                shared_identity_masked,
+                io_ctx,
+                &mut self.edabits_pool,
+            )?,
+            1..=16 => b2a_both::<u16, F, N>(
+                shared_interleaved_masked,
+                shared_identity_masked,
+                io_ctx,
+                &mut self.edabits_pool,
+            )?,
             _ => unreachable!("suffix_len must be 1..=128"),
         };
 
@@ -1612,40 +1639,38 @@ impl<F: JoltField> ReadRafProverState<F> {
                     .map(|f| promote_to_trivial_share(f, party_id))
                     .collect();
 
-                // Public operand contributions: u_pub * public_val → public, add_public into hist
-                for &(local, id_val, left_val, right_val) in &public_operands {
-                    let j = self.non_noop_cycles[local];
-                    if self.is_interleaved_operands[j] {
-                        if let Some(c) = self.c16[j] {
-                            let ci = c as usize;
-                            let prod_l = u_pub[j] * left_val;
-                            let prod_r = u_pub[j] * right_val;
-                            hist_left[ci] = rep3_arith::add_public(hist_left[ci], prod_l, party_id);
-                            hist_right[ci] =
-                                rep3_arith::add_public(hist_right[ci], prod_r, party_id);
-                        }
-                    } else if let Some(c) = self.c16[j] {
+                // Public operand contributions — branchless per group
+                for &(j, left_val, right_val) in &pub_interleaved {
+                    if let Some(c) = self.c16[j] {
                         let ci = c as usize;
-                        hist_identity[ci] = rep3_arith::add_public(
-                            hist_identity[ci],
+                        let prod_l = u_pub[j] * left_val;
+                        let prod_r = u_pub[j] * right_val;
+                        hist_left[ci] = rep3_arith::add_public(hist_left[ci], prod_l, party_id);
+                        hist_right[ci] = rep3_arith::add_public(hist_right[ci], prod_r, party_id);
+                    }
+                }
+                for &(j, id_val) in &pub_identity {
+                    if let Some(c) = self.c16[j] {
+                        hist_identity[c as usize] = rep3_arith::add_public(
+                            hist_identity[c as usize],
                             u_pub[j] * id_val,
                             party_id,
                         );
                     }
                 }
 
-                // Shared operand contributions: u_pub * shared → mul_public → Rep3 (no reshare!)
-                for (i, &local) in shared_locals.iter().enumerate() {
-                    let j = self.non_noop_cycles[local];
-                    if self.is_interleaved_operands[j] {
-                        if let Some(c) = self.c16[j] {
-                            let ci = c as usize;
-                            hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
-                            hist_right[ci] += rep3_arith::mul_public(s_right[i], u_pub[j]);
-                        }
-                    } else if let Some(c) = self.c16[j] {
+                // Shared operand contributions — branchless per group
+                for (i, &j) in shared_interleaved_js.iter().enumerate() {
+                    if let Some(c) = self.c16[j] {
                         let ci = c as usize;
-                        hist_identity[ci] += rep3_arith::mul_public(s_identity[i], u_pub[j]);
+                        hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
+                        hist_right[ci] += rep3_arith::mul_public(s_right[i], u_pub[j]);
+                    }
+                }
+                for (i, &j) in shared_identity_js.iter().enumerate() {
+                    if let Some(c) = self.c16[j] {
+                        hist_identity[c as usize] +=
+                            rep3_arith::mul_public(s_identity[i], u_pub[j]);
                     }
                 }
             }
@@ -1664,38 +1689,40 @@ impl<F: JoltField> ReadRafProverState<F> {
                     }
                 }
 
-                // Public operand contributions → Rep3 histograms directly
-                for &(local, id_val, left_val, right_val) in &public_operands {
-                    let j = self.non_noop_cycles[local];
-                    if self.is_interleaved_operands[j] {
-                        if let Some(c) = self.c16[j] {
-                            let u = u_shared[j];
-                            hist_left[c as usize] += u * left_val;
-                            hist_right[c as usize] += u * right_val;
-                        }
-                    } else if let Some(c) = self.c16[j] {
+                // Public operand contributions — branchless per group
+                for &(j, left_val, right_val) in &pub_interleaved {
+                    if let Some(c) = self.c16[j] {
+                        let u = u_shared[j];
+                        hist_left[c as usize] += u * left_val;
+                        hist_right[c as usize] += u * right_val;
+                    }
+                }
+                for &(j, id_val) in &pub_identity {
+                    if let Some(c) = self.c16[j] {
                         hist_identity[c as usize] += u_shared[j] * id_val;
                     }
                 }
 
                 // Shared operand contributions → additive (Rep3 × Rep3 → Additive), needs reshare
-                if !shared_locals.is_empty() {
+                let has_shared_interleaved = !shared_interleaved_js.is_empty();
+                let has_shared_identity = !shared_identity_js.is_empty();
+                if has_shared_interleaved || has_shared_identity {
                     let mut add_left = vec![AdditiveShare::<F>::zero(); M];
                     let mut add_right = vec![AdditiveShare::<F>::zero(); M];
                     let mut add_identity = vec![AdditiveShare::<F>::zero(); M];
 
-                    for (i, &local) in shared_locals.iter().enumerate() {
-                        let j = self.non_noop_cycles[local];
-                        if self.is_interleaved_operands[j] {
-                            if let Some(c) = self.c16[j] {
-                                let u = u_shared[j];
-                                let ci = c as usize;
-                                add_left[ci] = add_left[ci] + (u * s_left[i]);
-                                add_right[ci] = add_right[ci] + (u * s_right[i]);
-                            }
-                        } else if let Some(c) = self.c16[j] {
+                    for (i, &j) in shared_interleaved_js.iter().enumerate() {
+                        if let Some(c) = self.c16[j] {
+                            let u = u_shared[j];
                             let ci = c as usize;
-                            add_identity[ci] = add_identity[ci] + (u_shared[j] * s_identity[i]);
+                            add_left[ci] = add_left[ci] + (u * s_left[i]);
+                            add_right[ci] = add_right[ci] + (u * s_right[i]);
+                        }
+                    }
+                    for (i, &j) in shared_identity_js.iter().enumerate() {
+                        if let Some(c) = self.c16[j] {
+                            add_identity[c as usize] =
+                                add_identity[c as usize] + (u_shared[j] * s_identity[i]);
                         }
                     }
 
@@ -1763,22 +1790,13 @@ impl<F: JoltField> ReadRafProverState<F> {
                 // 1 * v_shifted[c16[j]] = v_shifted[c16[j]] — no mul_vec needed.
                 use rayon::prelude::*;
 
-                let mut ra_shared =
-                    vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
-
-                #[derive(Copy, Clone)]
-                struct SendPtr<T>(*mut T);
-                unsafe impl<T: Send> Send for SendPtr<T> {}
-                unsafe impl<T: Send> Sync for SendPtr<T> {}
-
-                let ptr = SendPtr(ra_shared.as_mut_ptr());
-                active_indices.par_iter().for_each(|&j| {
-                    let p = ptr;
-                    // SAFETY: active_indices has unique j values
-                    unsafe {
-                        p.0.add(j).write(v_shifted[self.c16[j].unwrap() as usize]);
-                    }
-                });
+                let ra_shared: Vec<_> = (0..num_cycles)
+                    .into_par_iter()
+                    .map(|j| match self.c16[j] {
+                        Some(c) => v_shifted[c as usize],
+                        None => Rep3PrimeFieldShare::<F>::zero_share(),
+                    })
+                    .collect();
                 self.ra_acc = Some(ra_shared);
             }
             Some(ra_shared) => {
@@ -1818,12 +1836,23 @@ impl<F: JoltField> ReadRafProverState<F> {
         let t = self.c16.len();
         let mut combined_val_poly: Vec<F> = vec![F::zero(); t];
 
-        for (j, (table, &is_interleaved)) in self
-            .lookup_tables
-            .iter()
-            .zip(self.is_interleaved_operands.iter())
-            .enumerate()
-        {
+        // Precompute per-group RAF constants
+        let left_right_contrib = gamma
+            * self.prefix_registry.checkpoints
+                [jolt_core::poly::prefix_suffix::Prefix::LeftOperand]
+                .unwrap()
+            + gamma_squared
+                * self.prefix_registry.checkpoints
+                    [jolt_core::poly::prefix_suffix::Prefix::RightOperand]
+                    .unwrap();
+        let identity_contrib = gamma_squared
+            * self.prefix_registry.checkpoints
+                [jolt_core::poly::prefix_suffix::Prefix::Identity]
+                .unwrap();
+
+        // Must iterate ALL cycles (including padding) because padding values
+        // affect sumcheck evaluations at extrapolated points when paired with real cycles.
+        for (j, table) in self.lookup_tables.iter().enumerate() {
             if let Some(table) = table {
                 let suffixes: Vec<_> = table
                     .suffixes()
@@ -1832,21 +1861,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                     .collect();
                 combined_val_poly[j] += table.combine(&prefixes, &suffixes);
             }
-
-            if is_interleaved {
-                combined_val_poly[j] += gamma
-                    * self.prefix_registry.checkpoints
-                        [jolt_core::poly::prefix_suffix::Prefix::LeftOperand]
-                        .unwrap()
-                    + gamma_squared
-                        * self.prefix_registry.checkpoints
-                            [jolt_core::poly::prefix_suffix::Prefix::RightOperand]
-                            .unwrap();
+            if self.is_interleaved_operands[j] {
+                combined_val_poly[j] += left_right_contrib;
             } else {
-                combined_val_poly[j] += gamma_squared
-                    * self.prefix_registry.checkpoints
-                        [jolt_core::poly::prefix_suffix::Prefix::Identity]
-                        .unwrap();
+                combined_val_poly[j] += identity_contrib;
             }
         }
 
@@ -1910,28 +1928,34 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             evals
         } else {
             // Cycle rounds: eq_r_cycle * ra * combined_val.
+            use rayon::prelude::*;
+
             let ps = &self.state;
             let ra = ps.ra.as_ref().unwrap();
             let combined_val = ps.combined_val_polynomial.as_ref().unwrap();
             let half = ps.eq_r_cycle.len() / 2;
 
-            let mut evals = [AdditiveShare::<F>::zero(); DEGREE];
-            for i in 0..half {
-                let eq_vals = ps
-                    .eq_r_cycle
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let val_vals =
-                    combined_val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let ra_vals = ra.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+            let evals = (0..half)
+                .into_par_iter()
+                .map(|i| {
+                    let eq_vals = ps
+                        .eq_r_cycle
+                        .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    let val_vals =
+                        combined_val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    let ra_vals = ra.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
 
-                for d in 0..DEGREE {
-                    // eq * val is public×public = public
-                    let eq_val: F = eq_vals[d] * val_vals[d];
-                    // multiply by shared ra: public × shared → Rep3 share → additive
-                    let contribution = (ra_vals[d] * eq_val).into_additive();
-                    evals[d] += contribution;
-                }
-            }
+                    let mut local = [AdditiveShare::<F>::zero(); DEGREE];
+                    for d in 0..DEGREE {
+                        let eq_val: F = eq_vals[d] * val_vals[d];
+                        local[d] = (ra_vals[d] * eq_val).into_additive();
+                    }
+                    local
+                })
+                .reduce(
+                    || [AdditiveShare::<F>::zero(); DEGREE],
+                    |a, b| std::array::from_fn(|d| a[d] + b[d]),
+                );
 
             let mut result = vec![AdditiveShare::zero(); max_degree];
             for (i, &e) in evals.iter().enumerate().take(max_degree) {
@@ -2105,17 +2129,24 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
 impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// Compute the prefix-suffix prover message for address rounds.
     fn compute_prefix_suffix_prover_message(&self, round: usize) -> [AdditiveShare<F>; 2] {
-        let read_checking = self.prover_msg_read_checking(round);
-        let raf = self.prover_msg_raf();
+        // Capture fields directly to avoid Sync bound on PhantomData<N>.
+        let ps = &self.state;
+        let gamma = self.gamma;
+        let gamma_squared = self.gamma_squared;
+        let (read_checking, raf) = rayon::join(
+            || Self::prover_msg_read_checking_inner(ps, round),
+            || Self::prover_msg_raf_inner(ps, gamma, gamma_squared),
+        );
         [read_checking[0] + raf[0], read_checking[1] + raf[1]]
     }
 
     /// Read-checking component of the prover message.
-    fn prover_msg_read_checking(&self, j: usize) -> [AdditiveShare<F>; 2] {
+    fn prover_msg_read_checking_inner(
+        ps: &ReadRafProverState<F>,
+        j: usize,
+    ) -> [AdditiveShare<F>; 2] {
         use rayon::prelude::*;
 
-        let ps = &self.state;
-        let lookup_tables: Vec<_> = LookupTables::<XLEN>::iter().collect();
         let len = ps.suffix_polys[0][0].len();
         let log_len = len.log_2();
 
@@ -2158,7 +2189,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 let mut e2l = AdditiveShare::<F>::zero();
                 let mut e2r = AdditiveShare::<F>::zero();
 
-                for (table, suffixes) in lookup_tables.iter().zip(ps.suffix_polys.iter()) {
+                for (table, suffixes) in
+                    LookupTables::<XLEN>::iter().zip(ps.suffix_polys.iter())
+                {
+                    let table = &table;
                     let suffixes_left: Vec<AdditiveShare<F>> =
                         suffixes.iter().map(|s| s.get_coeff(b)).collect();
                     let suffixes_right: Vec<AdditiveShare<F>> =
@@ -2189,10 +2223,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// Mirrors vanilla `prover_msg_raf` but uses our shared Q arrays
     /// (`{left,right,identity}_operand_q`) paired with public P polynomials
     /// from the `PrefixRegistry`.
-    fn prover_msg_raf(&self) -> [AdditiveShare<F>; 2] {
+    fn prover_msg_raf_inner(
+        ps: &ReadRafProverState<F>,
+        gamma: F,
+        gamma_squared: F,
+    ) -> [AdditiveShare<F>; 2] {
         use rayon::prelude::*;
 
-        let ps = &self.state;
         let len = ps.identity_q[0].len();
         let half = len / 2;
 
@@ -2221,8 +2258,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             );
 
         [
-            left_0 * self.gamma + right_0 * self.gamma_squared,
-            left_2 * self.gamma + right_2 * self.gamma_squared,
+            left_0 * gamma + right_0 * gamma_squared,
+            left_2 * gamma + right_2 * gamma_squared,
         ]
     }
 }

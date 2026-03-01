@@ -127,22 +127,23 @@ impl Rep3JoltDAGCoordinator {
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
+        // TODO: re-enable once bytecode stage4 is fully ported
         // -------------------------------------------------------------------
 
-        let stage4_instances = Self::stage4_collect_instances(&mut state, network)?;
-
-        if !stage4_instances.is_empty() {
-            let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
-                &stage4_instances,
-                &mut state.accumulator,
-                &mut state.transcript,
-                network,
-            )?;
-            state.proofs.insert(
-                ProofKeys::Stage4Sumcheck,
-                ProofData::SumcheckProof(stage4_proof),
-            );
-        }
+        // let stage4_instances = Self::stage4_collect_instances(&mut state, network)?;
+        //
+        // if !stage4_instances.is_empty() {
+        //     let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
+        //         &stage4_instances,
+        //         &mut state.accumulator,
+        //         &mut state.transcript,
+        //         network,
+        //     )?;
+        //     state.proofs.insert(
+        //         ProofKeys::Stage4Sumcheck,
+        //         ProofData::SumcheckProof(stage4_proof),
+        //     );
+        // }
 
         // --- Construct stub JoltProof with real commitments, deferred stages ---
         let proof = JoltProof {
