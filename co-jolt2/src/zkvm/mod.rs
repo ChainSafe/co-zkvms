@@ -316,7 +316,7 @@ mod tests {
                     trace,
                     io_device,
                     memory,
-                    io_ctx,
+                    &mut io_ctx,
                     ram_K,
                     Some(advice),
                     edabits_pool,

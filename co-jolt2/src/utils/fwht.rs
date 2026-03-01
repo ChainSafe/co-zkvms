@@ -1,5 +1,6 @@
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 
@@ -80,6 +81,53 @@ pub fn fwht_field_in_place<F: JoltField>(a: &mut [F]) {
         }
         len = step;
     }
+}
+
+/// Unmask a public (plain F) histogram using FWHT and ehat.
+///
+/// Equivalent to `unmask_histogram(promote(h_f), ehat)` but ~2x cheaper:
+/// - First FWHT operates on F (1 field elem) instead of Rep3 (2 field elems)
+/// - Pointwise F×Rep3→Additive: ~1 op/elem avg vs Rep3×Rep3→Additive: 5 ops/elem
+pub fn unmask_histogram_public<F: JoltField>(
+    h_f: &mut [F],
+    ehat: &[Rep3PrimeFieldShare<F>],
+    party_id: mpc_core::protocols::rep3::PartyID,
+) -> Vec<AdditiveShare<F>> {
+    use mpc_core::protocols::rep3::PartyID;
+    let m = h_f.len();
+    debug_assert_eq!(m, ehat.len());
+    debug_assert!(m.is_power_of_two());
+
+    // FWHT on plain F — half the cost of fwht_rep3
+    fwht_field_in_place(h_f);
+
+    // Pointwise F × Rep3 → Additive (no communication, parallelized)
+    // promote(f, id) * rep3 = trivial_rep3 * rep3
+    // ID0: (f,0)*(a,b) → f*a + f*b = f*(a+b)
+    // ID1: (0,f)*(a,b) → f*a
+    // ID2: (0,0)*(a,b) → 0
+    let mut result: Vec<AdditiveShare<F>> = match party_id {
+        PartyID::ID0 => h_f
+            .par_iter()
+            .zip(ehat.par_iter())
+            .map(|(&f, e)| AdditiveShare::from_fe(f * (e.a + e.b)))
+            .collect(),
+        PartyID::ID1 => h_f
+            .par_iter()
+            .zip(ehat.par_iter())
+            .map(|(&f, e)| AdditiveShare::from_fe(f * e.a))
+            .collect(),
+        PartyID::ID2 => vec![AdditiveShare::zero(); m],
+    };
+
+    fwht_additive_in_place(&mut result);
+
+    let inv_m = F::from(m as u64)
+        .inverse()
+        .expect("M must be invertible in field");
+    result.par_iter_mut().for_each(|r| *r = *r * inv_m);
+
+    result
 }
 
 /// XOR-convolution of two length-N vectors of Rep3 shares:
@@ -229,10 +277,10 @@ pub fn shift_eq_table_with_mask<F: JoltField>(
     let mut eq_hat = eq_table.to_vec();
     fwht_field_in_place(&mut eq_hat);
 
-    // Pointwise multiply: public × share (no communication needed)
+    // Pointwise multiply: public × share (no communication, parallelized)
     let mut result: Vec<Rep3PrimeFieldShare<F>> = ehat
-        .iter()
-        .zip(eq_hat.iter())
+        .par_iter()
+        .zip(eq_hat.par_iter())
         .map(|(e, &eq)| *e * eq)
         .collect();
 
@@ -241,9 +289,7 @@ pub fn shift_eq_table_with_mask<F: JoltField>(
     let inv_m = F::from(m as u64)
         .inverse()
         .expect("M must be invertible in field");
-    for r in result.iter_mut() {
-        *r = *r * inv_m;
-    }
+    result.par_iter_mut().for_each(|r| *r = *r * inv_m);
 
     result
 }
