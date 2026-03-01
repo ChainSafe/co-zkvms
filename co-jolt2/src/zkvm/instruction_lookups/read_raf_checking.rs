@@ -727,7 +727,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             }
             // Only classify cycles that have a valid one-hot entry (not padding NoOps).
             // Padding cycles have masked_indices_c[j] = None and c16[j] = None,
-            // so they'd be skipped by the histogram scatter guard anyway, but
+            // so they'd be skipped by the histogram scatter guard anyway, but§
             // filtering here avoids iterating over ~(padded_len - trace_len) entries.
             if one_hot_polys[0].masked_indices_c[j].is_some() {
                 if is_interleaved {
@@ -1407,7 +1407,6 @@ impl<F: JoltField> ReadRafProverState<F> {
             // All operand suffix values are zero. Only constant shift histograms matter.
             // histograms[0] == histograms[2], histograms[1,3,5] are zero.
             let _span = info_span!("build_histograms_final", phase).entered();
-            let _fwht_span = info_span!("fwht_unmask_final", phase).entered();
             let (q0, q4) = match &self.u_evals {
                 Either::Public(u_pub) => {
                     // F histograms → unmask_histogram_public (FWHT on F, ~2x cheaper)
@@ -1449,13 +1448,11 @@ impl<F: JoltField> ReadRafProverState<F> {
                         }
                     }
                     let hists = vec![hist0, hist4];
-                    let polys: Vec<_> =
-                        hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
+                    let polys: Vec<_> = hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
                     let [q0, q4]: [AdditiveDensePoly<F>; 2] = polys.try_into().unwrap();
                     (q0, q4)
                 }
             };
-            drop(_fwht_span);
             drop(_span);
 
             self.left_operand_q[0] = q0.clone();
@@ -1478,18 +1475,15 @@ impl<F: JoltField> ReadRafProverState<F> {
         };
         let mask = RingElement(mask_u128);
 
-        // Interleaved group: three categories:
-        // - pub: both operands public (full index is Either::Public)
-        // - mixed: left shared, right public (right_operand_public_mask[j].is_some())
-        // - shared: both operands shared
+        // Interleaved group: pub (both operands public) vs shared (left shared).
+        // For shared: right_operand_pub[i] = Some(F) if right is public (mixed), None if shared.
         let half_bits = suffix_len / 2;
         let mut pub_interleaved: Vec<(usize, F, F)> = Vec::new();
-        let mut mixed_interleaved_js: Vec<usize> = Vec::new();
-        let mut mixed_interleaved_masked: Vec<Rep3RingShare<u128>> = Vec::new();
-        let mut mixed_right_pub: Vec<F> = Vec::new();
         let mut shared_interleaved_js: Vec<usize> = Vec::new();
         let mut shared_interleaved_masked: Vec<Rep3RingShare<u128>> = Vec::new();
+        let mut right_operand_pub: Vec<Option<F>> = Vec::new();
 
+        // TODO: parallize, simplify: right_operand_pub: currently inner F is unused, best avoided entirely
         for &j in &self.interleaved_cycles {
             match &self.lookup_indices[j] {
                 Either::Public(p) => {
@@ -1498,20 +1492,16 @@ impl<F: JoltField> ReadRafProverState<F> {
                     pub_interleaved.push((j, F::from_u128(x as u128), F::from_u128(y as u128)));
                 }
                 Either::Shared(s) => {
-                    if let Some(right_val) = self.right_operand_public_mask[j] {
-                        // Mixed: right operand is public, only left needs B2A
-                        mixed_interleaved_js.push(j);
-                        mixed_interleaved_masked.push(*s & mask);
+                    shared_interleaved_js.push(j);
+                    shared_interleaved_masked.push(*s & mask);
+                    right_operand_pub.push(self.right_operand_public_mask[j].map(|right_val| {
                         let right_masked = if half_bits >= 64 {
                             right_val
                         } else {
                             right_val & ((1u64 << half_bits) - 1)
                         };
-                        mixed_right_pub.push(F::from_u64(right_masked));
-                    } else {
-                        shared_interleaved_js.push(j);
-                        shared_interleaved_masked.push(*s & mask);
-                    }
+                        F::from_u64(right_masked)
+                    }));
                 }
             }
         }
@@ -1549,19 +1539,18 @@ impl<F: JoltField> ReadRafProverState<F> {
                 },
             );
 
-        // Split B2A: interleaved needs T::Half (left+right), identity needs T.
-        // Mixed interleaved (right operand public) only need left B2A.
+        // B2A: interleaved needs T::Half (left + right where shared), identity needs T.
+        // right_pub[i] = Some(_) means right operand is public → skip B2A for right.
         fn b2a_all<T, F, N>(
-            shared_interleaved_u128: Vec<Rep3RingShare<u128>>,
-            mixed_interleaved_u128: Vec<Rep3RingShare<u128>>,
+            interleaved_u128: Vec<Rep3RingShare<u128>>,
+            right_pub: &[Option<F>],
             identity_u128: Vec<Rep3RingShare<u128>>,
             io_ctx: &mut IoContextPool<N>,
             pool: &mut EdaBitsPool<F>,
         ) -> eyre::Result<(
-            Vec<Rep3PrimeFieldShare<F>>, // s_left (shared interleaved)
-            Vec<Rep3PrimeFieldShare<F>>, // s_right (shared interleaved)
-            Vec<Rep3PrimeFieldShare<F>>, // s_mixed_left (mixed interleaved, left only)
-            Vec<Rep3PrimeFieldShare<F>>, // s_identity
+            Vec<Rep3PrimeFieldShare<F>>,         // s_left (all interleaved)
+            Vec<Option<Rep3PrimeFieldShare<F>>>, // s_right (Some for fully-shared, None for mixed)
+            Vec<Rep3PrimeFieldShare<F>>,         // s_identity
         )>
         where
             T: Uninterleavable,
@@ -1571,54 +1560,51 @@ impl<F: JoltField> ReadRafProverState<F> {
             F: JoltField,
             N: Rep3NetworkWorker,
         {
-            let n_sh = shared_interleaved_u128.len();
-            let n_mix = mixed_interleaved_u128.len();
+            let n_il = interleaved_u128.len();
             let n_id = identity_u128.len();
 
-            // Single downcast pass over all inputs
-            let all_downcast: Vec<Rep3RingShare<T>> = shared_interleaved_u128
+            let all_downcast: Vec<Rep3RingShare<T>> = interleaved_u128
                 .par_iter()
-                .chain(mixed_interleaved_u128.par_iter())
                 .chain(identity_u128.par_iter())
                 .map(|b| downcast::<u128, T>(*b))
                 .collect();
-            let (il_bits, id_bits) = all_downcast.split_at(n_sh + n_mix);
-            let (sh_bits, mix_bits) = il_bits.split_at(n_sh);
+            let (il_bits, id_bits) = all_downcast.split_at(n_il);
 
-            // Shared interleaved: uninterleave → B2A both left + right
+            // Uninterleave all interleaved → lefts + rights
+            let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
+                il_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+
+            // Indices of fully-shared rights that need B2A
+            let shared_right_idx: Vec<usize> = right_pub
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| if r.is_none() { Some(i) } else { None })
+                .collect();
+
+            // B2A: all lefts + shared rights in one batch
             let s_left;
-            let s_right;
-            if n_sh > 0 {
-                let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
-                    sh_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
-                let mut lr = Vec::with_capacity(2 * n_sh);
+            let mut s_right: Vec<Option<Rep3PrimeFieldShare<F>>> = vec![None; n_il];
+            if n_il > 0 {
+                let mut lr = Vec::with_capacity(n_il + shared_right_idx.len());
                 lr.extend_from_slice(&xs);
-                lr.extend_from_slice(&ys);
-                let lr_batch = pool.take_edabits::<T::Half>(2 * n_sh);
+                for &i in &shared_right_idx {
+                    lr.push(ys[i]);
+                }
+                let lr_batch = pool.take_edabits::<T::Half>(lr.len());
                 let mut lr_result =
                     io_ctx.par_chunks_preproc(lr, lr_batch, None, |shares, batch, ctx| {
                         edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
                     })?;
-                s_right = lr_result.split_off(n_sh);
+                let shared_rights = lr_result.split_off(n_il);
                 s_left = lr_result;
+                for (idx, &i) in shared_right_idx.iter().enumerate() {
+                    s_right[i] = Some(shared_rights[idx]);
+                }
             } else {
                 s_left = vec![];
-                s_right = vec![];
             }
 
-            // Mixed interleaved: uninterleave → B2A left only (right is public)
-            let s_mixed_left = if n_mix > 0 {
-                let xs: Vec<Rep3RingShare<T::Half>> =
-                    mix_bits.par_iter().map(|b| T::uninterleave(*b).0).collect();
-                let batch = pool.take_edabits::<T::Half>(n_mix);
-                io_ctx.par_chunks_preproc(xs, batch, None, |shares, batch, ctx| {
-                    edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
-                })?
-            } else {
-                vec![]
-            };
-
-            // Identity path: T-ring B2A
+            // Identity: T-ring B2A
             let s_identity = if n_id > 0 {
                 let id_batch = pool.take_edabits::<T>(n_id);
                 io_ctx.par_chunks_preproc(
@@ -1633,42 +1619,43 @@ impl<F: JoltField> ReadRafProverState<F> {
                 vec![]
             };
 
-            Ok((s_left, s_right, s_mixed_left, s_identity))
+            Ok((s_left, s_right, s_identity))
         }
 
+        let n_mixed = right_operand_pub.iter().filter(|r| r.is_some()).count();
         tracing::info!(
             "identity (pub: {}, priv: {}); operands (pub: {}, mixed: {}, priv: {})",
             pub_identity.len(),
             shared_identity_js.len(),
             pub_interleaved.len(),
-            mixed_interleaved_js.len(),
-            shared_interleaved_js.len()
+            n_mixed,
+            shared_interleaved_js.len() - n_mixed
         );
-        let (s_left, s_right, s_mixed_left, s_identity) = match suffix_len {
+        let (s_left, s_right, s_identity) = match suffix_len {
             65..=128 => b2a_all::<u128, F, N>(
                 shared_interleaved_masked,
-                mixed_interleaved_masked,
+                &right_operand_pub,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
             33..=64 => b2a_all::<u64, F, N>(
                 shared_interleaved_masked,
-                mixed_interleaved_masked,
+                &right_operand_pub,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
             17..=32 => b2a_all::<u32, F, N>(
                 shared_interleaved_masked,
-                mixed_interleaved_masked,
+                &right_operand_pub,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
             1..=16 => b2a_all::<u16, F, N>(
                 shared_interleaved_masked,
-                mixed_interleaved_masked,
+                &right_operand_pub,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
@@ -1732,25 +1719,23 @@ impl<F: JoltField> ReadRafProverState<F> {
                     }
                 }
 
-                // Mixed operand contributions: left shared (B2A'd), right public
-                for (i, &j) in mixed_interleaved_js.iter().enumerate() {
-                    if let Some(c) = self.c16[j] {
-                        let ci = c as usize;
-                        hist_left[ci] += rep3_arith::mul_public(s_mixed_left[i], u_pub[j]);
-                        hist_right[ci] = rep3_arith::add_public(
-                            hist_right[ci],
-                            u_pub[j] * mixed_right_pub[i],
-                            party_id,
-                        );
-                    }
-                }
-
-                // Fully shared operand contributions
+                // Shared/mixed operand contributions
                 for (i, &j) in shared_interleaved_js.iter().enumerate() {
                     if let Some(c) = self.c16[j] {
                         let ci = c as usize;
                         hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
-                        hist_right[ci] += rep3_arith::mul_public(s_right[i], u_pub[j]);
+                        match s_right[i] {
+                            Some(sr) => {
+                                hist_right[ci] += rep3_arith::mul_public(sr, u_pub[j]);
+                            }
+                            None => {
+                                hist_right[ci] = rep3_arith::add_public(
+                                    hist_right[ci],
+                                    u_pub[j] * right_operand_pub[i].unwrap(),
+                                    party_id,
+                                );
+                            }
+                        }
                     }
                 }
                 for (i, &j) in shared_identity_js.iter().enumerate() {
@@ -1789,44 +1774,33 @@ impl<F: JoltField> ReadRafProverState<F> {
                     }
                 }
 
-                // Mixed operand contributions: left shared → additive, right public → Rep3
-                for (i, &j) in mixed_interleaved_js.iter().enumerate() {
-                    if let Some(c) = self.c16[j] {
-                        let ci = c as usize;
-                        // Right: u_shared * right_pub → Rep3 (no reshare)
-                        hist_right[ci] += u_shared[j] * mixed_right_pub[i];
-                    }
-                }
-
-                // Shared operand contributions → additive (Rep3 × Rep3 → Additive), needs reshare.
-                // Mixed left also goes through additive path.
+                // Shared/mixed operand contributions
                 let has_shared_interleaved = !shared_interleaved_js.is_empty();
-                let has_mixed_interleaved = !mixed_interleaved_js.is_empty();
                 let has_shared_identity = !shared_identity_js.is_empty();
-                if has_shared_interleaved || has_mixed_interleaved || has_shared_identity {
+                let has_fully_shared_right = right_operand_pub.iter().any(|r| r.is_none());
+                if has_shared_interleaved || has_shared_identity {
                     let mut add_left = vec![AdditiveShare::<F>::zero(); M];
-                    let mut add_identity = vec![AdditiveShare::<F>::zero(); M];
-
-                    // Mixed left: Rep3 × Rep3 → Additive
-                    for (i, &j) in mixed_interleaved_js.iter().enumerate() {
-                        if let Some(c) = self.c16[j] {
-                            add_left[c as usize] =
-                                add_left[c as usize] + (u_shared[j] * s_mixed_left[i]);
-                        }
-                    }
-
-                    // Fully shared: Rep3 × Rep3 → Additive (both left + right)
-                    let mut add_right = if has_shared_interleaved {
+                    let mut add_right = if has_fully_shared_right {
                         vec![AdditiveShare::<F>::zero(); M]
                     } else {
                         vec![]
                     };
+                    let mut add_identity = vec![AdditiveShare::<F>::zero(); M];
+
                     for (i, &j) in shared_interleaved_js.iter().enumerate() {
                         if let Some(c) = self.c16[j] {
                             let u = u_shared[j];
                             let ci = c as usize;
                             add_left[ci] = add_left[ci] + (u * s_left[i]);
-                            add_right[ci] = add_right[ci] + (u * s_right[i]);
+                            match s_right[i] {
+                                Some(sr) => {
+                                    add_right[ci] = add_right[ci] + (u * sr);
+                                }
+                                None => {
+                                    // Mixed: right public → Rep3 (no reshare)
+                                    hist_right[ci] += u * right_operand_pub[i].unwrap();
+                                }
+                            }
                         }
                     }
                     for (i, &j) in shared_identity_js.iter().enumerate() {
@@ -1840,18 +1814,17 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let _reshare = info_span!("q_reshare").entered();
                     let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
                     flat.extend_from_slice(&add_left);
-                    if has_shared_interleaved {
+                    if has_fully_shared_right {
                         flat.extend_from_slice(&add_right);
                     }
                     flat.extend_from_slice(&add_identity);
                     let flat_rep3 = rep3_arith::reshare_additive_many(&flat, io_ctx.main())?;
                     drop(_reshare);
 
-                    // Merge back: left always present, right only if shared interleaved exists
                     for i in 0..M {
                         hist_left[i] += flat_rep3[i];
                     }
-                    if has_shared_interleaved {
+                    if has_fully_shared_right {
                         for i in 0..M {
                             hist_right[i] += flat_rep3[M + i];
                         }
@@ -1890,8 +1863,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         let (q02, q1, q3, q4, q5) = if shift_in_rep3 {
             // Phase 1+: all 5 from rep3
-            let [q02, q1, q3, q4, q5]: [AdditiveDensePoly<F>; 5] =
-                rep3_polys.try_into().unwrap();
+            let [q02, q1, q3, q4, q5]: [AdditiveDensePoly<F>; 5] = rep3_polys.try_into().unwrap();
             (q02, q1, q3, q4, q5)
         } else {
             // Phase 0: shift histograms from F, operand histograms from Rep3
@@ -2268,7 +2240,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         );
 
         // Return claims in deterministic order: table_flags..., ra, raf_flag
-        // TODO: avoid promoting public claims to trivial shares
         let mut claims: Vec<Rep3PrimeFieldShare<F>> = flag_claims
             .into_iter()
             .map(|c| promote_to_trivial_share(c, ps.party_id))
