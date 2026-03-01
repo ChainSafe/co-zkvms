@@ -672,12 +672,9 @@ where
             .with_min_len(256)
             .map(|idx| {
                 let a_start = idx * fb;
-                let lo = u64::from_le_bytes(
-                    alpha_bytes[a_start..a_start + 8].try_into().unwrap(),
-                );
-                let hi = u64::from_le_bytes(
-                    alpha_bytes[a_start + 8..a_start + 16].try_into().unwrap(),
-                );
+                let lo = u64::from_le_bytes(alpha_bytes[a_start..a_start + 8].try_into().unwrap());
+                let hi =
+                    u64::from_le_bytes(alpha_bytes[a_start + 8..a_start + 16].try_into().unwrap());
                 F::from((hi as u128) << 64 | lo as u128)
             })
             .collect();
@@ -754,12 +751,9 @@ where
                 let gamma = g1_val ^ g2_val;
                 for j in 0..k {
                     let a_start = (i * k + j) * field_bytes;
-                    let lo = u64::from_le_bytes(
-                        a1_bytes[a_start..a_start + 8].try_into().unwrap(),
-                    );
-                    let hi = u64::from_le_bytes(
-                        a1_bytes[a_start + 8..a_start + 16].try_into().unwrap(),
-                    );
+                    let lo = u64::from_le_bytes(a1_bytes[a_start..a_start + 8].try_into().unwrap());
+                    let hi =
+                        u64::from_le_bytes(a1_bytes[a_start + 8..a_start + 16].try_into().unwrap());
                     let alpha_1 = F::from((hi as u128) << 64 | lo as u128);
                     let gamma_bit = ((gamma >> j) & T::one()) == T::one();
                     chunk[j] = F::from(gamma_bit as u64) - alpha_1;
@@ -1153,6 +1147,7 @@ impl<F: PrimeField> EdaBitsPool<F> {
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
     ///
     /// Panics if `T` is not one of u8, u16, u32, u64, u128.
+    #[tracing::instrument(skip(self))]
     pub fn take_edabits<T: IntRing2k>(&mut self, n: usize) -> EdaBitsBatch<T, F>
     where
         Standard: Distribution<T>,

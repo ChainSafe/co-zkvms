@@ -301,9 +301,11 @@ fn do_per_table_suffix_eval<T, F, N>(
     pool: &mut EdaBitsPool<F>,
 ) -> eyre::Result<(Vec<EvalSegment>, Vec<Rep3PrimeFieldShare<F>>)>
 where
-    T: crate::zkvm::suffixes::Uninterleavable + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    T: crate::zkvm::suffixes::Uninterleavable
+        + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
     Standard: Distribution<T> + Distribution<T::Half>,
-    <T as crate::zkvm::suffixes::Uninterleavable>::Half: AsPrimitive<T> + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    <T as crate::zkvm::suffixes::Uninterleavable>::Half:
+        AsPrimitive<T> + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
     F: JoltField,
     N: Rep3NetworkWorker,
 {
@@ -323,6 +325,7 @@ where
 
     let mut batch = SuffixFutureBatch::<F>::new();
     let mut segments = Vec::new();
+    let _span = info_span!("suffix_mle").entered();
 
     for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
         let table_cycles = &lookup_indices_by_table[table_idx];
@@ -387,10 +390,8 @@ where
         } else {
             // Uninterleaved: Morton-decode shared indices, check right_operand_public_mask
             let n = table_cycles.len();
-            let mut left_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> =
-                Vec::with_capacity(n);
-            let mut right_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> =
-                Vec::with_capacity(n);
+            let mut left_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
+            let mut right_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
             let mut all_left_public = true;
             let mut all_left_shared = true;
             let mut all_right_public = true;
@@ -534,6 +535,7 @@ where
             }
         }
     }
+    drop(_span);
 
     // Fulfill all pending B2A/BitInject conversions in one batch
     let all_field = batch.fulfill_with_pool(io_ctx, pool)?;
@@ -857,11 +859,7 @@ where
     F: JoltField,
     N: Rep3NetworkWorker,
 {
-    crate::zkvm::suffixes::compute_operand_q_suffix_evals(
-        suffix_bits,
-        io_ctx.main(),
-        pool,
-    )
+    crate::zkvm::suffixes::compute_operand_q_suffix_evals(suffix_bits, io_ctx.main(), pool)
 }
 
 impl<F: JoltField> ReadRafProverState<F> {
