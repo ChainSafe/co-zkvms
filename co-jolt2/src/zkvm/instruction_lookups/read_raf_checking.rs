@@ -46,520 +46,6 @@ const M: usize = 1 << LOG_M; // 65536
 const DEGREE: usize = 3;
 
 // ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
-
-/// MPC-compatible version of `LookupTables::combine`.
-///
-/// The vanilla `combine(prefixes, suffixes) -> F` is linear in suffixes.
-/// We extract per-suffix weights by probing with unit vectors, then apply
-/// those weights (public F) to the additive suffix shares.
-fn combine_shared<F: JoltField>(
-    table: &LookupTables<XLEN>,
-    prefixes: &[PrefixEval<F>],
-    shared_suffixes: &[AdditiveShare<F>],
-) -> AdditiveShare<F> {
-    let n = shared_suffixes.len();
-    debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
-    let mut unit = [F::zero(); 8];
-    let mut result = AdditiveShare::<F>::zero();
-    for i in 0..n {
-        unit[i] = F::one();
-        let weight: F = table.combine(prefixes, &unit[..n]);
-        unit[i] = F::zero();
-        result = result + shared_suffixes[i] * weight;
-    }
-    result
-}
-
-/// MPC version of `PrefixSuffixDecomposition::sumcheck_evals`.
-///
-/// Given public P polynomial (from PrefixRegistry, ORDER=2: P[0] = Some(poly), P[1] = None)
-/// and additive Q arrays, compute (eval_0, eval_2) at the given sumcheck index.
-///
-/// For P[i] = Some(prefix_poly): p_evals = (p[index], 2*p[index+len/2] - p[index])
-/// For P[i] = None:              p_evals = (1, 1)
-fn psd_sumcheck_evals_shared<F: JoltField>(
-    p_poly: Option<
-        &std::sync::Arc<std::sync::RwLock<jolt_core::poly::prefix_suffix::CachedPolynomial<F>>>,
-    >,
-    q: &[AdditiveDensePoly<F>; 2],
-    index: usize,
-    len: usize,
-) -> (AdditiveShare<F>, AdditiveShare<F>) {
-    let mut eval_0 = AdditiveShare::<F>::zero();
-    let mut eval_2_left = AdditiveShare::<F>::zero();
-    let mut eval_2_right = AdditiveShare::<F>::zero();
-
-    // P[0] = p_poly (may be Some), P[1] = None (constant 1)
-    let p_polys: [Option<
-        &std::sync::Arc<std::sync::RwLock<jolt_core::poly::prefix_suffix::CachedPolynomial<F>>>,
-    >; 2] = [p_poly, None];
-
-    for (i, p) in p_polys.iter().enumerate() {
-        let (p_0, p_2) = if let Some(p_arc) = p {
-            let p_guard = p_arc.read().unwrap();
-            let use_cache = std::sync::Arc::strong_count(p_arc) > 2;
-            let evals = p_guard.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
-            evals
-        } else {
-            (F::one(), F::one())
-        };
-
-        let q_left = q[i].get_coeff(index);
-        let q_right = q[i].get_coeff(index + len / 2);
-
-        eval_0 = eval_0 + q_left * p_0;
-        eval_2_left = eval_2_left + q_left * p_2;
-        eval_2_right = eval_2_right + q_right * p_2;
-    }
-
-    (eval_0, eval_2_right + eval_2_right - eval_2_left)
-}
-
-// ---------------------------------------------------------------------------
-// Per-table suffix evaluation
-// ---------------------------------------------------------------------------
-
-/// Identifies a contiguous segment of suffix evaluation results in the flat output.
-#[derive(Clone, Copy)]
-struct EvalSegment {
-    table_idx: usize,
-    suffix_idx: usize,
-    base: usize,
-    n: usize,
-}
-
-/// Build `SuffixBitsBatch<T>` per table, evaluate all non-One suffixes per table,
-/// and fulfill all B2A conversions in one batched pass.
-///
-/// Returns `(segments, all_field)` where each segment maps `(table_idx, suffix_idx)`
-/// to a `[base..base+n)` slice of `all_field`.
-fn table_suffixes_mle<T, F, N>(
-    lookup_indices: &[Either<u128, Rep3RingShare<u128>>],
-    lookup_indices_by_table: &[Vec<usize>],
-    right_operand_public_mask: &[Option<u64>],
-    suffix_len: usize,
-    io_ctx: &mut IoContextPool<N>,
-    party_id: PartyID,
-    pool: &mut EdaBitsPool<F>,
-) -> eyre::Result<(Vec<EvalSegment>, Vec<Rep3Value<F>>)>
-where
-    T: crate::zkvm::suffixes::Uninterleavable
-        + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
-    Standard: Distribution<T> + Distribution<T::Half>,
-    <T as crate::zkvm::suffixes::Uninterleavable>::Half:
-        AsPrimitive<T> + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
-    F: JoltField,
-    N: Rep3NetworkWorker,
-{
-    use crate::zkvm::suffixes::{
-        evaluate_suffix_for_table, table_uses_interleaved_data, MixedBatch, SuffixBitsBatch,
-        SuffixFutureBatch, Uninterleavable,
-    };
-
-    type H<T> = <T as Uninterleavable>::Half;
-
-    let suffix_mask: u128 = if suffix_len >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << suffix_len) - 1
-    };
-    let half_bits = suffix_len / 2;
-
-    let mut batch = SuffixFutureBatch::<F>::new();
-    let mut segments = Vec::new();
-    let _span = info_span!("suffixes_mle", n = lookup_indices.len()).entered();
-
-    for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
-        let table_cycles = &lookup_indices_by_table[table_idx];
-        if table_cycles.is_empty() {
-            continue;
-        }
-
-        let suffixes = table.suffixes();
-        let uses_interleaved = table_uses_interleaved_data(&suffixes);
-
-        // Build SuffixBitsBatch for this table
-        let data: SuffixBitsBatch<T> = if uses_interleaved {
-            let entries: Vec<Either<u128, Rep3RingShare<T>>> = table_cycles
-                .iter()
-                .map(|&j| match &lookup_indices[j] {
-                    Either::Public(p) => Either::Public(*p & suffix_mask),
-                    Either::Shared(s) => {
-                        let masked = *s & RingElement(suffix_mask);
-                        Either::Shared(Rep3RingShare {
-                            a: RingElement(
-                                T::try_from(masked.a.0).unwrap_or_else(|_| unreachable!()),
-                            ),
-                            b: RingElement(
-                                T::try_from(masked.b.0).unwrap_or_else(|_| unreachable!()),
-                            ),
-                        })
-                    }
-                })
-                .collect();
-            SuffixBitsBatch::Interleaved(MixedBatch::classify(entries))
-        } else {
-            // Uninterleaved: split into left/right, check right_operand_public_mask
-            let n = table_cycles.len();
-            let mut left_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
-            let mut right_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
-
-            for &j in table_cycles {
-                match &lookup_indices[j] {
-                    Either::Public(p) => {
-                        let masked = *p & suffix_mask;
-                        let mut x = 0u64;
-                        let mut y = 0u64;
-                        for i in 0..half_bits {
-                            x |= ((masked >> (2 * i + 1)) & 1) as u64 >> 0 << i;
-                            y |= ((masked >> (2 * i)) & 1) as u64 >> 0 << i;
-                        }
-                        left_entries.push(Either::Public(x));
-                        right_entries.push(Either::Public(y));
-                    }
-                    Either::Shared(s) => {
-                        let masked = *s & RingElement(suffix_mask);
-                        let masked_t = Rep3RingShare {
-                            a: RingElement(
-                                T::try_from(masked.a.0).unwrap_or_else(|_| unreachable!()),
-                            ),
-                            b: RingElement(
-                                T::try_from(masked.b.0).unwrap_or_else(|_| unreachable!()),
-                            ),
-                        };
-                        let (x_share, y_share) = T::uninterleave(masked_t);
-                        left_entries.push(Either::Shared(x_share));
-
-                        if let Some(mask_val) = right_operand_public_mask[j] {
-                            let y_pub = if half_bits >= 64 {
-                                mask_val
-                            } else {
-                                mask_val & ((1u64 << half_bits) - 1)
-                            };
-                            right_entries.push(Either::Public(y_pub));
-                        } else {
-                            right_entries.push(Either::Shared(y_share));
-                        }
-                    }
-                }
-            }
-
-            SuffixBitsBatch::Uninterleaved(
-                MixedBatch::classify(left_entries),
-                MixedBatch::classify(right_entries),
-            )
-        };
-
-        // Evaluate each non-One suffix for this table
-        let n = table_cycles.len();
-        for (suffix_idx, suffix) in suffixes.iter().enumerate() {
-            let base = batch.reserve(n);
-            segments.push(EvalSegment {
-                table_idx,
-                suffix_idx,
-                base,
-                n,
-            });
-            evaluate_suffix_for_table::<T, F, _>(
-                suffix,
-                &data,
-                suffix_len,
-                io_ctx.main(),
-                party_id,
-                base,
-                &mut batch,
-            )?;
-        }
-    }
-    drop(_span);
-
-    // Fulfill all pending B2A/BitInject conversions in one batch
-    let all_field = batch.fulfill_with_pool(io_ctx, pool)?;
-    Ok((segments, all_field))
-}
-
-/// Build weighted histograms for all (table, suffix) pairs.
-///
-/// For each pair, accumulates `u[j] * suffix_eval[j]` into a size-M histogram
-/// indexed by public c16 values. Returns four groups:
-/// - `pub_f`: histogram is fully public F (phase 0 with constant/One suffix)
-/// - `rep3`: histogram is Rep3 (no reshare needed)
-/// - `additive`: histogram is additive (needs reshare before FWHT)
-/// - `zero`: table has no cycles or suffix is identically zero
-fn build_suffix_histograms<F: JoltField>(
-    eval_segments: &[EvalSegment],
-    all_field: &[Rep3Value<F>],
-    u_evals: &Either<Vec<F>, Vec<Rep3PrimeFieldShare<F>>>,
-    c16: &[Option<u16>],
-    lookup_indices_by_table: &[Vec<usize>],
-    suffix_len: usize,
-    party_id: PartyID,
-) -> (
-    Vec<(usize, usize, Vec<F>)>,
-    Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)>,
-    Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
-    Vec<(usize, usize)>,
-) {
-    use rayon::prelude::*;
-
-    let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
-
-    // Build lookup: (table_idx, suffix_idx) → segment in all_field
-    let segment_lookup: std::collections::HashMap<(usize, usize), (usize, usize)> =
-        eval_segments
-            .par_iter()
-            .map(|seg| ((seg.table_idx, seg.suffix_idx), (seg.base, seg.n)))
-            .collect();
-
-    let work_items: Vec<(usize, usize, Suffixes)> = LookupTables::<XLEN>::iter()
-        .enumerate()
-        .flat_map(|(ti, table)| {
-            table
-                .suffixes()
-                .into_iter()
-                .enumerate()
-                .map(move |(si, s)| (ti, si, s))
-        })
-        .collect();
-
-    enum HistResult<F: JoltField> {
-        PublicF(usize, usize, Vec<F>),
-        Rep3(usize, usize, Vec<Rep3PrimeFieldShare<F>>),
-        Additive(usize, usize, Vec<AdditiveShare<F>>),
-        Zero(usize, usize),
-    }
-
-    let hist_results: Vec<HistResult<F>> = match u_evals {
-        Either::Public(u_pub) => {
-            // Phase 0: u is public
-            work_items
-                .par_iter()
-                .map(|&(ti, si, ref suffix)| {
-                    let table_cycles = &lookup_indices_by_table[ti];
-                    if table_cycles.is_empty() {
-                        return HistResult::Zero(ti, si);
-                    }
-                    if suffix_len == 0 {
-                        let constant_u64 =
-                            suffix.suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
-                        if constant_u64 == 0 {
-                            return HistResult::Zero(ti, si);
-                        }
-                        let constant_f = F::from_u128(constant_u64 as u128);
-                        let mut h = vec![F::zero(); M];
-                        for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_pub[j] * constant_f;
-                            }
-                        }
-                        HistResult::PublicF(ti, si, h)
-                    } else if matches!(suffix, Suffixes::One) {
-                        let mut h = vec![F::zero(); M];
-                        for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_pub[j];
-                            }
-                        }
-                        HistResult::PublicF(ti, si, h)
-                    } else {
-                        let &(seg_base, seg_n) = segment_lookup
-                            .get(&(ti, si))
-                            .expect("missing eval segment");
-                        let suffix_evals = &all_field[seg_base..seg_base + seg_n];
-
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-                        for (local, &j) in table_cycles.iter().enumerate() {
-                            if let Some(c) = c16[j] {
-                                let ci = c as usize;
-                                match suffix_evals[local] {
-                                    Rep3Value::Public(f) => {
-                                        h[ci] = rep3_arith::add_public(
-                                            h[ci],
-                                            u_pub[j] * f,
-                                            party_id,
-                                        );
-                                    }
-                                    Rep3Value::Shared(s) => {
-                                        h[ci] += rep3_arith::mul_public(s, u_pub[j]);
-                                    }
-                                    Rep3Value::Additive(_) => unreachable!(),
-                                }
-                            }
-                        }
-                        HistResult::Rep3(ti, si, h)
-                    }
-                })
-                .collect()
-        }
-        Either::Shared(u_shared) => {
-            // Phase 1+: u is shared
-            work_items
-                .par_iter()
-                .map(|&(ti, si, ref suffix)| {
-                    let table_cycles = &lookup_indices_by_table[ti];
-                    if table_cycles.is_empty() {
-                        return HistResult::Zero(ti, si);
-                    }
-                    if suffix_len == 0 {
-                        let constant_u64 =
-                            suffix.suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
-                        if constant_u64 == 0 {
-                            return HistResult::Zero(ti, si);
-                        }
-                        let constant_f = F::from_u128(constant_u64 as u128);
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-                        for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_shared[j] * constant_f;
-                            }
-                        }
-                        HistResult::Rep3(ti, si, h)
-                    } else if matches!(suffix, Suffixes::One) {
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-                        for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_shared[j];
-                            }
-                        }
-                        HistResult::Rep3(ti, si, h)
-                    } else {
-                        let &(seg_base, seg_n) = segment_lookup
-                            .get(&(ti, si))
-                            .expect("missing eval segment");
-                        let suffix_evals = &all_field[seg_base..seg_base + seg_n];
-
-                        let all_suffix_public = suffix_evals
-                            .iter()
-                            .all(|v| matches!(v, Rep3Value::Public(_)));
-                        if all_suffix_public {
-                            let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-                            for (local, &j) in table_cycles.iter().enumerate() {
-                                if let Some(c) = c16[j] {
-                                    let f = suffix_evals[local].as_public();
-                                    h[c as usize] += u_shared[j] * f;
-                                }
-                            }
-                            HistResult::Rep3(ti, si, h)
-                        } else {
-                            let mut h = vec![AdditiveShare::<F>::zero(); M];
-                            for (local, &j) in table_cycles.iter().enumerate() {
-                                if let Some(c) = c16[j] {
-                                    let w: AdditiveShare<F> = match suffix_evals[local] {
-                                        Rep3Value::Public(f) => u_shared[j].into_additive() * f,
-                                        Rep3Value::Shared(s) => u_shared[j] * s,
-                                        Rep3Value::Additive(_) => unreachable!(),
-                                    };
-                                    h[c as usize] = h[c as usize] + w;
-                                }
-                            }
-                            HistResult::Additive(ti, si, h)
-                        }
-                    }
-                })
-                .collect()
-        }
-    };
-
-    let mut pub_f = Vec::new();
-    let mut rep3 = Vec::new();
-    let mut additive = Vec::new();
-    let mut zero = Vec::new();
-    for result in hist_results {
-        match result {
-            HistResult::PublicF(ti, si, h) => pub_f.push((ti, si, h)),
-            HistResult::Rep3(ti, si, h) => rep3.push((ti, si, h)),
-            HistResult::Additive(ti, si, h) => additive.push((ti, si, h)),
-            HistResult::Zero(ti, si) => zero.push((ti, si)),
-        }
-    }
-    (pub_f, rep3, additive, zero)
-}
-
-/// B2A conversion for operand Q: uninterleave interleaved shares into left/right halves,
-/// skip B2A for public right operands, and convert identity shares at full ring width.
-///
-/// Returns `(s_left, s_right, s_identity)` where:
-/// - `s_left`: field share for each interleaved cycle's left operand
-/// - `s_right[i]`: `Some(share)` if right is shared, `None` if right is public (mixed)
-/// - `s_identity`: field share for each identity cycle
-fn b2a_all<T, F, N>(
-    interleaved_u128: Vec<Rep3RingShare<u128>>,
-    right_is_public: &[bool],
-    identity_u128: Vec<Rep3RingShare<u128>>,
-    io_ctx: &mut IoContextPool<N>,
-    pool: &mut EdaBitsPool<F>,
-) -> eyre::Result<(
-    Vec<Rep3PrimeFieldShare<F>>,
-    Vec<Option<Rep3PrimeFieldShare<F>>>,
-    Vec<Rep3PrimeFieldShare<F>>,
-)>
-where
-    T: crate::zkvm::suffixes::Uninterleavable,
-    T::Half: AsPrimitive<T>,
-    u128: AsPrimitive<T>,
-    Standard: Distribution<T> + Distribution<T::Half>,
-    F: JoltField,
-    N: Rep3NetworkWorker,
-{
-    use mpc_core::protocols::rep3_ring::edabits;
-    use rayon::prelude::*;
-
-    let n_il = interleaved_u128.len();
-    let n_id = identity_u128.len();
-
-    let all_downcast: Vec<Rep3RingShare<T>> = interleaved_u128
-        .par_iter()
-        .chain(identity_u128.par_iter())
-        .map(|b| downcast::<u128, T>(*b))
-        .collect();
-    let (il_bits, id_bits) = all_downcast.split_at(n_il);
-
-    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
-        il_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
-
-    let shared_right_idx: Vec<usize> = right_is_public
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &is_pub)| if !is_pub { Some(i) } else { None })
-        .collect();
-
-    let s_left;
-    let mut s_right: Vec<Option<Rep3PrimeFieldShare<F>>> = vec![None; n_il];
-    if n_il > 0 {
-        let mut lr = Vec::with_capacity(n_il + shared_right_idx.len());
-        lr.extend_from_slice(&xs);
-        for &i in &shared_right_idx {
-            lr.push(ys[i]);
-        }
-        let lr_batch = pool.take_edabits::<T::Half>(lr.len());
-        let mut lr_result =
-            io_ctx.par_chunks_preproc(lr, lr_batch, None, |shares, batch, ctx| {
-                edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
-            })?;
-        let shared_rights = lr_result.split_off(n_il);
-        s_left = lr_result;
-        for (idx, &i) in shared_right_idx.iter().enumerate() {
-            s_right[i] = Some(shared_rights[idx]);
-        }
-    } else {
-        s_left = vec![];
-    }
-
-    let s_identity = if n_id > 0 {
-        let id_batch = pool.take_edabits::<T>(n_id);
-        io_ctx.par_chunks_preproc(id_bits.to_vec(), id_batch, None, |shares, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
-        })?
-    } else {
-        vec![]
-    };
-
-    Ok((s_left, s_right, s_identity))
-}
-
-// ---------------------------------------------------------------------------
 // Worker
 // ---------------------------------------------------------------------------
 
@@ -879,12 +365,8 @@ impl<F: JoltField> ReadRafProverState<F> {
         let mut a_expanded = Vec::with_capacity(M);
         let mut b_expanded = Vec::with_capacity(M);
         for a_idx in 0..256 {
-            for _b_idx in 0..256 {
-                a_expanded.push(ehat8_hi[a_idx]);
-            }
-        }
-        for _a_idx in 0..256 {
             for b_idx in 0..256 {
+                a_expanded.push(ehat8_hi[a_idx]);
                 b_expanded.push(ehat8_lo[b_idx]);
             }
         }
@@ -1349,41 +831,44 @@ impl<F: JoltField> ReadRafProverState<F> {
                 },
             );
 
-        let right_is_public: Vec<bool> = right_operand_pub.iter().map(|r| r.is_some()).collect();
-        let n_mixed = right_is_public.iter().filter(|&&b| b).count();
+        let shared_right_idx: Vec<usize> = right_operand_pub
+            .par_iter()
+            .enumerate()
+            .filter_map(|(i, &r)| if !r.is_some() { Some(i) } else { None })
+            .collect();
         tracing::info!(
             "identity (pub: {}, priv: {}); operands (pub: {}, mixed: {}, priv: {})",
             pub_identity.len(),
             shared_identity_js.len(),
             pub_interleaved.len(),
-            n_mixed,
-            shared_interleaved_js.len() - n_mixed
+            shared_right_idx.len(),
+            shared_interleaved_js.len() - shared_right_idx.len()
         );
         let (s_left, s_right, s_identity) = match suffix_len {
-            65..=128 => b2a_all::<u128, F, N>(
+            65..=128 => q_polys_b2a::<u128, F, N>(
                 shared_interleaved_masked,
-                &right_is_public,
+                &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
-            33..=64 => b2a_all::<u64, F, N>(
+            33..=64 => q_polys_b2a::<u64, F, N>(
                 shared_interleaved_masked,
-                &right_is_public,
+                &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
-            17..=32 => b2a_all::<u32, F, N>(
+            17..=32 => q_polys_b2a::<u32, F, N>(
                 shared_interleaved_masked,
-                &right_is_public,
+                &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
             )?,
-            1..=16 => b2a_all::<u16, F, N>(
+            1..=16 => q_polys_b2a::<u16, F, N>(
                 shared_interleaved_masked,
-                &right_is_public,
+                &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
                 &mut self.edabits_pool,
@@ -1395,6 +880,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         let shift_half_val = F::from_u128(1u128 << (suffix_len / 2));
         let shift_val = F::from_u128(1u128 << suffix_len);
         let party_id = self.party_id;
+        let c16 = &self.c16;
 
         // Build histograms. histograms[0] == histograms[2] always (both Σ u * shift_half_val
         // for interleaved cycles), so we compute it once and clone.
@@ -1407,138 +893,159 @@ impl<F: JoltField> ReadRafProverState<F> {
         let mut hist_right = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
         let mut hist_identity = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
 
+        // Shift histogram accumulation is folded into the operand loops below:
+        // pub_interleaved ∪ shared_interleaved == interleaved_cycles, and
+        // pub_identity ∪ shared_identity == identity_cycles, so every active
+        // cycle is visited exactly once.  The two groups (interleaved vs identity)
+        // write to disjoint histograms and run in parallel via rayon::join.
         match &self.u_evals {
             Either::Public(u_pub) => {
-                // Phase 0: u is public
-
-                // Constant shift histograms: u_pub * shift_val → plain F (skip promote)
+                // Phase 0: u is public — shift histograms as plain F
                 let mut hsh_f = vec![F::zero(); M];
                 let mut hs_f = vec![F::zero(); M];
-                for &j in &self.interleaved_cycles {
-                    if let Some(c) = self.c16[j] {
-                        hsh_f[c as usize] += u_pub[j] * shift_half_val;
-                    }
-                }
-                for &j in &self.identity_cycles {
-                    if let Some(c) = self.c16[j] {
-                        hs_f[c as usize] += u_pub[j] * shift_val;
-                    }
-                }
-                shift_half_f = Some(hsh_f);
-                shift_f = Some(hs_f);
-
-                // Public operand contributions — branchless per group
-                for &(j, left_val, right_val) in &pub_interleaved {
-                    if let Some(c) = self.c16[j] {
-                        let ci = c as usize;
-                        let prod_l = u_pub[j] * left_val;
-                        let prod_r = u_pub[j] * right_val;
-                        hist_left[ci] = rep3_arith::add_public(hist_left[ci], prod_l, party_id);
-                        hist_right[ci] = rep3_arith::add_public(hist_right[ci], prod_r, party_id);
-                    }
-                }
-                for &(j, id_val) in &pub_identity {
-                    if let Some(c) = self.c16[j] {
-                        hist_identity[c as usize] = rep3_arith::add_public(
-                            hist_identity[c as usize],
-                            u_pub[j] * id_val,
-                            party_id,
-                        );
-                    }
-                }
-
-                // Shared/mixed operand contributions
-                for (i, &j) in shared_interleaved_js.iter().enumerate() {
-                    if let Some(c) = self.c16[j] {
-                        let ci = c as usize;
-                        hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
-                        match s_right[i] {
-                            Some(sr) => {
-                                hist_right[ci] += rep3_arith::mul_public(sr, u_pub[j]);
-                            }
-                            None => {
+                rayon::join(
+                    || {
+                        // Interleaved: shift_half + left/right operands
+                        for &(j, left_val, right_val) in &pub_interleaved {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                hsh_f[ci] += u_pub[j] * shift_half_val;
+                                hist_left[ci] = rep3_arith::add_public(
+                                    hist_left[ci],
+                                    u_pub[j] * left_val,
+                                    party_id,
+                                );
                                 hist_right[ci] = rep3_arith::add_public(
                                     hist_right[ci],
-                                    u_pub[j] * right_operand_pub[i].unwrap(),
+                                    u_pub[j] * right_val,
                                     party_id,
                                 );
                             }
                         }
-                    }
-                }
-                for (i, &j) in shared_identity_js.iter().enumerate() {
-                    if let Some(c) = self.c16[j] {
-                        hist_identity[c as usize] +=
-                            rep3_arith::mul_public(s_identity[i], u_pub[j]);
-                    }
-                }
-            }
-            Either::Shared(u_shared) => {
-                // Phase 1+: u is shared
-
-                // Constant shift histograms (Rep3, no reshare needed)
-                for &j in &self.interleaved_cycles {
-                    if let Some(c) = self.c16[j] {
-                        hist_shift_half[c as usize] += u_shared[j] * shift_half_val;
-                    }
-                }
-                for &j in &self.identity_cycles {
-                    if let Some(c) = self.c16[j] {
-                        hist_shift[c as usize] += u_shared[j] * shift_val;
-                    }
-                }
-
-                // Public operand contributions (both left+right public)
-                for &(j, left_val, right_val) in &pub_interleaved {
-                    if let Some(c) = self.c16[j] {
-                        let u = u_shared[j];
-                        hist_left[c as usize] += u * left_val;
-                        hist_right[c as usize] += u * right_val;
-                    }
-                }
-                for &(j, id_val) in &pub_identity {
-                    if let Some(c) = self.c16[j] {
-                        hist_identity[c as usize] += u_shared[j] * id_val;
-                    }
-                }
-
-                // Shared/mixed operand contributions
-                let has_shared_interleaved = !shared_interleaved_js.is_empty();
-                let has_shared_identity = !shared_identity_js.is_empty();
-                let has_fully_shared_right = right_operand_pub.iter().any(|r| r.is_none());
-                if has_shared_interleaved || has_shared_identity {
-                    let mut add_left = vec![AdditiveShare::<F>::zero(); M];
-                    let mut add_right = if has_fully_shared_right {
-                        vec![AdditiveShare::<F>::zero(); M]
-                    } else {
-                        vec![]
-                    };
-                    let mut add_identity = vec![AdditiveShare::<F>::zero(); M];
-
-                    for (i, &j) in shared_interleaved_js.iter().enumerate() {
-                        if let Some(c) = self.c16[j] {
-                            let u = u_shared[j];
-                            let ci = c as usize;
-                            add_left[ci] = add_left[ci] + (u * s_left[i]);
-                            match s_right[i] {
-                                Some(sr) => {
-                                    add_right[ci] = add_right[ci] + (u * sr);
-                                }
-                                None => {
-                                    // Mixed: right public → Rep3 (no reshare)
-                                    hist_right[ci] += u * right_operand_pub[i].unwrap();
+                        for (i, &j) in shared_interleaved_js.iter().enumerate() {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                hsh_f[ci] += u_pub[j] * shift_half_val;
+                                hist_left[ci] +=
+                                    rep3_arith::mul_public(s_left[i], u_pub[j]);
+                                match s_right[i] {
+                                    Some(sr) => {
+                                        hist_right[ci] +=
+                                            rep3_arith::mul_public(sr, u_pub[j]);
+                                    }
+                                    None => {
+                                        hist_right[ci] = rep3_arith::add_public(
+                                            hist_right[ci],
+                                            u_pub[j] * right_operand_pub[i].unwrap(),
+                                            party_id,
+                                        );
+                                    }
                                 }
                             }
                         }
-                    }
-                    for (i, &j) in shared_identity_js.iter().enumerate() {
-                        if let Some(c) = self.c16[j] {
-                            add_identity[c as usize] =
-                                add_identity[c as usize] + (u_shared[j] * s_identity[i]);
+                    },
+                    || {
+                        // Identity: shift + identity operand
+                        for &(j, id_val) in &pub_identity {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                hs_f[ci] += u_pub[j] * shift_val;
+                                hist_identity[ci] = rep3_arith::add_public(
+                                    hist_identity[ci],
+                                    u_pub[j] * id_val,
+                                    party_id,
+                                );
+                            }
                         }
-                    }
+                        for (i, &j) in shared_identity_js.iter().enumerate() {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                hs_f[ci] += u_pub[j] * shift_val;
+                                hist_identity[ci] +=
+                                    rep3_arith::mul_public(s_identity[i], u_pub[j]);
+                            }
+                        }
+                    },
+                );
+                shift_half_f = Some(hsh_f);
+                shift_f = Some(hs_f);
+            }
+            Either::Shared(u_shared) => {
+                // Phase 1+: u is shared
+                let has_shared_interleaved = !shared_interleaved_js.is_empty();
+                let has_shared_identity = !shared_identity_js.is_empty();
+                let has_fully_shared_right = right_operand_pub.iter().any(|r| r.is_none());
 
-                    // Batch reshare additive → Rep3
+                // Additive accumulators allocated before parallel section.
+                let (mut add_left, mut add_right, mut add_identity) =
+                    if has_shared_interleaved || has_shared_identity {
+                        (
+                            vec![AdditiveShare::<F>::zero(); M],
+                            if has_fully_shared_right {
+                                vec![AdditiveShare::<F>::zero(); M]
+                            } else {
+                                vec![]
+                            },
+                            vec![AdditiveShare::<F>::zero(); M],
+                        )
+                    } else {
+                        (vec![], vec![], vec![])
+                    };
+
+                rayon::join(
+                    || {
+                        // Interleaved: shift_half + pub operands + shared operands
+                        for &(j, left_val, right_val) in &pub_interleaved {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                let u = u_shared[j];
+                                hist_shift_half[ci] += u * shift_half_val;
+                                hist_left[ci] += u * left_val;
+                                hist_right[ci] += u * right_val;
+                            }
+                        }
+                        for (i, &j) in shared_interleaved_js.iter().enumerate() {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                let u = u_shared[j];
+                                hist_shift_half[ci] += u * shift_half_val;
+                                add_left[ci] = add_left[ci] + (u * s_left[i]);
+                                match s_right[i] {
+                                    Some(sr) => {
+                                        add_right[ci] = add_right[ci] + (u * sr);
+                                    }
+                                    None => {
+                                        hist_right[ci] +=
+                                            u * right_operand_pub[i].unwrap();
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    || {
+                        // Identity: shift + pub operands + shared operands
+                        for &(j, id_val) in &pub_identity {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                let u = u_shared[j];
+                                hist_shift[ci] += u * shift_val;
+                                hist_identity[ci] += u * id_val;
+                            }
+                        }
+                        for (i, &j) in shared_identity_js.iter().enumerate() {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                let u = u_shared[j];
+                                hist_shift[ci] += u * shift_val;
+                                add_identity[ci] =
+                                    add_identity[ci] + (u * s_identity[i]);
+                            }
+                        }
+                    },
+                );
+
+                // Batch reshare additive → Rep3
+                if has_shared_interleaved || has_shared_identity {
                     let _reshare = info_span!("q_reshare").entered();
                     let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
                     flat.extend_from_slice(&add_left);
@@ -1632,20 +1139,13 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Only multiply active cycles (c16 != None) to reduce mul_vec size.
         // Inactive cycles have ra_acc = 0 already (multiplied by zero in condensation
         // or initialized to zero for padding), so skipping them is safe.
-        let active_indices: Vec<usize> = self
-            .c16
-            .iter()
-            .enumerate()
-            .filter_map(|(j, opt)| opt.map(|_| j))
-            .collect();
+        use rayon::prelude::*;
 
         let num_cycles = self.c16.len();
         match &self.ra_acc {
             None => {
                 // Phase 0: ra_acc[j] = 1 for active, 0 for padding.
                 // 1 * v_shifted[c16[j]] = v_shifted[c16[j]] — no mul_vec needed.
-                use rayon::prelude::*;
-
                 let ra_shared: Vec<_> = (0..num_cycles)
                     .into_par_iter()
                     .map(|j| match self.c16[j] {
@@ -1656,21 +1156,51 @@ impl<F: JoltField> ReadRafProverState<F> {
                 self.ra_acc = Some(ra_shared);
             }
             Some(ra_shared) => {
-                // Phase 1+: existing mul_vec path
-                if !active_indices.is_empty() {
-                    let ra_active: Vec<Rep3PrimeFieldShare<F>> =
-                        active_indices.iter().map(|&j| ra_shared[j]).collect();
-                    let v_active: Vec<Rep3PrimeFieldShare<F>> = active_indices
-                        .iter()
-                        .map(|&j| v_shifted[self.c16[j].unwrap() as usize])
-                        .collect();
+                // Phase 1+: gather active (ra, v) pairs and indices in one parallel pass.
+                let (active_indices, ra_active, v_active): (
+                    Vec<usize>,
+                    Vec<Rep3PrimeFieldShare<F>>,
+                    Vec<Rep3PrimeFieldShare<F>>,
+                ) = self
+                    .c16
+                    .par_iter()
+                    .enumerate()
+                    .filter_map(|(j, opt)| {
+                        opt.map(|c| (j, ra_shared[j], v_shifted[c as usize]))
+                    })
+                    .fold(
+                        || (Vec::new(), Vec::new(), Vec::new()),
+                        |(mut idx, mut ra, mut v), (j, r, vs)| {
+                            idx.push(j);
+                            ra.push(r);
+                            v.push(vs);
+                            (idx, ra, v)
+                        },
+                    )
+                    .reduce(
+                        || (Vec::new(), Vec::new(), Vec::new()),
+                        |(mut a, mut b, mut c), (x, y, z)| {
+                            a.extend(x);
+                            b.extend(y);
+                            c.extend(z);
+                            (a, b, c)
+                        },
+                    );
 
+                if !active_indices.is_empty() {
                     let products = rep3_arith::mul_vec(&ra_active, &v_active, io_ctx.main())?;
 
+                    // Parallel scatter — indices are disjoint by construction.
                     let mut new_ra = vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
-                    for (idx, &j) in active_indices.iter().enumerate() {
-                        new_ra[j] = products[idx];
-                    }
+                    use crate::utils::send_ptr::SendPtr;
+                    let ptr = SendPtr(new_ra.as_mut_ptr());
+                    active_indices
+                        .par_iter()
+                        .zip(products.par_iter())
+                        .for_each(|(&j, &val)| {
+                            let p = ptr;
+                            unsafe { p.0.add(j).write(val) };
+                        });
                     self.ra_acc = Some(new_ra);
                 }
             }
@@ -2112,6 +1642,508 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             left_2 * gamma + right_2 * gamma_squared,
         ]
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+/// MPC-compatible version of `LookupTables::combine`.
+///
+/// The vanilla `combine(prefixes, suffixes) -> F` is linear in suffixes.
+/// We extract per-suffix weights by probing with unit vectors, then apply
+/// those weights (public F) to the additive suffix shares.
+fn combine_shared<F: JoltField>(
+    table: &LookupTables<XLEN>,
+    prefixes: &[PrefixEval<F>],
+    shared_suffixes: &[AdditiveShare<F>],
+) -> AdditiveShare<F> {
+    let n = shared_suffixes.len();
+    debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
+    let mut unit = [F::zero(); 8];
+    let mut result = AdditiveShare::<F>::zero();
+    for i in 0..n {
+        unit[i] = F::one();
+        let weight: F = table.combine(prefixes, &unit[..n]);
+        unit[i] = F::zero();
+        result = result + shared_suffixes[i] * weight;
+    }
+    result
+}
+
+/// MPC version of `PrefixSuffixDecomposition::sumcheck_evals`.
+///
+/// Given public P polynomial (from PrefixRegistry, ORDER=2: P[0] = Some(poly), P[1] = None)
+/// and additive Q arrays, compute (eval_0, eval_2) at the given sumcheck index.
+///
+/// For P[i] = Some(prefix_poly): p_evals = (p[index], 2*p[index+len/2] - p[index])
+/// For P[i] = None:              p_evals = (1, 1)
+fn psd_sumcheck_evals_shared<F: JoltField>(
+    p_poly: Option<
+        &std::sync::Arc<std::sync::RwLock<jolt_core::poly::prefix_suffix::CachedPolynomial<F>>>,
+    >,
+    q: &[AdditiveDensePoly<F>; 2],
+    index: usize,
+    len: usize,
+) -> (AdditiveShare<F>, AdditiveShare<F>) {
+    let mut eval_0 = AdditiveShare::<F>::zero();
+    let mut eval_2_left = AdditiveShare::<F>::zero();
+    let mut eval_2_right = AdditiveShare::<F>::zero();
+
+    // P[0] = p_poly (may be Some), P[1] = None (constant 1)
+    let p_polys: [Option<
+        &std::sync::Arc<std::sync::RwLock<jolt_core::poly::prefix_suffix::CachedPolynomial<F>>>,
+    >; 2] = [p_poly, None];
+
+    for (i, p) in p_polys.iter().enumerate() {
+        let (p_0, p_2) = if let Some(p_arc) = p {
+            let p_guard = p_arc.read().unwrap();
+            let use_cache = std::sync::Arc::strong_count(p_arc) > 2;
+            let evals = p_guard.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
+            evals
+        } else {
+            (F::one(), F::one())
+        };
+
+        let q_left = q[i].get_coeff(index);
+        let q_right = q[i].get_coeff(index + len / 2);
+
+        eval_0 = eval_0 + q_left * p_0;
+        eval_2_left = eval_2_left + q_left * p_2;
+        eval_2_right = eval_2_right + q_right * p_2;
+    }
+
+    (eval_0, eval_2_right + eval_2_right - eval_2_left)
+}
+
+// ---------------------------------------------------------------------------
+// Per-table suffix evaluation
+// ---------------------------------------------------------------------------
+
+/// Identifies a contiguous segment of suffix evaluation results in the flat output.
+#[derive(Clone, Copy)]
+struct EvalSegment {
+    table_idx: usize,
+    suffix_idx: usize,
+    base: usize,
+    n: usize,
+}
+
+/// Build `SuffixBitsBatch<T>` per table, evaluate all non-One suffixes per table,
+/// and fulfill all B2A conversions in one batched pass.
+///
+/// Returns `(segments, all_field)` where each segment maps `(table_idx, suffix_idx)`
+/// to a `[base..base+n)` slice of `all_field`.
+fn table_suffixes_mle<T, F, N>(
+    lookup_indices: &[Either<u128, Rep3RingShare<u128>>],
+    lookup_indices_by_table: &[Vec<usize>],
+    right_operand_public_mask: &[Option<u64>],
+    suffix_len: usize,
+    io_ctx: &mut IoContextPool<N>,
+    party_id: PartyID,
+    pool: &mut EdaBitsPool<F>,
+) -> eyre::Result<(Vec<EvalSegment>, Vec<Rep3Value<F>>)>
+where
+    T: crate::zkvm::suffixes::Uninterleavable
+        + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    Standard: Distribution<T> + Distribution<T::Half>,
+    <T as crate::zkvm::suffixes::Uninterleavable>::Half:
+        AsPrimitive<T> + AsPrimitive<mpc_core::protocols::rep3_ring::ring::bit::Bit>,
+    F: JoltField,
+    N: Rep3NetworkWorker,
+{
+    use crate::zkvm::suffixes::{
+        evaluate_suffix_for_table, table_uses_interleaved_data, MixedBatch, SuffixBitsBatch,
+        SuffixFutureBatch, Uninterleavable,
+    };
+
+    type H<T> = <T as Uninterleavable>::Half;
+
+    let suffix_mask: u128 = if suffix_len >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << suffix_len) - 1
+    };
+    let half_bits = suffix_len / 2;
+
+    let mut batch = SuffixFutureBatch::<F>::new();
+    let mut segments = Vec::new();
+    let _span = info_span!("suffixes_mle", n = lookup_indices.len()).entered();
+
+    for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
+        let table_cycles = &lookup_indices_by_table[table_idx];
+        if table_cycles.is_empty() {
+            continue;
+        }
+
+        let suffixes = table.suffixes();
+        let uses_interleaved = table_uses_interleaved_data(&suffixes);
+
+        // Build SuffixBitsBatch for this table
+        let data: SuffixBitsBatch<T> = if uses_interleaved {
+            let entries: Vec<Either<u128, Rep3RingShare<T>>> = table_cycles
+                .iter()
+                .map(|&j| match &lookup_indices[j] {
+                    Either::Public(p) => Either::Public(*p & suffix_mask),
+                    Either::Shared(s) => {
+                        let masked = *s & RingElement(suffix_mask);
+                        Either::Shared(Rep3RingShare {
+                            a: RingElement(
+                                T::try_from(masked.a.0).unwrap_or_else(|_| unreachable!()),
+                            ),
+                            b: RingElement(
+                                T::try_from(masked.b.0).unwrap_or_else(|_| unreachable!()),
+                            ),
+                        })
+                    }
+                })
+                .collect();
+            SuffixBitsBatch::Interleaved(MixedBatch::classify(entries))
+        } else {
+            // Uninterleaved: split into left/right, check right_operand_public_mask
+            let n = table_cycles.len();
+            let mut left_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
+            let mut right_entries: Vec<Either<u64, Rep3RingShare<H<T>>>> = Vec::with_capacity(n);
+
+            for &j in table_cycles {
+                match &lookup_indices[j] {
+                    Either::Public(p) => {
+                        let masked = *p & suffix_mask;
+                        let mut x = 0u64;
+                        let mut y = 0u64;
+                        for i in 0..half_bits {
+                            x |= ((masked >> (2 * i + 1)) & 1) as u64 >> 0 << i;
+                            y |= ((masked >> (2 * i)) & 1) as u64 >> 0 << i;
+                        }
+                        left_entries.push(Either::Public(x));
+                        right_entries.push(Either::Public(y));
+                    }
+                    Either::Shared(s) => {
+                        let masked = *s & RingElement(suffix_mask);
+                        let masked_t = Rep3RingShare {
+                            a: RingElement(
+                                T::try_from(masked.a.0).unwrap_or_else(|_| unreachable!()),
+                            ),
+                            b: RingElement(
+                                T::try_from(masked.b.0).unwrap_or_else(|_| unreachable!()),
+                            ),
+                        };
+                        let (x_share, y_share) = T::uninterleave(masked_t);
+                        left_entries.push(Either::Shared(x_share));
+
+                        if let Some(mask_val) = right_operand_public_mask[j] {
+                            let y_pub = if half_bits >= 64 {
+                                mask_val
+                            } else {
+                                mask_val & ((1u64 << half_bits) - 1)
+                            };
+                            right_entries.push(Either::Public(y_pub));
+                        } else {
+                            right_entries.push(Either::Shared(y_share));
+                        }
+                    }
+                }
+            }
+
+            SuffixBitsBatch::Uninterleaved(
+                MixedBatch::classify(left_entries),
+                MixedBatch::classify(right_entries),
+            )
+        };
+
+        // Evaluate each non-One suffix for this table
+        let n = table_cycles.len();
+        for (suffix_idx, suffix) in suffixes.iter().enumerate() {
+            let base = batch.reserve(n);
+            segments.push(EvalSegment {
+                table_idx,
+                suffix_idx,
+                base,
+                n,
+            });
+            evaluate_suffix_for_table::<T, F, _>(
+                suffix,
+                &data,
+                suffix_len,
+                io_ctx.main(),
+                party_id,
+                base,
+                &mut batch,
+            )?;
+        }
+    }
+    drop(_span);
+
+    // Fulfill all pending B2A/BitInject conversions in one batch
+    let all_field = batch.fulfill_with_pool(io_ctx, pool)?;
+    Ok((segments, all_field))
+}
+
+/// Build weighted histograms for all (table, suffix) pairs.
+///
+/// For each pair, accumulates `u[j] * suffix_eval[j]` into a size-M histogram
+/// indexed by public c16 values. Returns four groups:
+/// - `pub_f`: histogram is fully public F (phase 0 with constant/One suffix)
+/// - `rep3`: histogram is Rep3 (no reshare needed)
+/// - `additive`: histogram is additive (needs reshare before FWHT)
+/// - `zero`: table has no cycles or suffix is identically zero
+fn build_suffix_histograms<F: JoltField>(
+    eval_segments: &[EvalSegment],
+    all_field: &[Rep3Value<F>],
+    u_evals: &Either<Vec<F>, Vec<Rep3PrimeFieldShare<F>>>,
+    c16: &[Option<u16>],
+    lookup_indices_by_table: &[Vec<usize>],
+    suffix_len: usize,
+    party_id: PartyID,
+) -> (
+    Vec<(usize, usize, Vec<F>)>,
+    Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)>,
+    Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
+    Vec<(usize, usize)>,
+) {
+    use rayon::prelude::*;
+
+    let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
+
+    // Build lookup: (table_idx, suffix_idx) → segment in all_field
+    let segment_lookup: std::collections::HashMap<(usize, usize), (usize, usize)> = eval_segments
+        .par_iter()
+        .map(|seg| ((seg.table_idx, seg.suffix_idx), (seg.base, seg.n)))
+        .collect();
+
+    let work_items: Vec<(usize, usize, Suffixes)> = LookupTables::<XLEN>::iter()
+        .enumerate()
+        .flat_map(|(ti, table)| {
+            table
+                .suffixes()
+                .into_iter()
+                .enumerate()
+                .map(move |(si, s)| (ti, si, s))
+        })
+        .collect();
+
+    enum HistResult<F: JoltField> {
+        PublicF(usize, usize, Vec<F>),
+        Rep3(usize, usize, Vec<Rep3PrimeFieldShare<F>>),
+        Additive(usize, usize, Vec<AdditiveShare<F>>),
+        Zero(usize, usize),
+    }
+
+    let hist_results: Vec<HistResult<F>> = match u_evals {
+        Either::Public(u_pub) => {
+            // Phase 0: u is public
+            work_items
+                .par_iter()
+                .map(|&(ti, si, ref suffix)| {
+                    let table_cycles = &lookup_indices_by_table[ti];
+                    if table_cycles.is_empty() {
+                        return HistResult::Zero(ti, si);
+                    }
+                    if suffix_len == 0 {
+                        let constant_u64 =
+                            suffix.suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
+                        if constant_u64 == 0 {
+                            return HistResult::Zero(ti, si);
+                        }
+                        let constant_f = F::from_u128(constant_u64 as u128);
+                        let mut h = vec![F::zero(); M];
+                        for &j in table_cycles {
+                            if let Some(c) = c16[j] {
+                                h[c as usize] += u_pub[j] * constant_f;
+                            }
+                        }
+                        HistResult::PublicF(ti, si, h)
+                    } else if matches!(suffix, Suffixes::One) {
+                        let mut h = vec![F::zero(); M];
+                        for &j in table_cycles {
+                            if let Some(c) = c16[j] {
+                                h[c as usize] += u_pub[j];
+                            }
+                        }
+                        HistResult::PublicF(ti, si, h)
+                    } else {
+                        let &(seg_base, seg_n) =
+                            segment_lookup.get(&(ti, si)).expect("missing eval segment");
+                        let suffix_evals = &all_field[seg_base..seg_base + seg_n];
+
+                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        for (local, &j) in table_cycles.iter().enumerate() {
+                            if let Some(c) = c16[j] {
+                                let ci = c as usize;
+                                match suffix_evals[local] {
+                                    Rep3Value::Public(f) => {
+                                        h[ci] =
+                                            rep3_arith::add_public(h[ci], u_pub[j] * f, party_id);
+                                    }
+                                    Rep3Value::Shared(s) => {
+                                        h[ci] += rep3_arith::mul_public(s, u_pub[j]);
+                                    }
+                                    Rep3Value::Additive(_) => unreachable!(),
+                                }
+                            }
+                        }
+                        HistResult::Rep3(ti, si, h)
+                    }
+                })
+                .collect()
+        }
+        Either::Shared(u_shared) => {
+            // Phase 1+: u is shared
+            work_items
+                .par_iter()
+                .map(|&(ti, si, ref suffix)| {
+                    let table_cycles = &lookup_indices_by_table[ti];
+                    if table_cycles.is_empty() {
+                        return HistResult::Zero(ti, si);
+                    }
+                    if suffix_len == 0 {
+                        let constant_u64 =
+                            suffix.suffix_mle::<XLEN>(LookupBits::new(0u128, 0usize));
+                        if constant_u64 == 0 {
+                            return HistResult::Zero(ti, si);
+                        }
+                        let constant_f = F::from_u128(constant_u64 as u128);
+                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        for &j in table_cycles {
+                            if let Some(c) = c16[j] {
+                                h[c as usize] += u_shared[j] * constant_f;
+                            }
+                        }
+                        HistResult::Rep3(ti, si, h)
+                    } else if matches!(suffix, Suffixes::One) {
+                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        for &j in table_cycles {
+                            if let Some(c) = c16[j] {
+                                h[c as usize] += u_shared[j];
+                            }
+                        }
+                        HistResult::Rep3(ti, si, h)
+                    } else {
+                        let &(seg_base, seg_n) =
+                            segment_lookup.get(&(ti, si)).expect("missing eval segment");
+                        let suffix_evals = &all_field[seg_base..seg_base + seg_n];
+
+                        let all_suffix_public = suffix_evals
+                            .iter()
+                            .all(|v| matches!(v, Rep3Value::Public(_)));
+                        if all_suffix_public {
+                            let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                            for (local, &j) in table_cycles.iter().enumerate() {
+                                if let Some(c) = c16[j] {
+                                    let f = suffix_evals[local].as_public();
+                                    h[c as usize] += u_shared[j] * f;
+                                }
+                            }
+                            HistResult::Rep3(ti, si, h)
+                        } else {
+                            let mut h = vec![AdditiveShare::<F>::zero(); M];
+                            for (local, &j) in table_cycles.iter().enumerate() {
+                                if let Some(c) = c16[j] {
+                                    let w: AdditiveShare<F> = match suffix_evals[local] {
+                                        Rep3Value::Public(f) => u_shared[j].into_additive() * f,
+                                        Rep3Value::Shared(s) => u_shared[j] * s,
+                                        Rep3Value::Additive(_) => unreachable!(),
+                                    };
+                                    h[c as usize] = h[c as usize] + w;
+                                }
+                            }
+                            HistResult::Additive(ti, si, h)
+                        }
+                    }
+                })
+                .collect()
+        }
+    };
+
+    let mut pub_f = Vec::new();
+    let mut rep3 = Vec::new();
+    let mut additive = Vec::new();
+    let mut zero = Vec::new();
+    for result in hist_results {
+        match result {
+            HistResult::PublicF(ti, si, h) => pub_f.push((ti, si, h)),
+            HistResult::Rep3(ti, si, h) => rep3.push((ti, si, h)),
+            HistResult::Additive(ti, si, h) => additive.push((ti, si, h)),
+            HistResult::Zero(ti, si) => zero.push((ti, si)),
+        }
+    }
+    (pub_f, rep3, additive, zero)
+}
+
+/// B2A conversion for operand Q: uninterleave interleaved shares into left/right halves,
+/// skip B2A for public right operands, and convert identity shares at full ring width.
+///
+/// Returns `(s_left, s_right, s_identity)` where:
+/// - `s_left`: field share for each interleaved cycle's left operand
+/// - `s_right[i]`: `Some(share)` if right is shared, `None` if right is public (mixed)
+/// - `s_identity`: field share for each identity cycle
+fn q_polys_b2a<T, F, N>(
+    interleaved_u128: Vec<Rep3RingShare<u128>>,
+    shared_right_idx: &[usize],
+    identity_u128: Vec<Rep3RingShare<u128>>,
+    io_ctx: &mut IoContextPool<N>,
+    pool: &mut EdaBitsPool<F>,
+) -> eyre::Result<(
+    Vec<Rep3PrimeFieldShare<F>>,
+    Vec<Option<Rep3PrimeFieldShare<F>>>,
+    Vec<Rep3PrimeFieldShare<F>>,
+)>
+where
+    T: crate::zkvm::suffixes::Uninterleavable,
+    T::Half: AsPrimitive<T>,
+    u128: AsPrimitive<T>,
+    Standard: Distribution<T> + Distribution<T::Half>,
+    F: JoltField,
+    N: Rep3NetworkWorker,
+{
+    use mpc_core::protocols::rep3_ring::edabits;
+    use rayon::prelude::*;
+
+    let n_il = interleaved_u128.len();
+    let n_id = identity_u128.len();
+
+    let all_downcast: Vec<Rep3RingShare<T>> = interleaved_u128
+        .par_iter()
+        .chain(identity_u128.par_iter())
+        .map(|b| downcast::<u128, T>(*b))
+        .collect();
+    let (il_bits, id_bits) = all_downcast.split_at(n_il);
+
+    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
+        il_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+
+    let s_left;
+    let mut s_right: Vec<Option<Rep3PrimeFieldShare<F>>> = vec![None; n_il];
+    if n_il > 0 {
+        let mut lr = Vec::with_capacity(n_il + shared_right_idx.len());
+        lr.extend_from_slice(&xs);
+        for &i in shared_right_idx {
+            lr.push(ys[i]);
+        }
+        let lr_batch = pool.take_edabits::<T::Half>(lr.len());
+        let mut lr_result =
+            io_ctx.par_chunks_preproc(lr, lr_batch, None, |shares, batch, ctx| {
+                edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
+            })?;
+        let shared_rights = lr_result.split_off(n_il);
+        s_left = lr_result;
+        for (idx, &i) in shared_right_idx.iter().enumerate() {
+            s_right[i] = Some(shared_rights[idx]);
+        }
+    } else {
+        s_left = vec![];
+    }
+
+    let s_identity = if n_id > 0 {
+        let id_batch = pool.take_edabits::<T>(n_id);
+        io_ctx.par_chunks_preproc(id_bits.to_vec(), id_batch, None, |shares, batch, ctx| {
+            edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
+        })?
+    } else {
+        vec![]
+    };
+
+    Ok((s_left, s_right, s_identity))
 }
 
 // ---------------------------------------------------------------------------
