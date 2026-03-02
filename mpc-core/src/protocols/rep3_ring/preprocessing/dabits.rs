@@ -12,6 +12,7 @@ use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare,
     network::{IoContext, Rep3Network},
 };
+use super::backing_store;
 use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3_ring::{
     Rep3RingShare,
@@ -58,11 +59,14 @@ pub struct LazyDaBits<F: PrimeField> {
     total: usize,
     cursor: usize,
     /// Received field elements that cannot be regenerated from seeds.
+    /// May be backed by a memory-mapped file.
     ///
     /// - P0: `[s₂₀_0, s₂₀_1, …]` — length `total`
     /// - P1: `[]` — empty
     /// - P2: `[s₂₀_0, s₁₂_0, s₂₀_1, s₁₂_1, …]` — interleaved, length `2*total`
-    stored: Vec<F>,
+    stored: backing_store::BackingStore<F>,
+    /// Path to the meta file on disk (set when loaded via `load()`).
+    meta_path: Option<std::path::PathBuf>,
 }
 
 impl<F: PrimeField> LazyDaBits<F> {
@@ -78,7 +82,8 @@ impl<F: PrimeField> LazyDaBits<F> {
             party_id,
             total: 0,
             cursor: 0,
-            stored: Vec::new(),
+            stored: backing_store::BackingStore::Empty,
+            meta_path: None,
         }
     }
 
@@ -102,7 +107,8 @@ impl<F: PrimeField> LazyDaBits<F> {
             party_id,
             total,
             cursor: 0,
-            stored,
+            stored: backing_store::BackingStore::from_vec(stored),
+            meta_path: None,
         }
     }
 
@@ -132,15 +138,18 @@ impl<F: PrimeField> LazyDaBits<F> {
 
             // Stored layout: [s₂₀_0, s₁₂_0, s₂₀_1, s₁₂_1, …]
             let store_base = cursor_base * 2;
+            let stored_slice = self.stored.as_slice();
             let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                 .map(|i| {
-                    let s20 = self.stored[store_base + 2 * i]; // v.a for P2
-                    let s12 = self.stored[store_base + 2 * i + 1]; // v.b for P2
+                    let s20 = stored_slice[store_base + 2 * i]; // v.a for P2
+                    let s12 = stored_slice[store_base + 2 * i + 1]; // v.b for P2
                     Rep3PrimeFieldShare::new(s20, s12)
                 })
                 .collect();
 
             self.cursor += n;
+            self.persist_cursor();
+            self.stored.consume(store_base, store_base + 2 * n);
             return DaBitBatch {
                 gammas: vec![false; n],
                 thetas,
@@ -174,15 +183,18 @@ impl<F: PrimeField> LazyDaBits<F> {
                     .map(|(a, b)| ((a ^ b) & 1) != 0)
                     .collect();
 
+                let stored_slice = self.stored.as_slice();
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                     .map(|i| {
                         let r1: F = parse_field(&r1_bytes, i * fb);
-                        let s20 = self.stored[cursor_base + i]; // received from P2
+                        let s20 = stored_slice[cursor_base + i]; // received from P2
                         Rep3PrimeFieldShare::new(r1, s20) // (.a=s₀₁=r₁, .b=s₂₀)
                     })
                     .collect();
 
                 self.cursor += n;
+                self.persist_cursor();
+                self.stored.consume(cursor_base, cursor_base + n);
                 DaBitBatch {
                     gammas,
                     thetas: vec![false; n],
@@ -222,6 +234,84 @@ impl<F: PrimeField> LazyDaBits<F> {
             }
             PartyID::ID2 => unreachable!(), // handled above
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Persistence
+    // ------------------------------------------------------------------
+
+    /// Write this lazy source to `dir`.
+    ///
+    /// Creates `dabits.meta` (all parties) and `dabits.stored` (P0/P2 only).
+    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        const { backing_store::assert_field_layout::<F>() };
+        std::fs::create_dir_all(dir)?;
+
+        let meta_path = dir.join("dabits.meta");
+        backing_store::write_meta(
+            &meta_path,
+            &backing_store::MetaData {
+                seed1: self.seed1,
+                pos1: self.pos1,
+                seed2: self.seed2,
+                pos2: self.pos2,
+                total: self.total,
+                party_id_byte: backing_store::party_id_to_byte(self.party_id),
+                cursor: self.cursor,
+                field_bytes: self.field_bytes,
+            },
+        )?;
+
+        if !self.stored.is_empty() {
+            let data_path = dir.join("dabits.stored");
+            self.stored.save_to_file(&data_path)?;
+        }
+        std::result::Result::Ok(())
+    }
+
+    /// Load a previously saved lazy source from `dir`.
+    ///
+    /// P0/P2 memory-map the stored data file for JIT retrieval.
+    pub fn load(dir: &std::path::Path, party_id: PartyID) -> std::io::Result<Self> {
+        const { backing_store::assert_field_layout::<F>() };
+
+        let meta_path = dir.join("dabits.meta");
+        let meta = backing_store::read_meta(&meta_path)?;
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
+
+        let stored = if meta.total > 0 && party_id != PartyID::ID1 {
+            let data_path = dir.join("dabits.stored");
+            backing_store::BackingStore::load_from_file(&data_path)?
+        } else {
+            backing_store::BackingStore::Empty
+        };
+
+        std::result::Result::Ok(Self {
+            seed1: meta.seed1,
+            pos1: meta.pos1,
+            seed2: meta.seed2,
+            pos2: meta.pos2,
+            field_bytes: meta.field_bytes,
+            party_id,
+            total: meta.total,
+            cursor: meta.cursor,
+            stored,
+            meta_path: Some(meta_path),
+        })
+    }
+
+    /// Persist the current cursor to the meta file on disk.
+    fn persist_cursor(&self) {
+        if let Some(ref path) = self.meta_path {
+            let _ = backing_store::update_cursor(path, self.cursor);
+        }
+    }
+}
+
+impl<F: PrimeField> Drop for LazyDaBits<F> {
+    fn drop(&mut self) {
+        #[cfg(not(feature = "reuse-preproc"))]
+        self.persist_cursor();
     }
 }
 
