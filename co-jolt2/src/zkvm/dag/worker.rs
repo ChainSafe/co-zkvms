@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use tracing::info_span;
@@ -8,10 +9,7 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::subprotocols::sumcheck::{
-    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker,
-};
-use crate::subprotocols::sumcheck::{Rep3BatchedSumcheckWorker, Rep3SumcheckInstanceWorker};
+use crate::subprotocols::sumcheck::{BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker};
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
@@ -82,12 +80,12 @@ impl Rep3JoltDAGWorker {
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
         Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
 
-        let (_hint_map, instruction_one_hot_polys) = Self::generate_and_commit_polynomials::<
-            F,
-            PCS,
-            ProofTranscript,
-            N,
-        >(party_id, &mut state, &mut io_ctx)?;
+        let (opening_hints, polynomials_map, instruction_one_hot_polys) =
+            Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
+                party_id,
+                &mut state,
+                &mut io_ctx,
+            )?;
 
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
         Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
@@ -430,7 +428,8 @@ impl Rep3JoltDAGWorker {
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
     ) -> eyre::Result<(
-        HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        HashMap<CommittedPolynomial, MaybeShared<PCS::OpeningProofHint>>,
+        HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>>,
         [Rep3OneHotPolynomial<F>; D],
     )>
     where
@@ -466,9 +465,11 @@ impl Rep3JoltDAGWorker {
         let commit_to_public = party_id == PartyID::ID0;
         let generators = &state.prover_state.preprocessing.generators;
 
-        let ordered_polys: Vec<Rep3MultilinearPolynomial<F>> = poly_keys
+        // Avoid cloning large polynomials just to commit: commit borrows them.
+        let default_poly = Rep3MultilinearPolynomial::<F>::default();
+        let ordered_polys: Vec<&Rep3MultilinearPolynomial<F>> = poly_keys
             .iter()
-            .map(|key| witness_polys.get(key).cloned().unwrap_or_default())
+            .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
         let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
@@ -491,14 +492,27 @@ impl Rep3JoltDAGWorker {
             .network()
             .send_response(state.untrusted_advice_commitment.clone())?;
 
-        // Open hints across parties (without coordinator)
-        let hint_map =
-            Self::open_hints::<F, PCS, ProofTranscript, N>(&poly_keys, hint_shares, state, io_ctx)?;
+        // Build hint map from raw MaybeShared hint shares (used by reduce_and_prove).
+        let hint_map: HashMap<CommittedPolynomial, MaybeShared<PCS::OpeningProofHint>> = poly_keys
+            .iter()
+            .zip(hint_shares)
+            .filter_map(|(key, hint)| match &hint {
+                MaybeShared::Public(None) => None,
+                _ => Some((*key, hint)),
+            })
+            .collect();
+
+        // Build Arc-wrapped polynomial map for reduce_and_prove.
+        let polynomials_map: HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>> =
+            witness_polys
+                .into_iter()
+                .map(|(k, v)| (k, Arc::new(v)))
+                .collect();
 
         // Ring-shared trace is no longer needed after witness generation; drop it to free memory.
         state.prover_state.trace = None;
 
-        Ok((hint_map, instruction_one_hot_polys))
+        Ok((hint_map, polynomials_map, instruction_one_hot_polys))
     }
 
     /// Commit the untrusted advice polynomial (if non-empty).
@@ -578,81 +592,5 @@ impl Rep3JoltDAGWorker {
         let poly = MultilinearPolynomial::from(initial_memory_state);
         state.prover_state.trusted_advice_polynomial =
             Some(Rep3MultilinearPolynomial::Public(poly));
-    }
-
-    /// Open hint shares across all 3 parties using two rounds of `reshare_many`.
-    ///
-    /// After two reshares each party holds all 3 additive shares and can
-    /// reconstruct the full hint via `combine_hint_shares`.
-    fn open_hints<F, PCS, ProofTranscript, N>(
-        poly_keys: &[CommittedPolynomial],
-        hint_shares: Vec<MaybeShared<PCS::OpeningProofHint>>,
-        state: &mut StateManagerWorker<'_, F, PCS>,
-        io_ctx: &mut IoContextPool<N>,
-    ) -> eyre::Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>>
-    where
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
-        PCS::OpeningProofHint: CanonicalSerialize + CanonicalDeserialize,
-        N: Rep3NetworkWorker,
-    {
-        // Collect shared hint shares for resharing
-        let mut shared_indices: Vec<usize> = Vec::new();
-        let mut own_shared: Vec<PCS::OpeningProofHint> = Vec::new();
-
-        for (i, hint) in hint_shares.iter().enumerate() {
-            if let MaybeShared::Shared(h) = hint {
-                shared_indices.push(i);
-                own_shared.push(h.clone());
-            }
-        }
-
-        if own_shared.is_empty() {
-            // No shared hints — all public, return directly
-            let mut hint_map = HashMap::with_capacity(poly_keys.len());
-            for (key, hint) in poly_keys.iter().zip(hint_shares) {
-                if let MaybeShared::Public(Some(h)) = hint {
-                    hint_map.insert(*key, h);
-                }
-            }
-            return Ok(hint_map);
-        }
-
-        // Round 1: send own shares to next party, receive prev party's shares
-        let prev_shared: Vec<PCS::OpeningProofHint> =
-            io_ctx.main().network.reshare_many(&own_shared)?;
-
-        // Round 2: forward prev's shares, receive the third party's shares
-        let prev_prev_shared: Vec<PCS::OpeningProofHint> =
-            io_ctx.main().network.reshare_many(&prev_shared)?;
-
-        // Combine all 3 shares per polynomial
-        let mut hint_map = HashMap::with_capacity(poly_keys.len());
-        let mut shared_idx = 0;
-
-        for (i, key) in poly_keys.iter().enumerate() {
-            match &hint_shares[i] {
-                MaybeShared::Shared(_) => {
-                    let own = MaybeShared::Shared(own_shared[shared_idx].clone());
-                    let prev = MaybeShared::Shared(prev_shared[shared_idx].clone());
-                    let prev_prev = MaybeShared::Shared(prev_prev_shared[shared_idx].clone());
-                    let combined =
-                        <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_hint_shares(&[
-                            &own, &prev, &prev_prev,
-                        ]);
-                    hint_map.insert(*key, combined);
-                    shared_idx += 1;
-                }
-                MaybeShared::Public(Some(h)) => {
-                    hint_map.insert(*key, h.clone());
-                }
-                MaybeShared::Public(None) => {
-                    // Skipped polynomial (e.g. InstructionRa) — no hint
-                }
-            }
-        }
-
-        Ok(hint_map)
     }
 }

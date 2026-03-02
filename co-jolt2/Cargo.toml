@@ -89,3 +89,4 @@ std = [
 ]
 debug = []
 test-utils = ["rcgen", "mpc-core/test-utils"]
+reuse-preproc = ["mpc-core/reuse-preproc"]

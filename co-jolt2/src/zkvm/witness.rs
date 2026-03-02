@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 
-use itertools::Itertools;
 use jolt2_common::constants::XLEN;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -17,7 +16,7 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
@@ -36,6 +35,85 @@ use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
+
+// ── ring_to_field cast helpers ──────────────────────────────────────────────
+
+#[derive(Copy, Clone, Debug)]
+enum SparseCastCol {
+    Rs1 = 0,
+    Rs2 = 1,
+    RdWrite = 2,
+    RamRead = 3,
+    RamWrite = 4,
+}
+
+#[derive(Clone, Debug)]
+struct SparseCastJob {
+    col: SparseCastCol,
+    row: usize,
+    share: Rep3RingShare<u64>,
+}
+
+struct SharedSparseFieldCols<F: JoltField> {
+    rs1: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    rs2: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    rd_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    ram_read: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    ram_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+}
+
+unsafe impl<F: JoltField> Sync for SharedSparseFieldCols<F> {}
+
+fn fill_field_from_operands_sparse_u64<F, N>(
+    io_ctx: &mut IoContextPool<N>,
+    jobs: Vec<SparseCastJob>,
+    out: Arc<SharedSparseFieldCols<F>>,
+) -> eyre::Result<()>
+where
+    F: JoltField,
+    N: Rep3NetworkWorker,
+    Standard: Distribution<u64>,
+{
+    if jobs.is_empty() {
+        return Ok(());
+    }
+
+    io_ctx.par_chunks(
+        jobs,
+        None,
+        move |chunk, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
+            // Further split each fork's chunk into smaller batches to avoid a single huge send
+            // that can hurt TCP/QUIC pipelining.
+            const MAX_BATCH: usize = 8192;
+            for sub in chunk.chunks(MAX_BATCH) {
+                let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(sub.len());
+                let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(sub.len());
+                for job in sub {
+                    shares.push(job.share);
+                    targets.push((job.col, job.row));
+                }
+
+                let casted = ring_to_field_a2b_many::<u64, F, _>(&shares, io_ctx)?;
+                debug_assert_eq!(casted.len(), targets.len());
+                for (value, (col, row)) in casted.into_iter().zip(targets.into_iter()) {
+                    unsafe {
+                        match col {
+                            SparseCastCol::Rs1 => (&mut *out.rs1.get())[row] = value,
+                            SparseCastCol::Rs2 => (&mut *out.rs2.get())[row] = value,
+                            SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
+                            SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
+                            SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
+                        }
+                    }
+                }
+            }
+
+            Ok(vec![()])
+        },
+    )?;
+
+    Ok(())
+}
 
 /// Compute the plaintext lookup index for cycles with fully-public operands.
 ///
@@ -216,18 +294,37 @@ where
     let mut output_futures: Vec<FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>> =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); trace.len()];
 
-    // Group by instruction type, skipping non-lookup cycles (NoOp, INLINE)
-    let ops_by_instruction: Vec<(
+    // Parallel pre-pass: compute discriminant per cycle for lookup-enabled instructions.
+    // We still build the final groups deterministically in trace order.
+    let discriminants: Vec<Option<mem::Discriminant<Rep3Cycle>>> = trace
+        .par_iter()
+        .map(|cycle| cycle.lookup_table().is_some().then_some(mem::discriminant(cycle)))
+        .collect();
+
+    // Deterministic, first-seen grouping by instruction discriminant (reduces tiny batches).
+    let mut disc_to_group: HashMap<mem::Discriminant<Rep3Cycle>, usize> = HashMap::new();
+    let mut group_ids: Vec<Option<usize>> = vec![None; trace.len()];
+    let mut num_groups = 0usize;
+    for (i, disc) in discriminants.into_iter().enumerate() {
+        let Some(disc) = disc else { continue };
+        let gid = *disc_to_group.entry(disc).or_insert_with(|| {
+            let gid = num_groups;
+            num_groups += 1;
+            gid
+        });
+        group_ids[i] = Some(gid);
+    }
+
+    let mut ops_by_instruction: Vec<(
         Vec<&Rep3Cycle>,
         Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
-    )> = trace
-        .iter()
-        .zip(output_futures.iter_mut())
-        .filter(|(cycle, _)| cycle.lookup_table().is_some())
-        .group_by(|(cycle, _)| mem::discriminant(*cycle))
-        .into_iter()
-        .map(|(_, group)| group.unzip())
-        .collect();
+    )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
+
+    for (i, (cycle, out)) in trace.iter().zip(output_futures.iter_mut()).enumerate() {
+        let Some(gid) = group_ids[i] else { continue };
+        ops_by_instruction[gid].0.push(cycle);
+        ops_by_instruction[gid].1.push(out);
+    }
 
     // Process each instruction group via par_chunks
     io_ctx.par_chunks(
@@ -289,12 +386,47 @@ where
     let mut is_interleaved_operands: Vec<bool> = Vec::with_capacity(n);
     let mut right_operand_public_mask: Vec<Option<u64>> = Vec::with_capacity(n);
 
-    // Ring-shared columns to cast to field
-    let mut rs1_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
-    let mut rs2_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
-    let mut rd_write_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
-    let mut ram_read_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
-    let mut ram_write_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
+    // Shared columns (ring→field), populated sparsely:
+    // - public/trivial values are injected directly into field trivial shares
+    // - secret values are batched into pipelined `ring_to_field_a2b_many` calls via IoContextPool
+    let shared_cols = Arc::new(SharedSparseFieldCols::<F> {
+        rs1: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        rs2: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        rd_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        ram_read: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        ram_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+    });
+    let mut cast_jobs: Vec<SparseCastJob> = Vec::new();
+    cast_jobs.reserve(n * 5);
+
+    let mut maybe_push = |col: SparseCastCol, row: usize, op: &Rep3Operand| {
+        match op {
+            Rep3Operand::Public(v)
+            | Rep3Operand::Shared {
+                public: Some(v), ..
+            } => {
+                let share = promote_to_trivial_share(party_id, F::from_u64(*v));
+                unsafe {
+                    match col {
+                        SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
+                        SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
+                        SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
+                        SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
+                        SparseCastCol::RamWrite => {
+                            (&mut *shared_cols.ram_write.get())[row] = share
+                        }
+                    }
+                }
+            }
+            Rep3Operand::Shared { .. } => {
+                cast_jobs.push(SparseCastJob {
+                    col,
+                    row,
+                    share: op.as_arithmetic_u64(),
+                });
+            }
+        }
+    };
 
     for (t, cycle) in trace.iter().enumerate() {
         let norm = cycle.instruction().normalize();
@@ -339,33 +471,40 @@ where
             }
         }
 
-        rs1_ring.push(rs1_v.as_arithmetic_or_trivial(party_id));
-        rs2_ring.push(rs2_v.as_arithmetic_or_trivial(party_id));
-        rd_write_ring.push(rd_post.as_arithmetic_or_trivial(party_id));
+        maybe_push(SparseCastCol::Rs1, t, &rs1_v);
+        maybe_push(SparseCastCol::Rs2, t, &rs2_v);
+        maybe_push(SparseCastCol::RdWrite, t, &rd_post);
 
         match cycle.ram_access() {
             Rep3RAMAccess::Read(r) => {
                 // Match vanilla: for reads, RamReadValue == RamWriteValue == r.value
-                ram_read_ring.push(r.value.as_arithmetic_or_trivial(party_id));
-                ram_write_ring.push(r.value.as_arithmetic_or_trivial(party_id));
+                maybe_push(SparseCastCol::RamRead, t, &r.value);
+                maybe_push(SparseCastCol::RamWrite, t, &r.value);
             }
             Rep3RAMAccess::Write(w) => {
-                ram_read_ring.push(w.pre_value.as_arithmetic_or_trivial(party_id));
-                ram_write_ring.push(w.post_value.as_arithmetic_or_trivial(party_id));
+                maybe_push(SparseCastCol::RamRead, t, &w.pre_value);
+                maybe_push(SparseCastCol::RamWrite, t, &w.post_value);
             }
             Rep3RAMAccess::NoOp => {
-                let zero = Rep3Operand::Public(0);
-                ram_read_ring.push(zero.as_arithmetic_or_trivial(party_id));
-                ram_write_ring.push(zero.as_arithmetic_or_trivial(party_id));
+                let z = promote_to_trivial_share(party_id, F::zero());
+                unsafe {
+                    (&mut *shared_cols.ram_read.get())[t] = z;
+                    (&mut *shared_cols.ram_write.get())[t] = z;
+                }
             }
         }
     }
 
-    let rs1_value = ring_to_field_a2b_many(&rs1_ring, io_ctx.main())?;
-    let rs2_value = ring_to_field_a2b_many(&rs2_ring, io_ctx.main())?;
-    let rd_write_value = ring_to_field_a2b_many(&rd_write_ring, io_ctx.main())?;
-    let ram_read_value = ring_to_field_a2b_many(&ram_read_ring, io_ctx.main())?;
-    let ram_write_value = ring_to_field_a2b_many(&ram_write_ring, io_ctx.main())?;
+    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols))?;
+
+    let shared_cols = Arc::try_unwrap(shared_cols)
+        .ok()
+        .expect("shared cols Arc should have single owner");
+    let rs1_value = shared_cols.rs1.into_inner();
+    let rs2_value = shared_cols.rs2.into_inner();
+    let rd_write_value = shared_cols.rd_write.into_inner();
+    let ram_read_value = shared_cols.ram_read.into_inner();
+    let ram_write_value = shared_cols.ram_write.into_inner();
 
     let cw = &mut state.prover_state.cycle_witness;
     cw.set_len(n);
@@ -439,11 +578,6 @@ where
     let party_id = state.party_id;
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
     let trace: &[Rep3Cycle] = state.trace_ref();
-
-    let cycle_witness = &state.prover_state.cycle_witness;
-    let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> = (0..cycle_witness.len())
-        .map(|t| cycle_witness.row_stage1(t).to_lookup_output())
-        .collect();
 
     let mut ram_d = 0;
     let mut bytecode_d = 0;
@@ -615,9 +749,30 @@ where
     let mut results = HashMap::with_capacity(polynomials.len());
     let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
-    // Instruction inputs are derived from the cached cycle witness (no extra casts).
-    // Clone flags_bits to release borrow on cycle_witness, allowing assignment of rd_inc/ram_inc later.
-    let flags_bits = state.prover_state.cycle_witness.pc_sumcheck_flags_bits().to_vec();
+    // should_branch[i] = lookup_output[i] * circuit_flags[Branch] (public scalar).
+    // Compute this before RdInc/RamInc so we can borrow cycle_witness immutably (no cloning).
+    if polynomials
+        .iter()
+        .any(|p| matches!(p, CommittedPolynomial::ShouldBranch))
+    {
+        let lookup_outputs = state.prover_state.cycle_witness.stage1_lookup_output();
+        let flags_bits = state.prover_state.cycle_witness.pc_sumcheck_flags_bits();
+        debug_assert_eq!(lookup_outputs.len(), flags_bits.len());
+
+        let branch_mask = 1u32 << (CircuitFlags::Branch as usize);
+        let mut should_branch: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(lookup_outputs.len());
+        for (t, output) in lookup_outputs.iter().enumerate() {
+            if (flags_bits[t] & branch_mask) != 0 {
+                should_branch.push(*output);
+            } else {
+                should_branch.push(Rep3PrimeFieldShare::zero_share());
+            }
+        }
+        results.insert(
+            CommittedPolynomial::ShouldBranch,
+            Rep3MultilinearPolynomial::from(should_branch),
+        );
+    }
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
     let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
@@ -666,20 +821,7 @@ where
                 );
             }
             CommittedPolynomial::ShouldBranch => {
-                // should_branch[i] = lookup_output[i] * circuit_flags[Branch] (public scalar)
-                let branch_mask = 1u32 << (CircuitFlags::Branch as usize);
-                let should_branch: Vec<Rep3PrimeFieldShare<F>> = lookup_outputs
-                    .iter()
-                    .enumerate()
-                    .map(|(t, output)| {
-                        if (flags_bits[t] & branch_mask) != 0 {
-                            *output
-                        } else {
-                            Rep3PrimeFieldShare::zero_share()
-                        }
-                    })
-                    .collect();
-                results.insert(*poly, Rep3MultilinearPolynomial::from(should_branch));
+                // Already computed above to avoid borrowing + cloning cycle_witness flags.
             }
             CommittedPolynomial::ShouldJump => {
                 let coeffs = std::mem::take(&mut batch.should_jump);
