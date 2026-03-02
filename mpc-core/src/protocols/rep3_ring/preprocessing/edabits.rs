@@ -566,13 +566,31 @@ where
     ))
 }
 
+/// Sequential preprocessing: generate all edaBits + daBits with natural TCP
+/// pipelining. Each `random_edabits_lazy` call sends α₂ immediately after
+/// computing it, so P2 starts receiving while P0 computes the next type.
+#[tracing::instrument(skip_all, name = "preprocess_pool")]
+pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
+    counts: [usize; 5], // [u8, u16, u32, u64, u128]
+    num_dabits: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<EdaBitsPool<F>> {
+    let e0 = random_edabits_lazy::<u8, F, _>(counts[0], io)?;
+    let e1 = random_edabits_lazy::<u16, F, _>(counts[1], io)?;
+    let e2 = random_edabits_lazy::<u32, F, _>(counts[2], io)?;
+    let e3 = random_edabits_lazy::<u64, F, _>(counts[3], io)?;
+    let e4 = random_edabits_lazy::<u128, F, _>(counts[4], io)?;
+    let d = super::dabits::random_dabits_lazy::<F, _>(num_dabits, io)?;
+    Ok(EdaBitsPool::new(e0, e1, e2, e3, e4, d))
+}
+
 /// Batched preprocessing: generate all edaBits + daBits in **2 network rounds**
 /// instead of 7 sequential rounds (5 edaBit + 2 daBit).
 ///
 /// Round 1: P0→P2 sends all edaBit α₂ + daBit α₂; P1→P2 sends daBit s₁₂.
 /// Round 2: P2→P0 sends daBit s₂₀.
-#[tracing::instrument(skip_all, name = "preprocess_pool")]
-pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
+#[tracing::instrument(skip_all, name = "preprocess_pool_batched")]
+pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
     io: &mut IoContextPool<N>,
@@ -672,7 +690,7 @@ pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
                 Vec::new()
             };
 
-            // Round 1: P0 → P2 — single concatenated send
+            // Round 1: P0 → P2 — distribute across parallel fork channels
             let mut combined: Vec<F> = Vec::with_capacity(
                 ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len(),
             );
@@ -682,12 +700,17 @@ pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
             combined.extend_from_slice(&ea3);
             combined.extend_from_slice(&ea4);
             combined.extend_from_slice(&da_alpha2);
-            io.network().send_many(PartyID::ID2, &combined)?;
+            io.par_chunks(combined.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                ctx.network.send_many(PartyID::ID2, &chunk)?;
+                Ok(vec![])
+            })?;
 
-            // Round 2: P0 ← P2 receives daBit s₂₀
+            // Round 2: P0 ← P2 receives daBit s₂₀ across fork channels
             let s20: Vec<F> = if num_dabits > 0 {
                 let _span = tracing::info_span!("resv_s20").entered();
-                io.network().recv_many(PartyID::ID2)?
+                io.par_chunks(0..num_dabits, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                    Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
+                })?
             } else {
                 Vec::new()
             };
@@ -785,7 +808,9 @@ pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
 
             let combined: Vec<F> = if total_recv > 0 {
                 let _span = tracing::info_span!("resv_combined").entered();
-                io.network().recv_many(PartyID::ID0)?
+                io.par_chunks(0..total_recv, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                    Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
+                })?
             } else {
                 Vec::new()
             };
@@ -825,15 +850,19 @@ pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
                     })
                     .collect();
 
-                // Round 2: P2 → P0 sends s₂₀
-                io.network().send_many(PartyID::ID0, &s20)?;
-
-                // Interleave s20 + s12 for LazyDaBits stored format
+                // Interleave s20 + s12 for LazyDaBits stored format (before send consumes s20)
                 let mut stored = Vec::with_capacity(2 * num_dabits);
                 for i in 0..num_dabits {
                     stored.push(s20[i]);
                     stored.push(s12_recv[i]);
                 }
+
+                // Round 2: P2 → P0 sends s₂₀ across fork channels
+                io.par_chunks(s20.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                    ctx.network.send_many(PartyID::ID0, &chunk)?;
+                    Ok(vec![])
+                })?;
+
                 stored
             } else {
                 Vec::new()
@@ -1568,10 +1597,8 @@ mod tests {
         );
     }
 
-    /// Test that `preprocess_pool` produces a working EdaBitsPool:
-    /// both edaBit B2A and daBit bit-injection produce correct results.
-    #[test]
-    fn preprocess_pool_roundtrip() {
+    /// Helper: run preprocess + B2A + bit-inject roundtrip with a given pool builder.
+    fn preprocess_roundtrip_impl(use_batched: bool) {
         use crate::protocols::rep3_ring::dabits;
 
         const NUM_U64: usize = 8;
@@ -1604,10 +1631,13 @@ mod tests {
                 1,
                 |i| (x_bin_shares[i].clone(), bit_shares[i].clone()),
                 || (),
-                |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
+                move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
                  mut io_ctx| {
-                    let mut pool =
-                        preprocess_pool::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?;
+                    let mut pool = if use_batched {
+                        preprocess_pool_batched::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?
+                    } else {
+                        preprocess_pool::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?
+                    };
 
                     // B2A via edaBits
                     let batch = pool.take_edabits::<u64>(NUM_U64);
@@ -1627,14 +1657,24 @@ mod tests {
         // Verify B2A
         let b2a_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
         let b2a_expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
-        assert_eq!(b2a_combined, b2a_expected, "preprocess_pool B2A mismatch");
+        assert_eq!(b2a_combined, b2a_expected, "preprocess B2A mismatch");
 
         // Verify bit injection
         let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
         let inj_expected: Vec<Fr> = bits.iter().map(|&b| Fr::from(b as u64)).collect();
         assert_eq!(
             inj_combined, inj_expected,
-            "preprocess_pool bit inject mismatch"
+            "preprocess bit inject mismatch"
         );
+    }
+
+    #[test]
+    fn preprocess_pool_roundtrip() {
+        preprocess_roundtrip_impl(false);
+    }
+
+    #[test]
+    fn preprocess_pool_batched_roundtrip() {
+        preprocess_roundtrip_impl(true);
     }
 }
