@@ -322,7 +322,6 @@ impl Rep3JoltDAGWorker {
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
-        // TODO: re-enable once bytecode stage4 is fully ported
         // -------------------------------------------------------------------
         // {
         //     use crate::zkvm::bytecode::{BytecodeStage4Init, Rep3BytecodeDagWorker};
