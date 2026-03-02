@@ -296,7 +296,7 @@ where
     N: Rep3NetworkWorker,
     MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
 {
-    use mpc_core::protocols::rep3_ring::edabits;
+    use mpc_core::protocols::rep3_ring::{dabits, edabits};
 
     let len = futures.len();
 
@@ -375,25 +375,23 @@ where
         out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
     }
 
-    // Bit Inject (single-bit → field via daBits)
+    // Bit Inject (single-bit → field via daBits) — distributed across forks
     if !buckets.bit_x.is_empty() {
-        let dabits = pool.take_dabits(buckets.bit_x.len());
-        let pairs: Vec<_> = buckets.bit_x.into_iter().zip(dabits).collect();
-        let c: Vec<Rep3PrimeFieldShare<F>> =
-            io_ctx.par_chunks(pairs, None, |chunk, io_ctx| {
-                let (xs, das): (Vec<_>, Vec<_>) = chunk.into_iter().unzip();
-                edabits::bit_inject_field_many(&xs, &das, io_ctx)
-            })?;
+        let batch = pool.take_dabits(buckets.bit_x.len());
+        let c = io_ctx.par_chunks_dabits(buckets.bit_x, batch, None, |xs, batch, ctx| {
+            dabits::bit_inject_field_many(&xs, &batch, ctx)
+        })?;
         for k in 0..c.len() {
             out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
         }
     }
 
-    // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits
+    // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits — distributed across forks
     if !buckets.b2a_x.is_empty() {
         let batch = pool.take_edabits::<R>(buckets.b2a_x.len());
-        let shares =
-            edabits::ring_to_field_b2a_many::<R, F, _>(&buckets.b2a_x, &batch, io_ctx.main())?;
+        let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
+            edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
+        })?;
         for k in 0..shares.len() {
             out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
         }

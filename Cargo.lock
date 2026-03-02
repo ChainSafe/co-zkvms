@@ -2454,6 +2454,7 @@ dependencies = [
  "eyre",
  "fancy-garbling",
  "itertools 0.12.1",
+ "memmap2",
  "mpc-net",
  "mpc-types",
  "nom",

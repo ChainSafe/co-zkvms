@@ -4,13 +4,23 @@ set -euo pipefail
 NUM_ITERS=${NUM_ITERS:-1}
 TRACE_DIR=${TRACE_DIR:-./.traces}
 ARTIFACT_DIR=.artifacts
+# When set, preprocessing is saved to (and loaded from) this directory.
+PREPROC_DIR=${PREPROC_DIR:-./.preprocessing}
+# When set to 1, builds with the `reuse-preproc` feature so that mmap'd
+# backing files are NOT zeroed on read and can be loaded multiple times.
+REUSE_PREPROC=${REUSE_PREPROC:-0}
 
 mkdir -p "$ARTIFACT_DIR"
 mkdir -p "$TRACE_DIR"
 
+FEATURES="test-utils"
+if [ "$REUSE_PREPROC" = "1" ]; then
+  FEATURES="test-utils,reuse-preproc"
+fi
+
 # Build the example binary (release mode)
 # Note: Guest ELF is auto-compiled by Program::build() on first run
-cargo build --example rep3_jolt --release --features test-utils
+cargo build --example rep3_jolt --release --features "$FEATURES"
 
 # Build gen_configs
 cd ../mpc-net
@@ -29,6 +39,14 @@ cd ../co-jolt2
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
 
+# Optionally pass --preproc-dir to workers.  Each worker stores its data in
+# <PREPROC_DIR>/party_<id>/ so files from different parties don't collide.
+PREPROC_ARGS=()
+if [ -n "$PREPROC_DIR" ]; then
+  mkdir -p "$PREPROC_DIR"
+  PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
+fi
+
 # Launch coordinator
 ../target/release/examples/rep3_jolt \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
@@ -38,8 +56,13 @@ cd ../co-jolt2
 for p in 0 1 2; do
   ../target/release/examples/rep3_jolt \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
-    -t "$TRACE_DIR" -n "$NUM_ITERS" &
+    -t "$TRACE_DIR" -n "$NUM_ITERS" \
+    "${PREPROC_ARGS[@]}" &
 done
 
 wait
 echo "Traces written to $TRACE_DIR"
+if [ -n "$PREPROC_DIR" ]; then
+  echo "Preprocessing data in $PREPROC_DIR/{party_0,party_1,party_2}/"
+  echo "(reuse-preproc: $REUSE_PREPROC)"
+fi

@@ -8,11 +8,13 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
 use mpc_types::field::PrimeField;
+use mpc_types::protocols::rep3_ring::ring::bit::Bit;
 use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use std::iter;
 use std::sync::{Arc, OnceLock};
 
+use crate::protocols::rep3_ring::dabits::DaBitBatch;
 use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
 
 use itertools::Itertools;
@@ -760,6 +762,60 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
                 let sub_batch = EdaBitsBatch {
                     gammas,
                     alphas_flat: alphas,
+                };
+                match map(inputs, sub_batch, ctx) {
+                    Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
+                    Err(e) => Either::Right(rayon::iter::once(Err(eyre::Error::from(e)))),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Like `par_chunks` but also splits a `DaBitBatch` in lockstep with inputs.
+    /// Each fork receives a sub-batch with matching gammas, thetas, and v_shares
+    /// (all 1:1 with inputs).
+    pub fn par_chunks_dabits<R, F, MapFn, Err>(
+        &mut self,
+        inputs: Vec<Rep3RingShare<Bit>>,
+        batch: DaBitBatch<F>,
+        chunk_size: Option<usize>,
+        map: MapFn,
+    ) -> eyre::Result<Vec<R>>
+    where
+        F: PrimeField + Send + Sync,
+        MapFn: Fn(Vec<Rep3RingShare<Bit>>, DaBitBatch<F>, &mut IoContext<Network>)
+            -> Result<Vec<R>, Err>
+            + Sync
+            + Send,
+        R: Sync + Send + Clone,
+        eyre::Report: From<Err>,
+        Err: Send + Sync,
+    {
+        let len = inputs.len();
+
+        if self.forks.is_empty() || len == 0 {
+            return Ok(map(inputs, batch, self.main())?);
+        }
+
+        let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
+        assert!(chunk_size != 0);
+        if len <= chunk_size {
+            return Ok(map(inputs, batch, self.main())?);
+        }
+        let num_forks = len.div_ceil(chunk_size);
+
+        inputs
+            .into_par_iter()
+            .chunks(chunk_size)
+            .zip_eq(batch.gammas.into_par_iter().chunks(chunk_size))
+            .zip_eq(batch.thetas.into_par_iter().chunks(chunk_size))
+            .zip_eq(batch.v_shares.into_par_iter().chunks(chunk_size))
+            .zip_eq(self.forks(num_forks).par_iter_mut())
+            .flat_map(|((((inputs, gammas), thetas), v_shares), ctx)| {
+                let sub_batch = DaBitBatch {
+                    gammas,
+                    thetas,
+                    v_shares,
                 };
                 match map(inputs, sub_batch, ctx) {
                     Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
