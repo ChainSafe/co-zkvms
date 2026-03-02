@@ -247,9 +247,12 @@ impl<F: PrimeField> LazyDaBits<F> {
         const { backing_store::assert_field_layout::<F>() };
         std::fs::create_dir_all(dir)?;
 
-        let meta_path = dir.join("dabits.meta");
+        // Data file first (page-cache write, no fsync), then meta with fsync.
+        if !self.stored.is_empty() {
+            self.stored.save_to_file(&dir.join("dabits.stored"))?;
+        }
         backing_store::write_meta(
-            &meta_path,
+            &dir.join("dabits.meta"),
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -261,11 +264,6 @@ impl<F: PrimeField> LazyDaBits<F> {
                 field_bytes: self.field_bytes,
             },
         )?;
-
-        if !self.stored.is_empty() {
-            let data_path = dir.join("dabits.stored");
-            self.stored.save_to_file(&data_path)?;
-        }
         std::result::Result::Ok(())
     }
 

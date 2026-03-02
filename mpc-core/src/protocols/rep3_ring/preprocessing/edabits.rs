@@ -393,9 +393,16 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
         std::fs::create_dir_all(dir)?;
 
         let suffix = T::K;
-        let meta_path = dir.join(format!("edabits_{suffix}.meta"));
+
+        // Data file first (page-cache write, no fsync), then meta with fsync.
+        // Meta fsync is the durability barrier: if it succeeds, data is at least
+        // in the kernel page cache and will be written to disk before meta.
+        if !self.alpha2_flat.is_empty() {
+            let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
+            self.alpha2_flat.save_to_file(&data_path)?;
+        }
         backing_store::write_meta(
-            &meta_path,
+            &dir.join(format!("edabits_{suffix}.meta")),
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -407,11 +414,6 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
                 field_bytes: self.field_bytes,
             },
         )?;
-
-        if !self.alpha2_flat.is_empty() {
-            let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
-            self.alpha2_flat.save_to_file(&data_path)?;
-        }
         std::result::Result::Ok(())
     }
 
@@ -1181,16 +1183,28 @@ impl<F: PrimeField> EdaBitsPool<F> {
         }
     }
 
-    /// Write all lazy sources to `dir`.
+    /// Write all lazy sources to `dir` concurrently.
+    ///
+    /// All 6 data+meta pairs are written in parallel via `thread::scope`.
+    /// Each save writes the large data file first (page-cache, no fsync), then
+    /// fsyncs the tiny 117-byte meta file as the durability barrier.
     #[tracing::instrument(skip_all, name = "Preprocessing::save")]
     pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
-        self.edabits_u8.save(dir)?;
-        self.edabits_u16.save(dir)?;
-        self.edabits_u32.save(dir)?;
-        self.edabits_u64.save(dir)?;
-        self.edabits_u128.save(dir)?;
-        self.dabits.save(dir)?;
-        std::result::Result::Ok(())
+        std::thread::scope(|s| -> std::io::Result<()> {
+            let h0 = s.spawn(|| self.edabits_u8.save(dir));
+            let h1 = s.spawn(|| self.edabits_u16.save(dir));
+            let h2 = s.spawn(|| self.edabits_u32.save(dir));
+            let h3 = s.spawn(|| self.edabits_u64.save(dir));
+            let h4 = s.spawn(|| self.edabits_u128.save(dir));
+            let h5 = s.spawn(|| self.dabits.save(dir));
+            h0.join().unwrap()?;
+            h1.join().unwrap()?;
+            h2.join().unwrap()?;
+            h3.join().unwrap()?;
+            h4.join().unwrap()?;
+            h5.join().unwrap()?;
+            std::result::Result::Ok(())
+        })
     }
 
     /// Load all lazy sources from `dir`.
