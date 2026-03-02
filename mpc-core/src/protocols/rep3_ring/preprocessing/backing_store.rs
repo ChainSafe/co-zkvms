@@ -113,9 +113,6 @@ impl<F> BackingStore<F> {
         let mut w = BufWriter::new(file);
         w.write_all(bytes)?;
         w.flush()?;
-        w.into_inner()
-            .map_err(|e| e.into_error())?
-            .sync_all()?;
         Ok(())
     }
 
