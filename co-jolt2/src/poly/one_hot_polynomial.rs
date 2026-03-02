@@ -18,50 +18,7 @@ use snarks_core::math::Math;
 
 use crate::field::JoltField;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
-
-#[inline]
-fn fwht_field_in_place<F: JoltField>(a: &mut [F]) {
-    debug_assert!(
-        a.len().is_power_of_two(),
-        "FWHT input length must be power-of-two"
-    );
-    let n = a.len();
-    let mut len = 1usize;
-    while len < n {
-        let step = len * 2;
-        for i in (0..n).step_by(step) {
-            for j in 0..len {
-                let u = a[i + j];
-                let v = a[i + j + len];
-                a[i + j] = u + v;
-                a[i + j + len] = u - v;
-            }
-        }
-        len = step;
-    }
-}
-
-#[inline]
-fn fwht_group_in_place<F: JoltField, G: CurveGroup<ScalarField = F>>(a: &mut [G]) {
-    debug_assert!(
-        a.len().is_power_of_two(),
-        "FWHT input length must be power-of-two"
-    );
-    let n = a.len();
-    let mut len = 1usize;
-    while len < n {
-        let step = len * 2;
-        for i in (0..n).step_by(step) {
-            for j in 0..len {
-                let u = a[i + j];
-                let v = a[i + j + len];
-                a[i + j] = u + v;
-                a[i + j + len] = u + (-v);
-            }
-        }
-        len = step;
-    }
-}
+use crate::utils::fwht::fwht_in_place;
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -256,7 +213,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
             let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
             let mut g_hat = g;
-            fwht_field_in_place(&mut g_hat);
+            fwht_in_place(&mut g_hat);
             let inv_k = F::from(self.K as u64)
                 .inverse()
                 .expect("K invertible in field");
@@ -295,11 +252,11 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                         // out[k] = Σ_c s[c] * g_hat_fwht[c XOR k].
                         {
                             let _guard = tracing::trace_span!("commit_rows.fwht").entered();
-                            fwht_group_in_place(&mut s);
+                            fwht_in_place(&mut s);
                             for (si, &gi) in s.iter_mut().zip(g_hat.iter()) {
                                 *si = *si * gi;
                             }
-                            fwht_group_in_place(&mut s);
+                            fwht_in_place(&mut s);
                             for si in s.iter_mut() {
                                 *si = *si * inv_k;
                             }
@@ -415,7 +372,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             // FWHT of the E_field .a shares (computed once, reused for all row_offsets).
             let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
             let mut g_hat = g;
-            fwht_field_in_place(&mut g_hat);
+            fwht_in_place(&mut g_hat);
             let inv_k = F::from(self.K as u64)
                 .inverse()
                 .expect("K invertible in field");
@@ -435,11 +392,11 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                             }
                         })
                         .collect();
-                    fwht_field_in_place(&mut h);
+                    fwht_in_place(&mut h);
                     for (hi, &gi) in h.iter_mut().zip(g_hat.iter()) {
                         *hi *= gi;
                     }
-                    fwht_field_in_place(&mut h);
+                    fwht_in_place(&mut h);
                     for hi in h.iter_mut() {
                         *hi *= inv_k;
                     }

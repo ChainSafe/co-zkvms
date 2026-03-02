@@ -74,6 +74,10 @@ jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "
 name = "rep3_jolt"
 required-features = ["test-utils"]
 
+[[bench]]
+name = "fwht"
+harness = false
+
 [features]
 default = ["std", "debug"]
 std = [

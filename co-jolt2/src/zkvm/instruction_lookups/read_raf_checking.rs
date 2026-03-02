@@ -3,7 +3,7 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::fwht::{
-    fwht_additive_in_place, fwht_rep3_in_place, shift_eq_table_with_mask, unmask_histogram_public,
+    fwht_in_place, fwht_rep3_in_place, shift_eq_table_with_mask, unmask_histogram_public,
 };
 use crate::utils::types::{Either, Rep3Value};
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
@@ -624,21 +624,18 @@ impl<F: JoltField> ReadRafProverState<F> {
             })
             .collect();
 
-        // Rep3 histograms: standard FWHT unmask
+        // Rep3 histograms: FWHT unmask each independently (parallelized via rayon)
         let rep3_polys: Vec<(usize, usize, AdditiveDensePoly<F>)> = all_rep3_entries
             .into_par_iter()
-            .map(|(ti, si, mut h_c)| {
-                fwht_rep3_in_place(&mut h_c);
-                let mut h: Vec<AdditiveShare<F>> = h_c
+            .map(|(ti, si, mut h)| {
+                fwht_rep3_in_place(&mut h);
+                let mut h_k: Vec<AdditiveShare<F>> = h
                     .iter()
                     .zip(ehat16.iter())
-                    .map(|(&a, &b)| a * b)
+                    .map(|(&a, &b)| (a * inv_m) * b)
                     .collect();
-                fwht_additive_in_place(&mut h);
-                for v in h.iter_mut() {
-                    *v = *v * inv_m;
-                }
-                (ti, si, AdditiveDensePoly::new(h))
+                fwht_in_place(&mut h_k);
+                (ti, si, AdditiveDensePoly::new(h_k))
             })
             .collect();
 
@@ -682,17 +679,15 @@ impl<F: JoltField> ReadRafProverState<F> {
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
 
         // Helper: FWHT unmask a Rep3 histogram against Ehat16.
-        // Pointwise mul and scale are parallelized (only 2-5 histograms in outer par_iter).
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
         let fwht_unmask = |mut h: Vec<Rep3PrimeFieldShare<F>>| -> AdditiveDensePoly<F> {
             fwht_rep3_in_place(&mut h);
             let mut h_k: Vec<AdditiveShare<F>> = h
-                .par_iter()
-                .zip(ehat16.par_iter())
-                .map(|(&a, &b)| a * b)
+                .iter()
+                .zip(ehat16.iter())
+                .map(|(&a, &b)| (a * inv_m) * b)
                 .collect();
-            fwht_additive_in_place(&mut h_k);
-            h_k.par_iter_mut().for_each(|v| *v = *v * inv_m);
+            fwht_in_place(&mut h_k);
             AdditiveDensePoly::new(h_k)
         };
 
@@ -926,12 +921,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                             if let Some(c) = c16[j] {
                                 let ci = c as usize;
                                 hsh_f[ci] += u_pub[j] * shift_half_val;
-                                hist_left[ci] +=
-                                    rep3_arith::mul_public(s_left[i], u_pub[j]);
+                                hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
                                 match s_right[i] {
                                     Some(sr) => {
-                                        hist_right[ci] +=
-                                            rep3_arith::mul_public(sr, u_pub[j]);
+                                        hist_right[ci] += rep3_arith::mul_public(sr, u_pub[j]);
                                     }
                                     None => {
                                         hist_right[ci] = rep3_arith::add_public(
@@ -1015,8 +1008,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                         add_right[ci] = add_right[ci] + (u * sr);
                                     }
                                     None => {
-                                        hist_right[ci] +=
-                                            u * right_operand_pub[i].unwrap();
+                                        hist_right[ci] += u * right_operand_pub[i].unwrap();
                                     }
                                 }
                             }
@@ -1037,8 +1029,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                 let ci = c as usize;
                                 let u = u_shared[j];
                                 hist_shift[ci] += u * shift_val;
-                                add_identity[ci] =
-                                    add_identity[ci] + (u * s_identity[i]);
+                                add_identity[ci] = add_identity[ci] + (u * s_identity[i]);
                             }
                         }
                     },
@@ -1165,9 +1156,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     .c16
                     .par_iter()
                     .enumerate()
-                    .filter_map(|(j, opt)| {
-                        opt.map(|c| (j, ra_shared[j], v_shifted[c as usize]))
-                    })
+                    .filter_map(|(j, opt)| opt.map(|c| (j, ra_shared[j], v_shifted[c as usize])))
                     .fold(
                         || (Vec::new(), Vec::new(), Vec::new()),
                         |(mut idx, mut ra, mut v), (j, r, vs)| {
