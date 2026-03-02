@@ -45,6 +45,15 @@ struct Args {
     /// Number of SHA-256 iterations for guest program
     #[clap(short = 'n', long, default_value = "1")]
     num_iters: u32,
+
+    /// Base directory for persisted preprocessing data.
+    ///
+    /// Each party writes/reads from `<preproc_dir>/party_<id>/`.
+    /// On first run: preprocessing runs and results are saved here.
+    /// On subsequent runs (requires `--features reuse-preproc`):
+    /// preprocessing is skipped and data is loaded from disk.
+    #[clap(short = 'p', long)]
+    preproc_dir: Option<PathBuf>,
 }
 
 /// Payload sent from coordinator to each worker.
@@ -70,7 +79,7 @@ fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -260,18 +269,49 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // populate_operands_casts: convert binary-shared operands to arithmetic
     populate_operands_casts(&mut trace, io_ctx.main())?;
 
-    // Preprocessing: create EdaBits pool for B2A conversions
+    // Preprocessing: create EdaBits pool for B2A conversions.
+    //
+    // If `--preproc-dir` is provided, we attempt to load a previously saved pool
+    // from `<preproc_dir>/party_<id>/`.  On a cache miss (files absent or corrupt)
+    // we fall back to running preprocessing and saving the result.
+    //
+    // NOTE: all three parties must make the same load-vs-preprocess decision.
+    // The run script achieves this by ensuring either all parties have their
+    // preproc files (reuse run) or none do (fresh run).  Build with
+    // `--features reuse-preproc` so consumed data is NOT zeroed on disk.
+    let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
     let edabits_pool = {
         use co_jolt2::zkvm::instruction_lookups::read_raf_checking::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
         let budget = compute_edabit_budget(trace_len);
         tracing::info!("budget: {:?}", budget);
-        edabits::preprocess_pool::<F, _>(
-            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-            80 * trace_len,
-            &mut io_ctx,
-        )?
+        let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+        let num_dabits = 80 * trace_len;
+
+        if let Some(ref base_dir) = args.preproc_dir {
+            let pool_dir = base_dir.join(format!("party_{}", my_id));
+            match edabits::EdaBitsPool::load(&pool_dir, party_id) {
+                Ok(pool) => {
+                    info!("reusing preprocessing from {:?} (skipping network preprocessing)", pool_dir);
+                    pool
+                }
+                Err(e) => {
+                    info!("no cached preprocessing ({e}); running preprocessing...");
+                    let pool =
+                        edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?;
+                    match pool.save(&pool_dir) {
+                        Ok(()) => info!("saved preprocessing to {:?}", pool_dir),
+                        Err(save_err) => {
+                            tracing::warn!("failed to save preprocessing to {:?}: {save_err}", pool_dir)
+                        }
+                    }
+                    pool
+                }
+            }
+        } else {
+            edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?
+        }
     };
     drop(_span);
 
@@ -290,4 +330,23 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     io_ctx.network().log_connection_stats();
 
     Ok(())
+}
+
+fn print_used_instructions(instruction_trace: &[Rep3Cycle]) {
+    use itertools::Itertools;
+    use rayon::prelude::*;
+    let opcodes_used = instruction_trace
+        .par_iter()
+        .filter_map(|cycle| match cycle {
+            Rep3Cycle::NoOp => None,
+            _ => {
+                let name: &'static str = cycle.instruction().into();
+                Some(name)
+            }
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .sorted()
+        .collect::<Vec<_>>();
+    tracing::info!("opcodes_used: {:?}", opcodes_used);
 }

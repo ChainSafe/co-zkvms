@@ -1,5 +1,6 @@
 .artifacts/
 .traces/
+.preprocessing/
 
 
 /examples/*.toml

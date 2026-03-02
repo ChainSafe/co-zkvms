@@ -700,17 +700,25 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             combined.extend_from_slice(&ea3);
             combined.extend_from_slice(&ea4);
             combined.extend_from_slice(&da_alpha2);
-            io.par_chunks(combined.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                ctx.network.send_many(PartyID::ID2, &chunk)?;
-                Ok(vec![])
-            })?;
+            io.par_chunks(
+                combined.into_par_iter(),
+                None,
+                |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                    ctx.network.send_many(PartyID::ID2, &chunk)?;
+                    Ok(vec![])
+                },
+            )?;
 
             // Round 2: P0 ← P2 receives daBit s₂₀ across fork channels
             let s20: Vec<F> = if num_dabits > 0 {
                 let _span = tracing::info_span!("resv_s20").entered();
-                io.par_chunks(0..num_dabits, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                    Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
-                })?
+                io.par_chunks(
+                    0..num_dabits,
+                    None,
+                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                        Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
+                    },
+                )?
             } else {
                 Vec::new()
             };
@@ -808,9 +816,13 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
 
             let combined: Vec<F> = if total_recv > 0 {
                 let _span = tracing::info_span!("resv_combined").entered();
-                io.par_chunks(0..total_recv, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                    Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
-                })?
+                io.par_chunks(
+                    0..total_recv,
+                    None,
+                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                        Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
+                    },
+                )?
             } else {
                 Vec::new()
             };
@@ -858,10 +870,14 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 }
 
                 // Round 2: P2 → P0 sends s₂₀ across fork channels
-                io.par_chunks(s20.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                    ctx.network.send_many(PartyID::ID0, &chunk)?;
-                    Ok(vec![])
-                })?;
+                io.par_chunks(
+                    s20.into_par_iter(),
+                    None,
+                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                        ctx.network.send_many(PartyID::ID0, &chunk)?;
+                        Ok(vec![])
+                    },
+                )?;
 
                 stored
             } else {
@@ -1166,6 +1182,7 @@ impl<F: PrimeField> EdaBitsPool<F> {
     }
 
     /// Write all lazy sources to `dir`.
+    #[tracing::instrument(skip_all, name = "Preprocessing::save")]
     pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
         self.edabits_u8.save(dir)?;
         self.edabits_u16.save(dir)?;
@@ -1632,9 +1649,13 @@ mod tests {
                 |i| (x_bin_shares[i].clone(), bit_shares[i].clone()),
                 || (),
                 move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
-                 mut io_ctx| {
+                      mut io_ctx| {
                     let mut pool = if use_batched {
-                        preprocess_pool_batched::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?
+                        preprocess_pool_batched::<Fr, _>(
+                            [0, 0, 0, NUM_U64, 0],
+                            NUM_DABITS,
+                            &mut io_ctx,
+                        )?
                     } else {
                         preprocess_pool::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?
                     };
@@ -1662,10 +1683,7 @@ mod tests {
         // Verify bit injection
         let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
         let inj_expected: Vec<Fr> = bits.iter().map(|&b| Fr::from(b as u64)).collect();
-        assert_eq!(
-            inj_combined, inj_expected,
-            "preprocess bit inject mismatch"
-        );
+        assert_eq!(inj_combined, inj_expected, "preprocess bit inject mismatch");
     }
 
     #[test]
