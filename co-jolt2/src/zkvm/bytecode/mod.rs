@@ -331,7 +331,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 
         if sm.party_id == PartyID::ID0 {
             // Use cycle_witness.pc which stores bytecode table indices (from get_pc).
-            let pc_indices = &sm.prover_state.cycle_witness.pc;
+            let pc_indices: Vec<u64> = sm
+                .prover_state
+                .cycle_witness
+                .meta()
+                .iter()
+                .map(|m| m.pc_index)
+                .collect();
 
             // Compute eq_r_cycle from accumulator r_cycle point
             let r_cycle: Vec<F::Challenge> = sm
@@ -444,7 +450,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 log_K_chunk,
                 eq_r_cycle,
                 F_1.clone(),
-                pc_indices,
+                &pc_indices,
             );
 
             let hamming_weight = BytecodeHammingWeight::new_prover_from_parts(

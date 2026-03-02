@@ -162,6 +162,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         io_ctx: &mut IoContextPool<N>,
         pool: &mut mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
+        use mpc_core::protocols::rep3_ring::dabits;
         use mpc_core::protocols::rep3_ring::edabits;
         use rayon::prelude::*;
 
@@ -178,7 +179,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
             let dabits = pool.take_dabits(self.bitinject.len());
             let _span =
                 tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
-            let fields = edabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
+            let fields = dabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
             drop(_span);
             scatter.extend(
                 self.bitinject_idx

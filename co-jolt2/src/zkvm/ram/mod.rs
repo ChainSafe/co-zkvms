@@ -365,9 +365,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             let addresses: Vec<Option<u64>> = sm
                 .prover_state
                 .cycle_witness
-                .ram_addr
+                .meta()
                 .par_iter()
-                .map(|&addr| remap_address(addr, memory_layout))
+                .map(|m| remap_address(m.ram_addr, memory_layout))
                 .collect();
 
             // Compute F_arrays (used for HammingWeight)

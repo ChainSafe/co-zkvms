@@ -39,7 +39,7 @@ impl Rep3SpartanDagWorker {
         let num_steps = cycle_witness.len();
         eyre::ensure!(num_steps.is_power_of_two(), "num_steps must be pow2");
         eyre::ensure!(
-            !cycle_witness.lookup_output.is_empty(),
+            !cycle_witness.stage1_lookup_output().is_empty(),
             "cycle_witness.lookup_output not populated"
         );
 
@@ -51,13 +51,13 @@ impl Rep3SpartanDagWorker {
         // in the sparse interleaved polynomial, so Product must match vanilla for correct t_inf.
         let lhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
             .map(|t| {
-                let row = cycle_witness.row(t);
+                let row = cycle_witness.row_stage1(t);
                 row.to_instruction_inputs(party_id).0
             })
             .collect();
         let rhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
             .map(|t| {
-                let row = cycle_witness.row(t);
+                let row = cycle_witness.row_stage1(t);
                 row.to_instruction_inputs(party_id).1
             })
             .collect();
@@ -67,7 +67,7 @@ impl Rep3SpartanDagWorker {
         // Materialize per-cycle R1CS inputs (cheap; uses cached cycle witness).
         let mut cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = Vec::with_capacity(num_steps);
         for t in 0..num_steps {
-            let row = cycle_witness.row(t);
+            let row = cycle_witness.row_stage1(t);
             cycle_inputs.push(Rep3R1CSCycleInputs::from_trace(
                 party_id,
                 row,

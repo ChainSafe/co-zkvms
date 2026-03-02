@@ -375,21 +375,17 @@ impl<F: JoltField> Rep3ValFinalSumcheckWorker<F> {
 
         // wa (PUBLIC): eq(r_address, remap(ram_addr[j]))
         let wa: Vec<F> = cycle_witness
-            .ram_addr
+            .meta()
             .par_iter()
-            .map(|&addr| {
-                remap_address(addr, memory_layout).map_or(F::zero(), |k| eq_r_address[k as usize])
+            .map(|m| {
+                remap_address(m.ram_addr, memory_layout)
+                    .map_or(F::zero(), |k| eq_r_address[k as usize])
             })
             .collect();
         let wa = MultilinearPolynomial::from(wa);
 
         // Take ownership — this is the last consumer of ram_inc
-        let inc = sm
-            .prover_state
-            .cycle_witness
-            .ram_inc
-            .take()
-            .expect("ram_inc not populated");
+        let inc = sm.prover_state.cycle_witness.take_ram_inc();
 
         Self {
             party_id,

@@ -42,8 +42,7 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         input_claim: F,
     ) -> Self {
         let party_id = sm.party_id;
-        let cycle_witness = &sm.prover_state.cycle_witness;
-        let n = cycle_witness.len();
+        let n = sm.prover_state.cycle_witness.len();
 
         let (r_cycle_point, _) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Product,
@@ -51,22 +50,14 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         );
         let log_T = r_cycle_point.r.len();
 
-        let mut left: Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> =
-            Vec::with_capacity(n);
-        let mut right: Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> =
-            Vec::with_capacity(n);
-        for t in 0..n {
-            let (l, r) = cycle_witness.row(t).to_instruction_inputs(party_id);
-            left.push(l);
-            right.push(r);
-        }
+        let inputs = sm.prover_state.cycle_witness.take_product_inputs();
 
         Self {
             party_id,
             input_claim,
             log_T,
-            left_input_poly: Rep3DensePolynomial::new(left),
-            right_input_poly: Rep3DensePolynomial::new(right),
+            left_input_poly: Rep3DensePolynomial::new(inputs.left),
+            right_input_poly: Rep3DensePolynomial::new(inputs.right),
             eq_r_cycle: GruenSplitEqPolynomial::new(&r_cycle_point.r, BindingOrder::LowToHigh),
         }
     }

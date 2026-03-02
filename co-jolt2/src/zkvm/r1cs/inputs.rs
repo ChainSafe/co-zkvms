@@ -10,8 +10,8 @@ use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
-use crate::zkvm::dag::state_manager::Rep3CycleWitnessRef;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use crate::zkvm::dag::witness::Stage1RowRef;
 
 pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 
@@ -53,7 +53,7 @@ pub struct Rep3R1CSCycleInputs<F: JoltField> {
 impl<F: JoltField> Rep3R1CSCycleInputs<F> {
     pub fn from_trace(
         party_id: mpc_core::protocols::rep3::PartyID,
-        row: Rep3CycleWitnessRef<'_, F>,
+        row: Stage1RowRef<'_, F>,
         product: Rep3PrimeFieldShare<F>,
     ) -> Self {
         let (left_input, right_input) = row.to_instruction_inputs(party_id);
@@ -69,8 +69,8 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let ram_read_value = row.ram_read_value();
         let ram_write_value = row.ram_write_value();
 
-        let pc = row.pc();
-        let next_pc = row.next_pc();
+        let pc = row.pc_index();
+        let next_pc = row.next_pc_index();
         let unexpanded_pc = row.unexpanded_pc();
         let next_unexpanded_pc = row.next_unexpanded_pc();
         let imm = row.imm();
@@ -156,15 +156,7 @@ where
 
     let party_id = state.party_id;
 
-    let pc = &cycle_witness.pc;
-    let unexpanded_pc = &cycle_witness.unexpanded_pc;
-    let imm = &cycle_witness.imm;
-    let rd_addr = &cycle_witness.rd_addr;
-    let ram_addr = &cycle_witness.ram_addr;
-    let flags_bits = &cycle_witness.flags_bits;
-
-    let rs1_field = &cycle_witness.rs1_value;
-    let rs2_field = &cycle_witness.rs2_value;
+    let flags_bits = cycle_witness.pc_sumcheck_flags_bits();
 
     // Batched shared×shared products: needed for ALL rows where both instruction
     // inputs are shared (vanilla computes Product = left * right unconditionally).
@@ -182,8 +174,14 @@ where
     }
 
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
-        let lhs: Vec<_> = shared_mul_rows.iter().map(|&t| rs1_field[t]).collect();
-        let rhs: Vec<_> = shared_mul_rows.iter().map(|&t| rs2_field[t]).collect();
+        let lhs: Vec<_> = shared_mul_rows
+            .iter()
+            .map(|&t| cycle_witness.row_stage1(t).rs1_value())
+            .collect();
+        let rhs: Vec<_> = shared_mul_rows
+            .iter()
+            .map(|&t| cycle_witness.row_stage1(t).rs2_value())
+            .collect();
         arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
     } else {
         vec![]
@@ -235,23 +233,18 @@ where
                 let eq2_val = eq_two[x2];
                 let t = x1 * eq_two.len() + x2;
 
-                let row = cycle_witness.row(t);
+                let row = cycle_witness.row_stage1(t);
 
                 // Public per-cycle values
-                inner_public[idx_pc] += F::from_u64(pc[t]) * eq2_val;
-                inner_public[idx_unexp_pc] += F::from_u64(unexpanded_pc[t]) * eq2_val;
-                inner_public[idx_rd] += F::from_u64(rd_addr[t] as u64) * eq2_val;
-                inner_public[idx_imm] += F::from_i128(imm[t]) * eq2_val;
-                inner_public[idx_ram_addr] += F::from_u64(ram_addr[t]) * eq2_val;
-                let next_unexp = if t + 1 < trace_len {
-                    unexpanded_pc[t + 1]
-                } else {
-                    0
-                };
-                let next_pc_val = if t + 1 < trace_len { pc[t + 1] } else { 0 };
+                inner_public[idx_pc] += F::from_u64(row.pc_index()) * eq2_val;
+                inner_public[idx_unexp_pc] += F::from_u64(row.unexpanded_pc()) * eq2_val;
+                inner_public[idx_rd] += F::from_u64(row.rd_addr() as u64) * eq2_val;
+                inner_public[idx_imm] += F::from_i128(row.imm()) * eq2_val;
+                inner_public[idx_ram_addr] += F::from_u64(row.ram_addr()) * eq2_val;
+
+                inner_public[idx_next_unexp] += F::from_u64(row.next_unexpanded_pc()) * eq2_val;
+                inner_public[idx_next_pc] += F::from_u64(row.next_pc_index()) * eq2_val;
                 let next_is_noop = row.next_is_noop();
-                inner_public[idx_next_unexp] += F::from_u64(next_unexp) * eq2_val;
-                inner_public[idx_next_pc] += F::from_u64(next_pc_val) * eq2_val;
                 inner_public[idx_next_is_noop] += F::from_bool(next_is_noop) * eq2_val;
 
                 // Shared per-cycle values
@@ -275,10 +268,10 @@ where
                         let right_shared = (fb & mask_right_rs2) != 0;
                         match (left_shared, right_shared) {
                             (true, false) => {
-                                arithmetic::mul_public(rs1_field[t], row.to_right_public_input())
+                                arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
                             }
                             (false, true) => {
-                                arithmetic::mul_public(rs2_field[t], row.to_left_public_input())
+                                arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
                             }
                             (false, false) => {
                                 let l = row.to_left_public_input();
@@ -299,11 +292,11 @@ where
 
                 let fb = flags_bits[t];
                 if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                    inner_public[idx_write_lookup] += F::from_u64(rd_addr[t] as u64) * eq2_val;
+                    inner_public[idx_write_lookup] += F::from_u64(row.rd_addr() as u64) * eq2_val;
                 }
                 let is_jump = row.flag(CircuitFlags::Jump);
                 if is_jump {
-                    inner_public[idx_write_pc] += F::from_u64(rd_addr[t] as u64) * eq2_val;
+                    inner_public[idx_write_pc] += F::from_u64(row.rd_addr() as u64) * eq2_val;
                 }
                 if row.flag(CircuitFlags::Branch) {
                     inner_shared[idx_should_branch] +=
@@ -363,7 +356,7 @@ mod tests {
     use crate::utils::tracing::init_tracing;
     use crate::zkvm::instruction::populate_operands_casts;
     use crate::zkvm::instruction::Rep3Cycle;
-    use crate::zkvm::witness::generate_witness_batch_rep3;
+    use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
     use jolt_core::host::Program;
     use jolt_core::poly::commitment::mock::MockCommitScheme;
     use jolt_core::zkvm::bytecode::BytecodePreprocessing;
@@ -453,13 +446,13 @@ mod tests {
                     None,
                 );
 
-                // Populate lookup cache via witness generation
+                populate_cycle_witness_rep3(&mut state, &mut io_ctx)?;
+
                 let poly_keys: Vec<CommittedPolynomial> =
                     AllCommittedPolynomials::iter().copied().collect();
                 let _witness_polys =
                     generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx)?;
-                state.prover_state.trace.clear();
-                state.prover_state.trace.shrink_to_fit();
+                state.prover_state.trace = None;
 
                 compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)
             },

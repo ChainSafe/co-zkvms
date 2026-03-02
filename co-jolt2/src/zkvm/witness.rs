@@ -264,7 +264,7 @@ where
 {
     let party_id = state.party_id;
     let preprocessing = state.prover_state.preprocessing;
-    let trace = &mut state.prover_state.trace;
+    let trace = state.trace_mut();
     eyre::ensure!(
         trace.len().is_power_of_two(),
         "trace length must be power-of-two"
@@ -278,18 +278,16 @@ where
 
     let n = trace.len();
 
-    // Public columns
-    let mut pc: Vec<u64> = Vec::with_capacity(n);
+    // Meta (AoS) + public stage-specific columns
+    let mut meta: Vec<crate::zkvm::dag::witness::CycleMeta> = Vec::with_capacity(n);
     let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(n);
-    let mut imm: Vec<i128> = Vec::with_capacity(n);
-    let mut rd_addr: Vec<u8> = Vec::with_capacity(n);
-    let mut rs1_addr: Vec<u8> = Vec::with_capacity(n);
-    let mut rs2_addr: Vec<u8> = Vec::with_capacity(n);
-    let mut ram_addr: Vec<u64> = Vec::with_capacity(n);
     let mut flags_bits: Vec<u32> = Vec::with_capacity(n);
+
+    let mut imm: Vec<i128> = Vec::with_capacity(n);
     let mut advice: Vec<u64> = vec![0; n];
     let mut lookup_tables: Vec<Option<LookupTables<XLEN>>> = Vec::with_capacity(n);
     let mut is_interleaved_operands: Vec<bool> = Vec::with_capacity(n);
+    let mut right_operand_public_mask: Vec<Option<u64>> = Vec::with_capacity(n);
 
     // Ring-shared columns to cast to field
     let mut rs1_ring: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
@@ -302,7 +300,7 @@ where
         let norm = cycle.instruction().normalize();
         let circuit_flags = cycle.instruction().circuit_flags();
 
-        pc.push(cycle.get_pc(&preprocessing.shared.bytecode) as u64);
+        let pc_index = cycle.get_pc(&preprocessing.shared.bytecode) as u64;
         unexpanded_pc.push(norm.address as u64);
         imm.push(norm.operands.imm);
 
@@ -310,11 +308,15 @@ where
         let (rs2_i, rs2_v) = cycle.rs2_read();
         let (rd_i, _rd_pre, rd_post) = cycle.rd_write();
 
-        rs1_addr.push(rs1_i);
-        rs2_addr.push(rs2_i);
-        rd_addr.push(rd_i);
+        let ram_addr = cycle.ram_access().address();
 
-        ram_addr.push(cycle.ram_access().address());
+        meta.push(crate::zkvm::dag::witness::CycleMeta {
+            pc_index,
+            ram_addr,
+            rd_addr: rd_i,
+            rs1_addr: rs1_i,
+            rs2_addr: rs2_i,
+        });
 
         // Pack circuit flags into a u32 bitmask
         let mut mask = 0u32;
@@ -328,6 +330,7 @@ where
         // Lookup table and interleaved operand flag (public, derived from opcode).
         lookup_tables.push(InstructionLookup::<XLEN>::lookup_table(cycle));
         is_interleaved_operands.push(circuit_flags.is_interleaved_operands());
+        right_operand_public_mask.push(compute_right_operand_public(cycle));
 
         // Advice value (only meaningful for VirtualAdvice).
         if circuit_flags[CircuitFlags::Advice as usize] {
@@ -364,24 +367,48 @@ where
     let ram_read_value = ring_to_field_a2b_many(&ram_read_ring, io_ctx.main())?;
     let ram_write_value = ring_to_field_a2b_many(&ram_write_ring, io_ctx.main())?;
 
-    state.prover_state.cycle_witness.pc = pc;
-    state.prover_state.cycle_witness.unexpanded_pc = unexpanded_pc;
-    state.prover_state.cycle_witness.imm = imm;
-    state.prover_state.cycle_witness.rd_addr = rd_addr;
-    state.prover_state.cycle_witness.rs1_addr = rs1_addr;
-    state.prover_state.cycle_witness.rs2_addr = rs2_addr;
-    state.prover_state.cycle_witness.ram_addr = ram_addr;
-    state.prover_state.cycle_witness.flags_bits = flags_bits;
-    state.prover_state.cycle_witness.advice = std::mem::take(&mut advice);
+    let cw = &mut state.prover_state.cycle_witness;
+    cw.set_len(n);
+    cw.set_meta(meta);
+    cw.set_stage1(
+        imm,
+        std::mem::take(&mut advice),
+        lookup_output,
+        rs1_value,
+        rs2_value,
+        rd_write_value,
+        ram_read_value,
+        ram_write_value,
+    );
+    cw.update_stage3(crate::zkvm::dag::witness::Stage3Update {
+        pc_sumcheck: Some((unexpanded_pc, flags_bits)),
+        read_raf_tables_and_masks: Some((
+            lookup_tables,
+            is_interleaved_operands,
+            right_operand_public_mask,
+        )),
+        read_raf_lookup_indices: None,
+        product_inputs: None,
+    });
 
-    state.prover_state.cycle_witness.lookup_output = lookup_output;
-    state.prover_state.cycle_witness.lookup_tables = lookup_tables;
-    state.prover_state.cycle_witness.is_interleaved_operands = is_interleaved_operands;
-    state.prover_state.cycle_witness.rs1_value = rs1_value;
-    state.prover_state.cycle_witness.rs2_value = rs2_value;
-    state.prover_state.cycle_witness.rd_write_value = rd_write_value;
-    state.prover_state.cycle_witness.ram_read_value = ram_read_value;
-    state.prover_state.cycle_witness.ram_write_value = ram_write_value;
+    // Precompute instruction inputs for Spartan Product virtualization (stage 3),
+    // so we can drop the large stage1 witness vectors after Spartan stage 1.
+    let mut left: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+    let mut right: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+    for t in 0..n {
+        let (l, r) = cw.row_stage1(t).to_instruction_inputs(party_id);
+        left.push(l);
+        right.push(r);
+    }
+    cw.update_stage3(crate::zkvm::dag::witness::Stage3Update {
+        pc_sumcheck: None,
+        read_raf_tables_and_masks: None,
+        read_raf_lookup_indices: None,
+        product_inputs: Some(crate::zkvm::dag::witness::ProductInputs { left, right }),
+    });
+
+    #[cfg(debug_assertions)]
+    cw.sanity_check_lengths();
 
     Ok(())
 }
@@ -411,10 +438,12 @@ where
 {
     let party_id = state.party_id;
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
-    let trace: &[Rep3Cycle] = &state.prover_state.trace;
+    let trace: &[Rep3Cycle] = state.trace_ref();
 
-    let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> =
-        state.prover_state.cycle_witness.lookup_output.clone();
+    let cycle_witness = &state.prover_state.cycle_witness;
+    let lookup_outputs: Vec<Rep3PrimeFieldShare<F>> = (0..cycle_witness.len())
+        .map(|t| cycle_witness.row_stage1(t).to_lookup_output())
+        .collect();
 
     let mut ram_d = 0;
     let mut bytecode_d = 0;
@@ -566,16 +595,15 @@ where
         .collect();
 
     // Persist lookup indices for ReadRaf suffix evaluation
-    state.prover_state.cycle_witness.lookup_indices = either_indices;
-
-    // Build right_operand_public_mask for SignExtension shortcut in ReadRaf.
-    // Populated for instructions where the right operand is public:
-    // shift/rotate (VirtualSRA/SRL/SRAI/SRLI/ROTRI/ROTRIW) and
-    // immediate ALU (ADDI/ANDI/ORI/XORI/SLTI/SLTIU/VirtualMULI).
-    state.prover_state.cycle_witness.right_operand_public_mask = trace
-        .par_iter()
-        .map(compute_right_operand_public)
-        .collect();
+    state
+        .prover_state
+        .cycle_witness
+        .update_stage3(crate::zkvm::dag::witness::Stage3Update {
+            pc_sumcheck: None,
+            read_raf_tables_and_masks: None,
+            read_raf_lookup_indices: Some(either_indices),
+            product_inputs: None,
+        });
 
     let mut batch = Arc::try_unwrap(batch_cell)
         .ok()
@@ -589,7 +617,7 @@ where
 
     // Instruction inputs are derived from the cached cycle witness (no extra casts).
     // Clone flags_bits to release borrow on cycle_witness, allowing assignment of rd_inc/ram_inc later.
-    let flags_bits = state.prover_state.cycle_witness.flags_bits.clone();
+    let flags_bits = state.prover_state.cycle_witness.pc_sumcheck_flags_bits().to_vec();
 
     let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
     let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
@@ -606,7 +634,7 @@ where
             let (l, r) = state
                 .prover_state
                 .cycle_witness
-                .row(t)
+                .row_stage1(t)
                 .to_instruction_inputs(party_id);
             left_input_field.push(l);
             right_input_field.push(r);
@@ -674,7 +702,10 @@ where
                 // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
                 // Arc internally — no data duplication.
                 let dense = Rep3DensePolynomial::new(inc);
-                state.prover_state.cycle_witness.rd_inc = Some(dense.clone());
+                state
+                    .prover_state
+                    .cycle_witness
+                    .set_stage2_incs(Some(dense.clone()), None);
                 results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::RamInc => {
@@ -690,7 +721,10 @@ where
                     .collect();
                 // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
                 let dense = Rep3DensePolynomial::new(inc);
-                state.prover_state.cycle_witness.ram_inc = Some(dense.clone());
+                state
+                    .prover_state
+                    .cycle_witness
+                    .set_stage2_incs(None, Some(dense.clone()));
                 results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::InstructionRa(i) => {
