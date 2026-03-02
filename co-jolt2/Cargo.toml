@@ -48,9 +48,9 @@ tokio = { version = "1.34.0", features = [
     "macros",
 ] }
 # Jolt dependencies (path deps to examples/jolt fork)
-jolt-core = { path = "/Users/timofey/repos/examples/jolt/jolt-core" }
-jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "common" }
-tracer = { path = "/Users/timofey/repos/examples/jolt/tracer" }
+jolt-core.workspace = true
+jolt2-common.workspace = true
+tracer.workspace = true
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
@@ -68,7 +68,7 @@ co-jolt2 = { path = ".", features = ["test-utils"] }
 rcgen = "0.13"
 
 [build-dependencies]
-jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "common" }
+jolt2-common.workspace = true
 
 [[example]]
 name = "rep3_jolt"
@@ -89,3 +89,4 @@ std = [
 ]
 debug = []
 test-utils = ["rcgen", "mpc-core/test-utils"]
+reuse-preproc = ["mpc-core/reuse-preproc"]

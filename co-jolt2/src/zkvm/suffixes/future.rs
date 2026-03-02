@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use mpc_core::protocols::rep3_ring::{dabits, Rep3RingShare};
 
 // ---------------------------------------------------------------------------
 // B2ABucketExtend — compile-time dispatch for typed B2A bucket extension
@@ -178,7 +178,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
             let dabits = pool.take_dabits(self.bitinject.len());
             let _span =
                 tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
-            let fields = edabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
+            let fields = dabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
             drop(_span);
             scatter.extend(
                 self.bitinject_idx
