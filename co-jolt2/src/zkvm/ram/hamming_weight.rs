@@ -64,9 +64,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingWeightSumcheck<F> 
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(
-            self, r_j, round,
-        )
+        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(self, r_j, round)
     }
 
     fn normalize_opening_point(

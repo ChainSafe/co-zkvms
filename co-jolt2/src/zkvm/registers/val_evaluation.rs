@@ -60,7 +60,11 @@ impl<F: JoltField> Rep3ValEvaluationWorker<F> {
 
         // wa: PUBLIC polynomial from eq(r_address) and public rd_addr
         let eq_r_address = EqPolynomial::evals(&r_address);
-        let wa_evals: Vec<F> = sm.prover_state.cycle_witness.meta().par_iter()
+        let wa_evals: Vec<F> = sm
+            .prover_state
+            .cycle_witness
+            .meta()
+            .par_iter()
             .map(|m| eq_r_address[m.rd_addr as usize])
             .collect();
         let wa = MultilinearPolynomial::from(wa_evals);
@@ -95,7 +99,9 @@ impl<F: JoltField> Rep3ValEvaluationWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ValEvaluationWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3ValEvaluationWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -120,10 +126,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
             .into_par_iter()
             .map(|i| {
                 let inc_evals = self.inc.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
-                let wa_evals: [F; DEGREE] =
-                    self.wa.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let lt_evals: [F; DEGREE] =
-                    self.lt.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let wa_evals: [F; DEGREE] = self
+                    .wa
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let lt_evals: [F; DEGREE] = self
+                    .lt
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 // inc(SHARED) * wa(PUB) * lt(PUB) → SHARED (mul_public twice) → AdditiveShare
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE];
@@ -135,7 +143,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
             )
             .to_vec();
 

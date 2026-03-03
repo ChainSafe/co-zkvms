@@ -31,12 +31,11 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         max_degree: usize,
     ) -> Vec<F> {
         let degree = <RaSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
-        let base =
-            <RaSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
-                self,
-                round,
-                previous_claim,
-            );
+        let base = <RaSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
+            self,
+            round,
+            previous_claim,
+        );
 
         debug_assert!(degree >= 1);
         debug_assert!(base.len() >= degree);

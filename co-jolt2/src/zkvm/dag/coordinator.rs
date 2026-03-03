@@ -173,13 +173,11 @@ impl Rep3JoltDAGCoordinator {
             )?;
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(
-                jolt_core::poly::opening_proof::ReducedOpeningProof {
-                    sumcheck_proof: reduced.sumcheck_proof,
-                    sumcheck_claims: reduced.sumcheck_claims,
-                    joint_opening_proof: reduced.joint_opening_proof,
-                },
-            ),
+            ProofData::ReducedOpeningProof(jolt_core::poly::opening_proof::ReducedOpeningProof {
+                sumcheck_proof: reduced.sumcheck_proof,
+                sumcheck_claims: reduced.sumcheck_claims,
+                joint_opening_proof: reduced.joint_opening_proof,
+            }),
         );
 
         // --- Construct JoltProof ---
@@ -389,8 +387,12 @@ impl Rep3JoltDAGCoordinator {
         // ValEvaluation needs init_eval computed from public initial_ram_state.
         // No transcript draw for any of these.
         let (ram_val_eval, ram_val_eval_input_claim) = {
-            use crate::zkvm::ram::{build_initial_memory_state, val_evaluation::Rep3RamValEvaluation};
-            use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+            use crate::zkvm::ram::{
+                build_initial_memory_state, val_evaluation::Rep3RamValEvaluation,
+            };
+            use jolt_core::poly::multilinear_polynomial::{
+                MultilinearPolynomial, PolynomialEvaluation,
+            };
 
             let initial_ram_state = build_initial_memory_state(
                 &state.preprocessing.shared.ram,
@@ -406,7 +408,8 @@ impl Rep3JoltDAGCoordinator {
                 MultilinearPolynomial::from(initial_ram_state);
             let ram_init_eval = val_init_poly.evaluate(&r_address.r);
 
-            let val_eval = Rep3RamValEvaluation::<F>::new::<ProofTranscript, PCS>(state, ram_init_eval);
+            let val_eval =
+                Rep3RamValEvaluation::<F>::new::<ProofTranscript, PCS>(state, ram_init_eval);
             let claim = val_eval.input_claim();
             (val_eval, claim)
         };

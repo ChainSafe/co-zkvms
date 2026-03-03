@@ -1,8 +1,8 @@
-use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
-use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
-use jolt_core::zkvm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction::CircuitFlags;
+use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
+use jolt_core::zkvm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::arithmetic as rep3_arithmetic;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
@@ -12,6 +12,7 @@ use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
+use crate::utils::shared_mul_index::build_shared_mul_rows_and_map;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, Rep3R1CSCycleInputs};
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
@@ -61,29 +62,17 @@ impl Rep3SpartanDagWorker {
 
         // Important: keep ordering deterministic across parties.
         // Do not build this list with a parallel filter+collect (ordering is not guaranteed).
-        let shared_mul_rows: Vec<usize> = (0..num_steps)
-            .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
-            .collect();
-        let mut mul_map: Vec<u32> = vec![u32::MAX; num_steps];
-        for (k, &t) in shared_mul_rows.iter().enumerate() {
-            mul_map[t] = k as u32;
-        }
+        let (shared_mul_rows, mul_map) =
+            build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
 
         let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
-            let (lhs, rhs): (Vec<_>, Vec<_>) = rayon::join(
-                || {
-                    shared_mul_rows
-                        .par_iter()
-                        .map(|&t| cycle_witness.row_stage1(t).rs1_value())
-                        .collect()
-                },
-                || {
-                    shared_mul_rows
-                        .par_iter()
-                        .map(|&t| cycle_witness.row_stage1(t).rs2_value())
-                        .collect()
-                },
-            );
+            let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
+                .par_iter()
+                .map(|&t| {
+                    let row = cycle_witness.row_stage1(t);
+                    (row.rs1_value(), row.rs2_value())
+                })
+                .unzip();
             rep3_arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
         } else {
             vec![]
@@ -128,7 +117,6 @@ impl Rep3SpartanDagWorker {
                 product_per_cycle[t],
             ));
         }
-
 
         let mut az_bz_cz_poly = Rep3SpartanInterleavedPolynomial::<F>::new(
             &key,

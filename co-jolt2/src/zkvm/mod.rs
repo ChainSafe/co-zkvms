@@ -278,7 +278,13 @@ mod tests {
                 let verifier_preprocessing = verifier_preprocessing.clone();
                 let prover_preprocessing = Arc::clone(&preprocessing_arc);
                 let io_device = (*io_device_arc).clone();
-                (verifier_preprocessing, prover_preprocessing, io_device, ram_K, padded_len)
+                (
+                    verifier_preprocessing,
+                    prover_preprocessing,
+                    io_device,
+                    ram_K,
+                    padded_len,
+                )
             },
             |input, mut io_ctx| {
                 let (mut trace, memory, preprocessing, io_device, ram_K, advice) = input;
@@ -313,7 +319,8 @@ mod tests {
                 Ok(())
             },
             |input, network| {
-                let (verifier_preprocessing, prover_preprocessing, io_device, ram_K, trace_length) = input;
+                let (verifier_preprocessing, prover_preprocessing, io_device, ram_K, trace_length) =
+                    input;
                 let _span = info_span!("coordinator_prove").entered();
                 let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
                     &verifier_preprocessing,

@@ -44,10 +44,9 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         let party_id = sm.party_id;
         let n = sm.prover_state.cycle_witness.len();
 
-        let (r_cycle_point, _) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Product,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_cycle_point, _) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         let log_T = r_cycle_point.r.len();
 
         let inputs = sm.prover_state.cycle_witness.take_product_inputs();
@@ -63,7 +62,9 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ProductVirtualizationSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3ProductVirtualizationSumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -208,10 +209,9 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheck<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (r_point, input_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Product,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_point, input_claim) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         Self {
             input_claim,
             log_T: r_point.r.len(),
@@ -223,7 +223,9 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheck<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ProductVirtualizationSumcheck<F> {
+impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T>
+    for Rep3ProductVirtualizationSumcheck<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -241,10 +243,8 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ProductVirt
         accumulator: &Rep3OpeningAccumulator<F>,
         r: &[F::Challenge],
     ) -> F {
-        let (outer_sumcheck_opening, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Product,
-            SumcheckId::SpartanOuter,
-        );
+        let (outer_sumcheck_opening, _) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
         let (r_cycle, _) = outer_sumcheck_r.split_at(self.log_T);
 
@@ -257,8 +257,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ProductVirt
             SumcheckId::ProductVirtualization,
         );
 
-        let eq_eval =
-            EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
+        let eq_eval = EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
         eq_eval * left_input_eval * right_input_eval
     }
 

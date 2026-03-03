@@ -185,8 +185,12 @@ impl Rep3JoltDAGWorker {
         // Receive stage3 init data from coordinator (three messages).
         let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
             io_ctx.network().receive_request()?;
-        let (registers_val_claim, lookups_gamma_vec, ram_val_final_input_claim, ram_val_eval_input_claim): (F, Vec<F>, F, F) =
-            io_ctx.network().receive_request()?;
+        let (
+            registers_val_claim,
+            lookups_gamma_vec,
+            ram_val_final_input_claim,
+            ram_val_eval_input_claim,
+        ): (F, Vec<F>, F, F) = io_ctx.network().receive_request()?;
         let lookups_gamma: [F; D] = lookups_gamma_vec
             .try_into()
             .map_err(|_| eyre::eyre!("lookups gamma vec has wrong length"))?;
@@ -323,7 +327,8 @@ impl Rep3JoltDAGWorker {
                 ra_r_cycle,
                 ra_r_address_chunks,
             });
-            let ram_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> = ram_dag.stage4_instances(&mut state);
+            let ram_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> =
+                ram_dag.stage4_instances(&mut state);
 
             // Message 3: Bytecode init (two messages)
             let (read_raf_gamma, rv_claim, val_polys, r_cycles): (
@@ -386,12 +391,14 @@ impl Rep3JoltDAGWorker {
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
         let _stage5 = info_span!("stage5_reduce_and_prove").entered();
-        state.accumulator.reduce_and_prove::<PCS, ProofTranscript, N>(
-            &polynomials_map,
-            opening_hints,
-            &state.prover_state.preprocessing.generators,
-            &mut io_ctx,
-        )?;
+        state
+            .accumulator
+            .reduce_and_prove::<PCS, ProofTranscript, N>(
+                &polynomials_map,
+                opening_hints,
+                &state.prover_state.preprocessing.generators,
+                &mut io_ctx,
+            )?;
         drop(_stage5);
 
         Ok(())
@@ -566,5 +573,4 @@ impl Rep3JoltDAGWorker {
         state.prover_state.trusted_advice_polynomial =
             Some(Rep3MultilinearPolynomial::Public(poly));
     }
-
 }

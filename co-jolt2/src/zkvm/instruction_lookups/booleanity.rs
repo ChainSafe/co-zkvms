@@ -323,7 +323,9 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3BooleanitySumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3BooleanitySumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }

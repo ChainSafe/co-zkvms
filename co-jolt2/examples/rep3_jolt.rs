@@ -194,6 +194,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     info!("starting coordinator prove");
     let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
         &verifier_preprocessing,
+        &preprocessing.generators,
         io_device,
         &mut network,
         ram_k,
@@ -293,7 +294,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
             match edabits::EdaBitsPool::load(&pool_dir, party_id) {
                 Ok(pool) => {
-                    info!("reusing preprocessing from {:?} (skipping network preprocessing)", pool_dir);
+                    info!(
+                        "reusing preprocessing from {:?} (skipping network preprocessing)",
+                        pool_dir
+                    );
                     pool
                 }
                 Err(e) => {
@@ -303,7 +307,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     match pool.save(&pool_dir) {
                         Ok(()) => info!("saved preprocessing to {:?}", pool_dir),
                         Err(save_err) => {
-                            tracing::warn!("failed to save preprocessing to {:?}: {save_err}", pool_dir)
+                            tracing::warn!(
+                                "failed to save preprocessing to {:?}: {save_err}",
+                                pool_dir
+                            )
                         }
                     }
                     pool

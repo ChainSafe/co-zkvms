@@ -31,8 +31,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
         previous_claim: F,
         max_degree: usize,
     ) -> Vec<F> {
-        let degree =
-            <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
+        let degree = <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
         let base =
             <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
                 self,
@@ -151,8 +150,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
             r_address_prime.iter().copied().rev().collect();
         let r_cycle_prime_rev: Vec<F::Challenge> = r_cycle_prime.iter().copied().rev().collect();
 
-        let eq_address =
-            EqPolynomial::<F>::mle(self.r_address(), &r_address_prime_rev);
+        let eq_address = EqPolynomial::<F>::mle(self.r_address(), &r_address_prime_rev);
         let eq_cycle = EqPolynomial::<F>::mle(self.r_cycle(), &r_cycle_prime_rev);
 
         let booleanity_sum: F = ra_claims

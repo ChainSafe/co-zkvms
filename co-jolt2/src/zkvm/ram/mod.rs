@@ -357,10 +357,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 .iter()
                 .map(|m| remap_address(m.ram_addr, memory_layout).unwrap_or(0))
                 .collect();
-            HammingBooleanitySumcheck::new_prover_from_parts(
-                &ram_addrs,
-                &r_cycle,
-            )
+            HammingBooleanitySumcheck::new_prover_from_parts(&ram_addrs, &r_cycle)
         } else {
             let log_T = sm
                 .accumulator
@@ -437,9 +434,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                         .par_chunks(chunk_size)
                         .enumerate()
                         .map(|(chunk_index, addr_chunk)| {
-                            let mut local = jolt_core::utils::thread::unsafe_allocate_zero_vec(
-                                DTH_ROOT_OF_K,
-                            );
+                            let mut local =
+                                jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
                             let mut j = chunk_index * chunk_size;
                             for addr_opt in addr_chunk {
                                 if let Some(address) = addr_opt {
@@ -479,9 +475,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                         .par_chunks(chunk_size)
                         .enumerate()
                         .map(|(chunk_index, addr_chunk)| {
-                            let mut local = jolt_core::utils::thread::unsafe_allocate_zero_vec(
-                                DTH_ROOT_OF_K,
-                            );
+                            let mut local =
+                                jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
                             let mut j = chunk_index * chunk_size;
                             for addr_opt in addr_chunk {
                                 if let Some(address) = addr_opt {
@@ -638,8 +633,7 @@ impl Rep3RamDag {
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
         );
-        let hamming_input_claim =
-            hamming_booleanity_claim * hamming_gamma_powers.iter().sum::<F>();
+        let hamming_input_claim = hamming_booleanity_claim * hamming_gamma_powers.iter().sum::<F>();
 
         let hamming_weight = RamHammingWeight::new_verifier_from_parts(
             hamming_gamma_powers.clone(),
@@ -680,10 +674,9 @@ impl Rep3RamDag {
         );
         let (_, r_cycle_rw) = r_rw.split_at_r(log_K);
 
-        let (r_raf, ra_claim_raf) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRafEvaluation,
-        );
+        let (r_raf, ra_claim_raf) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (_, r_cycle_raf) = r_raf.split_at_r(log_K);
 
         let r_address = if r_address_val.len() % DTH_ROOT_OF_K.log_2() == 0 {
@@ -699,15 +692,20 @@ impl Rep3RamDag {
 
         let ra_gamma: F = sm.transcript.challenge_scalar();
         let ra_gamma_arr = [F::one(), ra_gamma, ra_gamma.square()];
-        let combined_ra_claim =
-            ra_gamma_arr[0] * ra_claim_val + ra_gamma_arr[1] * ra_claim_rw + ra_gamma_arr[2] * ra_claim_raf;
+        let combined_ra_claim = ra_gamma_arr[0] * ra_claim_val
+            + ra_gamma_arr[1] * ra_claim_rw
+            + ra_gamma_arr[2] * ra_claim_raf;
 
         let ra_virtual = RamRaSumcheck::new_verifier_from_parts(
             ra_gamma_arr,
             combined_ra_claim,
             d,
             T,
-            [r_cycle_val.to_vec(), r_cycle_rw.to_vec(), r_cycle_raf.to_vec()],
+            [
+                r_cycle_val.to_vec(),
+                r_cycle_rw.to_vec(),
+                r_cycle_raf.to_vec(),
+            ],
             r_address_chunks.clone(),
         );
 
@@ -725,7 +723,11 @@ impl Rep3RamDag {
             bool_gamma_powers,
             ra_gamma: ra_gamma_arr,
             ra_claim: combined_ra_claim,
-            ra_r_cycle: [r_cycle_val.to_vec(), r_cycle_rw.to_vec(), r_cycle_raf.to_vec()],
+            ra_r_cycle: [
+                r_cycle_val.to_vec(),
+                r_cycle_rw.to_vec(),
+                r_cycle_raf.to_vec(),
+            ],
             ra_r_address_chunks: r_address_chunks,
         };
 
@@ -755,7 +757,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
     ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
-        use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+        use jolt_core::poly::multilinear_polynomial::{
+            MultilinearPolynomial, PolynomialEvaluation,
+        };
         use jolt_core::utils::math::Math;
         use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
 

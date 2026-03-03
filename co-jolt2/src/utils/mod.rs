@@ -1,8 +1,9 @@
-pub mod fwht;
 pub mod future;
 pub mod future_ring;
+pub mod fwht;
 pub mod instruction_utils;
 pub(crate) mod send_ptr;
+pub(crate) mod shared_mul_index;
 pub mod tracing;
 pub mod types;
 
@@ -11,8 +12,8 @@ pub mod test_utils;
 
 use crate::field::JoltField;
 use jolt_core::zkvm::ram::remap_address;
-use mpc_core::protocols::additive::AdditiveShare;
 use jolt_core::zkvm::JoltSharedPreprocessing;
+use mpc_core::protocols::additive::AdditiveShare;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 

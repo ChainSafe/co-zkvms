@@ -34,7 +34,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMu
             .unzip();
         let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
         let upper_halves: Vec<Rep3RingShare<u64>> = products.iter().map(|p| *p >> 32).collect();
-        let zeros: Vec<_> = (0..steps.len()).map(|_| Rep3RingShare::<u64>::default()).collect();
+        let zeros: Vec<_> = (0..steps.len())
+            .map(|_| Rep3RingShare::<u64>::default())
+            .collect();
         rep3_ring::arithmetic::eq_many(&upper_halves, &zeros, io_ctx)?
             .into_iter()
             .zip(out)

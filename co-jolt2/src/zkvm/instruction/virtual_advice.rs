@@ -35,10 +35,12 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
                 FutureRep3Ring::Ready(s) => s.a.0,
                 _ => unreachable!("VirtualAdvice lookup index must be Ready(trivial_share)"),
             };
-            *out = FutureRep3Ring::Ready(mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share(
-                io_ctx.id,
-                F::from_u64(advice_u128 as u64),
-            ));
+            *out = FutureRep3Ring::Ready(
+                mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share(
+                    io_ctx.id,
+                    F::from_u64(advice_u128 as u64),
+                ),
+            );
         });
         Ok(())
     }

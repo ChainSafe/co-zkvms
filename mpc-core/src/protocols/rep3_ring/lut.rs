@@ -15,8 +15,8 @@ use crate::{
         rep3_ring::{conversion, gadgets},
     },
 };
-use mpc_types::field::PrimeField;
 use itertools::{Itertools, izip};
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare, id::PartyID},
     rep3_ring::{

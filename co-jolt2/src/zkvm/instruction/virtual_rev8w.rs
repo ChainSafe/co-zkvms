@@ -24,8 +24,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualRev8W> {
             let (l, _) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
             let x: Rep3RingShare<u32> = downcast(l.as_binary_or_trivial(io_ctx.id));
             let reversed = Rep3RingShare::new(x.a.0.swap_bytes(), x.b.0.swap_bytes());
-            let reversed_u64 =
-                Rep3RingShare::new_ring(RingElement(reversed.a.0 as u64), RingElement(reversed.b.0 as u64));
+            let reversed_u64 = Rep3RingShare::new_ring(
+                RingElement(reversed.a.0 as u64),
+                RingElement(reversed.b.0 as u64),
+            );
             *out = FutureRep3Ring::cast_to_field_b2a(reversed_u64);
         });
         Ok(())

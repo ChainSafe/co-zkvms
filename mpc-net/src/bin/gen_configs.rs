@@ -30,7 +30,10 @@ struct CliArgs {
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    let data_dir = args.cert_dir.to_str().expect("cert_dir must be valid UTF-8");
+    let data_dir = args
+        .cert_dir
+        .to_str()
+        .expect("cert_dir must be valid UTF-8");
     let (workers, coordinator) =
         NetworkConfig::generate_worker_configs_with_dir(args.num_workers, data_dir);
 

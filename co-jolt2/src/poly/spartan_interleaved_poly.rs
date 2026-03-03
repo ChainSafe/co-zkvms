@@ -136,18 +136,20 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let party_id = io_ctx.party_id();
         eyre::ensure!(!self.is_bound(), "expected unbound coefficients");
 
-        let (t0, t_inf) = quadratic_evals_from_unbound(&self.unbound_coeffs_shards, eq_poly, party_id, self.padded_num_constraints);
+        let (t0, t_inf) = quadratic_evals_from_unbound(
+            &self.unbound_coeffs_shards,
+            eq_poly,
+            party_id,
+            self.padded_num_constraints,
+        );
         io_ctx.network().send_response((t0, t_inf))?;
 
         let r_i: F::Challenge = io_ctx.network().receive_request()?;
         r.push(r_i);
         eq_poly.bind(r_i);
 
-        self.bound_coeffs = bind_sparse_shards_into_bound(
-            &self.unbound_coeffs_shards,
-            party_id,
-            r_i.into(),
-        );
+        self.bound_coeffs =
+            bind_sparse_shards_into_bound(&self.unbound_coeffs_shards, party_id, r_i.into());
         self.unbound_coeffs_shards.clear();
         self.unbound_coeffs_shards.shrink_to_fit();
         self.dense_len /= 2;
@@ -176,7 +178,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         r.push(r_i);
         eq_poly.bind(r_i);
 
-        self.bound_coeffs = bind_sparse_coeffs_low_to_high(&self.bound_coeffs, party_id, r_i.into());
+        self.bound_coeffs =
+            bind_sparse_coeffs_low_to_high(&self.bound_coeffs, party_id, r_i.into());
         self.dense_len /= 2;
 
         Ok(())
@@ -377,7 +380,8 @@ fn bind_sparse_coeffs_low_to_high<F: JoltField>(
     party_id: PartyID,
     r: F,
 ) -> Vec<SparseCoefficient<Rep3Value<F>>> {
-    let mut out: Vec<SparseCoefficient<Rep3Value<F>>> = Vec::with_capacity(binding_output_length(coeffs));
+    let mut out: Vec<SparseCoefficient<Rep3Value<F>>> =
+        Vec::with_capacity(binding_output_length(coeffs));
 
     let mut i = 0;
     while i < coeffs.len() {
@@ -479,7 +483,9 @@ fn input_as_value<F: JoltField>(
         JoltR1CSInputs::PC => Rep3Value::Public(F::from_u64(inputs.pc)),
         JoltR1CSInputs::NextPC => Rep3Value::Public(F::from_u64(inputs.next_pc)),
         JoltR1CSInputs::UnexpandedPC => Rep3Value::Public(F::from_u64(inputs.unexpanded_pc)),
-        JoltR1CSInputs::NextUnexpandedPC => Rep3Value::Public(F::from_u64(inputs.next_unexpanded_pc)),
+        JoltR1CSInputs::NextUnexpandedPC => {
+            Rep3Value::Public(F::from_u64(inputs.next_unexpanded_pc))
+        }
         JoltR1CSInputs::Imm => Rep3Value::Public(F::from_i128(inputs.imm)),
         JoltR1CSInputs::Rd => Rep3Value::Public(F::from_u64(inputs.rd_addr as u64)),
         JoltR1CSInputs::RamAddress => Rep3Value::Public(F::from_u64(inputs.ram_addr)),

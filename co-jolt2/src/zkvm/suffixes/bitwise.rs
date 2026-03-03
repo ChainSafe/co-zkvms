@@ -105,8 +105,7 @@ pub(crate) fn eval_xor<T, F, N>(
             match right {
                 MixedBatch::Public(y_pubs) => {
                     let mask = RingElement(
-                        T::Half::try_from(y_pubs[i] as u128)
-                            .unwrap_or_else(|_| unreachable!()),
+                        T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
                     );
                     rep3_ring::binary::xor_public(x, &mask, party_id)
                 }
@@ -114,8 +113,7 @@ pub(crate) fn eval_xor<T, F, N>(
                 MixedBatch::Mixed(mixed) => match &mixed[i] {
                     Either::Public(yp) => {
                         let mask = RingElement(
-                            T::Half::try_from(*yp as u128)
-                                .unwrap_or_else(|_| unreachable!()),
+                            T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
                         );
                         rep3_ring::binary::xor_public(x, &mask, party_id)
                     }
@@ -127,11 +125,7 @@ pub(crate) fn eval_xor<T, F, N>(
 }
 
 /// XorRot with pre-uninterleaved operands: (x ^ y) rotate_right by ROTATION.
-pub(crate) fn eval_xor_rot_uninterleaved<
-    const ROTATION: u32,
-    T: Uninterleavable,
-    F: JoltField,
->(
+pub(crate) fn eval_xor_rot_uninterleaved<const ROTATION: u32, T: Uninterleavable, F: JoltField>(
     xs: &[Rep3RingShare<T::Half>],
     ys: &[Rep3RingShare<T::Half>],
     indices: impl IntoIterator<Item = usize>,
@@ -153,11 +147,7 @@ pub(crate) fn eval_xor_rot_uninterleaved<
 }
 
 /// XorRotW with pre-uninterleaved operands: u32 rotate then push as u32 or T::Half.
-pub(crate) fn eval_xor_rot_w_uninterleaved<
-    const ROTATION: u32,
-    T: Uninterleavable,
-    F: JoltField,
->(
+pub(crate) fn eval_xor_rot_w_uninterleaved<const ROTATION: u32, T: Uninterleavable, F: JoltField>(
     xs: &[Rep3RingShare<T::Half>],
     ys: &[Rep3RingShare<T::Half>],
     indices: impl IntoIterator<Item = usize>,

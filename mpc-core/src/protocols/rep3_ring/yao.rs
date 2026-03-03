@@ -16,9 +16,9 @@ use crate::{
         rep3_ring::conversion,
     },
 };
-use mpc_types::field::PrimeField;
 use fancy_garbling::{BinaryBundle, WireLabel, WireMod2};
 use itertools::izip;
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare, id::PartyID},
     rep3_ring::{

@@ -1,5 +1,5 @@
-pub mod topology;
 pub mod rep3;
+pub mod topology;
 
 pub(crate) use color_eyre::eyre::Result;
 use std::{sync::Mutex, time::Duration};

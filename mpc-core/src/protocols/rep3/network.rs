@@ -8,9 +8,9 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use eyre::Context;
 use mpc_types::field::PrimeField;
+use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use mpc_types::protocols::rep3_ring::ring::bit::Bit;
 use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use std::iter;
 use std::sync::{Arc, OnceLock};
 
@@ -730,8 +730,11 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     where
         T: IntRing2k + Send + Sync,
         F: PrimeField + Send + Sync,
-        MapFn: Fn(Vec<Rep3RingShare<T>>, EdaBitsBatch<T, F>, &mut IoContext<Network>)
-            -> Result<Vec<R>, Err>
+        MapFn: Fn(
+                Vec<Rep3RingShare<T>>,
+                EdaBitsBatch<T, F>,
+                &mut IoContext<Network>,
+            ) -> Result<Vec<R>, Err>
             + Sync
             + Send,
         R: Sync + Send + Clone,
@@ -783,8 +786,11 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     ) -> eyre::Result<Vec<R>>
     where
         F: PrimeField + Send + Sync,
-        MapFn: Fn(Vec<Rep3RingShare<Bit>>, DaBitBatch<F>, &mut IoContext<Network>)
-            -> Result<Vec<R>, Err>
+        MapFn: Fn(
+                Vec<Rep3RingShare<Bit>>,
+                DaBitBatch<F>,
+                &mut IoContext<Network>,
+            ) -> Result<Vec<R>, Err>
             + Sync
             + Send,
         R: Sync + Send + Clone,

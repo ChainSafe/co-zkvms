@@ -14,11 +14,11 @@ use crate::{
         network::{IoContext, Rep3Network},
     },
 };
-use mpc_types::field::PrimeField;
 use core::panic;
 use fancy_garbling::{
     BinaryBundle, Fancy, FancyBinary, WireLabel, WireMod2, errors::GarblerError, util::output_tweak,
 };
+use mpc_types::field::PrimeField;
 use rand::SeedableRng;
 use scuttlebutt::Block;
 use sha3::{Digest, Sha3_256};

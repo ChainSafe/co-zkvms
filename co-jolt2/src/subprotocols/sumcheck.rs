@@ -319,9 +319,7 @@ impl Rep3BatchedSumcheck {
             // vanilla's per-round adaptive degree (vanilla produces variable-degree
             // polys because each instance contributes its own degree, while MPC
             // always pads to max_degree).
-            while round_poly.coeffs.len() > 1
-                && round_poly.coeffs.last() == Some(&F::zero())
-            {
+            while round_poly.coeffs.len() > 1 && round_poly.coeffs.last() == Some(&F::zero()) {
                 round_poly.coeffs.pop();
             }
             let compressed_poly = round_poly.compress();
@@ -410,13 +408,11 @@ impl Rep3BatchedSumcheckWorker {
                     Rep3Value::Public(f) => {
                         additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
                     }
-                    Rep3Value::Shared(share) => {
-                        Rep3PrimeFieldShare::new(
-                            share.a.mul_pow_2(padding),
-                            share.b.mul_pow_2(padding),
-                        )
-                        .into_additive()
-                    }
+                    Rep3Value::Shared(share) => Rep3PrimeFieldShare::new(
+                        share.a.mul_pow_2(padding),
+                        share.b.mul_pow_2(padding),
+                    )
+                    .into_additive(),
                     Rep3Value::Additive(a) => {
                         AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
                     }
@@ -595,9 +591,7 @@ impl HybridBatchedSumcheck {
             // vanilla's per-round adaptive degree (vanilla produces variable-degree
             // polys because each instance contributes its own degree, while MPC
             // always pads to max_degree).
-            while round_poly.coeffs.len() > 1
-                && round_poly.coeffs.last() == Some(&F::zero())
-            {
+            while round_poly.coeffs.len() > 1 && round_poly.coeffs.last() == Some(&F::zero()) {
                 round_poly.coeffs.pop();
             }
             let compressed_poly = round_poly.compress();
@@ -685,13 +679,11 @@ impl HybridBatchedSumcheckWorker {
                         Rep3Value::Public(f) => {
                             additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
                         }
-                        Rep3Value::Shared(share) => {
-                            Rep3PrimeFieldShare::new(
-                                share.a.mul_pow_2(padding),
-                                share.b.mul_pow_2(padding),
-                            )
-                            .into_additive()
-                        }
+                        Rep3Value::Shared(share) => Rep3PrimeFieldShare::new(
+                            share.a.mul_pow_2(padding),
+                            share.b.mul_pow_2(padding),
+                        )
+                        .into_additive(),
                         Rep3Value::Additive(a) => {
                             AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
                         }
@@ -763,7 +755,8 @@ impl HybridBatchedSumcheckWorker {
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
                         let prev = secret_claims[i].unwrap();
-                        let msg = s.compute_prover_message_share(local_round, prev, max_degree, io_ctx);
+                        let msg =
+                            s.compute_prover_message_share(local_round, prev, max_degree, io_ctx);
                         eyre::ensure!(
                             msg.len() == max_degree,
                             "instance message len mismatch: expected {max_degree}, got {}",
@@ -1212,7 +1205,13 @@ mod tests {
             vec![c; max_degree]
         }
 
-        fn bind(&mut self, _r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {}
+        fn bind(
+            &mut self,
+            _r_j: <Fr as jolt_core::field::JoltField>::Challenge,
+            _round: usize,
+            _io_ctx: &mut IoContextPool<N>,
+        ) {
+        }
 
         fn normalize_opening_point(
             &self,

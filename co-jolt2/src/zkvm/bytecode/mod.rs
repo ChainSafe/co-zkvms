@@ -57,11 +57,10 @@ impl Rep3BytecodeDag {
         let read_raf_gamma_four = read_raf_gamma_sqr.square();
 
         // Stage1 gamma_powers
-        let _gamma_powers_1 =
-            jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
-                &mut sm.transcript,
-                3 + jolt_core::zkvm::instruction::NUM_CIRCUIT_FLAGS,
-            );
+        let _gamma_powers_1 = jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
+            &mut sm.transcript,
+            3 + jolt_core::zkvm::instruction::NUM_CIRCUIT_FLAGS,
+        );
         // Stage1 rv_claim: needs accumulator openings
         let (_, unexpanded_pc_claim_1) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
@@ -77,18 +76,18 @@ impl Rep3BytecodeDag {
             + _gamma_powers_1[1] * imm_claim_1
             + _gamma_powers_1[2] * rd_claim_1;
         for (i, flag) in jolt_core::zkvm::instruction::CircuitFlags::iter().enumerate() {
-            let (_, flag_claim) = sm
-                .accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::OpFlags(flag), SumcheckId::SpartanOuter);
+            let (_, flag_claim) = sm.accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(flag),
+                SumcheckId::SpartanOuter,
+            );
             rv_claim_1 += _gamma_powers_1[3 + i] * flag_claim;
         }
 
         // Stage2 gamma_powers
-        let _gamma_powers_2 =
-            jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
-                &mut sm.transcript,
-                3,
-            );
+        let _gamma_powers_2 = jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
+            &mut sm.transcript,
+            3,
+        );
         let (_, rdwa_claim_2) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersReadWriteChecking,
@@ -106,14 +105,13 @@ impl Rep3BytecodeDag {
             + _gamma_powers_2[2] * rs2ra_claim_2;
 
         // Stage3 gamma_powers
-        use jolt_core::zkvm::lookup_table::LookupTables;
         use jolt2_common::constants::XLEN;
+        use jolt_core::zkvm::lookup_table::LookupTables;
         use strum::EnumCount;
-        let _gamma_powers_3 =
-            jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
-                &mut sm.transcript,
-                4 + LookupTables::<XLEN>::COUNT,
-            );
+        let _gamma_powers_3 = jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
+            &mut sm.transcript,
+            4 + LookupTables::<XLEN>::COUNT,
+        );
         let (_, rd_wa_claim_3) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
@@ -171,8 +169,11 @@ impl Rep3BytecodeDag {
         let eq_r_register_2 = jolt_core::poly::eq_poly::EqPolynomial::<F>::evals(
             &r_register_2[..(jolt2_common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_2 =
-            BytecodeReadRaf::<F>::compute_val_2_from_bytecode(bytecode, &_gamma_powers_2, &eq_r_register_2);
+        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(
+            bytecode,
+            &_gamma_powers_2,
+            &eq_r_register_2,
+        );
 
         // Val3 needs eq_r_register from a different sumcheck.
         let r_register_3 = sm
@@ -186,8 +187,11 @@ impl Rep3BytecodeDag {
         let eq_r_register_3 = jolt_core::poly::eq_poly::EqPolynomial::<F>::evals(
             &r_register_3[..(jolt2_common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_3 =
-            BytecodeReadRaf::<F>::compute_val_3_from_bytecode(bytecode, &_gamma_powers_3, &eq_r_register_3);
+        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(
+            bytecode,
+            &_gamma_powers_3,
+            &eq_r_register_3,
+        );
 
         // Compute r_cycles from accumulator (matching vanilla get_r_cycle_verif).
         use jolt2_common::constants::REGISTER_COUNT;
@@ -481,10 +485,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 log_K_chunk,
             );
 
-            let hamming_weight = BytecodeHammingWeight::new_verifier_from_parts(
-                init.hw_gamma_powers,
-                log_K_chunk,
-            );
+            let hamming_weight =
+                BytecodeHammingWeight::new_verifier_from_parts(init.hw_gamma_powers, log_K_chunk);
 
             vec![
                 BatchedSumcheckWorkerInstance::Public(Box::new(read_raf)),
