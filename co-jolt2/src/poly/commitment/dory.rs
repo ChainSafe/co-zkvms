@@ -288,14 +288,14 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         while curr_nu > 0 {
             let n2 = 1usize << (curr_nu - 1);
 
-            // First message: d2_left/d2_right pairings
+            // First message: d2_left/d2_right pairings (parallel)
             let (d2_left_share_round, d2_right_share_round) = {
-                let _span = tracing::info_span!("prove_rep3::d2_pairing", n2).entered();
+                let _span = tracing::trace_span!("prove_rep3::d2_pairing", n2).entered();
                 let g1_prime_aff = &g1_affine_all[..n2];
                 let (v2_l, v2_r) = v2_share.split_at(n2);
-                (
-                    multi_pairing_g1_affine(g1_prime_aff, v2_l),
-                    multi_pairing_g1_affine(g1_prime_aff, v2_r),
+                rayon::join(
+                    || multi_pairing_g1_affine(g1_prime_aff, v2_l),
+                    || multi_pairing_g1_affine(g1_prime_aff, v2_r),
                 )
             };
 
@@ -306,7 +306,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             // Update v1/v2 with generators
             {
-                let _span = tracing::info_span!("prove_rep3::v1v2_update", n2).entered();
+                let _span = tracing::trace_span!("prove_rep3::v1v2_update", n2).entered();
                 jolt_optimizations::vector_add_scalar_mul_g1_online(
                     &mut v1_pub,
                     &g1_all[..(1 << curr_nu)],
@@ -322,18 +322,23 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 }
             }
 
-            // Second message: c_plus/c_minus pairings + e2 MSMs
+            // Second message: c_plus/c_minus pairings + e2 MSMs (all 4 in parallel)
             let (v1_l, v1_r) = v1_pub.split_at(n2);
             let (v2_l, v2_r) = v2_share.split_at(n2);
             let (s1_l, s1_r) = s1.split_at(n2);
 
-            let (c_plus_share_round, c_minus_share_round, e2_plus_share, e2_minus_share) = {
-                let _span = tracing::info_span!("prove_rep3::second_msg", n2).entered();
-                let c_plus = multi_pairing(v1_l, v2_r);
-                let c_minus = multi_pairing(v1_r, v2_l);
-                let e2_plus = msm_g2(v2_r, s1_l).into_affine();
-                let e2_minus = msm_g2(v2_l, s1_r).into_affine();
-                (c_plus, c_minus, e2_plus, e2_minus)
+            let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = {
+                let _span = tracing::trace_span!("prove_rep3::second_msg", n2).entered();
+                rayon::join(
+                    || rayon::join(
+                        || multi_pairing(v1_l, v2_r),
+                        || multi_pairing(v1_r, v2_l),
+                    ),
+                    || rayon::join(
+                        || msm_g2(v2_r, s1_l).into_affine(),
+                        || msm_g2(v2_l, s1_r).into_affine(),
+                    ),
+                )
             };
 
             network.send_response((
@@ -344,21 +349,25 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             // Receive alpha challenge from coordinator
             let (alpha, alpha_inv): (Fr, Fr) = network.receive_request()?;
 
-            // Fold v1, v2, s1, s2
+            // Fold v1, v2, s1, s2 — in-place GLV-accelerated for group elements
             {
-                let _span = tracing::info_span!("prove_rep3::fold", n2).entered();
-                let v1_next: Vec<G1Projective> = (0..n2)
-                    .into_par_iter()
-                    .map(|i| v1_l[i] * alpha + v1_r[i])
-                    .collect();
-                v1_pub = v1_next;
+                let _span = tracing::trace_span!("prove_rep3::fold", n2).entered();
 
-                let v2_next: Vec<G2Projective> = (0..n2)
-                    .into_par_iter()
-                    .map(|i| v2_l[i] * alpha_inv + v2_r[i])
-                    .collect();
-                v2_share = v2_next;
+                // v1[i] = alpha * v1_l[i] + v1_r[i] (in-place, GLV 2D Shamir)
+                let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                    v1_l_mut, alpha, v1_r_ref,
+                );
+                v1_pub.truncate(n2);
 
+                // v2[i] = alpha_inv * v2_l[i] + v2_r[i] (in-place, GLV 4D Shamir)
+                let (v2_l_mut, v2_r_ref) = v2_share.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
+                    v2_l_mut, alpha_inv, v2_r_ref,
+                );
+                v2_share.truncate(n2);
+
+                // s1, s2 scalar folds (no GLV needed for field elements)
                 let (s1_l, s1_r) = s1.split_at(n2);
                 let (s2_l, s2_r) = s2.split_at(n2);
                 let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
@@ -477,19 +486,23 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 d2_right *= r;
             }
 
-            // Public-only terms — use pre-computed affine g2 generators
+            // Public-only terms — parallel d1 pairings + parallel e1/e2 MSMs
             let g2_prime_aff = &g2_affine_all[..n2];
-            let (d1_left, d1_right) = {
+            let ((d1_left, d1_right), (e1_beta, e2_beta)) = {
                 let (v1_l, v1_r) = v1_pub.split_at(n2);
-                (
-                    multi_pairing_g2_affine(v1_l, g2_prime_aff),
-                    multi_pairing_g2_affine(v1_r, g2_prime_aff),
+                let g1_aff_nu = &g1_affine_all[..(1 << curr_nu)];
+                let g2_aff_nu = &g2_affine_all[..(1 << curr_nu)];
+                rayon::join(
+                    || rayon::join(
+                        || multi_pairing_g2_affine(v1_l, g2_prime_aff),
+                        || multi_pairing_g2_affine(v1_r, g2_prime_aff),
+                    ),
+                    || rayon::join(
+                        || msm_g1_affine(g1_aff_nu, &s2),
+                        || msm_g2_affine(g2_aff_nu, &s1),
+                    ),
                 )
             };
-
-            // Use pre-computed affine for MSMs on generators
-            let e1_beta = msm_g1_affine(&g1_affine_all[..(1 << curr_nu)], &s2);
-            let e2_beta = msm_g2_affine(&g2_affine_all[..(1 << curr_nu)], &s1);
 
             let first_msg =
                 dory::messages::FirstReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -532,8 +545,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             let (s2_l, s2_r) = s2.split_at(n2);
             let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let e1_plus = msm_g1(v1_l, s2_r);
-            let e1_minus = msm_g1(v1_r, s2_l);
+            let (e1_plus, e1_minus) = rayon::join(
+                || msm_g1(v1_l, s2_r),
+                || msm_g1(v1_r, s2_l),
+            );
 
             let second_msg =
                 dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -551,13 +566,12 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let alpha_inv = alpha_chal.alpha_inverse.0;
             network.broadcast_request((alpha, alpha_inv))?;
 
-            // Fold v1 and s1,s2 for next round (public)
-            let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let v1_next: Vec<G1Projective> = (0..n2)
-                .into_par_iter()
-                .map(|i| v1_l[i] * alpha + v1_r[i])
-                .collect();
-            v1_pub = v1_next;
+            // Fold v1 (in-place GLV) and s1,s2 for next round (public)
+            let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                v1_l_mut, alpha, v1_r_ref,
+            );
+            v1_pub.truncate(n2);
 
             let (s1_l, s1_r) = s1.split_at(n2);
             let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
