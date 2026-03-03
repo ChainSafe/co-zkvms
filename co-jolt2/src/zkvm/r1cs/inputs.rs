@@ -175,9 +175,7 @@ where
         .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
         .collect();
     let mut mul_map: Vec<u32> = vec![u32::MAX; trace_len];
-    for (k, &t) in shared_mul_rows.iter().enumerate() {
-        mul_map[t] = k as u32;
-    }
+    let (shared_mul_rows, mul_map) = build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
 
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
         let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
@@ -359,6 +357,86 @@ where
         .into_iter()
         .map(|v| v.into_shared_rep3(party_id))
         .collect())
+}
+
+use crate::utils::send_ptr::SendPtr;
+
+/// Build `(shared_mul_rows, mul_map)` for the predicate `(flags_bits[t] & mask) == mask`.
+///
+/// - `shared_mul_rows` is in ascending `t` order (deterministic across parties).
+/// - `mul_map[t]` is the index of `t` in `shared_mul_rows`, or `u32::MAX` if not present.
+pub(crate) fn build_shared_mul_rows_and_map(
+    flags_bits: &[u32],
+    mask: u32,
+) -> (Vec<usize>, Vec<u32>) {
+    let n = flags_bits.len();
+
+    // For small traces, a single sequential pass is usually faster than Rayon overhead.
+    const SEQ_THRESHOLD: usize = 1 << 14; // 16k
+    if n < SEQ_THRESHOLD {
+        let mut shared_mul_rows: Vec<usize> = Vec::new();
+        let mut mul_map: Vec<u32> = vec![u32::MAX; n];
+        for t in 0..n {
+            if (flags_bits[t] & mask) == mask {
+                mul_map[t] = shared_mul_rows.len() as u32;
+                shared_mul_rows.push(t);
+            }
+        }
+        return (shared_mul_rows, mul_map);
+    }
+
+    // Chunked parallel scan:
+    // 1) count matches per chunk in parallel
+    // 2) prefix-sum offsets (deterministic, small)
+    // 3) fill `shared_mul_rows` and `mul_map` in parallel (disjoint writes)
+    const CHUNK_SIZE: usize = 4096;
+    let num_chunks = n.div_ceil(CHUNK_SIZE);
+
+    let counts: Vec<usize> = (0..num_chunks)
+        .into_par_iter()
+        .map(|i| {
+            let start = i * CHUNK_SIZE;
+            let end = core::cmp::min(start + CHUNK_SIZE, n);
+            flags_bits[start..end]
+                .iter()
+                .filter(|&&fb| (fb & mask) == mask)
+                .count()
+        })
+        .collect();
+
+    let mut offsets: Vec<usize> = Vec::with_capacity(num_chunks + 1);
+    offsets.push(0);
+    for &c in &counts {
+        offsets.push(offsets.last().unwrap() + c);
+    }
+    let total = *offsets.last().unwrap();
+
+    let mut shared_mul_rows: Vec<usize> = vec![0; total];
+    let mut mul_map: Vec<u32> = vec![u32::MAX; n];
+
+    let shared_mul_rows_ptr = SendPtr(shared_mul_rows.as_mut_ptr());
+    let mul_map_ptr = SendPtr(mul_map.as_mut_ptr());
+
+    (0..num_chunks).into_par_iter().for_each(move |i| {
+        let start = i * CHUNK_SIZE;
+        let end = core::cmp::min(start + CHUNK_SIZE, n);
+        let mut out = offsets[i];
+
+        for (j, &fb) in flags_bits[start..end].iter().enumerate() {
+            if (fb & mask) == mask {
+                let t = start + j;
+                unsafe {
+                    shared_mul_rows_ptr.write(out, t);
+                    mul_map_ptr.write(t, out as u32);
+                }
+                out += 1;
+            }
+        }
+
+        debug_assert_eq!(out, offsets[i + 1]);
+    });
+
+    (shared_mul_rows, mul_map)
 }
 
 #[cfg(test)]
