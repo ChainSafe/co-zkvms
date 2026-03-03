@@ -312,7 +312,7 @@ fn dag_correct() {
                 let budget = compute_edabit_budget(trace.len());
                 edabits::preprocess_pool::<F, _>(
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-                    512 * trace.len(),
+                    budget.dabits,
                     &mut io_ctx,
                 )?
             };

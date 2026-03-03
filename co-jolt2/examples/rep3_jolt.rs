@@ -288,7 +288,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let budget = compute_edabit_budget(trace_len);
         tracing::info!("budget: {:?}", budget);
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
-        let num_dabits = 80 * trace_len;
+        let num_dabits = budget.dabits;
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
