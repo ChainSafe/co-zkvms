@@ -48,8 +48,10 @@ impl<F: JoltField> Rep3InnerSumcheckWorker<F> {
         let num_vars_uniform = key.num_vars_uniform_padded();
 
         // poly_abc_small: PUBLIC — combined A/B/C matrix evaluation with RLC
-        let poly_abc_small =
-            MixedPolynomial::from_public_evals(key.evaluate_small_matrix_rlc(rx_var, gamma), party_id);
+        let poly_abc_small = MixedPolynomial::from_public_evals(
+            key.evaluate_small_matrix_rlc(rx_var, gamma),
+            party_id,
+        );
 
         // poly_z: MIXED — shared witness evals + public constant column
         let mut bind_z = vec![Rep3Value::zero_public(); num_vars_uniform];
@@ -82,7 +84,9 @@ impl<F: JoltField> Rep3InnerSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3InnerSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3InnerSumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         2
     }
@@ -112,9 +116,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         let mut evals = vec![AdditiveShare::<F>::zero(); max_degree];
 
         for i in 0..half_len {
-            let abc_evals =
-                self.poly_abc_small
-                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
+            let abc_evals = self.poly_abc_small.sumcheck_evals(
+                i,
+                eval_degree,
+                BindingOrder::HighToLow,
+                party_id,
+            );
             let z_evals =
                 self.poly_z
                     .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
@@ -187,8 +194,8 @@ impl<F: JoltField> Rep3InnerSumcheck<F> {
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
             .iter()
             .map(|r1cs_input| {
-                let key = OpeningId::try_from(r1cs_input)
-                    .expect("Failed to map R1CS input to OpeningId");
+                let key =
+                    OpeningId::try_from(r1cs_input).expect("Failed to map R1CS input to OpeningId");
                 sm.accumulator.get_opening(key)
             })
             .collect();
@@ -241,9 +248,9 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3InnerSumche
         let eval_c = self.key.evaluate_uniform_c_at_point(rx_var, r);
 
         let left = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
-        let eval_z = self
-            .key
-            .evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
+        let eval_z =
+            self.key
+                .evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
 
         left * eval_z
     }

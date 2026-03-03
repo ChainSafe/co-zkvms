@@ -240,9 +240,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
 
         // g. Compute per-polynomial RLC coefficients (using saved metadata)
         let mut rlc_map: BTreeMap<CommittedPolynomial, F> = BTreeMap::new();
-        for (gamma_power, (rlc_coeffs, poly_labels)) in
-            gamma_powers.iter().zip(saved_meta.iter())
-        {
+        for (gamma_power, (rlc_coeffs, poly_labels)) in gamma_powers.iter().zip(saved_meta.iter()) {
             for (coeff, polynomial) in rlc_coeffs.iter().zip(poly_labels.iter()) {
                 *rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
             }
@@ -256,9 +254,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             .map(|(k, v)| {
                 (
                     *v,
-                    opening_hints
-                        .remove(k)
-                        .unwrap_or(MaybeShared::Public(None)),
+                    opening_hints.remove(k).unwrap_or(MaybeShared::Public(None)),
                 )
             })
             .unzip();
@@ -489,10 +485,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             .collect();
         let (sumcheck_proof, r_sumcheck) =
             crate::subprotocols::sumcheck::Rep3BatchedSumcheck::prove(
-                &instances,
-                self,
-                transcript,
-                network,
+                &instances, self, transcript, network,
             )?;
 
         // f. Read sumcheck_claims from accumulator (populated by cache_openings)
@@ -511,9 +504,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
 
         // h. Compute joint_commitment = RLC of commitments
         let mut rlc_map: BTreeMap<CommittedPolynomial, F> = BTreeMap::new();
-        for (gamma_power, (rlc_coeffs, poly_labels)) in
-            gamma_powers.iter().zip(saved_meta.iter())
-        {
+        for (gamma_power, (rlc_coeffs, poly_labels)) in gamma_powers.iter().zip(saved_meta.iter()) {
             for (coeff, polynomial) in rlc_coeffs.iter().zip(poly_labels.iter()) {
                 *rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
             }
@@ -841,11 +832,8 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
                 } else {
                     // Single polynomial
                     let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
-                    let dense = Self::to_rep3_dense(
-                        poly.as_ref(),
-                        self.party_id,
-                        self.polynomials[0],
-                    );
+                    let dense =
+                        Self::to_rep3_dense(poly.as_ref(), self.party_id, self.polynomials[0]);
                     self.prover_state =
                         Some(Rep3ProverOpening::Dense(Rep3DensePolynomialProverOpening {
                             polynomial: Some(dense),
@@ -892,8 +880,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
                             }
                         }
                         let eq_evals = EqPolynomial::<F>::evals(&self.opening_point);
-                        let eq_poly =
-                            jolt_core::poly::dense_mlpoly::DensePolynomial::new(eq_evals);
+                        let eq_poly = jolt_core::poly::dense_mlpoly::DensePolynomial::new(eq_evals);
                         self.prover_state =
                             Some(Rep3ProverOpening::Dense(Rep3DensePolynomialProverOpening {
                                 polynomial: Some(Rep3DensePolynomial::new(coeffs)),
@@ -947,7 +934,9 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3OpeningProofReductionSumcheck<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3OpeningProofReductionSumcheck<F>
+{
     fn degree(&self) -> usize {
         2
     }

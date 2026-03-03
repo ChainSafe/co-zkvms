@@ -154,8 +154,7 @@ where
             match right {
                 MixedBatch::Public(y_pubs) => {
                     let mask = RingElement(
-                        T::Half::try_from(y_pubs[i] as u128)
-                            .unwrap_or_else(|_| unreachable!()),
+                        T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
                     );
                     rep3_ring::binary::xor_public(x, &mask, party_id)
                 }
@@ -163,8 +162,7 @@ where
                 MixedBatch::Mixed(mixed) => match &mixed[i] {
                     Either::Public(yp) => {
                         let mask = RingElement(
-                            T::Half::try_from(*yp as u128)
-                                .unwrap_or_else(|_| unreachable!()),
+                            T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
                         );
                         rep3_ring::binary::xor_public(x, &mask, party_id)
                     }
@@ -278,8 +276,7 @@ where
     combined.extend_from_slice(&q_xor);
     let combined_result = rep3_ring::binary::is_zero_many::<T::Half, _>(&combined, io_ctx)?;
     let (divisor_zero, quotient_all_ones) = combined_result.split_at(split);
-    let result =
-        rep3_ring::binary::and_many::<Bit, _>(divisor_zero, quotient_all_ones, io_ctx)?;
+    let result = rep3_ring::binary::and_many::<Bit, _>(divisor_zero, quotient_all_ones, io_ctx)?;
     out.extend_bitinject(indices_iter, result.into_iter());
     Ok(())
 }

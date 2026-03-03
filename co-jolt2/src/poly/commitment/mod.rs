@@ -19,13 +19,19 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         poly: &Rep3MultilinearPolynomial<F>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> (MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>);
+    ) -> (
+        MaybeShared<Self::Commitment>,
+        MaybeShared<Self::OpeningProofHint>,
+    );
 
     fn distributed_commit_rep3(
         _poly: &Rep3MultilinearPolynomial<F>,
         _setup: &Self::ProverSetup,
         _commit_to_public: bool,
-    ) -> (MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>) {
+    ) -> (
+        MaybeShared<Self::Commitment>,
+        MaybeShared<Self::OpeningProofHint>,
+    ) {
         todo!("distributed commit not implemented for this PCS")
     }
 
@@ -33,7 +39,10 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         polys: &[U],
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> Vec<(MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>)>
+    ) -> Vec<(
+        MaybeShared<Self::Commitment>,
+        MaybeShared<Self::OpeningProofHint>,
+    )>
     where
         U: Borrow<Rep3MultilinearPolynomial<F>> + Sync;
 
@@ -58,7 +67,9 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     where
         Network: Rep3NetworkWorker;
 
-    fn combine_commitment_shares(commitments: &[&MaybeShared<Self::Commitment>]) -> Self::Commitment;
+    fn combine_commitment_shares(
+        commitments: &[&MaybeShared<Self::Commitment>],
+    ) -> Self::Commitment;
 
     fn combine_hint_shares(
         hints: &[&MaybeShared<Self::OpeningProofHint>],

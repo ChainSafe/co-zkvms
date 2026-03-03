@@ -49,8 +49,8 @@ pub fn eval_inter4_rep3<F: JoltField>(
     [
         &a[0] * &b[0], // at 1
         &a[1] * &b[1], // at 2
-        a3 * b3,        // at 3
-        a4 * b4,        // at 4
+        a3 * b3,       // at 3
+        a4 * b4,       // at 4
         &a[2] * &b[2], // at ∞
     ]
 }
@@ -74,10 +74,10 @@ pub fn eval_inter8_rep3<F: JoltField>(
         &a[1] * &b[1], // at 2
         &a[2] * &b[2], // at 3
         &a[3] * &b[3], // at 4
-        a5 * b5,        // at 5
-        a6 * b6,        // at 6
-        a7 * b7,        // at 7
-        a8 * b8,        // at 8
+        a5 * b5,       // at 5
+        a6 * b6,       // at 6
+        a7 * b7,       // at 7
+        a8 * b8,       // at 8
         &a[4] * &b[4], // at ∞
     ]
 }
@@ -126,8 +126,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
         .par_iter()
         .enumerate()
         .map(|(j_wr, _eq_wr_eval)| {
-            let mut chunk_results: Vec<[AdditiveShare<F>; 3]> =
-                Vec::with_capacity(n_wl * 8);
+            let mut chunk_results: Vec<[AdditiveShare<F>; 3]> = Vec::with_capacity(n_wl * 8);
 
             for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
                 let j = j_wl + (j_wr << wl_len);
@@ -144,10 +143,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
                 pairs[0].1 *= eq_wl_eval;
 
                 for pair_idx in 0..8 {
-                    let triple = eval_inter2_rep3(
-                        pairs[2 * pair_idx],
-                        pairs[2 * pair_idx + 1],
-                    );
+                    let triple = eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
                     chunk_results.push(triple);
                 }
             }
@@ -158,8 +154,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
 
     // Flatten level-1 results for batch resharing.
     let total_level1_triples = n_wr * n_wl * 8;
-    let mut flat_additive: Vec<AdditiveShare<F>> =
-        Vec::with_capacity(total_level1_triples * 3);
+    let mut flat_additive: Vec<AdditiveShare<F>> = Vec::with_capacity(total_level1_triples * 3);
     for wr_chunk in &level1_results {
         for triple in wr_chunk {
             flat_additive.extend_from_slice(triple);
@@ -177,24 +172,19 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
     let mut level2_flat: Vec<AdditiveShare<F>> = Vec::with_capacity(n_wr * n_wl * 4 * 5);
     for _j_wr in 0..n_wr {
         for _j_wl in 0..n_wl {
-            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] = std::array::from_fn(|_| {
-                std::array::from_fn(|_| flat_iter.next().unwrap())
-            });
+            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] =
+                std::array::from_fn(|_| std::array::from_fn(|_| flat_iter.next().unwrap()));
 
             for group in 0..4 {
-                let result = eval_inter4_rep3(
-                    &triples[2 * group],
-                    &triples[2 * group + 1],
-                );
+                let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
                 level2_flat.extend_from_slice(&result);
             }
         }
     }
 
     // ---- Reshare level 2 → rep3 ----
-    let level2_rep3 =
-        rep3::arithmetic::reshare_additive_many(&level2_flat, io_ctx.main())
-            .context("reshare level 2")?;
+    let level2_rep3 = rep3::arithmetic::reshare_additive_many(&level2_flat, io_ctx.main())
+        .context("reshare level 2")?;
     drop(level2_flat);
 
     let mut l2_iter = level2_rep3.into_iter();
@@ -203,24 +193,19 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
     let mut level3_flat: Vec<AdditiveShare<F>> = Vec::with_capacity(n_wr * n_wl * 2 * 9);
     for _j_wr in 0..n_wr {
         for _j_wl in 0..n_wl {
-            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] = std::array::from_fn(|_| {
-                std::array::from_fn(|_| l2_iter.next().unwrap())
-            });
+            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] =
+                std::array::from_fn(|_| std::array::from_fn(|_| l2_iter.next().unwrap()));
 
             for group in 0..2 {
-                let result = eval_inter8_rep3(
-                    &quints[2 * group],
-                    &quints[2 * group + 1],
-                );
+                let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);
                 level3_flat.extend_from_slice(&result);
             }
         }
     }
 
     // ---- Reshare level 3 → rep3 ----
-    let level3_rep3 =
-        rep3::arithmetic::reshare_additive_many(&level3_flat, io_ctx.main())
-            .context("reshare level 3")?;
+    let level3_rep3 = rep3::arithmetic::reshare_additive_many(&level3_flat, io_ctx.main())
+        .context("reshare level 3")?;
     drop(level3_flat);
 
     let mut l3_iter = level3_rep3.into_iter();
@@ -230,16 +215,10 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
 
     for (_j_wr, eq_wr_eval) in eq_wr_evals.iter().enumerate() {
         for _j_wl in 0..n_wl {
-            let nines: [[Rep3PrimeFieldShare<F>; 9]; 2] = std::array::from_fn(|_| {
-                std::array::from_fn(|_| l3_iter.next().unwrap())
-            });
+            let nines: [[Rep3PrimeFieldShare<F>; 9]; 2] =
+                std::array::from_fn(|_| std::array::from_fn(|_| l3_iter.next().unwrap()));
 
-            eval_inter16_final_accumulate_rep3(
-                &nines[0],
-                &nines[1],
-                *eq_wr_eval,
-                &mut sum_evals,
-            );
+            eval_inter16_final_accumulate_rep3(&nines[0], &nines[1], *eq_wr_eval, &mut sum_evals);
         }
     }
 
@@ -290,13 +269,9 @@ fn ex8_rep3<F: JoltField>(
     f: &[Rep3PrimeFieldShare<F>; 8],
     f_inf40320: Rep3PrimeFieldShare<F>,
 ) -> Rep3PrimeFieldShare<F> {
-    let pos = (f[1] + f[7]) * F::from(8u64)
-        + (f[3] + f[5]) * F::from(56u64)
-        + f_inf40320;
+    let pos = (f[1] + f[7]) * F::from(8u64) + (f[3] + f[5]) * F::from(56u64) + f_inf40320;
 
-    let neg = (f[2] + f[6]) * F::from(28u64)
-        + f[4] * F::from(70u64)
-        + f[0];
+    let neg = (f[2] + f[6]) * F::from(28u64) + f[4] * F::from(70u64) + f[0];
 
     pos - neg
 }

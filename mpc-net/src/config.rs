@@ -74,8 +74,9 @@ impl FromStr for Address {
 impl ToSocketAddrs for Address {
     type Iter = std::vec::IntoIter<SocketAddr>;
     fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        let mut addrs: Vec<SocketAddr> =
-            format!("{}:{}", self.hostname, self.port).to_socket_addrs()?.collect();
+        let mut addrs: Vec<SocketAddr> = format!("{}:{}", self.hostname, self.port)
+            .to_socket_addrs()?
+            .collect();
         // Sort IPv4 addresses first so that connections to servers bound on
         // 0.0.0.0 succeed even when the OS resolves "localhost" to ::1 first.
         addrs.sort_by_key(|a| matches!(a, SocketAddr::V6(_)));
@@ -380,8 +381,7 @@ impl NetworkConfig {
             for party in 0..=2usize {
                 parties[party].worker = worker;
                 parties[party].dns_name.port += worker_port_offset;
-                parties[party].cert_path =
-                    format!("{data_dir}/cert{worker}_{party}.der").into();
+                parties[party].cert_path = format!("{data_dir}/cert{worker}_{party}.der").into();
             }
 
             for party in 0..=2usize {

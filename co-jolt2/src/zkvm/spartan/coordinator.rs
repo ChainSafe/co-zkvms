@@ -38,7 +38,6 @@ impl Rep3SpartanDag {
             .challenge_vector_optimized::<F>(num_rounds_x);
         network.broadcast_request(tau.clone())?;
 
-
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
 
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
@@ -71,20 +70,22 @@ impl Rep3SpartanDag {
 
         // Insert Stage1 sumcheck proof.
         let proof = SumcheckInstanceProof::new(polys);
-        state.proofs.insert(
-            ProofKeys::Stage1Sumcheck,
-            ProofData::SumcheckProof(proof),
-        );
+        state
+            .proofs
+            .insert(ProofKeys::Stage1Sumcheck, ProofData::SumcheckProof(proof));
 
         // Outer sumcheck is bound from the "top"; reverse challenges to match vanilla.
         let mut outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
 
         // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
         // Vanilla uses append_scalars (with vector framing) for the outer sumcheck claims.
-        state.transcript.append_scalars(&[claim_az, claim_bz, claim_cz]);
+        state
+            .transcript
+            .append_scalars(&[claim_az, claim_bz, claim_cz]);
 
         // Store Az/Bz/Cz virtual openings (append again via accumulator, matching vanilla).
-        let opening_point = jolt_core::poly::opening_proof::OpeningPoint::new(outer_sumcheck_r.clone());
+        let opening_point =
+            jolt_core::poly::opening_proof::OpeningPoint::new(outer_sumcheck_r.clone());
         state.accumulator.append_virtual(
             &mut state.transcript,
             VirtualPolynomial::SpartanAz,
@@ -117,7 +118,6 @@ impl Rep3SpartanDag {
             claimed_witness_evals.len() == ALL_R1CS_INPUTS.len(),
             "claimed witness eval len mismatch"
         );
-
 
         // Append committed openings (PCS).
         let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS

@@ -71,7 +71,8 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
-    fn initialize<PCS: CommitmentScheme<Field = F>>(sm: &mut StateManagerWorker<'_, F, PCS>,
+    fn initialize<PCS: CommitmentScheme<Field = F>>(
+        sm: &mut StateManagerWorker<'_, F, PCS>,
         r_prime: &[F::Challenge],
     ) -> Self {
         let cycle_witness = &sm.prover_state.cycle_witness;
@@ -130,12 +131,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                     .iter()
                     .map(|m| {
                         let inc_val = inc_cycle.get_bound_coeff(j);
-                        let entry = (
-                            j,
-                            m.rd_addr,
-                            Rep3PrimeFieldShare::zero_share(),
-                            inc_val,
-                        );
+                        let entry = (j, m.rd_addr, Rep3PrimeFieldShare::zero_share(), inc_val);
                         j += 1;
                         entry
                     })
@@ -570,14 +566,10 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
 
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] = evals[0].add(
-                            &evals_for_current_E_out[0].mul_public(E_out_eval),
-                            party_id,
-                        );
-                        evals[1] = evals[1].add(
-                            &evals_for_current_E_out[1].mul_public(E_out_eval),
-                            party_id,
-                        );
+                        evals[0] = evals[0]
+                            .add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
+                        evals[1] = evals[1]
+                            .add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
                     }
                     evals
                 })
@@ -919,7 +911,9 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RegistersReadWriteCheckingWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3RegistersReadWriteCheckingWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }

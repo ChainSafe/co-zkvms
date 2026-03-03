@@ -67,8 +67,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
 
         // Build val_io (PUBLIC) from program_io — for correct execution this
         // matches val_final at I/O addresses and is 0 elsewhere.
-        let io_start =
-            remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+        let io_start = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
         let io_end = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
 
         let mut val_io_evals = vec![0u64; K];
@@ -95,8 +94,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
             output_index += 1;
         }
         // Panic bit
-        let panic_index =
-            remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
+        let panic_index = remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
         val_io_evals[panic_index] = program_io.panic as u64;
         // Termination bit
         if !program_io.panic {
@@ -128,7 +126,9 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3OutputSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3OutputSumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE_OUTPUT
     }
@@ -158,20 +158,23 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
             .into_par_iter()
             .map(|i| {
                 let eq_evals: Vec<F> =
-                    self.eq_poly.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                    self.eq_poly
+                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
                 let mask_evals: Vec<F> =
-                    self.io_mask.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                    self.io_mask
+                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
                 let vf_evals: Vec<Rep3PrimeFieldShare<F>> =
-                    self.val_final.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                    self.val_final
+                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
                 let vio_evals: Vec<F> =
-                    self.val_io.sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                    self.val_io
+                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
 
                 let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
                 for d in 0..DEGREE_OUTPUT.min(max_degree) {
                     let eq_mask = eq_evals[d] * mask_evals[d]; // PUBLIC
-                    // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
-                    let shared_term =
-                        rep3_arith::mul_public(vf_evals[d], eq_mask).into_additive();
+                                                               // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
+                    let shared_term = rep3_arith::mul_public(vf_evals[d], eq_mask).into_additive();
                     let public_term = eq_mask * vio_evals[d]; // PUBLIC
                     result[d] =
                         shared_term - additive::promote_to_trivial_share(public_term, party_id);
@@ -290,8 +293,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3OutputSumch
                 &self.program_io.memory_layout,
             )
             .unwrap() as u128,
-            remap_address(RAM_START_ADDRESS, &self.program_io.memory_layout)
-                .unwrap() as u128,
+            remap_address(RAM_START_ADDRESS, &self.program_io.memory_layout).unwrap() as u128,
         );
         let val_io = ProgramIOPolynomial::new(&self.program_io);
 
@@ -397,7 +399,9 @@ impl<F: JoltField> Rep3ValFinalSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ValFinalSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3ValFinalSumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE_VAL_FINAL
     }
@@ -420,17 +424,16 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         let evals: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals =
-                    self.inc
-                        .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
-                let wa_evals: Vec<F> = self
-                    .wa
+                let inc_evals = self
+                    .inc
                     .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
+                let wa_evals: Vec<F> =
+                    self.wa
+                        .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
 
                 let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
                 for d in 0..max_degree {
-                    result[d] =
-                        rep3_arith::mul_public(inc_evals[d], wa_evals[d]).into_additive();
+                    result[d] = rep3_arith::mul_public(inc_evals[d], wa_evals[d]).into_additive();
                 }
                 result
             })

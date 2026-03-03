@@ -704,13 +704,15 @@ where
         // and_many only for shared y elements, then a single Kogge-Stone tree.
         Suffixes::LessThan => {
             // lt(x, y) = !(x >= y)
-            let ge_bits = comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, false)?;
+            let ge_bits =
+                comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, false)?;
             let lt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, lt_bits.into_iter());
         }
         Suffixes::GreaterThan => {
             // gt(x, y) = !(y >= x)
-            let ge_bits = comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, true)?;
+            let ge_bits =
+                comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, true)?;
             let gt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, gt_bits.into_iter());
         }
@@ -765,9 +767,7 @@ where
             );
         }
         Suffixes::SignExtensionRightOperand => {
-            eval_sign_extension_right_operand::<T, F>(
-                xs, right, suffix_len, base, &orig, out,
-            );
+            eval_sign_extension_right_operand::<T, F>(xs, right, suffix_len, base, &orig, out);
         }
 
         // --- B2A(H): XOR-rotate (right always shared — hash tables) ---
@@ -1210,8 +1210,7 @@ fn eval_right_operand_w<T, F>(
                     Either::Shared(y) => {
                         if T::Half::K >= 32 {
                             let m: u128 = (1u128 << 32) - 1;
-                            let mask_val =
-                                T::Half::try_from(m).unwrap_or_else(|_| unreachable!());
+                            let mask_val = T::Half::try_from(m).unwrap_or_else(|_| unreachable!());
                             out.extend_b2a_ring::<T::Half>(
                                 std::iter::once(base + i),
                                 std::iter::once(*y & RingElement(mask_val)),

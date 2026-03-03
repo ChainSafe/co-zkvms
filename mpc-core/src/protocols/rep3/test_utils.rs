@@ -4,17 +4,19 @@
 //! coordinator/worker protocols without QUIC / localhost sockets.
 
 use std::collections::BTreeMap;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
-use crate::protocols::rep3::network::{IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use crate::protocols::rep3::PartyID;
+use crate::protocols::rep3::network::{
+    IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+};
 
 fn to_io_err(msg: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, msg.into())
@@ -152,7 +154,10 @@ impl Rep3Network for LocalRep3TestWorkerNet {
 }
 
 impl MpcStarNetWorker for LocalRep3TestWorkerNet {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()> {
         let bytes = serialize_uncompressed(&data)?;
         self.star_resp_tx
             .send(bytes)
@@ -237,7 +242,9 @@ impl LocalRep3TestCoordinatorNet {
 }
 
 impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<T>> {
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+    ) -> Result<Vec<T>> {
         Ok(vec![
             self.recv_from_party(PartyID::ID0)?,
             self.recv_from_party(PartyID::ID1)?,
@@ -269,7 +276,10 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         Ok(vec![self.receive_response(party_id, 0)?])
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: T,
+    ) -> Result<()> {
         let bytes = serialize_uncompressed(&data)?;
         for tx in self.star_req_txs.iter() {
             tx.send(bytes.clone())
@@ -278,7 +288,10 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         Ok(())
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()> {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+        data: Vec<T>,
+    ) -> Result<()> {
         if data.len() != 3 {
             return Err(eyre!("send_requests expects 3 items, got {}", data.len()));
         }

@@ -2,9 +2,9 @@ use crate::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };
-use mpc_types::field::PrimeField;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
+use mpc_types::field::PrimeField;
 use mpc_types::protocols::additive::AdditivePrimeFieldShare;
 use rand::RngCore;
 

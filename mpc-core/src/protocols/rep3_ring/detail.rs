@@ -454,9 +454,7 @@ where
     let p: Vec<Rep3RingShare<T>> = izip!(&y_neg, x_consts)
         .map(|(yn, xc)| binary::xor_public(yn, xc, io_context.id))
         .collect();
-    let mut g: Vec<Rep3RingShare<T>> = izip!(&y_neg, x_consts)
-        .map(|(yn, xc)| yn & xc)
-        .collect();
+    let mut g: Vec<Rep3RingShare<T>> = izip!(&y_neg, x_consts).map(|(yn, xc)| yn & xc).collect();
     // carry_in = 1: XOR LSB of p into g
     izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| *g ^= *p & RingElement::one());
     let (_, c) = kogge_stone_inner_with_carry_many(p, g, io_context)?;

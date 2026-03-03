@@ -209,24 +209,12 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
         // Immediate ALU — right operand is the immediate
-        Rep3Cycle::ADDI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::ANDI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::ORI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::XORI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::SLTI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::SLTIU(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::ADDI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::ANDI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::ORI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::XORI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::SLTI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::SLTIU(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::VirtualMULI(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -298,7 +286,12 @@ where
     // We still build the final groups deterministically in trace order.
     let discriminants: Vec<Option<mem::Discriminant<Rep3Cycle>>> = trace
         .par_iter()
-        .map(|cycle| cycle.lookup_table().is_some().then_some(mem::discriminant(cycle)))
+        .map(|cycle| {
+            cycle
+                .lookup_table()
+                .is_some()
+                .then_some(mem::discriminant(cycle))
+        })
         .collect();
 
     // Deterministic, first-seen grouping by instruction discriminant (reduces tiny batches).
@@ -399,32 +392,28 @@ where
     let mut cast_jobs: Vec<SparseCastJob> = Vec::new();
     cast_jobs.reserve(n * 5);
 
-    let mut maybe_push = |col: SparseCastCol, row: usize, op: &Rep3Operand| {
-        match op {
-            Rep3Operand::Public(v)
-            | Rep3Operand::Shared {
-                public: Some(v), ..
-            } => {
-                let share = promote_to_trivial_share(party_id, F::from_u64(*v));
-                unsafe {
-                    match col {
-                        SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
-                        SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
-                        SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
-                        SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
-                        SparseCastCol::RamWrite => {
-                            (&mut *shared_cols.ram_write.get())[row] = share
-                        }
-                    }
+    let mut maybe_push = |col: SparseCastCol, row: usize, op: &Rep3Operand| match op {
+        Rep3Operand::Public(v)
+        | Rep3Operand::Shared {
+            public: Some(v), ..
+        } => {
+            let share = promote_to_trivial_share(party_id, F::from_u64(*v));
+            unsafe {
+                match col {
+                    SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
+                    SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
+                    SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
+                    SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
+                    SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
                 }
             }
-            Rep3Operand::Shared { .. } => {
-                cast_jobs.push(SparseCastJob {
-                    col,
-                    row,
-                    share: op.as_arithmetic_u64(),
-                });
-            }
+        }
+        Rep3Operand::Shared { .. } => {
+            cast_jobs.push(SparseCastJob {
+                col,
+                row,
+                share: op.as_arithmetic_u64(),
+            });
         }
     };
 
@@ -760,7 +749,8 @@ where
         debug_assert_eq!(lookup_outputs.len(), flags_bits.len());
 
         let branch_mask = 1u32 << (CircuitFlags::Branch as usize);
-        let mut should_branch: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(lookup_outputs.len());
+        let mut should_branch: Vec<Rep3PrimeFieldShare<F>> =
+            Vec::with_capacity(lookup_outputs.len());
         for (t, output) in lookup_outputs.iter().enumerate() {
             if (flags_bits[t] & branch_mask) != 0 {
                 should_branch.push(*output);

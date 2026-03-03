@@ -30,8 +30,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
         previous_claim: F,
         max_degree: usize,
     ) -> Vec<F> {
-        let degree =
-            <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
+        let degree = <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
         let base =
             <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
                 self,

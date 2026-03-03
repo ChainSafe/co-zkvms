@@ -35,7 +35,9 @@ impl<F: JoltField> Rep3HammingWeightSumcheckWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3HammingWeightSumcheckWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3HammingWeightSumcheckWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -100,11 +102,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let ra_claims: Vec<Rep3PrimeFieldShare<F>> = self
-            .ra
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect();
+        let ra_claims: Vec<Rep3PrimeFieldShare<F>> =
+            self.ra.iter().map(|ra| ra.final_sumcheck_claim()).collect();
 
         // Get r_cycle from the accumulator (stored during Spartan outer sumcheck).
         let r_cycle = accumulator

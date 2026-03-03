@@ -149,8 +149,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
 
         let (r_address_prime, r_cycle_prime_raw) = r.split_at(log_K);
         // r_cycle was bound LowToHigh, so reverse for EqPolynomial::mle
-        let r_cycle_prime: Vec<F::Challenge> =
-            r_cycle_prime_raw.iter().rev().copied().collect();
+        let r_cycle_prime: Vec<F::Challenge> = r_cycle_prime_raw.iter().rev().copied().collect();
 
         // Replicate get_r_cycle_verif from vanilla using Rep3OpeningAccumulator.
         let reg_count_bits = (REGISTER_COUNT as usize).ilog2() as usize;
@@ -178,18 +177,20 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         // gamma_sqr and gamma_cub stored on self.
         let gamma_int = [
             int_poly_eval * self.gamma_cub(), // RAF for Stage1
-            F::zero(),                         // No RAF for Stage2
+            F::zero(),                        // No RAF for Stage2
             int_poly_eval * self.gamma_sqr(), // RAF for Stage3
         ];
 
-        let ra_claims: Vec<F> = (0..d).map(|i| {
-            accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::BytecodeRa(i),
-                    SumcheckId::BytecodeReadRaf,
-                )
-                .1
-        }).collect();
+        let ra_claims: Vec<F> = (0..d)
+            .map(|i| {
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeRa(i),
+                        SumcheckId::BytecodeReadRaf,
+                    )
+                    .1
+            })
+            .collect();
 
         let val_evals = self.val_polys_evaluate(r_address_prime);
         let gammas = self.gamma_stages();

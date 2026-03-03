@@ -81,7 +81,10 @@ fn vanilla_up_to_stage5(
         .collect();
     let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
     let (commitments, opening_proof_hints): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
-    let opening_proof_hints: HashMap<CommittedPolynomial, <PCS as CommitmentScheme>::OpeningProofHint> = AllCommittedPolynomials::iter()
+    let opening_proof_hints: HashMap<
+        CommittedPolynomial,
+        <PCS as CommitmentScheme>::OpeningProofHint,
+    > = AllCommittedPolynomials::iter()
         .copied()
         .zip(opening_proof_hints)
         .collect();
@@ -346,7 +349,8 @@ fn dag_correct() {
                 (*program_io).clone(),
                 ram_K,
                 twist_sumcheck_switch_index,
-            ).with_pcs_setup(&prover_preprocessing.generators);
+            )
+            .with_pcs_setup(&prover_preprocessing.generators);
             Rep3JoltDAGCoordinator::prove(state, net)
         },
     );
@@ -619,18 +623,14 @@ fn dag_correct() {
                             "Stage4 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
                             rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i],
                         );
-                    } else if rep3_sc.compressed_polys.len()
-                        != vanilla_sc.compressed_polys.len()
-                    {
+                    } else if rep3_sc.compressed_polys.len() != vanilla_sc.compressed_polys.len() {
                         panic!(
                             "Stage4 sumcheck proof poly count mismatch: rep3={} vanilla={}",
                             rep3_sc.compressed_polys.len(),
                             vanilla_sc.compressed_polys.len()
                         );
                     } else {
-                        panic!(
-                            "Stage4 sumcheck proof bytes differ but individual polys match"
-                        );
+                        panic!("Stage4 sumcheck proof bytes differ but individual polys match");
                     }
                 }
             }
@@ -651,12 +651,18 @@ fn dag_correct() {
     {
         let rep3_claims_bytes = {
             let mut v = Vec::new();
-            rep3_proof.opening_claims.serialize_uncompressed(&mut v).unwrap();
+            rep3_proof
+                .opening_claims
+                .serialize_uncompressed(&mut v)
+                .unwrap();
             v
         };
         let vanilla_claims_bytes = {
             let mut v = Vec::new();
-            vanilla_proof.opening_claims.serialize_uncompressed(&mut v).unwrap();
+            vanilla_proof
+                .opening_claims
+                .serialize_uncompressed(&mut v)
+                .unwrap();
             v
         };
         assert_eq!(
@@ -697,12 +703,18 @@ fn dag_correct() {
             // Compare sumcheck proof
             let rep3_sc_bytes = {
                 let mut v = Vec::new();
-                rep3_rop.sumcheck_proof.serialize_uncompressed(&mut v).unwrap();
+                rep3_rop
+                    .sumcheck_proof
+                    .serialize_uncompressed(&mut v)
+                    .unwrap();
                 v
             };
             let vanilla_sc_bytes = {
                 let mut v = Vec::new();
-                vanilla_rop.sumcheck_proof.serialize_uncompressed(&mut v).unwrap();
+                vanilla_rop
+                    .sumcheck_proof
+                    .serialize_uncompressed(&mut v)
+                    .unwrap();
                 v
             };
             let sc_match = rep3_sc_bytes == vanilla_sc_bytes;
@@ -713,12 +725,18 @@ fn dag_correct() {
             // Compare PCS proof
             let rep3_pcs_bytes = {
                 let mut v = Vec::new();
-                rep3_rop.joint_opening_proof.serialize_uncompressed(&mut v).unwrap();
+                rep3_rop
+                    .joint_opening_proof
+                    .serialize_uncompressed(&mut v)
+                    .unwrap();
                 v
             };
             let vanilla_pcs_bytes = {
                 let mut v = Vec::new();
-                vanilla_rop.joint_opening_proof.serialize_uncompressed(&mut v).unwrap();
+                vanilla_rop
+                    .joint_opening_proof
+                    .serialize_uncompressed(&mut v)
+                    .unwrap();
                 v
             };
             let pcs_match = rep3_pcs_bytes == vanilla_pcs_bytes;
@@ -726,7 +744,10 @@ fn dag_correct() {
             if !sc_match {
                 // Find first differing round
                 let mut first_diff = None;
-                for (i, (a, b)) in rep3_rop.sumcheck_proof.compressed_polys.iter()
+                for (i, (a, b)) in rep3_rop
+                    .sumcheck_proof
+                    .compressed_polys
+                    .iter()
                     .zip(vanilla_rop.sumcheck_proof.compressed_polys.iter())
                     .enumerate()
                 {
@@ -747,9 +768,7 @@ fn dag_correct() {
                 );
             }
 
-            panic!(
-                "Stage5 mismatch: sumcheck={sc_match}, claims={claims_match}, pcs={pcs_match}"
-            );
+            panic!("Stage5 mismatch: sumcheck={sc_match}, claims={claims_match}, pcs={pcs_match}");
         }
     }
 

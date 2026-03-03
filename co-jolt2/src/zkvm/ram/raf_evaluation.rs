@@ -42,9 +42,7 @@ pub struct Rep3RafEvaluationWorker<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3RafEvaluationWorker<F> {
-    pub fn new<PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Self {
+    pub fn new<PCS: CommitmentScheme<Field = F>>(sm: &mut StateManagerWorker<'_, F, PCS>) -> Self {
         let party_id = sm.party_id;
         let memory_layout = &sm.program_io.memory_layout;
         let K = sm.ram_K;
@@ -99,8 +97,7 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
             .sum();
 
         let ra = MultilinearPolynomial::from(ra_evals);
-        let unmap =
-            UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
+        let unmap = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
 
         Self {
             party_id,
@@ -113,7 +110,9 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RafEvaluationWorker<F> {
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
+    for Rep3RafEvaluationWorker<F>
+{
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -141,12 +140,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         let evals: Vec<F> = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals: Vec<F> = self
-                    .ra
-                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
-                let unmap_evals: Vec<F> = self
-                    .unmap
-                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
+                let ra_evals: Vec<F> =
+                    self.ra
+                        .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
+                let unmap_evals: Vec<F> =
+                    self.unmap
+                        .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
                 let mut result = vec![F::zero(); max_degree];
                 for d in 0..max_degree {
                     result[d] = ra_evals[d] * unmap_evals[d];
@@ -190,10 +189,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamAddress,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .0;
         let ra_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
@@ -208,7 +204,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
             self.party_id,
         );
 
-        vec![rep3_arith::promote_to_trivial_share(self.party_id, ra_claim)]
+        vec![rep3_arith::promote_to_trivial_share(
+            self.party_id,
+            ra_claim,
+        )]
     }
 }
 
@@ -229,10 +228,7 @@ impl<F: JoltField> Rep3RafEvaluation<F> {
         let K = sm.ram_K;
         let raf_claim = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamAddress,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .1;
 
         Self {
@@ -265,10 +261,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
             UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
 
         let ra_claim = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamRafEvaluation,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
             .1;
 
         unmap_eval * ra_claim
@@ -289,10 +282,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
         claims: Vec<F>,
     ) {
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamAddress,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .0;
         let ra_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());

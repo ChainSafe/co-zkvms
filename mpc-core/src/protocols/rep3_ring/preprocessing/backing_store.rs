@@ -197,9 +197,7 @@ pub(crate) fn write_meta(path: &Path, meta: &MetaData) -> io::Result<()> {
     w.write_all(&(meta.cursor as u64).to_le_bytes())?;
     w.write_all(&(meta.field_bytes as u32).to_le_bytes())?;
     w.flush()?;
-    w.into_inner()
-        .map_err(|e| e.into_error())?
-        .sync_all()?;
+    w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
     Ok(())
 }
 

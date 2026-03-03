@@ -205,10 +205,8 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             }
         };
 
-        let row_commit_shares_affine: Vec<G1Affine> = row_commit_shares
-            .iter()
-            .map(|p| p.into_affine())
-            .collect();
+        let row_commit_shares_affine: Vec<G1Affine> =
+            row_commit_shares.iter().map(|p| p.into_affine()).collect();
 
         network.send_response((num_vars, row_commit_shares_affine))?;
 

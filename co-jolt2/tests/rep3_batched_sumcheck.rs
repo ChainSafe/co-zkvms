@@ -75,7 +75,12 @@ impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyLinearWorker
         evals
     }
 
-    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(
+        &mut self,
+        r_j: <Fr as jolt_core::field::JoltField>::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+    ) {
         let r: Fr = r_j.into();
         let one_minus_r = Fr::one() - r;
 
@@ -233,12 +238,14 @@ impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyCubicProduct
     }
 
     fn input_claim(&self) -> Rep3Value<Fr> {
-        Rep3Value::Public(self.a
-            .iter()
-            .zip(self.b.iter())
-            .zip(self.c.iter())
-            .map(|((&a, &b), &c)| a * b * c)
-            .sum())
+        Rep3Value::Public(
+            self.a
+                .iter()
+                .zip(self.b.iter())
+                .zip(self.c.iter())
+                .map(|((&a, &b), &c)| a * b * c)
+                .sum(),
+        )
     }
 
     fn compute_prover_message_share(
@@ -256,7 +263,12 @@ impl<N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<Fr, N> for ToyCubicProduct
         evals
     }
 
-    fn bind(&mut self, r_j: <Fr as jolt_core::field::JoltField>::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(
+        &mut self,
+        r_j: <Fr as jolt_core::field::JoltField>::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+    ) {
         let r: Fr = r_j.into();
         Self::bind_vec(&mut self.a, r);
         Self::bind_vec(&mut self.b, r);
@@ -383,7 +395,8 @@ fn rep3_batched_sumcheck_mixed_degree_front_loaded_correct() {
             ];
 
             let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
-            let _r = Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
+            let _r =
+                Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
             Ok(())
         },
         |(lin_coeffs, a, b, c), network| {
@@ -463,7 +476,8 @@ fn rep3_batched_sumcheck_degree3_smoke_correct() {
                 vec![Box::new(ToyCubicProductWorker::new(party_id, a, b, c))];
 
             let mut accumulator = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
-            let _r = Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
+            let _r =
+                Rep3BatchedSumcheckWorker::prove(&mut instances, &mut accumulator, &mut io_ctx)?;
             Ok(())
         },
         |(a, b, c), network| {

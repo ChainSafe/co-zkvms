@@ -67,9 +67,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RafEvaluationSumcheck<F> 
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(
-            self, r_j, round,
-        )
+        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(self, r_j, round)
     }
 
     fn normalize_opening_point(
@@ -89,10 +87,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RafEvaluationSumcheck<F> 
         party_id: PartyID,
     ) -> Vec<F> {
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamAddress,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .0;
         let ra_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
@@ -136,10 +131,8 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluation
         let unmap_eval =
             UnmapRamAddressPolynomial::<F>::new(self.log_K(), self.start_address()).evaluate(r);
 
-        let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamRafEvaluation,
-        );
+        let (_, ra_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
 
         unmap_eval * ra_claim
     }
@@ -162,10 +155,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluation
         claims: Vec<F>,
     ) {
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamAddress,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .0;
         let ra_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());

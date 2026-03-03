@@ -7,17 +7,14 @@
 //!
 //! Online cost: 3 bits / 1 round (same as standard bit injection).
 
+use super::backing_store;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare,
     network::{IoContext, Rep3Network},
 };
-use super::backing_store;
 use mpc_types::field::PrimeField;
-use mpc_types::protocols::rep3_ring::{
-    Rep3RingShare,
-    ring::bit::Bit,
-};
+use mpc_types::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 
@@ -275,7 +272,10 @@ impl<F: PrimeField> LazyDaBits<F> {
 
         let meta_path = dir.join("dabits.meta");
         let meta = backing_store::read_meta(&meta_path)?;
-        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
+        assert_eq!(
+            meta.party_id_byte,
+            backing_store::party_id_to_byte(party_id)
+        );
 
         let stored = if meta.total > 0 && party_id != PartyID::ID1 {
             let data_path = dir.join("dabits.stored");
@@ -551,8 +551,7 @@ pub fn bit_inject_field_many<F: PrimeField, N: Rep3Network>(
                 .zip(batch.v_shares.iter())
                 .map(|((((xi, &_m0), &m1), &gamma), v)| {
                     // σ = m₁ ⊕ x.a ⊕ x.b ⊕ γ
-                    let sigma =
-                        (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
+                    let sigma = (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
                     let neg1_sigma = if sigma { -F::one() } else { F::one() };
                     // P0: no β addition (β unknown to P0)
                     Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
@@ -639,8 +638,8 @@ pub(crate) fn parse_field<Fp: PrimeField>(bytes: &[u8], start: usize) -> Fp {
 mod tests {
     use super::*;
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
-    use mpc_types::protocols::rep3::combine_field_elements;
     use ark_bn254::Fr;
+    use mpc_types::protocols::rep3::combine_field_elements;
     use mpc_types::protocols::rep3_ring::{
         ring::{bit::Bit as RingBit, ring_impl::RingElement},
         share_ring_element,
@@ -673,8 +672,7 @@ mod tests {
                 let n = x_shares.len();
                 let mut lazy = random_dabits_lazy::<Fr, _>(n, &mut io_ctx)?;
                 let batch = lazy.take_batch(n);
-                bit_inject_field_many::<Fr, _>(&x_shares, &batch, io_ctx.main())
-                    .map_err(Into::into)
+                bit_inject_field_many::<Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(): (), _net| Ok(()),
         )
