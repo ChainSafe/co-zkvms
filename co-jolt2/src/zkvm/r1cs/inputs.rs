@@ -10,10 +10,14 @@ use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
+use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::witness::Stage1RowRef;
+use rayon::prelude::*;
 
 pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+
+const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 
 /// Rep3 view of all R1CS inputs for a single cycle.
 ///
@@ -164,24 +168,28 @@ where
     let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
 
     let mask_both_shared = mask_left_rs1 | mask_right_rs2;
+    // Important: keep ordering deterministic across parties.
+    // Do not build this list with a parallel filter+collect (ordering is not guaranteed).
     let shared_mul_rows: Vec<usize> = (0..trace_len)
         .into_par_iter()
         .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
         .collect();
-    let mut mul_map = vec![None; trace_len];
+    let mut mul_map: Vec<u32> = vec![u32::MAX; trace_len];
     for (k, &t) in shared_mul_rows.iter().enumerate() {
-        mul_map[t] = Some(k);
+        mul_map[t] = k as u32;
     }
 
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
-        let lhs: Vec<_> = shared_mul_rows
-            .iter()
-            .map(|&t| cycle_witness.row_stage1(t).rs1_value())
-            .collect();
-        let rhs: Vec<_> = shared_mul_rows
-            .iter()
-            .map(|&t| cycle_witness.row_stage1(t).rs2_value())
-            .collect();
+        let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
+            .par_iter()
+            .map(|&t| {
+                (
+                    cycle_witness.row_stage1(t).rs1_value(),
+                    cycle_witness.row_stage1(t).rs2_value(),
+                )
+            })
+            .unzip();
+
         arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
     } else {
         vec![]
@@ -195,7 +203,7 @@ where
         || EqPolynomial::<F>::evals(r1),
     );
 
-    let n_inputs = ALL_R1CS_INPUTS.len();
+    let n_inputs = NUM_R1CS_INPUTS;
 
     let idx_left = JoltR1CSInputs::LeftInstructionInput.to_index();
     let idx_right = JoltR1CSInputs::RightInstructionInput.to_index();
@@ -222,12 +230,13 @@ where
     let idx_should_jump = JoltR1CSInputs::ShouldJump.to_index();
 
     // Parallel outer loop over eq_one, serial inner loop over eq_two (mirrors vanilla).
-    let (acc_public, acc_shared) = (0..eq_one.len())
+    // We accumulate into Rep3Value so public terms stay public until the final conversion.
+    let acc: [Rep3Value<F>; NUM_R1CS_INPUTS] = (0..eq_one.len())
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
-            let mut inner_public = vec![F::zero(); n_inputs];
-            let mut inner_shared = vec![Rep3PrimeFieldShare::zero_share(); n_inputs];
+            let mut inner: [Rep3Value<F>; NUM_R1CS_INPUTS] =
+                core::array::from_fn(|_| Rep3Value::<F>::zero_public());
 
             for x2 in 0..eq_two.len() {
                 let eq2_val = eq_two[x2];
@@ -236,106 +245,119 @@ where
                 let row = cycle_witness.row_stage1(t);
 
                 // Public per-cycle values
-                inner_public[idx_pc] += F::from_u64(row.pc_index()) * eq2_val;
-                inner_public[idx_unexp_pc] += F::from_u64(row.unexpanded_pc()) * eq2_val;
-                inner_public[idx_rd] += F::from_u64(row.rd_addr() as u64) * eq2_val;
-                inner_public[idx_imm] += F::from_i128(row.imm()) * eq2_val;
-                inner_public[idx_ram_addr] += F::from_u64(row.ram_addr()) * eq2_val;
+                inner[idx_pc].add_public_assign(F::from_u64(row.pc_index()) * eq2_val, party_id);
+                inner[idx_unexp_pc]
+                    .add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_rd]
+                    .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                inner[idx_imm].add_public_assign(F::from_i128(row.imm()) * eq2_val, party_id);
+                inner[idx_ram_addr]
+                    .add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
 
-                inner_public[idx_next_unexp] += F::from_u64(row.next_unexpanded_pc()) * eq2_val;
-                inner_public[idx_next_pc] += F::from_u64(row.next_pc_index()) * eq2_val;
+                inner[idx_next_unexp]
+                    .add_public_assign(F::from_u64(row.next_unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_next_pc]
+                    .add_public_assign(F::from_u64(row.next_pc_index()) * eq2_val, party_id);
                 let next_is_noop = row.next_is_noop();
-                inner_public[idx_next_is_noop] += F::from_bool(next_is_noop) * eq2_val;
+                inner[idx_next_is_noop]
+                    .add_public_assign(F::from_bool(next_is_noop) * eq2_val, party_id);
 
                 // Shared per-cycle values
                 let lookup_output = row.to_lookup_output();
-                inner_shared[idx_lookup_output] += arithmetic::mul_public(lookup_output, eq2_val);
-                inner_shared[idx_rs1] += arithmetic::mul_public(row.rs1_value(), eq2_val);
-                inner_shared[idx_rs2] += arithmetic::mul_public(row.rs2_value(), eq2_val);
-                inner_shared[idx_rd_write] += arithmetic::mul_public(row.rd_write_value(), eq2_val);
-                inner_shared[idx_ram_read] += arithmetic::mul_public(row.ram_read_value(), eq2_val);
-                inner_shared[idx_ram_write] +=
-                    arithmetic::mul_public(row.ram_write_value(), eq2_val);
+                inner[idx_lookup_output].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
+                    party_id,
+                );
+                inner[idx_rs1].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(row.rs1_value(), eq2_val)),
+                    party_id,
+                );
+                inner[idx_rs2].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(row.rs2_value(), eq2_val)),
+                    party_id,
+                );
+                inner[idx_rd_write].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(row.rd_write_value(), eq2_val)),
+                    party_id,
+                );
+                inner[idx_ram_read].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_read_value(), eq2_val)),
+                    party_id,
+                );
+                inner[idx_ram_write].add_assign(
+                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_write_value(), eq2_val)),
+                    party_id,
+                );
 
                 // Instruction inputs, product, and lookup operands.
                 // Vanilla computes Product = left * right for ALL rows unconditionally.
-                let (left_input, right_input) = row.to_instruction_inputs(party_id);
-                let product = match mul_map[t] {
-                    Some(k) => mul_products[k],
-                    None => {
-                        let fb = flags_bits[t];
-                        let left_shared = (fb & mask_left_rs1) != 0;
-                        let right_shared = (fb & mask_right_rs2) != 0;
-                        match (left_shared, right_shared) {
-                            (true, false) => {
-                                arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
-                            }
-                            (false, true) => {
-                                arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
-                            }
-                            (false, false) => {
-                                let l = row.to_left_public_input();
-                                let r = row.to_right_public_input();
-                                arithmetic::promote_to_trivial_share(party_id, l * r)
-                            }
-                            (true, true) => unreachable!("should be in mul_map"),
-                        }
+                let (left_input, right_input) = row.to_instruction_inputs_value(party_id);
+                let product = if mul_map[t] != u32::MAX {
+                    Rep3Value::Shared(mul_products[mul_map[t] as usize])
+                } else {
+                    let fb = flags_bits[t];
+                    let left_shared = (fb & mask_left_rs1) != 0;
+                    let right_shared = (fb & mask_right_rs2) != 0;
+                    match (left_shared, right_shared) {
+                        (true, false) => left_input.mul(&right_input),
+                        (false, true) => left_input.mul(&right_input),
+                        (false, false) => left_input.mul(&right_input),
+                        (true, true) => unreachable!("shared×shared row must be in mul_map"),
                     }
                 };
-                let (left_lookup, right_lookup) = row.to_lookup_operands(party_id, product);
+                let (left_lookup, right_lookup) = row.to_lookup_operands_value(party_id, product);
 
-                inner_shared[idx_left] += arithmetic::mul_public(left_input, eq2_val);
-                inner_shared[idx_right] += arithmetic::mul_public(right_input, eq2_val);
-                inner_shared[idx_product] += arithmetic::mul_public(product, eq2_val);
-                inner_shared[idx_left_lookup] += arithmetic::mul_public(left_lookup, eq2_val);
-                inner_shared[idx_right_lookup] += arithmetic::mul_public(right_lookup, eq2_val);
+                inner[idx_left].add_assign(&left_input.mul_public(eq2_val), party_id);
+                inner[idx_right].add_assign(&right_input.mul_public(eq2_val), party_id);
+                inner[idx_product].add_assign(&product.mul_public(eq2_val), party_id);
+                inner[idx_left_lookup].add_assign(&left_lookup.mul_public(eq2_val), party_id);
+                inner[idx_right_lookup].add_assign(&right_lookup.mul_public(eq2_val), party_id);
 
                 let fb = flags_bits[t];
                 if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                    inner_public[idx_write_lookup] += F::from_u64(row.rd_addr() as u64) * eq2_val;
+                    inner[idx_write_lookup]
+                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 let is_jump = row.flag(CircuitFlags::Jump);
                 if is_jump {
-                    inner_public[idx_write_pc] += F::from_u64(row.rd_addr() as u64) * eq2_val;
+                    inner[idx_write_pc]
+                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 if row.flag(CircuitFlags::Branch) {
-                    inner_shared[idx_should_branch] +=
-                        arithmetic::mul_public(lookup_output, eq2_val);
+                    inner[idx_should_branch].add_assign(
+                        &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
+                        party_id,
+                    );
                 }
-                inner_public[idx_should_jump] += F::from_bool(is_jump && !next_is_noop) * eq2_val;
+                inner[idx_should_jump]
+                    .add_public_assign(F::from_bool(is_jump && !next_is_noop) * eq2_val, party_id);
 
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                     let bit = 1u32 << (flag as usize);
-                    inner_public[idx] += F::from_bool((fb & bit) != 0) * eq2_val;
+                    inner[idx].add_public_assign(F::from_bool((fb & bit) != 0) * eq2_val, party_id);
                 }
             }
 
             // Multiply inner sums by eq1[x1]
             for i in 0..n_inputs {
-                inner_public[i] *= eq1_val;
-                inner_shared[i] = arithmetic::mul_public(inner_shared[i], eq1_val);
+                inner[i] = inner[i].mul_public(eq1_val);
             }
-            (inner_public, inner_shared)
+            inner
         })
         .reduce(
-            || {
-                (
-                    vec![F::zero(); n_inputs],
-                    vec![Rep3PrimeFieldShare::zero_share(); n_inputs],
-                )
-            },
-            |(mut acc_pub, mut acc_sh), (item_pub, item_sh)| {
+            || core::array::from_fn(|_| Rep3Value::<F>::zero_public()),
+            |mut acc, item| {
                 for i in 0..n_inputs {
-                    acc_pub[i] += item_pub[i];
-                    acc_sh[i] += item_sh[i];
+                    acc[i].add_assign(&item[i], party_id);
                 }
-                (acc_pub, acc_sh)
+                acc
             },
         );
 
-    Ok((0..n_inputs)
-        .map(|i| acc_shared[i] + arithmetic::promote_to_trivial_share(party_id, acc_public[i]))
+    Ok(acc
+        .into_iter()
+        .map(|v| v.into_shared_rep3(party_id))
         .collect())
 }
 

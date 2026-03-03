@@ -2,11 +2,13 @@ use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::r1cs::inputs::{ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 use jolt_core::utils::math::Math;
+use jolt_core::zkvm::instruction::CircuitFlags;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::arithmetic as rep3_arithmetic;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::distributions::{Distribution, Standard};
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
@@ -46,23 +48,75 @@ impl Rep3SpartanDagWorker {
         let key = UniformSpartanKey::<F>::new(num_steps);
 
         // Precompute Product shares = left_input * right_input for ALL rows.
+        // We only batch MPC shared×shared multiplication for the rows where BOTH inputs are shared.
+        // All other cases are computed locally using mul_public or a trivial share.
+        //
         // Vanilla always computes Product = left_input * right_input regardless of instruction type.
         // The R1CS constraint RightLookupEqProductIfMul (index 13) pairs with RightLookupSub (index 12)
         // in the sparse interleaved polynomial, so Product must match vanilla for correct t_inf.
-        let lhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
+        let flags_bits = cycle_witness.pc_sumcheck_flags_bits();
+        let mask_left_rs1 = 1u32 << (CircuitFlags::LeftOperandIsRs1Value as usize);
+        let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
+        let mask_both_shared = mask_left_rs1 | mask_right_rs2;
+
+        // Important: keep ordering deterministic across parties.
+        // Do not build this list with a parallel filter+collect (ordering is not guaranteed).
+        let shared_mul_rows: Vec<usize> = (0..num_steps)
+            .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
+            .collect();
+        let mut mul_map: Vec<u32> = vec![u32::MAX; num_steps];
+        for (k, &t) in shared_mul_rows.iter().enumerate() {
+            mul_map[t] = k as u32;
+        }
+
+        let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
+            let (lhs, rhs): (Vec<_>, Vec<_>) = rayon::join(
+                || {
+                    shared_mul_rows
+                        .par_iter()
+                        .map(|&t| cycle_witness.row_stage1(t).rs1_value())
+                        .collect()
+                },
+                || {
+                    shared_mul_rows
+                        .par_iter()
+                        .map(|&t| cycle_witness.row_stage1(t).rs2_value())
+                        .collect()
+                },
+            );
+            rep3_arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
+        } else {
+            vec![]
+        };
+
+        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
+            .into_par_iter()
             .map(|t| {
+                if mul_map[t] != u32::MAX {
+                    return mul_products[mul_map[t] as usize];
+                }
+
                 let row = cycle_witness.row_stage1(t);
-                row.to_instruction_inputs(party_id).0
+                let fb = flags_bits[t];
+                let left_shared = (fb & mask_left_rs1) != 0;
+                let right_shared = (fb & mask_right_rs2) != 0;
+
+                match (left_shared, right_shared) {
+                    (true, false) => {
+                        rep3_arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
+                    }
+                    (false, true) => {
+                        rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
+                    }
+                    (false, false) => {
+                        let l = row.to_left_public_input();
+                        let r = row.to_right_public_input();
+                        rep3_arithmetic::promote_to_trivial_share(party_id, l * r)
+                    }
+                    (true, true) => unreachable!("shared×shared row must be in mul_map"),
+                }
             })
             .collect();
-        let rhs_all: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
-            .map(|t| {
-                let row = cycle_witness.row_stage1(t);
-                row.to_instruction_inputs(party_id).1
-            })
-            .collect();
-        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> =
-            rep3_arithmetic::mul_vec_par(&lhs_all, &rhs_all, io_ctx.main())?;
 
         // Materialize per-cycle R1CS inputs (cheap; uses cached cycle witness).
         let mut cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = Vec::with_capacity(num_steps);

@@ -8,6 +8,7 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::utils::types::Either;
+use crate::utils::types::Rep3Value;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CycleMeta {
@@ -73,11 +74,8 @@ struct Stage3Witness<F: JoltField> {
 #[derive(Clone, Debug, Default)]
 pub struct Stage3Update<F: JoltField> {
     pub pc_sumcheck: Option<(Vec<u64>, Vec<u32>)>,
-    pub read_raf_tables_and_masks: Option<(
-        Vec<Option<LookupTables<XLEN>>>,
-        Vec<bool>,
-        Vec<Option<u64>>,
-    )>,
+    pub read_raf_tables_and_masks:
+        Option<(Vec<Option<LookupTables<XLEN>>>, Vec<bool>, Vec<Option<u64>>)>,
     pub read_raf_lookup_indices: Option<Vec<Either<u128, Rep3RingShare<u128>>>>,
     pub product_inputs: Option<ProductInputs<F>>,
 }
@@ -248,10 +246,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     pub fn rd_inc_ref(&self) -> &Rep3DensePolynomial<F> {
-        self.stage2
-            .rd_inc
-            .as_ref()
-            .expect("rd_inc not populated")
+        self.stage2.rd_inc.as_ref().expect("rd_inc not populated")
     }
 
     pub fn take_ram_inc(&mut self) -> Rep3DensePolynomial<F> {
@@ -259,10 +254,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     pub fn ram_inc_ref(&self) -> &Rep3DensePolynomial<F> {
-        self.stage2
-            .ram_inc
-            .as_ref()
-            .expect("ram_inc not populated")
+        self.stage2.ram_inc.as_ref().expect("ram_inc not populated")
     }
 
     #[cfg(debug_assertions)]
@@ -428,6 +420,66 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
             F::from_i128(self.imm())
         } else {
             F::zero()
+        }
+    }
+
+    pub fn to_instruction_inputs_value(&self, _party_id: PartyID) -> (Rep3Value<F>, Rep3Value<F>) {
+        let left = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
+            Rep3Value::Shared(self.rs1_value())
+        } else if self.flag(CircuitFlags::LeftOperandIsPC) {
+            Rep3Value::Public(F::from_u64(self.unexpanded_pc()))
+        } else {
+            Rep3Value::Public(F::zero())
+        };
+        let right = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
+            Rep3Value::Shared(self.rs2_value())
+        } else if self.flag(CircuitFlags::RightOperandIsImm) {
+            Rep3Value::Public(F::from_i128(self.imm()))
+        } else {
+            Rep3Value::Public(F::zero())
+        };
+        (left, right)
+    }
+
+    pub fn to_lookup_operands_value(
+        &self,
+        party_id: PartyID,
+        product: Rep3Value<F>,
+    ) -> (Rep3Value<F>, Rep3Value<F>) {
+        let left_u64 = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
+            Rep3Value::Shared(self.rs1_value())
+        } else if self.flag(CircuitFlags::LeftOperandIsPC) {
+            Rep3Value::Public(F::from_u64(self.unexpanded_pc()))
+        } else {
+            Rep3Value::Public(F::zero())
+        };
+
+        let right_u64 = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
+            Rep3Value::Shared(self.rs2_value())
+        } else if self.flag(CircuitFlags::RightOperandIsImm) {
+            Rep3Value::Public(F::from_u64(self.imm() as u64))
+        } else {
+            Rep3Value::Public(F::zero())
+        };
+
+        let zero = Rep3Value::Public(F::zero());
+
+        if self.flag(CircuitFlags::AddOperands) {
+            (zero, left_u64.add(&right_u64, party_id))
+        } else if self.flag(CircuitFlags::SubtractOperands) {
+            let two_pow_64 = F::from_u128(1u128 << 64);
+            (
+                zero,
+                left_u64
+                    .sub(&right_u64, party_id)
+                    .add_public(two_pow_64, party_id),
+            )
+        } else if self.flag(CircuitFlags::MultiplyOperands) {
+            (zero, product)
+        } else if self.flag(CircuitFlags::Advice) {
+            (zero, Rep3Value::Public(F::from_u64(self.advice())))
+        } else {
+            (left_u64, right_u64)
         }
     }
 
