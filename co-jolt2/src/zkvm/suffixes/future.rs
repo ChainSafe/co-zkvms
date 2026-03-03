@@ -160,7 +160,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
     pub fn fulfill_with_pool<N: Rep3NetworkWorker>(
         self,
         io_ctx: &mut IoContextPool<N>,
-        pool: &mut mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
+        pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
         use mpc_core::protocols::rep3_ring::dabits;
         use mpc_core::protocols::rep3_ring::edabits;

@@ -7,7 +7,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::{
         self,
-        edabits::EdaBitsPool,
+        edabits::PreprocessingPool,
         ring::{bit::Bit, int_ring::IntRing2k},
         Rep3RingShare, Rep3RingSignedShare,
     },
@@ -284,7 +284,7 @@ where
 pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
     futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
-    pool: &mut EdaBitsPool<F>,
+    pool: &mut PreprocessingPool<F>,
     map: MapFn,
 ) -> eyre::Result<Vec<T>>
 where

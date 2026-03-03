@@ -28,7 +28,7 @@ use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreproc
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ where
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: EdaBitsPool<F>,
+        edabits_pool: PreprocessingPool<F>,
     ) -> eyre::Result<()>;
 }
 
@@ -108,7 +108,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: EdaBitsPool<Fr>,
+        edabits_pool: PreprocessingPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(

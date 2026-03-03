@@ -42,7 +42,7 @@ impl Rep3JoltDAGWorker {
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS>,
         mut io_ctx: &mut IoContextPool<N>,
-        edabits_pool: mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
+        edabits_pool: mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
     ) -> eyre::Result<()>
     where
         F: JoltField,

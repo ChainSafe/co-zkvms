@@ -292,12 +292,33 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
-            match edabits::EdaBitsPool::load(&pool_dir, party_id) {
-                Ok(pool) => {
-                    info!(
-                        "reusing preprocessing from {:?} (skipping network preprocessing)",
-                        pool_dir
-                    );
+            match edabits::PreprocessingPool::load(&pool_dir, party_id) {
+                Ok(mut pool) => {
+                    let (rem_eda, rem_da) = pool.remaining_counts();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
+
+                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                        info!(
+                            "extending pool: deficit edabits={:?}, dabits={}",
+                            deficit_counts, deficit_dabits
+                        );
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        match pool.save(&pool_dir) {
+                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
+                            Err(e) => {
+                                tracing::warn!("failed to save extended pool: {e}")
+                            }
+                        }
+                    } else {
+                        info!("reusing preprocessing from {:?}", pool_dir);
+                    }
                     pool
                 }
                 Err(e) => {

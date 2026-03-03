@@ -112,7 +112,7 @@ pub struct Rep3JoltDagStagesWorker<F: JoltField> {
     lookups_dag: Option<crate::zkvm::instruction_lookups::Rep3LookupsDagWorker<F>>,
 
     // Stage3 needs edabits ownership to construct ReadRaf worker.
-    edabits_pool: Option<mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>>,
+    edabits_pool: Option<mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>>,
 
     // Witness-time lookup polynomials (consumed when we create lookups_dag).
     instruction_one_hot_polys: Option<
@@ -128,7 +128,7 @@ impl<F: JoltField> Rep3JoltDagStagesWorker<F> {
         padded_trace_length: usize,
         instruction_one_hot_polys: [crate::poly::one_hot_polynomial::Rep3OneHotPolynomial<F>;
             jolt_core::zkvm::instruction_lookups::D],
-        edabits_pool: mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
+        edabits_pool: mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
     ) -> Self {
         Self {
             outer_sumcheck_r,

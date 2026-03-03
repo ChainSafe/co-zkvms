@@ -155,35 +155,32 @@ impl<F: PrimeField> LazyDaBits<F> {
         }
 
         // P0 and P1: regenerate from seeds.
-        // P0↔P1 stream offsets:
-        let gamma_g1_offset = cursor_base; // 1 byte per daBit
-        let alpha1_offset = self.total + cursor_base * fb; // after all gamma bytes
-        let r1_offset = self.total + self.total * fb + cursor_base * fb; // after all alpha bytes
-
-        let gamma_g1_needed = n;
-        let alpha1_needed = n * fb;
-        let r1_needed = n * fb;
+        // P0↔P1 stream uses per-item interleaved layout:
+        //   [g₀(1B), a1₀(fb), r1₀(fb) | g₁(1B), a1₁(fb), r1₁(fb) | ...]
+        let da_stride = 1 + 2 * fb;
+        let interleaved_offset = cursor_base * da_stride;
+        let interleaved_needed = n * da_stride;
 
         match party_id {
             PartyID::ID0 => {
-                // seed1 = P0↔P1, seed2 = P0↔P2
-                let g1_bytes =
-                    seek_and_generate(self.seed1, self.pos1, gamma_g1_offset, gamma_g1_needed);
-                // r1 from same stream (seed1), at r1 offset (skip past alpha1 region).
-                let r1_bytes = seek_and_generate(self.seed1, self.pos1, r1_offset, r1_needed);
+                // seed1 = P0↔P1 (interleaved), seed2 = P0↔P2
+                let s1_buf = seek_and_generate(
+                    self.seed1,
+                    self.pos1,
+                    interleaved_offset,
+                    interleaved_needed,
+                );
                 // g2 from seed2 (P0↔P2 stream)
                 let g2_bytes = seek_and_generate(self.seed2, self.pos2, cursor_base, n);
 
-                let gammas: Vec<bool> = g1_bytes
-                    .iter()
-                    .zip(g2_bytes.iter())
-                    .map(|(a, b)| ((a ^ b) & 1) != 0)
+                let gammas: Vec<bool> = (0..n)
+                    .map(|i| ((s1_buf[i * da_stride] ^ g2_bytes[i]) & 1) != 0)
                     .collect();
 
                 let stored_slice = self.stored.as_slice();
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                     .map(|i| {
-                        let r1: F = parse_field(&r1_bytes, i * fb);
+                        let r1: F = parse_field(&s1_buf, i * da_stride + 1 + fb);
                         let s20 = stored_slice[cursor_base + i]; // received from P2
                         Rep3PrimeFieldShare::new(r1, s20) // (.a=s₀₁=r₁, .b=s₂₀)
                     })
@@ -201,19 +198,21 @@ impl<F: PrimeField> LazyDaBits<F> {
             PartyID::ID1 => {
                 // seed1 = P1↔P2, seed2 = P1↔P0 (same stream as P0's seed1)
                 // Theta from seed1 (P1↔P2)
-                let theta_offset = cursor_base;
-                let theta_bytes = seek_and_generate(self.seed1, self.pos1, theta_offset, n);
+                let theta_bytes = seek_and_generate(self.seed1, self.pos1, cursor_base, n);
                 let thetas: Vec<bool> = theta_bytes.iter().map(|b| (b & 1) != 0).collect();
 
-                // alpha1, r1 from seed2 (P1↔P0 = P0↔P1 stream)
-                let a1_bytes =
-                    seek_and_generate(self.seed2, self.pos2, alpha1_offset, alpha1_needed);
-                let r1_bytes = seek_and_generate(self.seed2, self.pos2, r1_offset, r1_needed);
+                // alpha1, r1 from seed2 (P1↔P0 = P0↔P1 interleaved stream)
+                let s2_buf = seek_and_generate(
+                    self.seed2,
+                    self.pos2,
+                    interleaved_offset,
+                    interleaved_needed,
+                );
 
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                     .map(|i| {
-                        let alpha1: F = parse_field(&a1_bytes, i * fb);
-                        let r1: F = parse_field(&r1_bytes, i * fb);
+                        let alpha1: F = parse_field(&s2_buf, i * da_stride + 1);
+                        let r1: F = parse_field(&s2_buf, i * da_stride + 1 + fb);
                         let theta = thetas[i];
                         let neg1_theta = if theta { -F::one() } else { F::one() };
                         let v1 = neg1_theta * alpha1;
@@ -304,6 +303,33 @@ impl<F: PrimeField> LazyDaBits<F> {
             let _ = backing_store::update_cursor(path, self.cursor);
         }
     }
+
+    /// Return the RNG seeds and positions for this lazy source.
+    pub(crate) fn extension_seeds(
+        &self,
+    ) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
+        (self.seed1, self.pos1, self.seed2, self.pos2)
+    }
+
+    /// Current total number of items in this pool.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Extend this pool by `deficit` additional items.
+    ///
+    /// For P0: appends received s₂₀ to stored backing.
+    /// For P1: only bumps `total` (fully seed-regenerable).
+    /// For P2: appends interleaved s₂₀+s₁₂ to stored backing.
+    pub(crate) fn apply_extension(&mut self, deficit: usize, stored_ext: Vec<F>) {
+        if deficit == 0 {
+            return;
+        }
+        if !stored_ext.is_empty() {
+            self.stored.extend(&stored_ext);
+        }
+        self.total += deficit;
+    }
 }
 
 impl<F: PrimeField> Drop for LazyDaBits<F> {
@@ -350,8 +376,10 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
 
     let stored: Vec<F> = match party_id {
         PartyID::ID0 => {
-            // Generate g1, alpha1, r1 from rng1 (P0↔P1). g2 from rng2 (P0↔P2).
-            let stream1_len = num + num * fb + num * fb;
+            // Generate interleaved [g₀(1B), a1₀(fb), r1₀(fb), ...] from rng1.
+            // g2 from rng2 (P0↔P2).
+            let da_stride = 1 + 2 * fb;
+            let stream1_len = num * da_stride;
             let stream2_len = num;
             let (stream1, stream2) = {
                 let mut s1 = vec![0u8; stream1_len];
@@ -362,9 +390,6 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
                 );
                 (s1, s2)
             };
-            let g1_bytes = &stream1[..num];
-            let a1_bytes = &stream1[num..num + num * fb];
-            let r1_bytes = &stream1[num + num * fb..];
             let g2_bytes = &stream2;
 
             // Compute alpha2 = F(gamma) - alpha1 for each daBit, and send to P2.
@@ -372,11 +397,9 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
                 .into_par_iter()
                 .with_min_len(256)
                 .map(|i| {
-                    let gamma_bit = ((g1_bytes[i] ^ g2_bytes[i]) & 1) != 0;
-                    let lo = u64::from_le_bytes(a1_bytes[i * fb..i * fb + 8].try_into().unwrap());
-                    let hi =
-                        u64::from_le_bytes(a1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
-                    let alpha1 = F::from((hi as u128) << 64 | lo as u128);
+                    let base = i * da_stride;
+                    let gamma_bit = ((stream1[base] ^ g2_bytes[i]) & 1) != 0;
+                    let alpha1: F = parse_field(&stream1, base + 1);
                     F::from(gamma_bit as u64) - alpha1
                 })
                 .collect();
@@ -386,14 +409,13 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
             // Round 2: P0 ← P2 receives s20
             let s20: Vec<F> = io.network().recv_many(PartyID::ID2)?;
             debug_assert_eq!(s20.len(), num);
-            drop(alpha2);
-            let _ = r1_bytes; // r1 regenerated during take_batch
             s20
         }
         PartyID::ID1 => {
-            // Generate from rng2 (P1↔P0): g1, alpha1, r1
+            // Generate interleaved from rng2 (P1↔P0): g1, alpha1, r1
             // Generate from rng1 (P1↔P2): theta
-            let stream2_len = num + num * fb + num * fb; // P1↔P0 stream
+            let da_stride = 1 + 2 * fb;
+            let stream2_len = num * da_stride; // P1↔P0 interleaved stream
             let stream1_len = num; // P1↔P2 stream
             let (stream2, stream1) = {
                 let mut s2 = vec![0u8; stream2_len];
@@ -404,8 +426,6 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
                 );
                 (s2, s1)
             };
-            let a1_bytes = &stream2[num..num + num * fb];
-            let r1_bytes = &stream2[num + num * fb..];
             let theta_bytes = &stream1;
 
             // Compute s12 = v1 - r1 for each daBit, and send to P2.
@@ -413,16 +433,11 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
                 .into_par_iter()
                 .with_min_len(256)
                 .map(|i| {
+                    let base = i * da_stride;
                     let theta = (theta_bytes[i] & 1) != 0;
                     let neg1_theta = if theta { -F::one() } else { F::one() };
-                    let lo = u64::from_le_bytes(a1_bytes[i * fb..i * fb + 8].try_into().unwrap());
-                    let hi =
-                        u64::from_le_bytes(a1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
-                    let alpha1 = F::from((hi as u128) << 64 | lo as u128);
-                    let lo = u64::from_le_bytes(r1_bytes[i * fb..i * fb + 8].try_into().unwrap());
-                    let hi =
-                        u64::from_le_bytes(r1_bytes[i * fb + 8..i * fb + 16].try_into().unwrap());
-                    let r1 = F::from((hi as u128) << 64 | lo as u128);
+                    let alpha1: F = parse_field(&stream2, base + 1);
+                    let r1: F = parse_field(&stream2, base + 1 + fb);
                     let v1 = neg1_theta * alpha1;
                     v1 - r1
                 })
