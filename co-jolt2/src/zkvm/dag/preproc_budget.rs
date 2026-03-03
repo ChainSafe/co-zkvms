@@ -2,11 +2,12 @@ use crate::zkvm::suffixes::suffix_edabit_ring_bits;
 use jolt2_common::constants::XLEN;
 use jolt_core::zkvm::instruction_lookups::LOG_M;
 use jolt_core::zkvm::lookup_table::LookupTables;
+use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use strum::IntoEnumIterator;
 
 const PHASES: usize = 8;
 
-/// Per-ring-type EdaBit counts needed for the ReadRaf sumcheck.
+/// Per-ring-type EdaBit counts and daBit count needed for the ReadRaf sumcheck.
 ///
 /// Computed from the actual lookup table structure, not hardcoded multipliers.
 #[derive(Clone, Default)]
@@ -16,13 +17,15 @@ pub struct PreprocessingBudget {
     pub u32: usize,
     pub u64: usize,
     pub u128: usize,
+    /// daBits for BitInject (single-bit → field) suffix conversions.
+    pub dabits: usize,
 }
 
 impl std::fmt::Debug for PreprocessingBudget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}",
-            self.u8, self.u16, self.u32, self.u64, self.u128
+            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
+            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
         ))
     }
 }
@@ -51,6 +54,35 @@ impl std::fmt::Debug for PreprocessingBudget {
 pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
     let n = non_noop_cycles;
     let mut budget = PreprocessingBudget::default();
+
+    // daBit budget: per cycle, sum BitInject suffixes across all phases.
+    // Each cycle belongs to exactly one table, so budget = max_over_tables × n.
+    let max_dabits_per_cycle = LookupTables::<XLEN>::iter()
+        .map(|table| {
+            let mut total = 0usize;
+            for phase in 0..PHASES {
+                let suffix_len = (PHASES - 1 - phase) * LOG_M;
+                if suffix_len == 0 {
+                    continue;
+                }
+                let t_k = match suffix_len {
+                    65..=128 => 128usize,
+                    33..=64 => 64,
+                    17..=32 => 32,
+                    1..=16 => 16,
+                    _ => unreachable!(),
+                };
+                for suffix in table.suffixes() {
+                    if suffix_is_bitinject(&suffix, t_k, suffix_len) {
+                        total += 1;
+                    }
+                }
+            }
+            total
+        })
+        .max()
+        .unwrap_or(0);
+    budget.dabits = max_dabits_per_cycle * n;
 
     for phase in 0..PHASES {
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -97,6 +129,36 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
     budget
 }
 
+/// Returns true if this suffix produces a BitInject result (consuming 1 daBit)
+/// for the given phase parameters.
+///
+/// - `t_k`: bit-width of ring T for this phase (16, 32, 64, or 128)
+/// - `suffix_len`: suffix length in bits for this phase
+fn suffix_is_bitinject(suffix: &Suffixes, t_k: usize, suffix_len: usize) -> bool {
+    match suffix {
+        // Always BitInject regardless of phase
+        Suffixes::Lsb
+        | Suffixes::TwoLsb
+        | Suffixes::LessThan
+        | Suffixes::GreaterThan
+        | Suffixes::Eq
+        | Suffixes::LeftOperandIsZero
+        | Suffixes::RightOperandIsZero
+        | Suffixes::DivByZero
+        | Suffixes::ChangeDivisor
+        | Suffixes::ChangeDivisorW => true,
+
+        // BitInject only when suffix_len >= XLEN/2 (sign bit is within the suffix window)
+        Suffixes::SignExtensionUpperHalf => suffix_len >= XLEN / 2,
+
+        // BitInject only when T::K > XLEN (upper bits exist to check for zero)
+        Suffixes::OverflowBitsZero => t_k > XLEN,
+
+        // All other suffixes are either Ready or B2A edaBit conversions
+        _ => false,
+    }
+}
+
 fn ring_bucket(ring_bits: usize) -> usize {
     match ring_bits {
         1..=8 => 0,
@@ -118,3 +180,4 @@ fn add_to_budget(budget: &mut PreprocessingBudget, ring_bits: usize, count: usiz
         _ => unreachable!(),
     }
 }
+
