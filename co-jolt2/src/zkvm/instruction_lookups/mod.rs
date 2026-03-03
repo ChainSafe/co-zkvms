@@ -41,90 +41,14 @@ pub mod read_raf_checking;
 /// of lookup index chunks using the RandOHV representation from witness gen.
 ///
 /// For each chunk `i`, computes `G[i][k] = Σ_j eq(r_cycle, j) * [chunk_i(index_j) == k]`
-/// as a secret-shared vector using the existing `compute_g_from_masked_indices`.
+/// as a secret-shared vector.
 ///
 /// No MPC communication — all operations are `public * shared`.
 fn compute_ra_evals<F: JoltField>(
     one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
     eq_r_cycle: &[F],
 ) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
-    use rayon::prelude::*;
-
-    debug_assert_eq!(eq_r_cycle.len(), one_hot_polys[0].masked_indices_c.len());
-    debug_assert_eq!(one_hot_polys[0].rand_ohv_e_field.len(), one_hot_polys[0].K);
-
-    let t = eq_r_cycle.len();
-    let k_len = one_hot_polys[0].K;
-
-    for i in 1..D {
-        debug_assert_eq!(one_hot_polys[i].K, k_len, "K mismatch across chunks");
-        debug_assert_eq!(
-            one_hot_polys[i].masked_indices_c.len(),
-            t,
-            "masked indices length mismatch"
-        );
-        debug_assert_eq!(
-            one_hot_polys[i].rand_ohv_e_field.len(),
-            k_len,
-            "E_field length mismatch"
-        );
-    }
-
-    // Histogram in masked index space for all D chunks in one trace pass.
-    let num_chunks = rayon::current_num_threads()
-        .next_power_of_two()
-        .min(t)
-        .max(1);
-    let chunk_size = (t / num_chunks).max(1);
-
-    let g_c: [Vec<F>; D] = (0..num_chunks)
-        .into_par_iter()
-        .map(|chunk_index| {
-            let start = chunk_index * chunk_size;
-            let end = ((chunk_index + 1) * chunk_size).min(t);
-
-            let mut local: [Vec<F>; D] = std::array::from_fn(|_| vec![F::zero(); k_len]);
-
-            for j in start..end {
-                let eq = eq_r_cycle[j];
-                for i in 0..D {
-                    if let Some(c) = one_hot_polys[i].masked_indices_c[j] {
-                        local[i][c as usize] += eq;
-                    }
-                }
-            }
-
-            local
-        })
-        .reduce(
-            || std::array::from_fn(|_| vec![F::zero(); k_len]),
-            |mut a, b| {
-                for i in 0..D {
-                    for (ai, bi) in a[i].iter_mut().zip(b[i].iter()) {
-                        *ai += *bi;
-                    }
-                }
-                a
-            },
-        );
-
-    // Convert to k-space: G[k] = Σ_c G_c[c] * E_field[c XOR k].
-    std::array::from_fn(|i| {
-        let g_c_i = &g_c[i];
-        let e_field = &one_hot_polys[i].rand_ohv_e_field;
-        let g_i: Vec<Rep3PrimeFieldShare<F>> = (0..k_len)
-            .into_par_iter()
-            .map(|k| {
-                let mut acc = Rep3PrimeFieldShare::zero_share();
-                for c in 0..k_len {
-                    let idx = (c as u8) ^ (k as u8);
-                    acc += e_field[idx as usize] * g_c_i[c];
-                }
-                acc
-            })
-            .collect();
-        Arc::new(g_i)
-    })
+    crate::poly::one_hot_polynomial::compute_g_from_masked_indices_many(one_hot_polys, eq_r_cycle)
 }
 
 // ---------------------------------------------------------------------------
