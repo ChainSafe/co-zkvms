@@ -24,7 +24,7 @@ pub struct Rep3RLCPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3RLCPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "Rep3RLCPoly::linear_combination")]
+    #[tracing::instrument(skip_all, name = "RLCPoly::linear_combination")]
     pub fn linear_combination(
         polynomials: Vec<Arc<Rep3MultilinearPolynomial<F>>>,
         coefficients: &[F],

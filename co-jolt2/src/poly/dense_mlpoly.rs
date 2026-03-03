@@ -414,9 +414,15 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
-                    left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
-                        *a += rep3::arithmetic::mul_public(*b - *a, r);
-                    });
+                    if n >= 1024 {
+                        left.par_iter_mut().zip(right.par_iter()).for_each(|(a, b)| {
+                            *a += rep3::arithmetic::mul_public(*b - *a, r);
+                        });
+                    } else {
+                        left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
+                            *a += rep3::arithmetic::mul_public(*b - *a, r);
+                        });
+                    }
                 }
             }
         } else {

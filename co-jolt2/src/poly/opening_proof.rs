@@ -47,6 +47,34 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         }
     }
 
+    /// Append sparse polynomial openings for **public** one-hot polynomials.
+    /// Accepts plain `F` claims (no promote). Skips `self.openings` storage
+    /// because worker-side callers never read committed polynomial claims for
+    /// public one-hots (all `get_committed_polynomial_opening` calls for
+    /// BytecodeRa/RamRa are coordinator-side only).
+    pub fn append_sparse_public(
+        &mut self,
+        polynomials: Vec<CommittedPolynomial>,
+        sumcheck: SumcheckId,
+        r_address: &[F::Challenge],
+        r_cycle: &[F::Challenge],
+        claims: Vec<F>,
+    ) {
+        assert_eq!(polynomials.len(), claims.len());
+        for (label, claim) in polynomials.iter().zip(claims.iter()) {
+            self.sumchecks.push(
+                Rep3OpeningProofReductionSumcheck::new_prover_instance_one_hot_public(
+                    *label,
+                    sumcheck,
+                    r_address,
+                    r_cycle,
+                    *claim,
+                    self.party_id,
+                ),
+            );
+        }
+    }
+
     /// Append sparse polynomial openings (one-hot style) at `[r_address, r_cycle]`.
     /// Each polynomial gets its own sumcheck entry.
     pub fn append_sparse(
@@ -192,6 +220,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         // a. Receive gammas from coordinator
         let all_gammas: Vec<F> = io_ctx.network().receive_request()?;
 
+        let _span = tracing::info_span!("prepare_sumchecks").entered();
         // b. Prepare sumchecks
         let mut gamma_offsets = vec![0usize];
         for sumcheck in self.sumchecks.iter() {
@@ -203,11 +232,14 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
         }
 
-        for (idx, sumcheck) in self.sumchecks.iter_mut().enumerate() {
-            let offset = gamma_offsets[idx];
-            let num_gammas = gamma_offsets[idx + 1] - offset;
-            sumcheck.prepare_sumcheck(polynomials, &all_gammas[offset..offset + num_gammas]);
-        }
+        self.sumchecks
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, sumcheck)| {
+                let offset = gamma_offsets[idx];
+                let num_gammas = gamma_offsets[idx + 1] - offset;
+                sumcheck.prepare_sumcheck(polynomials, &all_gammas[offset..offset + num_gammas]);
+            });
 
         // c. Save rlc_coeffs + polynomials before draining into boxed instances
         let saved_meta: Vec<(Vec<F>, Vec<CommittedPolynomial>)> = self
@@ -223,13 +255,16 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             .drain(..)
             .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstanceWorker<F, N>>)
             .collect();
+        drop(_span);
 
-        // e. Run batched sumcheck via framework
+        // e. Run batched sumcheck
         let r_sumcheck = crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker::prove(
             &mut instances,
             self,
             io_ctx,
         )?;
+
+        let _span = tracing::info_span!("rlc_and_hints").entered();
 
         // f. Receive gamma for joint poly RLC from coordinator
         let gamma: F = io_ctx.network().receive_request()?;
@@ -271,6 +306,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             self.party_id,
         );
         let joint_poly = Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc));
+        drop(_span);
 
         // j. Call PCS::prove_rep3 with joint polynomial and pre-combined hint
         PCS::prove_rep3(
@@ -594,25 +630,25 @@ impl<F: JoltField> Rep3DensePolynomialProverOpening<F> {
         let polynomial = self.polynomial.as_ref().unwrap();
         let mle_half = polynomial.len() / 2;
 
-        let eval_0: AdditiveShare<F> = (0..mle_half)
-            .into_par_iter()
-            .map(|j| (polynomial.get_bound_coeff(j) * self.eq_poly.Z[j]).into_additive())
-            .sum();
-
-        let eval_2: AdditiveShare<F> = (0..mle_half)
+        let (eval_0, eval_2) = (0..mle_half)
             .into_par_iter()
             .map(|j| {
                 let poly_j = polynomial.get_bound_coeff(j);
+                let eq_j = self.eq_poly.Z[j];
+                let e0 = (poly_j * eq_j).into_additive();
+
                 let poly_j_half = polynomial.get_bound_coeff(j + mle_half);
                 let poly_2 = poly_j_half + poly_j_half - poly_j;
-
-                let eq_j = self.eq_poly.Z[j];
                 let eq_j_half = self.eq_poly.Z[j + mle_half];
                 let eq_2 = eq_j_half + eq_j_half - eq_j;
+                let e2 = (poly_2 * eq_2).into_additive();
 
-                (poly_2 * eq_2).into_additive()
+                (e0, e2)
             })
-            .sum();
+            .reduce(
+                || (AdditiveShare::zero(), AdditiveShare::zero()),
+                |(a0, a2), (b0, b2)| (a0 + b0, a2 + b2),
+            );
 
         [eval_0, eval_2]
     }
@@ -630,10 +666,18 @@ impl<F: JoltField> Rep3DensePolynomialProverOpening<F> {
     }
 }
 
-/// Worker-side prover opening enum. Dispatches to dense or one-hot variant.
+/// Worker-side prover opening enum. Dispatches to dense, shared one-hot,
+/// or public one-hot variant.
 pub enum Rep3ProverOpening<F: JoltField> {
     Dense(Rep3DensePolynomialProverOpening<F>),
     OneHot(Rep3OneHotPolynomialProverOpening<F>),
+    /// Public one-hot polynomial — wraps vanilla `OneHotPolynomialProverOpening`
+    /// to avoid O(K×T) dense expansion. Uses the efficient O(K+T) algorithm,
+    /// promoting only the 2 per-round scalars to trivial additive shares.
+    PublicOneHot(
+        jolt_core::poly::one_hot_polynomial::OneHotPolynomialProverOpening<F>,
+        PartyID,
+    ),
 }
 
 impl<F: JoltField> Rep3ProverOpening<F> {
@@ -647,6 +691,23 @@ impl<F: JoltField> Rep3ProverOpening<F> {
             Rep3ProverOpening::OneHot(oh) => {
                 oh.compute_prover_message_shared(round, previous_claim)
             }
+            Rep3ProverOpening::PublicOneHot(vanilla, party_id) => {
+                // Reconstruct the previous_claim as a plain F for vanilla.
+                // In the trivial-share convention, only ID0 holds the value.
+                let prev_f = previous_claim.into_fe();
+                let vanilla_evals = vanilla.compute_prover_message(round, prev_f);
+                // Promote the 2 result scalars to trivial additive shares.
+                [
+                    mpc_core::protocols::additive::promote_to_trivial_share(
+                        vanilla_evals[0],
+                        *party_id,
+                    ),
+                    mpc_core::protocols::additive::promote_to_trivial_share(
+                        vanilla_evals[1],
+                        *party_id,
+                    ),
+                ]
+            }
         }
     }
 
@@ -654,6 +715,7 @@ impl<F: JoltField> Rep3ProverOpening<F> {
         match self {
             Rep3ProverOpening::Dense(d) => d.bind(r_j),
             Rep3ProverOpening::OneHot(oh) => oh.bind(r_j, round),
+            Rep3ProverOpening::PublicOneHot(vanilla, _) => vanilla.bind(r_j, round),
         }
     }
 
@@ -661,6 +723,9 @@ impl<F: JoltField> Rep3ProverOpening<F> {
         match self {
             Rep3ProverOpening::Dense(d) => d.final_sumcheck_claim(),
             Rep3ProverOpening::OneHot(oh) => oh.final_sumcheck_claim(),
+            Rep3ProverOpening::PublicOneHot(vanilla, party_id) => {
+                rep3_arith::promote_to_trivial_share(*party_id, vanilla.final_sumcheck_claim())
+            }
         }
     }
 }
@@ -679,7 +744,7 @@ pub struct Rep3OpeningProofReductionSumcheck<F: JoltField> {
     pub polynomials: Vec<CommittedPolynomial>,
     pub sumcheck_id: SumcheckId,
     pub rlc_coeffs: Vec<F>,
-    input_claims: Vec<Rep3PrimeFieldShare<F>>,
+    input_claims: Vec<Rep3Value<F>>,
     pub opening_point: Vec<F::Challenge>,
     party_id: PartyID,
     sumcheck_claim: Option<Rep3PrimeFieldShare<F>>,
@@ -699,7 +764,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
             polynomials,
             sumcheck_id,
             rlc_coeffs: vec![],
-            input_claims: claims,
+            input_claims: claims.into_iter().map(Rep3Value::Shared).collect(),
             opening_point,
             party_id,
             sumcheck_claim: None,
@@ -724,7 +789,32 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
             polynomials: vec![polynomial],
             sumcheck_id,
             rlc_coeffs: vec![F::one()],
-            input_claims: vec![claim],
+            input_claims: vec![Rep3Value::Shared(claim)],
+            opening_point,
+            party_id,
+            sumcheck_claim: None,
+        }
+    }
+
+    pub fn new_prover_instance_one_hot_public(
+        polynomial: CommittedPolynomial,
+        sumcheck_id: SumcheckId,
+        r_address: &[F::Challenge],
+        r_cycle: &[F::Challenge],
+        claim: F,
+        party_id: PartyID,
+    ) -> Self {
+        let opening_point: Vec<F::Challenge> =
+            r_address.iter().chain(r_cycle.iter()).copied().collect();
+        Self {
+            prover_state: None,
+            opening_kind: OpeningKind::OneHot {
+                address_len: r_address.len(),
+            },
+            polynomials: vec![polynomial],
+            sumcheck_id,
+            rlc_coeffs: vec![F::one()],
+            input_claims: vec![Rep3Value::Public(claim)],
             opening_point,
             party_id,
             sumcheck_claim: None,
@@ -792,14 +882,17 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
                 let eq_poly = DensePolynomial::new(eq_evals);
 
                 if self.polynomials.len() > 1 {
-                    // Reduce claims
+                    // Reduce claims (Dense claims are always Shared)
                     let reduced_claim: Rep3PrimeFieldShare<F> = self
                         .rlc_coeffs
                         .iter()
                         .zip(self.input_claims.iter())
-                        .map(|(gamma, claim)| *claim * *gamma)
+                        .map(|(gamma, claim)| match claim {
+                            Rep3Value::Shared(s) => *s * *gamma,
+                            _ => unreachable!("Dense claims are always Shared"),
+                        })
                         .sum();
-                    self.input_claims = vec![reduced_claim];
+                    self.input_claims = vec![Rep3Value::Shared(reduced_claim)];
 
                     // Create RLC dense polynomial
                     let dense_polys: Vec<Rep3DensePolynomial<F>> = self
@@ -866,26 +959,25 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
                         jolt_core::poly::multilinear_polynomial::MultilinearPolynomial::OneHot(oh),
                     ) => {
                         // Public one-hot polynomial (e.g., BytecodeRa, RamRa):
-                        // expand to dense and use Dense opening path.
-                        let T = oh.nonzero_indices.len();
-                        let K = oh.K;
-                        let zero_share =
-                            rep3_arith::promote_to_trivial_share(self.party_id, F::zero());
-                        let one_share =
-                            rep3_arith::promote_to_trivial_share(self.party_id, F::one());
-                        let mut coeffs = vec![zero_share; K * T];
-                        for (t, k) in oh.nonzero_indices.iter().enumerate() {
-                            if let Some(k) = k {
-                                coeffs[*k as usize * T + t] = one_share;
-                            }
-                        }
-                        let eq_evals = EqPolynomial::<F>::evals(&self.opening_point);
-                        let eq_poly = jolt_core::poly::dense_mlpoly::DensePolynomial::new(eq_evals);
-                        self.prover_state =
-                            Some(Rep3ProverOpening::Dense(Rep3DensePolynomialProverOpening {
-                                polynomial: Some(Rep3DensePolynomial::new(coeffs)),
-                                eq_poly,
-                            }));
+                        // Use vanilla OneHotPolynomialProverOpening for O(K+T)
+                        // per round instead of dense-expanding to O(K×T).
+                        use jolt_core::poly::one_hot_polynomial::{
+                            EqAddressState, EqCycleState, OneHotPolynomialProverOpening,
+                        };
+                        use std::sync::{Arc, RwLock};
+
+                        let (r_address, r_cycle) = self.opening_point.split_at(*address_len);
+                        let eq_address = Arc::new(RwLock::new(EqAddressState::new(r_address)));
+                        let eq_cycle = Arc::new(RwLock::new(EqCycleState::new(r_cycle)));
+                        eq_cycle.write().unwrap().merge_D();
+
+                        let mut vanilla_opening =
+                            OneHotPolynomialProverOpening::new(eq_address, eq_cycle);
+                        vanilla_opening.initialize(oh.clone());
+                        self.prover_state = Some(Rep3ProverOpening::PublicOneHot(
+                            vanilla_opening,
+                            self.party_id,
+                        ));
                     }
                     _ => panic!(
                         "Expected shared or public one-hot polynomial for {:?}",
@@ -900,7 +992,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
         self.opening_point.len()
     }
 
-    pub fn input_claim_rep3(&self) -> Rep3PrimeFieldShare<F> {
+    pub fn input_claim_value(&self) -> Rep3Value<F> {
         assert_eq!(
             self.input_claims.len(),
             1,
@@ -946,13 +1038,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 
     fn input_claim(&self) -> Rep3Value<F> {
-        // Use the `a` component directly as an additive share.
-        // For proper Rep3 shares, a0 + a1 + a2 = value (Rep3 invariant).
-        // For "degenerate" shares from public openings (only ID0 holds the
-        // value, others hold zero), this also sums correctly.  Using
-        // `Shared` + `into_additive()` would halve degenerate shares.
-        let claim = self.input_claim_rep3();
-        Rep3Value::Additive(AdditiveShare::from_fe(claim.a))
+        self.input_claim_value()
     }
 
     fn compute_prover_message_share(

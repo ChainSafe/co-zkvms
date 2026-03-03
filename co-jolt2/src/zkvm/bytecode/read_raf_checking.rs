@@ -6,7 +6,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstance;
 use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID};
+use mpc_core::protocols::rep3::PartyID;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
@@ -111,12 +111,12 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for ReadRafSumcheck<F> {
             };
             claims.push(claim);
 
-            accumulator.append_sparse(
+            accumulator.append_sparse_public(
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 r_addr_chunk,
                 &r_cycle.r,
-                vec![rep3_arith::promote_to_trivial_share(party_id, claim)],
+                vec![claim],
             );
         }
 

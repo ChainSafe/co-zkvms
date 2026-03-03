@@ -113,6 +113,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Dory::batch_commit_rep3")]
     fn batch_commit_rep3<U>(
         polys: &[U],
         setup: &Self::ProverSetup,
@@ -136,6 +137,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "Dory::prove_rep3")]
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
@@ -679,36 +681,47 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
     ) -> Self::OpeningProofHint {
         debug_assert_eq!(hints.len(), coeffs.len());
         let num_rows = DoryGlobals::get_max_num_rows();
-        let mut combined = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
 
+        // Mirror vanilla combine_hints pattern: Horner-style accumulation using
+        // the fused GLV-accelerated `v[i] = scalar * v[i] + gamma[i]`.
+        let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
         for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
-            match hint {
-                MaybeShared::Shared(shares) => {
-                    for (i, row) in shares.iter().enumerate() {
-                        if i >= num_rows {
-                            break;
-                        }
-                        combined[i].0 += row.0 * coeff;
-                    }
-                }
-                MaybeShared::Public(Some(hint)) => {
-                    // Public hint: only party ID0 adds (trivial share promotion)
-                    if party_id == PartyID::ID0 {
-                        for (i, row) in hint.iter().enumerate() {
-                            if i >= num_rows {
-                                break;
-                            }
-                            combined[i].0 += row.0 * coeff;
-                        }
-                    }
-                }
-                MaybeShared::Public(None) => {
-                    // Not committed, skip
-                }
-            }
+            // Determine the effective hint for this polynomial.
+            // Public(None) → skip (zero hint, no-op in accumulation).
+            // Public(Some(_)) with party_id != ID0 → skip (trivial share: non-ID0 holds zero).
+            let mut effective_hint = match hint {
+                MaybeShared::Shared(h) => h,
+                MaybeShared::Public(Some(h)) if party_id == PartyID::ID0 => h,
+                _ => continue,
+            };
+
+            effective_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
+
+            // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
+            let row_commitments: &mut [G1Projective] = unsafe {
+                std::slice::from_raw_parts_mut(
+                    effective_hint.as_mut_ptr() as *mut G1Projective,
+                    effective_hint.len(),
+                )
+            };
+            let rlc_row_commitments: &[G1Projective] = unsafe {
+                std::slice::from_raw_parts(
+                    rlc_hint.as_ptr() as *const G1Projective,
+                    rlc_hint.len(),
+                )
+            };
+
+            // v[i] = coeff * v[i] + accumulated[i]
+            jolt_core::jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                row_commitments,
+                *coeff,
+                rlc_row_commitments,
+            );
+
+            let _ = std::mem::replace(&mut rlc_hint, effective_hint);
         }
 
-        combined
+        rlc_hint
     }
 }
 
