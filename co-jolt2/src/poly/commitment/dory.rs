@@ -113,6 +113,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Dory::batch_commit_rep3")]
     fn batch_commit_rep3<U>(
         polys: &[U],
         setup: &Self::ProverSetup,
@@ -136,6 +137,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "Dory::prove_rep3")]
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,

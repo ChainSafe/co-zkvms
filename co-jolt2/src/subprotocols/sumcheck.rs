@@ -364,7 +364,7 @@ impl Rep3BatchedSumcheck {
 pub struct Rep3BatchedSumcheckWorker;
 
 impl Rep3BatchedSumcheckWorker {
-    #[tracing::instrument(skip_all, name = "Rep3BatchedSumcheckWorker::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
     pub fn prove<F, N>(
         instances: &mut [Box<dyn Rep3SumcheckInstanceWorker<F, N>>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,

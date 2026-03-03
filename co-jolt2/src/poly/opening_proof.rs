@@ -192,6 +192,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         // a. Receive gammas from coordinator
         let all_gammas: Vec<F> = io_ctx.network().receive_request()?;
 
+        let _span = tracing::info_span!("prepare_sumchecks").entered();
         // b. Prepare sumchecks
         let mut gamma_offsets = vec![0usize];
         for sumcheck in self.sumchecks.iter() {
@@ -223,13 +224,16 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             .drain(..)
             .map(|s| Box::new(s) as Box<dyn Rep3SumcheckInstanceWorker<F, N>>)
             .collect();
+        drop(_span);
 
-        // e. Run batched sumcheck via framework
+        // e. Run batched sumcheck
         let r_sumcheck = crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker::prove(
             &mut instances,
             self,
             io_ctx,
         )?;
+
+        let _span = tracing::info_span!("rlc_and_hints").entered();
 
         // f. Receive gamma for joint poly RLC from coordinator
         let gamma: F = io_ctx.network().receive_request()?;
@@ -271,6 +275,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             self.party_id,
         );
         let joint_poly = Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc));
+        drop(_span);
 
         // j. Call PCS::prove_rep3 with joint polynomial and pre-combined hint
         PCS::prove_rep3(
