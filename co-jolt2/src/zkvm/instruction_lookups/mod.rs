@@ -12,7 +12,7 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
@@ -112,7 +112,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: EdaBitsPool<F>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let G = self.G.take().unwrap();
         let init = self
@@ -206,7 +206,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             sm.party_id,
         );
 
-        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))])
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(
+            booleanity,
+        ))])
     }
 }
 

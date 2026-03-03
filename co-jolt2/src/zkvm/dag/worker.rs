@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracing::info_span;
 
 use crate::field::JoltField;
@@ -42,7 +43,7 @@ impl Rep3JoltDAGWorker {
     pub fn prove<F, PCS, ProofTranscript, N>(
         mut state: StateManagerWorker<'_, F, PCS>,
         mut io_ctx: &mut IoContextPool<N>,
-        edabits_pool: mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()>
     where
         F: JoltField,
@@ -75,6 +76,7 @@ impl Rep3JoltDAGWorker {
                 party_id,
                 &mut state,
                 &mut io_ctx,
+                edabits_pool,
             )?;
 
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
@@ -93,7 +95,6 @@ impl Rep3JoltDAGWorker {
             claimed_witness_evals,
             padded_trace_length,
             instruction_one_hot_polys,
-            edabits_pool,
         );
 
         let mut stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
@@ -102,50 +103,22 @@ impl Rep3JoltDAGWorker {
             &mut stage2_instances,
             &mut state.accumulator,
             &mut io_ctx,
+            edabits_pool,
         )?;
         drop(_stage2);
-
-        // // -------------------------------------------------------------------
-        // // Stage 2: batched sumcheck (secret instances only)
-        // // -------------------------------------------------------------------
-
-        // let mut registers = Rep3RegistersDagWorker::<F>::new();
-        // let mut ram = Rep3RamDagWorker::<F>::new(&mut state, &mut io_ctx)?;
-        // let mut lookups = Rep3LookupsDagWorker::<F>::new(instruction_one_hot_polys);
-
-        // let (registers_gamma, registers_input_claim): (F, F) =
-        //     io_ctx.network().receive_request()?;
-        // registers.set_stage2_init(registers_gamma, registers_input_claim);
-
-        // let (ram_gamma, ram_input_claim, ram_r_address): (F, F, Vec<F::Challenge>) =
-        //     io_ctx.network().receive_request()?;
-        // ram.set_stage2_init(ram_gamma, ram_input_claim, ram_r_address);
-
-        // let (lookup_gamma, lookup_r_address): ([F; D], Vec<F::Challenge>) =
-        //     io_ctx.network().receive_request()?;
-        // lookups.set_stage2_init(lookup_gamma, lookup_r_address);
-
-        // let mut stage2_instances: Vec<BatchedSumcheckWorkerInstance<F>> = vec![];
-        // stage2_instances.extend(registers.stage2_instances(&mut state));
-        // stage2_instances.extend(ram.stage2_instances(&mut state));
-        // stage2_instances.extend(lookups.stage2_instances(&mut state));
-
-        // HybridBatchedSumcheckWorker::prove(
-        //     &mut stage2_instances,
-        //     &mut state.accumulator,
-        //     &mut io_ctx,
-        // )?;
 
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
-        let mut stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx)?;
+        let mut stage3_instances =
+            stages.stage3_instances(&mut state, &mut io_ctx, edabits_pool)?;
         let _stage3 = info_span!("stage3_prove").entered();
         HybridBatchedSumcheckWorker::prove(
             &mut stage3_instances,
             &mut state.accumulator,
             &mut io_ctx,
+            edabits_pool,
         )?;
         drop(_stage3);
 
@@ -159,6 +132,7 @@ impl Rep3JoltDAGWorker {
                 &mut stage4_instances,
                 &mut state.accumulator,
                 &mut io_ctx,
+                edabits_pool,
             )?;
         }
         // -------------------------------------------------------------------
@@ -184,6 +158,7 @@ impl Rep3JoltDAGWorker {
         party_id: PartyID,
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<(
         HashMap<CommittedPolynomial, MaybeShared<PCS::OpeningProofHint>>,
         HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>>,
@@ -201,9 +176,9 @@ impl Rep3JoltDAGWorker {
             AllCommittedPolynomials::iter().copied().collect();
 
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
-        populate_cycle_witness_rep3(state, io_ctx)?;
+        populate_cycle_witness_rep3(state, io_ctx, edabits_pool)?;
 
-        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx)?;
+        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, edabits_pool)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);

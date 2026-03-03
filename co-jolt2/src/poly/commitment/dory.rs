@@ -7,6 +7,7 @@ use ark_ff::One;
 use ark_std::Zero;
 use dory::{DoryProofBuilder, ProofBuilder};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
@@ -58,23 +59,20 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 }
             }
             Rep3MultilinearPolynomial::Shared(shared_poly) => {
+                let sigma = DoryGlobals::get_num_columns().log_2();
+                let num_columns = DoryGlobals::get_num_columns();
+
                 let (num_vars, row_commitments_share) = match shared_poly {
                     Rep3SharedPoly::Dense(poly) => {
-                        let nu = dory::vmv::compute_nu(
-                            poly.get_num_vars(),
-                            DoryGlobals::get_num_columns().log_2(),
-                        );
+                        let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
                         (
                             poly.get_num_vars(),
                             compute_row_commitment_shares_a(poly, setup, nu),
                         )
                     }
                     Rep3SharedPoly::OneHot(poly) => {
-                        let num_columns = DoryGlobals::get_num_columns();
-                        let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
-                            .iter()
-                            .map(|g| g.0.into_affine())
-                            .collect();
+                        let g1_proj = &setup_g1_projective(setup)[..num_columns];
+                        let bases = G1Projective::normalize_batch(g1_proj);
                         let rows = poly
                             .commit_rows::<G1Projective>(&bases)
                             .expect("OneHot commit_rows preconditions met");
@@ -85,25 +83,28 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                     }
                 };
 
-                let sigma = DoryGlobals::get_num_columns().log_2();
                 let nu = dory::vmv::compute_nu(num_vars, sigma);
                 let num_rows_target = 1usize << nu;
 
                 let mut row_commitments = row_commitments_share;
                 row_commitments.resize(num_rows_target, G1Projective::zero());
 
-                let row_commitments_aff: Vec<G1Affine> =
-                    row_commitments.iter().map(|p| p.into_affine()).collect();
+                let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
 
-                let g2: Vec<G2Affine> = setup.core.g2_vec[..row_commitments_aff.len()]
-                    .iter()
-                    .map(|g| g.0.into_affine())
-                    .collect();
+                let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
+                let g2_aff = G2Projective::normalize_batch(g2_proj);
 
-                let commitment_share = Bn254::multi_pairing(row_commitments_aff, g2);
+                let commitment_share = Bn254::multi_pairing(&row_commitments_aff, &g2_aff);
 
-                let hint_share: Vec<JoltG1Wrapper> =
-                    row_commitments.into_iter().map(JoltGroupWrapper).collect();
+                // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
+                let hint_share: Vec<JoltG1Wrapper> = unsafe {
+                    let mut v = std::mem::ManuallyDrop::new(row_commitments);
+                    Vec::from_raw_parts(
+                        v.as_mut_ptr() as *mut JoltG1Wrapper,
+                        v.len(),
+                        v.capacity(),
+                    )
+                };
 
                 (
                     MaybeShared::Shared(DoryCommitment(commitment_share.into())),
@@ -154,61 +155,67 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             ));
         }
 
-        let sigma = DoryGlobals::get_num_columns().log_2();
-        let num_vars = poly.get_num_vars();
-        let nu = dory::vmv::compute_nu(num_vars, sigma);
+        let (sigma, num_vars, nu, l_vec, r_vec, g1_all, g2_all, g1_affine_all) = {
+            let _span = tracing::info_span!("prove_rep3::precompute").entered();
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let num_vars = poly.get_num_vars();
+            let nu = dory::vmv::compute_nu(num_vars, sigma);
 
-        // Dory uses opposite endian-ness to Jolt
-        let point_rev: Vec<Fr> = opening_point.iter().rev().map(|c| (*c).into()).collect();
-        let point_wrapped: Vec<JoltFieldWrapper<Fr>> =
-            point_rev.iter().copied().map(JoltFieldWrapper).collect();
+            // Dory uses opposite endian-ness to Jolt
+            let point_wrapped: Vec<JoltFieldWrapper<Fr>> = opening_point
+                .iter()
+                .rev()
+                .map(|c| JoltFieldWrapper((*c).into()))
+                .collect();
 
-        let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
-        let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
-        let r_vec: Vec<Fr> = r_vec_w.iter().map(|x| x.0).collect();
+            let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
+            let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
+            let r_vec: Vec<Fr> = r_vec_w.iter().map(|x| x.0).collect();
+
+            // Zero-copy generator slices (JoltGroupWrapper is #[repr(transparent)])
+            let g1_all = setup_g1_projective(setup);
+            let g2_all = setup_g2_projective(setup);
+
+            // Pre-compute affine generators once (used for pairing/MSM across all rounds)
+            let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << nu)]);
+            (sigma, num_vars, nu, l_vec, r_vec, g1_all, g2_all, g1_affine_all)
+        };
 
         // 1) Compute row commitment shares — dispatch based on variant + hint
         let num_rows_target = 1usize << nu;
-        let row_commit_shares: Vec<G1Projective> = if let Some(hint) = opening_hint {
-            // Pre-combined hint: use directly (already the correct additive shares)
-            let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
-            rows.resize(num_rows_target, G1Projective::zero());
-            rows
-        } else {
-            match poly {
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
-                    let mut rows = compute_row_commitment_shares_a(dense, setup, nu);
-                    rows.resize(num_rows_target, G1Projective::zero());
-                    rows
-                }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
-                    let num_columns = DoryGlobals::get_num_columns();
-                    let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
-                        .iter()
-                        .map(|g| g.0.into_affine())
-                        .collect();
-                    let mut rows = one_hot.commit_rows::<G1Projective>(&bases)?;
-                    rows.resize(num_rows_target, G1Projective::zero());
-                    rows
-                }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
-                    let num_columns = DoryGlobals::get_num_columns();
-                    let bases: Vec<G1Affine> = setup.core.g1_vec[..num_columns]
-                        .iter()
-                        .map(|g| g.0.into_affine())
-                        .collect();
-                    let mut rows = rlc.commit_rows::<G1Projective>(&bases)?;
-                    rows.resize(num_rows_target, G1Projective::zero());
-                    rows
-                }
-                Rep3MultilinearPolynomial::Public(_) => {
-                    return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
+        let num_columns = 1usize << sigma;
+        let row_commit_shares: Vec<G1Projective> = {
+            let _span = tracing::info_span!("prove_rep3::row_commits").entered();
+            if let Some(hint) = opening_hint {
+                // Pre-combined hint: use directly (already the correct additive shares)
+                let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
+                rows.resize(num_rows_target, G1Projective::zero());
+                rows
+            } else {
+                let g1_col_affine = &g1_affine_all[..num_columns];
+                match poly {
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                        let mut rows = compute_row_commitment_shares_a(dense, setup, nu);
+                        rows.resize(num_rows_target, G1Projective::zero());
+                        rows
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
+                        one_hot.commit_rows::<G1Projective>(g1_col_affine)
+                            .map(|mut rows| { rows.resize(num_rows_target, G1Projective::zero()); rows })?
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
+                        rlc.commit_rows::<G1Projective>(g1_col_affine)
+                            .map(|mut rows| { rows.resize(num_rows_target, G1Projective::zero()); rows })?
+                    }
+                    Rep3MultilinearPolynomial::Public(_) => {
+                        return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
+                    }
                 }
             }
         };
 
         let row_commit_shares_affine: Vec<G1Affine> =
-            row_commit_shares.iter().map(|p| p.into_affine()).collect();
+            G1Projective::normalize_batch(&row_commit_shares);
 
         network.send_response((num_vars, row_commit_shares_affine))?;
 
@@ -220,7 +227,6 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             .collect();
 
         // 3) compute v_vec share — dispatch based on variant
-        let num_columns = 1usize << sigma;
         let v_vec_share: Vec<Fr> = match poly {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
                 let mut v = vec![<Fr as ark_ff::Zero>::zero(); num_columns];
@@ -248,25 +254,28 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             }
         };
 
-        // c_share = e(msm(row_commitments, v_vec_share), g_fin)
-        let t_vec_v = msm_g1(&row_commitments, &v_vec_share);
-        let c_share = Bn254::pairing(t_vec_v, setup.core.g_fin.0.into_affine()).0;
+        // c_share + d2_share: MSMs + pairings for VMV message
+        let (c_share, d2_share) = {
+            let _span = tracing::info_span!("prove_rep3::vmv_message").entered();
+            let t_vec_v = msm_g1(&row_commitments, &v_vec_share);
+            let g_fin_affine = setup.core.g_fin.0.into_affine();
+            let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
 
-        // d2_share = e(msm(g1_vec[..2^nu], v_vec_share), g_fin)
-        // Dory expects MSM over Γ1[nu] (length 2^nu) with v_vec of length 2^sigma. With fixed sigma,
-        // we have nu >= sigma; we simply pad v_vec with zeros to length 2^nu.
-        let gamma1: Vec<G1Projective> =
-            setup.core.g1_vec[..(1 << nu)].iter().map(|g| g.0).collect();
-        let mut v_vec_padded = v_vec_share.clone();
-        v_vec_padded.resize(1 << nu, <Fr as ark_ff::Zero>::zero());
-        let gamma1_v = msm_g1(&gamma1, &v_vec_padded);
-        let d2_share = Bn254::pairing(gamma1_v, setup.core.g_fin.0.into_affine()).0;
+            let mut v_vec_padded = v_vec_share.clone();
+            v_vec_padded.resize(1 << nu, <Fr as ark_ff::Zero>::zero());
+            let gamma1_v = msm_g1_affine(&g1_affine_all, &v_vec_padded);
+            let d2_share = Bn254::pairing(gamma1_v, g_fin_affine).0;
+            (c_share, d2_share)
+        };
 
         network.send_response((c_share, d2_share))?;
 
-        // v2_share[j] = g_fin * v_vec_share[j]
-        let g_fin = setup.core.g_fin.0;
-        let mut v2_share: Vec<G2Projective> = v_vec_share.iter().map(|s| g_fin * s).collect();
+        // v2_share[j] = g_fin * v_vec_share[j]  (parallelized)
+        let mut v2_share: Vec<G2Projective> = {
+            let _span = tracing::info_span!("prove_rep3::v2_init").entered();
+            let g_fin = setup.core.g_fin.0;
+            v_vec_share.par_iter().map(|s| g_fin * s).collect()
+        };
 
         // s1 = R, s2 = L (matches dory vmv_state_to_dory_prover_state)
         let mut s1 = r_vec;
@@ -275,16 +284,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let mut v1_pub: Vec<G1Projective> = row_commitments;
         let mut curr_nu = nu;
 
+        let _loop_span = tracing::info_span!("prove_rep3::reduction_loop").entered();
         while curr_nu > 0 {
             let n2 = 1usize << (curr_nu - 1);
 
-            // First message: only witness-dependent shares (d2_left/right in GT)
-            let g1_prime: Vec<G1Projective> = setup.core.g1_vec[..n2].iter().map(|g| g.0).collect();
+            // First message: d2_left/d2_right pairings (parallel)
             let (d2_left_share_round, d2_right_share_round) = {
+                let _span = tracing::trace_span!("prove_rep3::d2_pairing", n2).entered();
+                let g1_prime_aff = &g1_affine_all[..n2];
                 let (v2_l, v2_r) = v2_share.split_at(n2);
-                (
-                    multi_pairing(&g1_prime, v2_l),
-                    multi_pairing(&g1_prime, v2_r),
+                rayon::join(
+                    || multi_pairing_g1_affine(g1_prime_aff, v2_l),
+                    || multi_pairing_g1_affine(g1_prime_aff, v2_r),
                 )
             };
 
@@ -293,39 +304,42 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             // Receive beta challenge from coordinator
             let (beta, beta_inv): (Fr, Fr) = network.receive_request()?;
 
-            // Update v1 public: v1 += beta * Gamma1[curr_nu]
-            let gamma1_full: Vec<G1Projective> = setup.core.g1_vec[..(1 << curr_nu)]
-                .iter()
-                .map(|g| g.0)
-                .collect();
-            v1_pub
-                .par_iter_mut()
-                .zip(gamma1_full.par_iter())
-                .for_each(|(v1i, gi)| *v1i += *gi * beta);
+            // Update v1/v2 with generators
+            {
+                let _span = tracing::trace_span!("prove_rep3::v1v2_update", n2).entered();
+                jolt_optimizations::vector_add_scalar_mul_g1_online(
+                    &mut v1_pub,
+                    &g1_all[..(1 << curr_nu)],
+                    beta,
+                );
 
-            // Update v2 share: v2 += beta_inv * Gamma2 (public term: only party 0 adds)
-            if network.party_id() == PartyID::ID0 {
-                let gamma2_full: Vec<G2Projective> = setup.core.g2_vec[..(1 << curr_nu)]
-                    .iter()
-                    .map(|g| g.0)
-                    .collect();
-                v2_share
-                    .par_iter_mut()
-                    .zip(gamma2_full.par_iter())
-                    .for_each(|(v2i, gi)| *v2i += *gi * beta_inv);
+                if network.party_id() == PartyID::ID0 {
+                    jolt_optimizations::vector_add_scalar_mul_g2_online(
+                        &mut v2_share,
+                        &g2_all[..(1 << curr_nu)],
+                        beta_inv,
+                    );
+                }
             }
 
-            // Second message: witness-dependent (c_plus/c_minus in GT, e2_plus/e2_minus in G2)
+            // Second message: c_plus/c_minus pairings + e2 MSMs (all 4 in parallel)
             let (v1_l, v1_r) = v1_pub.split_at(n2);
             let (v2_l, v2_r) = v2_share.split_at(n2);
             let (s1_l, s1_r) = s1.split_at(n2);
-            let (_s2_l, _s2_r) = s2.split_at(n2);
 
-            let c_plus_share_round = multi_pairing(v1_l, v2_r);
-            let c_minus_share_round = multi_pairing(v1_r, v2_l);
-
-            let e2_plus_share = msm_g2(v2_r, s1_l).into_affine();
-            let e2_minus_share = msm_g2(v2_l, s1_r).into_affine();
+            let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = {
+                let _span = tracing::trace_span!("prove_rep3::second_msg", n2).entered();
+                rayon::join(
+                    || rayon::join(
+                        || multi_pairing(v1_l, v2_r),
+                        || multi_pairing(v1_r, v2_l),
+                    ),
+                    || rayon::join(
+                        || msm_g2(v2_r, s1_l).into_affine(),
+                        || msm_g2(v2_l, s1_r).into_affine(),
+                    ),
+                )
+            };
 
             network.send_response((
                 (c_plus_share_round, c_minus_share_round),
@@ -335,34 +349,38 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             // Receive alpha challenge from coordinator
             let (alpha, alpha_inv): (Fr, Fr) = network.receive_request()?;
 
-            // Fold v1 public: v1 = alpha*v1L + v1R (truncate)
-            let mut v1_next = Vec::with_capacity(n2);
-            for i in 0..n2 {
-                v1_next.push(v1_l[i] * alpha + v1_r[i]);
-            }
-            v1_pub = v1_next;
+            // Fold v1, v2, s1, s2 — in-place GLV-accelerated for group elements
+            {
+                let _span = tracing::trace_span!("prove_rep3::fold", n2).entered();
 
-            // Fold v2 share: v2 = alpha_inv*v2L + v2R
-            let mut v2_next = Vec::with_capacity(n2);
-            for i in 0..n2 {
-                v2_next.push(v2_l[i] * alpha_inv + v2_r[i]);
-            }
-            v2_share = v2_next;
+                // v1[i] = alpha * v1_l[i] + v1_r[i] (in-place, GLV 2D Shamir)
+                let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                    v1_l_mut, alpha, v1_r_ref,
+                );
+                v1_pub.truncate(n2);
 
-            // Fold s1,s2
-            let (s1_l, s1_r) = s1.split_at(n2);
-            let (s2_l, s2_r) = s2.split_at(n2);
-            let mut s1_next = Vec::with_capacity(n2);
-            let mut s2_next = Vec::with_capacity(n2);
-            for i in 0..n2 {
-                s1_next.push(s1_l[i] * alpha + s1_r[i]);
-                s2_next.push(s2_l[i] * alpha_inv + s2_r[i]);
+                // v2[i] = alpha_inv * v2_l[i] + v2_r[i] (in-place, GLV 4D Shamir)
+                let (v2_l_mut, v2_r_ref) = v2_share.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
+                    v2_l_mut, alpha_inv, v2_r_ref,
+                );
+                v2_share.truncate(n2);
+
+                // s1, s2 scalar folds (no GLV needed for field elements)
+                let (s1_l, s1_r) = s1.split_at(n2);
+                let (s2_l, s2_r) = s2.split_at(n2);
+                let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
+                    .into_par_iter()
+                    .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
+                    .unzip();
+                s1 = s1_next;
+                s2 = s2_next;
             }
-            s1 = s1_next;
-            s2 = s2_next;
 
             curr_nu -= 1;
         }
+        drop(_loop_span);
 
         // Final: send v2 final share to coordinator for scalar product message
         debug_assert_eq!(v2_share.len(), 1);
@@ -395,6 +413,14 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let num_vars = init_msgs[0].0;
         let nu = dory::vmv::compute_nu(num_vars, sigma);
 
+        // Zero-copy generator slices
+        let g1_all = setup_g1_projective(setup);
+        let g2_all = setup_g2_projective(setup);
+
+        // Pre-compute affine generators once (used across all rounds)
+        let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << nu)]);
+        let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << nu)]);
+
         // Reconstruct row commitments: sum in G1
         let rows_len = init_msgs[0].1.len();
         let mut row_commitments = vec![G1Projective::zero(); rows_len];
@@ -404,17 +430,16 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 *acc += s.into_group();
             }
         }
-        let row_commitments_affine = row_commitments
-            .iter()
-            .map(|p| p.into_affine())
-            .collect::<Vec<_>>();
+        let row_commitments_affine = G1Projective::normalize_batch(&row_commitments);
 
         network.broadcast_request(row_commitments_affine)?;
 
         // Compute L,R and public parts
-        let point_rev: Vec<Fr> = opening_point.iter().rev().map(|&x| x.into()).collect();
-        let point_wrapped: Vec<JoltFieldWrapper<Fr>> =
-            point_rev.iter().copied().map(JoltFieldWrapper).collect();
+        let point_wrapped: Vec<JoltFieldWrapper<Fr>> = opening_point
+            .iter()
+            .rev()
+            .map(|&x| JoltFieldWrapper(x.into()))
+            .collect();
 
         let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
         let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
@@ -461,27 +486,23 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 d2_right *= r;
             }
 
-            // Public-only terms (computed by coordinator)
-            let g2_prime: Vec<G2Projective> = setup.core.g2_vec[..n2].iter().map(|g| g.0).collect();
-            let (d1_left, d1_right) = {
+            // Public-only terms — parallel d1 pairings + parallel e1/e2 MSMs
+            let g2_prime_aff = &g2_affine_all[..n2];
+            let ((d1_left, d1_right), (e1_beta, e2_beta)) = {
                 let (v1_l, v1_r) = v1_pub.split_at(n2);
-                (
-                    multi_pairing(v1_l, &g2_prime),
-                    multi_pairing(v1_r, &g2_prime),
+                let g1_aff_nu = &g1_affine_all[..(1 << curr_nu)];
+                let g2_aff_nu = &g2_affine_all[..(1 << curr_nu)];
+                rayon::join(
+                    || rayon::join(
+                        || multi_pairing_g2_affine(v1_l, g2_prime_aff),
+                        || multi_pairing_g2_affine(v1_r, g2_prime_aff),
+                    ),
+                    || rayon::join(
+                        || msm_g1_affine(g1_aff_nu, &s2),
+                        || msm_g2_affine(g2_aff_nu, &s1),
+                    ),
                 )
             };
-
-            let g1_full: Vec<G1Projective> = setup.core.g1_vec[..(1 << curr_nu)]
-                .iter()
-                .map(|g| g.0)
-                .collect();
-            let g2_full: Vec<G2Projective> = setup.core.g2_vec[..(1 << curr_nu)]
-                .iter()
-                .map(|g| g.0)
-                .collect();
-
-            let e1_beta = msm_g1(&g1_full, &s2);
-            let e2_beta = msm_g2(&g2_full, &s1);
 
             let first_msg =
                 dory::messages::FirstReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -499,15 +520,13 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let beta_inv = beta_chal.beta_inverse.0;
             network.broadcast_request((beta, beta_inv))?;
 
-            // Update v1_pub for next computations
-            let gamma1_full: Vec<G1Projective> = setup.core.g1_vec[..(1 << curr_nu)]
-                .iter()
-                .map(|g| g.0)
-                .collect();
-            v1_pub
-                .par_iter_mut()
-                .zip(gamma1_full.par_iter())
-                .for_each(|(v1i, gi)| *v1i += *gi * beta);
+            // Update v1_pub: v1 += beta * Gamma1[curr_nu]
+            // Uses GLV-accelerated fused scalar-mul-and-add (zero-copy generators)
+            jolt_optimizations::vector_add_scalar_mul_g1_online(
+                &mut v1_pub,
+                &g1_all[..(1 << curr_nu)],
+                beta,
+            );
 
             // Second message reconstruction
             let second_msgs: Vec<((Fq12, Fq12), (G2Affine, G2Affine))> =
@@ -526,8 +545,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             let (s2_l, s2_r) = s2.split_at(n2);
             let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let e1_plus = msm_g1(v1_l, s2_r);
-            let e1_minus = msm_g1(v1_r, s2_l);
+            let (e1_plus, e1_minus) = rayon::join(
+                || msm_g1(v1_l, s2_r),
+                || msm_g1(v1_r, s2_l),
+            );
 
             let second_msg =
                 dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -545,21 +566,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let alpha_inv = alpha_chal.alpha_inverse.0;
             network.broadcast_request((alpha, alpha_inv))?;
 
-            // Fold v1 and s1,s2 for next round (public)
-            let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let mut v1_next = Vec::with_capacity(n2);
-            for i in 0..n2 {
-                v1_next.push(v1_l[i] * alpha + v1_r[i]);
-            }
-            v1_pub = v1_next;
+            // Fold v1 (in-place GLV) and s1,s2 for next round (public)
+            let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+                v1_l_mut, alpha, v1_r_ref,
+            );
+            v1_pub.truncate(n2);
 
             let (s1_l, s1_r) = s1.split_at(n2);
-            let mut s1_next = Vec::with_capacity(n2);
-            let mut s2_next = Vec::with_capacity(n2);
-            for i in 0..n2 {
-                s1_next.push(s1_l[i] * alpha + s1_r[i]);
-                s2_next.push(s2_l[i] * alpha_inv + s2_r[i]);
-            }
+            let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
+                .into_par_iter()
+                .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
+                .unzip();
             s1 = s1_next;
             s2 = s2_next;
 
@@ -729,6 +747,32 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 // Helpers (Rep3)
 // =============================================================================
 
+/// Zero-copy view of `setup.core.g1_vec` as `&[G1Projective]`.
+/// Safety: `JoltGroupWrapper<G1Projective>` is `#[repr(transparent)]`.
+fn setup_g1_projective(
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> &[G1Projective] {
+    unsafe {
+        std::slice::from_raw_parts(
+            setup.core.g1_vec.as_ptr() as *const G1Projective,
+            setup.core.g1_vec.len(),
+        )
+    }
+}
+
+/// Zero-copy view of `setup.core.g2_vec` as `&[G2Projective]`.
+/// Safety: `JoltGroupWrapper<G2Projective>` is `#[repr(transparent)]`.
+fn setup_g2_projective(
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> &[G2Projective] {
+    unsafe {
+        std::slice::from_raw_parts(
+            setup.core.g2_vec.as_ptr() as *const G2Projective,
+            setup.core.g2_vec.len(),
+        )
+    }
+}
+
 fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
     let coeffs_ref = poly.coeffs_ref();
     let local = coeffs_ref.iter().map(|s| s.a).collect::<Vec<Fr>>();
@@ -745,10 +789,8 @@ fn compute_row_commitment_shares_a(
     let num_columns = 1usize << sigma;
     let num_rows_target = 1usize << nu;
 
-    let bases = setup.core.g1_vec[..num_columns]
-        .iter()
-        .map(|g| g.0.into_affine())
-        .collect::<Vec<G1Affine>>();
+    let g1_proj = &setup_g1_projective(setup)[..num_columns];
+    let bases = G1Projective::normalize_batch(g1_proj);
 
     let (global_offset, local_coeffs) = rep3_local_coeffs_a(poly);
     let mut row_commitments = vec![G1Projective::zero(); num_rows_target];
@@ -789,9 +831,16 @@ fn compute_row_commitment_shares_a(
     row_commitments
 }
 
+/// MSM with projective bases (normalizes to affine internally).
 fn msm_g1(bases: &[G1Projective], scalars: &[Fr]) -> G1Projective {
     let bases_aff = G1Projective::normalize_batch(bases);
     ArkVariableBaseMSM::msm(&bases_aff, scalars).expect("msm should succeed")
+}
+
+/// MSM with pre-computed affine bases (avoids redundant normalization).
+fn msm_g1_affine(bases_aff: &[G1Affine], scalars: &[Fr]) -> G1Projective {
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars)
+        .expect("msm should succeed")
 }
 
 fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
@@ -799,10 +848,29 @@ fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
     ArkVariableBaseMSM::msm(&bases_aff, scalars).expect("msm should succeed")
 }
 
+/// MSM with pre-computed affine bases (avoids redundant normalization).
+fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars)
+        .expect("msm should succeed")
+}
+
 fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
     let ps_aff = G1Projective::normalize_batch(ps);
     let qs_aff = G2Projective::normalize_batch(qs);
     Bn254::multi_pairing(ps_aff, qs_aff).0
+}
+
+/// Pairing with pre-computed G1 affine bases.
+fn multi_pairing_g1_affine(ps_aff: &[G1Affine], qs: &[G2Projective]) -> Fq12 {
+    let qs_aff = G2Projective::normalize_batch(qs);
+    Bn254::multi_pairing(&ps_aff[..qs_aff.len()], qs_aff).0
+}
+
+/// Pairing with pre-computed G2 affine bases.
+fn multi_pairing_g2_affine(ps: &[G1Projective], qs_aff: &[G2Affine]) -> Fq12 {
+    let ps_aff = G1Projective::normalize_batch(ps);
+    let n = ps_aff.len();
+    Bn254::multi_pairing(ps_aff, &qs_aff[..n]).0
 }
 
 #[cfg(test)]

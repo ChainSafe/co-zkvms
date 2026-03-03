@@ -158,7 +158,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         self.eq_r_cycle.bind(r_j);
         let r: F = r_j.into();
         rayon::join(

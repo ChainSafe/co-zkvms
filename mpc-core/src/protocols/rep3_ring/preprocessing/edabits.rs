@@ -285,8 +285,13 @@ where
         }
 
         // P0/P1: regenerate from RNG seeds.
-        let gamma_byte_offset = cursor_base * t_bytes;
-        let alpha_byte_offset = self.total * t_bytes + cursor_base * k * fb;
+        //
+        // Per-item interleaved layout in rng1 (P0↔P1 stream):
+        //   [γ₀(t_B) α_{0,0}(fb)..α_{0,k-1}(fb) | γ₁ α_{1,0}..α_{1,k-1} | ...]
+        // stride = t_bytes + k * fb per item.  Offsets are independent of `total`.
+        let stride = t_bytes + k * fb;
+        let item_byte_offset = cursor_base * stride;
+        let interleaved_bytes = n * stride;
 
         fn seek_and_generate(
             seed: [u8; crate::SEED_SIZE],
@@ -306,55 +311,37 @@ where
             buf
         }
 
-        let gamma_total_bytes = n * t_bytes;
-        let alpha_total_bytes = n * k * fb;
+        // rng2 (P0↔P2) only carries gammas — offset = cursor * t_bytes (unchanged).
+        let g2_gamma_offset = cursor_base * t_bytes;
+        let g2_gamma_bytes = n * t_bytes;
 
-        let (g1_bytes, g2_bytes, alpha_bytes);
+        let (interleaved, g2_bytes);
         if party_id == PartyID::ID0 {
             let _span = tracing::trace_span!("gen_gamma_alpha").entered();
-            let (g1, (g2, a1)) = rayon::join(
-                || seek_and_generate(self.seed1, self.pos1, gamma_byte_offset, gamma_total_bytes),
-                || {
-                    rayon::join(
-                        || {
-                            seek_and_generate(
-                                self.seed2,
-                                self.pos2,
-                                gamma_byte_offset,
-                                gamma_total_bytes,
-                            )
-                        },
-                        || {
-                            seek_and_generate(
-                                self.seed1,
-                                self.pos1,
-                                alpha_byte_offset,
-                                alpha_total_bytes,
-                            )
-                        },
-                    )
-                },
+            let (s1, s2) = rayon::join(
+                || seek_and_generate(self.seed1, self.pos1, item_byte_offset, interleaved_bytes),
+                || seek_and_generate(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes),
             );
-            g1_bytes = g1;
-            g2_bytes = g2;
-            alpha_bytes = a1;
+            interleaved = s1;
+            g2_bytes = s2;
         } else {
+            // P1: same interleaved stream from seed2 (P1↔P0 = P0↔P1 shared stream).
             let _span = tracing::trace_span!("gen_alpha").entered();
-            g1_bytes = Vec::new();
+            interleaved =
+                seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
             g2_bytes = Vec::new();
-            alpha_bytes =
-                seek_and_generate(self.seed2, self.pos2, alpha_byte_offset, alpha_total_bytes);
         }
 
-        // Build flat arrays: one gammas vec + one alphas_flat vec.
+        // Build flat arrays from per-item interleaved layout.
         let _span = tracing::trace_span!("build_batch").entered();
         let gammas: Vec<RingElement<T>> = if party_id == PartyID::ID0 {
             (0..n)
                 .into_par_iter()
                 .map(|i| {
-                    let g_start = i * t_bytes;
-                    let g1_val = T::from_le_bytes(&g1_bytes[g_start..g_start + t_bytes]);
-                    let g2_val = T::from_le_bytes(&g2_bytes[g_start..g_start + t_bytes]);
+                    let g1_off = i * stride;
+                    let g2_off = i * t_bytes;
+                    let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
+                    let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
                     RingElement(g1_val ^ g2_val)
                 })
                 .collect()
@@ -366,10 +353,12 @@ where
             .into_par_iter()
             .with_min_len(256)
             .map(|idx| {
-                let a_start = idx * fb;
-                let lo = u64::from_le_bytes(alpha_bytes[a_start..a_start + 8].try_into().unwrap());
+                let item = idx / k;
+                let bit = idx % k;
+                let a_start = item * stride + t_bytes + bit * fb;
+                let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
                 let hi =
-                    u64::from_le_bytes(alpha_bytes[a_start + 8..a_start + 16].try_into().unwrap());
+                    u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
                 F::from((hi as u128) << 64 | lo as u128)
             })
             .collect();
@@ -462,6 +451,32 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
             let _ = backing_store::update_cursor(path, self.cursor);
         }
     }
+
+    /// Return the RNG seeds and positions for this lazy source.
+    pub(crate) fn extension_seeds(
+        &self,
+    ) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
+        (self.seed1, self.pos1, self.seed2, self.pos2)
+    }
+
+    /// Current total number of items in this pool.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Extend this pool by `deficit` additional items.
+    ///
+    /// For P2: appends the received alpha2 extension to stored backing.
+    /// For P0/P1: only bumps `total` (regeneration is seed-based).
+    pub(crate) fn apply_extension(&mut self, deficit: usize, alpha2_ext: Vec<F>) {
+        if deficit == 0 {
+            return;
+        }
+        if !alpha2_ext.is_empty() {
+            self.alpha2_flat.extend(&alpha2_ext);
+        }
+        self.total += deficit;
+    }
 }
 
 impl<T: IntRing2k, F: PrimeField> Drop for LazyEdaBits<T, F> {
@@ -500,17 +515,19 @@ where
     let mut eda_rand = io.main().rngs.rand.fork();
     let (seed1, pos1, seed2, pos2) = eda_rand.snapshot();
 
+    // Per-item interleaved layout in rng1:
+    //   [γ₀(t_B) α_{0,0}(fb)..α_{0,k-1}(fb) | γ₁ α_{1,0}..α_{1,k-1} | ...]
+    // stride = t_bytes + k * field_bytes.
+    let stride = t_bytes + k * field_bytes;
     let gamma_total_bytes = num * t_bytes;
-    let alpha_total_bytes = num * k * field_bytes;
 
     // P0 → P2: send alpha_2 = F::from(gamma_bit) - alpha_1.
     // Only P0 needs RNG bytes; P1/P2 skip generation entirely.
     if party_id == PartyID::ID0 {
         let _span = tracing::trace_span!("gen_rng_bytes").entered();
-        // P0 needs: gamma from both seeds (for XOR) + alpha from seed1 only.
-        // rng1: generate gamma + alpha contiguously. rng2: gamma only.
+        // rng1: interleaved gamma+alpha per item. rng2: gamma only.
         let (all_bytes1, g2_bytes) = {
-            let mut a = vec![0u8; gamma_total_bytes + alpha_total_bytes];
+            let mut a = vec![0u8; num * stride];
             let mut b = vec![0u8; gamma_total_bytes];
             rayon::join(
                 || eda_rand.rng1.fill_bytes(&mut a),
@@ -518,8 +535,6 @@ where
             );
             (a, b)
         };
-        let g1_bytes = &all_bytes1[..gamma_total_bytes];
-        let a1_bytes = &all_bytes1[gamma_total_bytes..];
         drop(_span);
 
         let _span = tracing::trace_span!("compute_send_alpha2").entered();
@@ -529,15 +544,17 @@ where
             .enumerate()
             .with_min_len(256)
             .for_each(|(i, chunk)| {
-                let g_start = i * t_bytes;
-                let g1_val = T::from_le_bytes(&g1_bytes[g_start..g_start + t_bytes]);
-                let g2_val = T::from_le_bytes(&g2_bytes[g_start..g_start + t_bytes]);
+                let base = i * stride;
+                let g1_val = T::from_le_bytes(&all_bytes1[base..base + t_bytes]);
+                let g2_val = T::from_le_bytes(&g2_bytes[i * t_bytes..(i + 1) * t_bytes]);
                 let gamma = g1_val ^ g2_val;
                 for j in 0..k {
-                    let a_start = (i * k + j) * field_bytes;
-                    let lo = u64::from_le_bytes(a1_bytes[a_start..a_start + 8].try_into().unwrap());
-                    let hi =
-                        u64::from_le_bytes(a1_bytes[a_start + 8..a_start + 16].try_into().unwrap());
+                    let a_start = base + t_bytes + j * field_bytes;
+                    let lo =
+                        u64::from_le_bytes(all_bytes1[a_start..a_start + 8].try_into().unwrap());
+                    let hi = u64::from_le_bytes(
+                        all_bytes1[a_start + 8..a_start + 16].try_into().unwrap(),
+                    );
                     let alpha_1 = F::from((hi as u128) << 64 | lo as u128);
                     let gamma_bit = ((gamma >> j) & T::one()) == T::one();
                     chunk[j] = F::from(gamma_bit as u64) - alpha_1;
@@ -576,14 +593,14 @@ pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
     io: &mut IoContextPool<N>,
-) -> eyre::Result<EdaBitsPool<F>> {
+) -> eyre::Result<PreprocessingPool<F>> {
     let e0 = random_edabits_lazy::<u8, F, _>(counts[0], io)?;
     let e1 = random_edabits_lazy::<u16, F, _>(counts[1], io)?;
     let e2 = random_edabits_lazy::<u32, F, _>(counts[2], io)?;
     let e3 = random_edabits_lazy::<u64, F, _>(counts[3], io)?;
     let e4 = random_edabits_lazy::<u128, F, _>(counts[4], io)?;
     let d = super::dabits::random_dabits_lazy::<F, _>(num_dabits, io)?;
-    Ok(EdaBitsPool::new(e0, e1, e2, e3, e4, d))
+    Ok(PreprocessingPool::new(e0, e1, e2, e3, e4, d))
 }
 
 /// Batched preprocessing: generate all edaBits + daBits in **2 network rounds**
@@ -596,7 +613,7 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
     io: &mut IoContextPool<N>,
-) -> eyre::Result<EdaBitsPool<F>> {
+) -> eyre::Result<PreprocessingPool<F>> {
     use super::dabits;
     use crate::protocols::rep3::rngs::Rep3Rand;
 
@@ -624,10 +641,10 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
         }
         let t_bytes = std::mem::size_of::<T>();
         let k = T::K;
+        let stride = t_bytes + k * fb;
         let gamma_total = num * t_bytes;
-        let alpha_total = num * k * fb;
         let (all1, g2) = {
-            let mut a = vec![0u8; gamma_total + alpha_total];
+            let mut a = vec![0u8; num * stride];
             let mut b = vec![0u8; gamma_total];
             rayon::join(
                 || eda_rand.rng1.fill_bytes(&mut a),
@@ -635,20 +652,18 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             );
             (a, b)
         };
-        let g1 = &all1[..gamma_total];
-        let a1 = &all1[gamma_total..];
         let mut out = vec![Fp::zero(); num * k];
         out.par_chunks_mut(k)
             .enumerate()
             .with_min_len(256)
             .for_each(|(i, chunk)| {
-                let gs = i * t_bytes;
-                let g1v = T::from_le_bytes(&g1[gs..gs + t_bytes]);
-                let g2v = T::from_le_bytes(&g2[gs..gs + t_bytes]);
+                let base = i * stride;
+                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
                 let gamma = g1v ^ g2v;
                 for j in 0..k {
-                    let s = (i * k + j) * fb;
-                    let alpha1 = dabits::parse_field::<Fp>(&a1, s);
+                    let s = base + t_bytes + j * fb;
+                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
                     let gbit = ((gamma >> j) & T::one()) == T::one();
                     chunk[j] = Fp::from(gbit as u64) - alpha1;
                 }
@@ -667,9 +682,12 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let ea4 = edabit_alpha2_p0::<u128, F>(counts[4], &mut rands[4], fb);
 
             // daBit α₂ (same logic as random_dabits_lazy P0 branch)
+            // daBit α₂ — per-item interleaved layout in rng1:
+            //   [g₀(1) a1₀(fb) r1₀(fb) | g₁(1) a1₁(fb) r1₁(fb) | ...]
             let da_alpha2 = if num_dabits > 0 {
                 let r = &mut rands[5];
-                let slen1 = num_dabits + num_dabits * fb + num_dabits * fb;
+                let da_stride = 1 + 2 * fb;
+                let slen1 = num_dabits * da_stride;
                 let slen2 = num_dabits;
                 let (s1, s2) = {
                     let mut a = vec![0u8; slen1];
@@ -677,14 +695,12 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                     rayon::join(|| r.rng1.fill_bytes(&mut a), || r.rng2.fill_bytes(&mut b));
                     (a, b)
                 };
-                let g1 = &s1[..num_dabits];
-                let a1 = &s1[num_dabits..num_dabits + num_dabits * fb];
                 (0..num_dabits)
                     .into_par_iter()
                     .with_min_len(256)
                     .map(|i| {
-                        let gbit = ((g1[i] ^ s2[i]) & 1) != 0;
-                        let alpha1: F = dabits::parse_field(&a1, i * fb);
+                        let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
+                        let alpha1: F = dabits::parse_field(&s1, i * da_stride + 1);
                         F::from(gbit as u64) - alpha1
                     })
                     .collect::<Vec<F>>()
@@ -737,7 +753,7 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(EdaBitsPool::new(
+            Ok(PreprocessingPool::new(
                 e0,
                 e1,
                 e2,
@@ -748,9 +764,12 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
         }
         PartyID::ID1 => {
             // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
+            // Per-item interleaved layout in rng2 (P1↔P0 stream):
+            //   [g₀(1) a1₀(fb) r1₀(fb) | g₁(1) a1₁(fb) r1₁(fb) | ...]
             if num_dabits > 0 {
                 let r = &mut rands[5];
-                let slen2 = num_dabits + num_dabits * fb + num_dabits * fb;
+                let da_stride = 1 + 2 * fb;
+                let slen2 = num_dabits * da_stride;
                 let slen1 = num_dabits;
                 let (s2, s1) = {
                     let mut a = vec![0u8; slen2];
@@ -758,8 +777,6 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                     rayon::join(|| r.rng2.fill_bytes(&mut a), || r.rng1.fill_bytes(&mut b));
                     (a, b)
                 };
-                let a1 = &s2[num_dabits..num_dabits + num_dabits * fb];
-                let r1 = &s2[num_dabits + num_dabits * fb..];
                 let theta_bytes = &s1;
 
                 let s12: Vec<F> = (0..num_dabits)
@@ -768,8 +785,8 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                     .map(|i| {
                         let theta = (theta_bytes[i] & 1) != 0;
                         let neg1_theta = if theta { -F::one() } else { F::one() };
-                        let alpha1: F = dabits::parse_field(&a1, i * fb);
-                        let r1_val: F = dabits::parse_field(&r1, i * fb);
+                        let alpha1: F = dabits::parse_field(&s2, i * da_stride + 1);
+                        let r1_val: F = dabits::parse_field(&s2, i * da_stride + 1 + fb);
                         neg1_theta * alpha1 - r1_val
                     })
                     .collect();
@@ -788,7 +805,7 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(EdaBitsPool::new(
+            Ok(PreprocessingPool::new(
                 e0,
                 e1,
                 e2,
@@ -899,7 +916,7 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], a4, party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(EdaBitsPool::new(
+            Ok(PreprocessingPool::new(
                 e0,
                 e1,
                 e2,
@@ -909,6 +926,332 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             ))
         }
     }
+}
+
+/// Extend an existing preprocessing pool with additional items.
+///
+/// For each edaBit type and daBits where `deficit > 0`, generates additional
+/// items by seeking into the existing RNG streams past the already-generated
+/// region. Same 2-round communication pattern as `preprocess_pool_batched`.
+///
+/// **Communication:** P0→P2 (combined alpha2 for deficit items), P1→P2 (daBit s₁₂),
+/// P2→P0 (daBit s₂₀).
+#[tracing::instrument(skip_all, name = "extend_pool_batched")]
+pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
+    pool: &mut PreprocessingPool<F>,
+    deficit_counts: [usize; 5],
+    deficit_dabits: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<()> {
+    use super::dabits;
+
+    let party_id = io.party_id();
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
+        .expect("u32 fits into usize")
+        .div_ceil(8);
+
+    // Helper: compute edaBit alpha2 for P0 by seeking past old_total items.
+    fn edabit_alpha2_ext<T: IntRing2k, Fp: PrimeField>(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        old_total: usize,
+        deficit: usize,
+        fb: usize,
+    ) -> Vec<Fp>
+    where
+        Standard: Distribution<T>,
+    {
+        if deficit == 0 {
+            return Vec::new();
+        }
+        let t_bytes = std::mem::size_of::<T>();
+        let k = T::K;
+        let stride = t_bytes + k * fb;
+
+        let all1 = dabits::seek_and_generate(seed1, pos1, old_total * stride, deficit * stride);
+        let g2 = dabits::seek_and_generate(seed2, pos2, old_total * t_bytes, deficit * t_bytes);
+
+        let mut out = vec![Fp::zero(); deficit * k];
+        out.par_chunks_mut(k)
+            .enumerate()
+            .with_min_len(256)
+            .for_each(|(i, chunk)| {
+                let base = i * stride;
+                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
+                let gamma = g1v ^ g2v;
+                for j in 0..k {
+                    let s = base + t_bytes + j * fb;
+                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
+                    let gbit = ((gamma >> j) & T::one()) == T::one();
+                    chunk[j] = Fp::from(gbit as u64) - alpha1;
+                }
+            });
+        out
+    }
+
+    match party_id {
+        PartyID::ID0 => {
+            // Compute edaBit alpha2 extensions by seeking past old items.
+            let (s1, p1, s2, p2) = pool.edabits_u8.extension_seeds();
+            let ea0 = edabit_alpha2_ext::<u8, F>(
+                s1,
+                p1,
+                s2,
+                p2,
+                pool.edabits_u8.total(),
+                deficit_counts[0],
+                fb,
+            );
+            let (s1, p1, s2, p2) = pool.edabits_u16.extension_seeds();
+            let ea1 = edabit_alpha2_ext::<u16, F>(
+                s1,
+                p1,
+                s2,
+                p2,
+                pool.edabits_u16.total(),
+                deficit_counts[1],
+                fb,
+            );
+            let (s1, p1, s2, p2) = pool.edabits_u32.extension_seeds();
+            let ea2 = edabit_alpha2_ext::<u32, F>(
+                s1,
+                p1,
+                s2,
+                p2,
+                pool.edabits_u32.total(),
+                deficit_counts[2],
+                fb,
+            );
+            let (s1, p1, s2, p2) = pool.edabits_u64.extension_seeds();
+            let ea3 = edabit_alpha2_ext::<u64, F>(
+                s1,
+                p1,
+                s2,
+                p2,
+                pool.edabits_u64.total(),
+                deficit_counts[3],
+                fb,
+            );
+            let (s1, p1, s2, p2) = pool.edabits_u128.extension_seeds();
+            let ea4 = edabit_alpha2_ext::<u128, F>(
+                s1,
+                p1,
+                s2,
+                p2,
+                pool.edabits_u128.total(),
+                deficit_counts[4],
+                fb,
+            );
+
+            // daBit alpha2 extension
+            let da_alpha2 = if deficit_dabits > 0 {
+                let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
+                let old_total = pool.dabits.total();
+                let da_stride = 1 + 2 * fb;
+                let s1_buf = dabits::seek_and_generate(
+                    ds1,
+                    dp1,
+                    old_total * da_stride,
+                    deficit_dabits * da_stride,
+                );
+                let g2_buf = dabits::seek_and_generate(ds2, dp2, old_total, deficit_dabits);
+                (0..deficit_dabits)
+                    .into_par_iter()
+                    .with_min_len(256)
+                    .map(|i| {
+                        let base = i * da_stride;
+                        let gbit = ((s1_buf[base] ^ g2_buf[i]) & 1) != 0;
+                        let alpha1: F = dabits::parse_field(&s1_buf, base + 1);
+                        F::from(gbit as u64) - alpha1
+                    })
+                    .collect::<Vec<F>>()
+            } else {
+                Vec::new()
+            };
+
+            // Round 1: P0 → P2 — send combined alpha2
+            let mut combined: Vec<F> = Vec::with_capacity(
+                ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len(),
+            );
+            combined.extend_from_slice(&ea0);
+            combined.extend_from_slice(&ea1);
+            combined.extend_from_slice(&ea2);
+            combined.extend_from_slice(&ea3);
+            combined.extend_from_slice(&ea4);
+            combined.extend_from_slice(&da_alpha2);
+            if !combined.is_empty() {
+                io.par_chunks(
+                    combined.into_par_iter(),
+                    None,
+                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                        ctx.network.send_many(PartyID::ID2, &chunk)?;
+                        Ok(vec![])
+                    },
+                )?;
+            }
+
+            // Round 2: P0 ← P2 receives daBit s₂₀
+            let s20: Vec<F> = if deficit_dabits > 0 {
+                io.par_chunks(
+                    0..deficit_dabits,
+                    None,
+                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                        Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
+                    },
+                )?
+            } else {
+                Vec::new()
+            };
+
+            // Apply extensions (P0 stores s₂₀ for daBits, nothing for edaBits)
+            pool.edabits_u8
+                .apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16
+                .apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32
+                .apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64
+                .apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128
+                .apply_extension(deficit_counts[4], Vec::new());
+            pool.dabits.apply_extension(deficit_dabits, s20);
+        }
+        PartyID::ID1 => {
+            // P1 only sends daBit s₁₂ to P2 (edaBits are local-only).
+            if deficit_dabits > 0 {
+                let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
+                let old_total = pool.dabits.total();
+                let da_stride = 1 + 2 * fb;
+
+                // rng2 (P1↔P0 interleaved stream): seek past old items
+                let s2_buf = dabits::seek_and_generate(
+                    ds2,
+                    dp2,
+                    old_total * da_stride,
+                    deficit_dabits * da_stride,
+                );
+                // rng1 (P1↔P2 stream): theta
+                let theta_buf = dabits::seek_and_generate(ds1, dp1, old_total, deficit_dabits);
+
+                let s12: Vec<F> = (0..deficit_dabits)
+                    .into_par_iter()
+                    .with_min_len(256)
+                    .map(|i| {
+                        let base = i * da_stride;
+                        let theta = (theta_buf[i] & 1) != 0;
+                        let neg1_theta = if theta { -F::one() } else { F::one() };
+                        let alpha1: F = dabits::parse_field(&s2_buf, base + 1);
+                        let r1: F = dabits::parse_field(&s2_buf, base + 1 + fb);
+                        neg1_theta * alpha1 - r1
+                    })
+                    .collect();
+                io.network().send_many(PartyID::ID2, &s12)?;
+            }
+
+            // Apply extensions (P1 stores nothing)
+            pool.edabits_u8
+                .apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16
+                .apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32
+                .apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64
+                .apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128
+                .apply_extension(deficit_counts[4], Vec::new());
+            pool.dabits.apply_extension(deficit_dabits, Vec::new());
+        }
+        PartyID::ID2 => {
+            // Round 1: receive combined alpha2 from P0 + s₁₂ from P1
+            let total_eda = deficit_counts
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| c * [u8::K, u16::K, u32::K, u64::K, u128::K][i])
+                .sum::<usize>();
+            let total_recv = total_eda + deficit_dabits;
+
+            let combined: Vec<F> = if total_recv > 0 {
+                io.par_chunks(
+                    0..total_recv,
+                    None,
+                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                        Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
+                    },
+                )?
+            } else {
+                Vec::new()
+            };
+
+            let s12_recv: Vec<F> = if deficit_dabits > 0 {
+                io.network().recv_many(PartyID::ID1)?
+            } else {
+                Vec::new()
+            };
+
+            // Split combined into edaBit alpha2 slices + daBit alpha2
+            let mut offset = 0;
+            let mut eda_alphas: [Vec<F>; 5] = Default::default();
+            for (idx, &c) in deficit_counts.iter().enumerate() {
+                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                let len = c * k;
+                eda_alphas[idx] = combined[offset..offset + len].to_vec();
+                offset += len;
+            }
+            let dabit_alpha2 = &combined[offset..offset + deficit_dabits];
+
+            // Compute daBit s₂₀ and send to P0
+            let dabit_stored = if deficit_dabits > 0 {
+                let (_, _, ds2, dp2) = pool.dabits.extension_seeds();
+                let old_total = pool.dabits.total();
+                let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total, deficit_dabits);
+
+                let s20: Vec<F> = (0..deficit_dabits)
+                    .into_par_iter()
+                    .with_min_len(256)
+                    .map(|i| {
+                        let theta = (theta_buf[i] & 1) != 0;
+                        let neg1_theta = if theta { -F::one() } else { F::one() };
+                        neg1_theta * dabit_alpha2[i]
+                    })
+                    .collect();
+
+                // Interleave s₂₀ + s₁₂ for LazyDaBits stored format
+                let mut stored = Vec::with_capacity(2 * deficit_dabits);
+                for i in 0..deficit_dabits {
+                    stored.push(s20[i]);
+                    stored.push(s12_recv[i]);
+                }
+
+                // Round 2: P2 → P0 sends s₂₀
+                io.par_chunks(
+                    s20.into_par_iter(),
+                    None,
+                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                        ctx.network.send_many(PartyID::ID0, &chunk)?;
+                        Ok(vec![])
+                    },
+                )?;
+
+                stored
+            } else {
+                Vec::new()
+            };
+
+            // Apply extensions
+            let [a0, a1, a2, a3, a4] = eda_alphas;
+            pool.edabits_u8.apply_extension(deficit_counts[0], a0);
+            pool.edabits_u16.apply_extension(deficit_counts[1], a1);
+            pool.edabits_u32.apply_extension(deficit_counts[2], a2);
+            pool.edabits_u64.apply_extension(deficit_counts[3], a3);
+            pool.edabits_u128.apply_extension(deficit_counts[4], a4);
+            pool.dabits.apply_extension(deficit_dabits, dabit_stored);
+        }
+    }
+
+    Ok(())
 }
 
 /// Convert an arithmetic ring share `[x]` over `Z_{2^K}` into an arithmetic
@@ -1089,7 +1432,7 @@ where
 ///
 /// EdaBits are stored lazily via [`LazyEdaBits`] (O(1) storage for P0/P1).
 /// DaBits are stored via [`LazyDaBits`] (Cheng23 Π₁ partial-lazy).
-pub struct EdaBitsPool<F: PrimeField> {
+pub struct PreprocessingPool<F: PrimeField> {
     edabits_u8: LazyEdaBits<u8, F>,
     edabits_u16: LazyEdaBits<u16, F>,
     edabits_u32: LazyEdaBits<u32, F>,
@@ -1098,7 +1441,7 @@ pub struct EdaBitsPool<F: PrimeField> {
     dabits: LazyDaBits<F>,
 }
 
-impl<F: PrimeField> EdaBitsPool<F> {
+impl<F: PrimeField> PreprocessingPool<F> {
     /// Create an empty pool.
     pub fn empty(party_id: PartyID) -> Self {
         Self {
@@ -1147,6 +1490,20 @@ impl<F: PrimeField> EdaBitsPool<F> {
             && self.edabits_u64.remaining() == 0
             && self.edabits_u128.remaining() == 0
             && self.dabits.remaining() == 0
+    }
+
+    /// Return remaining counts for each edaBit ring type and daBits.
+    pub fn remaining_counts(&self) -> ([usize; 5], usize) {
+        (
+            [
+                self.edabits_u8.remaining(),
+                self.edabits_u16.remaining(),
+                self.edabits_u32.remaining(),
+                self.edabits_u64.remaining(),
+                self.edabits_u128.remaining(),
+            ],
+            self.dabits.remaining(),
+        )
     }
 
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
@@ -1708,5 +2065,122 @@ mod tests {
     #[test]
     fn preprocess_pool_batched_roundtrip() {
         preprocess_roundtrip_impl(true);
+    }
+
+    /// Test that extend_pool_batched produces correct results.
+    ///
+    /// 1. Create a pool with INITIAL items.
+    /// 2. Consume all of them.
+    /// 3. Extend the pool with EXTRA deficit items.
+    /// 4. Consume the new items and verify B2A / bit-inject correctness.
+    #[test]
+    fn extend_pool_batched_roundtrip() {
+        use crate::protocols::rep3_ring::dabits;
+
+        const INITIAL_U64: usize = 4;
+        const INITIAL_DABITS: usize = 8;
+        const EXTRA_U64: usize = 6;
+        const EXTRA_DABITS: usize = 10;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0xE001_0001);
+
+        // Values for initial consumption (just to advance cursors)
+        let init_xs: Vec<u64> = (0..INITIAL_U64).map(|_| rng.next_u64()).collect();
+        let init_x_shares: [Vec<Rep3RingShare<u64>>; 3] = {
+            let per = init_xs
+                .iter()
+                .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+        let init_bits: Vec<bool> = (0..INITIAL_DABITS)
+            .map(|_| (rng.next_u32() & 1) == 1)
+            .collect();
+        let init_bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] = {
+            let per = init_bits
+                .iter()
+                .map(|&b| share_ring_element::<RingBit, _>(RingElement(RingBit::new(b)), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+
+        // Values for extension verification
+        let ext_xs: Vec<u64> = (0..EXTRA_U64).map(|_| rng.next_u64()).collect();
+        let ext_x_shares: [Vec<Rep3RingShare<u64>>; 3] = {
+            let per = ext_xs
+                .iter()
+                .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+        let ext_bits: Vec<bool> = (0..EXTRA_DABITS)
+            .map(|_| (rng.next_u32() & 1) == 1)
+            .collect();
+        let ext_bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] = {
+            let per = ext_bits
+                .iter()
+                .map(|&b| share_ring_element::<RingBit, _>(RingElement(RingBit::new(b)), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+
+        type Input = (
+            Vec<Rep3RingShare<u64>>,
+            Vec<Rep3RingShare<RingBit>>,
+            Vec<Rep3RingShare<u64>>,
+            Vec<Rep3RingShare<RingBit>>,
+        );
+
+        let outputs: [(Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>); 3] =
+            run_rep3_local_test_with_coordinator(
+                1,
+                |i| {
+                    (
+                        init_x_shares[i].clone(),
+                        init_bit_shares[i].clone(),
+                        ext_x_shares[i].clone(),
+                        ext_bit_shares[i].clone(),
+                    )
+                },
+                || (),
+                move |(init_x, init_b, ext_x, ext_b): Input, mut io_ctx| {
+                    // Phase 1: create initial pool and consume everything.
+                    let mut pool = preprocess_pool_batched::<Fr, _>(
+                        [0, 0, 0, INITIAL_U64, 0],
+                        INITIAL_DABITS,
+                        &mut io_ctx,
+                    )?;
+                    let batch = pool.take_edabits::<u64>(INITIAL_U64);
+                    let _ = ring_to_field_b2a_many::<u64, Fr, _>(&init_x, &batch, io_ctx.main())?;
+                    let dbatch = pool.take_dabits(INITIAL_DABITS);
+                    let _ =
+                        dabits::bit_inject_field_many::<Fr, _>(&init_b, &dbatch, io_ctx.main())?;
+
+                    // Phase 2: extend pool to cover extra items.
+                    let deficit_counts = [0, 0, 0, EXTRA_U64, 0];
+                    extend_pool_batched(&mut pool, deficit_counts, EXTRA_DABITS, &mut io_ctx)?;
+
+                    // Phase 3: consume extension items and verify.
+                    let batch2 = pool.take_edabits::<u64>(EXTRA_U64);
+                    let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&ext_x, &batch2, io_ctx.main())?;
+                    let dbatch2 = pool.take_dabits(EXTRA_DABITS);
+                    let inj =
+                        dabits::bit_inject_field_many::<Fr, _>(&ext_b, &dbatch2, io_ctx.main())?;
+
+                    Ok((b2a, inj))
+                },
+                |(): (), _net| Ok(()),
+            )
+            .0;
+
+        // Verify B2A
+        let b2a_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
+        let b2a_expected: Vec<Fr> = ext_xs.iter().map(|&x| Fr::from(x)).collect();
+        assert_eq!(b2a_combined, b2a_expected, "extend B2A mismatch");
+
+        // Verify bit injection
+        let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
+        let inj_expected: Vec<Fr> = ext_bits.iter().map(|&b| Fr::from(b as u64)).collect();
+        assert_eq!(inj_combined, inj_expected, "extend bit inject mismatch");
     }
 }

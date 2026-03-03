@@ -24,11 +24,11 @@ use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
 use jolt_core::zkvm::dag::proof_serialization::JoltProof;
 use jolt_core::zkvm::witness::CommittedPolynomial;
-use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreprocessing};
+use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ where
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: EdaBitsPool<F>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()>;
 }
 
@@ -87,10 +87,6 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<Fr, DoryCommitmentScheme> {
-        use jolt_core::utils::math::Math;
-        use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
-        use jolt_core::zkvm::Jolt;
-
         // Delegate to vanilla Jolt::prover_preprocess — preprocessing is public
         <JoltRV64IMAC as Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript>>::prover_preprocess(
             bytecode,
@@ -108,7 +104,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: EdaBitsPool<Fr>,
+        edabits_pool: &mut PreprocessingPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
@@ -295,7 +291,7 @@ mod tests {
                 drop(_span);
 
                 // Preprocessing: create EdaBits pool for B2A conversions (2 rounds).
-                let edabits_pool = {
+                let mut edabits_pool = {
                     use crate::zkvm::dag::preproc_budget::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
                     let budget = compute_edabit_budget(trace.len());
@@ -314,7 +310,7 @@ mod tests {
                     &mut io_ctx,
                     ram_K,
                     Some(advice),
-                    edabits_pool,
+                    &mut edabits_pool,
                 )?;
                 Ok(())
             },

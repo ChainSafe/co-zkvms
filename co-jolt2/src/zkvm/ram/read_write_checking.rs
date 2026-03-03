@@ -765,7 +765,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         }
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         let chunk_log = self.prover_state.chunk_size.log_2();
         let log_T = self.T.log_2();
 

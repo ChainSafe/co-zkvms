@@ -267,8 +267,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let num_forks = rayon::current_num_threads() as u32;
 
     let mut io_ctx = IoContextPool::init(network, num_forks)?;
-    // populate_operands_casts: convert binary-shared operands to arithmetic
-    populate_operands_casts(&mut trace, io_ctx.main())?;
 
     // Preprocessing: create EdaBits pool for B2A conversions.
     //
@@ -282,7 +280,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // `--features reuse-preproc` so consumed data is NOT zeroed on disk.
     let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
-    let edabits_pool = {
+    let mut edabits_pool = {
         use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
         let budget = compute_edabit_budget(trace_len);
@@ -292,12 +290,33 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
-            match edabits::EdaBitsPool::load(&pool_dir, party_id) {
-                Ok(pool) => {
-                    info!(
-                        "reusing preprocessing from {:?} (skipping network preprocessing)",
-                        pool_dir
-                    );
+            match edabits::PreprocessingPool::load(&pool_dir, party_id) {
+                Ok(mut pool) => {
+                    let (rem_eda, rem_da) = pool.remaining_counts();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
+
+                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                        info!(
+                            "extending pool: deficit edabits={:?}, dabits={}",
+                            deficit_counts, deficit_dabits
+                        );
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        match pool.save(&pool_dir) {
+                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
+                            Err(e) => {
+                                tracing::warn!("failed to save extended pool: {e}")
+                            }
+                        }
+                    } else {
+                        info!("reusing preprocessing from {:?}", pool_dir);
+                    }
                     pool
                 }
                 Err(e) => {
@@ -331,8 +350,19 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         &mut io_ctx,
         ram_k,
         Some(program_io_share),
-        edabits_pool,
+        &mut edabits_pool,
     )?;
+
+    let (rem_eda, rem_da) = edabits_pool.remaining_counts();
+    info!(
+        u8 = rem_eda[0],
+        u16 = rem_eda[1],
+        u32 = rem_eda[2],
+        u64 = rem_eda[3],
+        u128 = rem_eda[4],
+        dabits = rem_da,
+        "remaining preprocessing"
+    );
 
     io_ctx.network().log_connection_stats();
 

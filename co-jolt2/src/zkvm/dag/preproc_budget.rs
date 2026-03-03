@@ -126,6 +126,11 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
         }
     }
 
+    // Witness generation: binary→field B2A for operand columns and inc polynomials.
+    // - Sparse operand cast (5 columns × n, worst case): 5n u64 EdaBits
+    // - rd_inc/ram_inc (2 pre + 2 post × n): 4n u64 EdaBits
+    budget.u64 += 9 * n;
+
     budget
 }
 

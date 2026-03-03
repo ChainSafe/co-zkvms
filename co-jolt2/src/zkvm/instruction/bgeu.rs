@@ -8,6 +8,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BGEU> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BGEU::output", level = "trace")]
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],

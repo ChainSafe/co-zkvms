@@ -306,7 +306,7 @@ fn dag_correct() {
             let party_id = io_ctx.party_id();
 
             // Preprocessing: create EdaBits pool for B2A conversions (2 rounds).
-            let edabits_pool = {
+            let mut edabits_pool = {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
@@ -326,7 +326,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, edabits_pool)
+            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, &mut edabits_pool)
         },
         move |input, net| {
             let (verifier_preprocessing, prover_preprocessing, program_io, ram_K) = input;

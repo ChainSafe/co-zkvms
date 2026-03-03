@@ -536,6 +536,17 @@ mod tests {
                 populate_operands_casts(&mut trace, io_ctx.main())?;
                 let party_id = io_ctx.party_id();
 
+                // Create EdaBits pool for B2A conversions in witness gen
+                let budget =
+                    crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+                let mut edabits_pool =
+                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
+                        counts,
+                        budget.dabits,
+                        &mut io_ctx,
+                    )?;
+
                 let mut state = StateManagerWorker::new(
                     &preprocessing,
                     trace,
@@ -546,12 +557,12 @@ mod tests {
                     None,
                 );
 
-                populate_cycle_witness_rep3(&mut state, &mut io_ctx)?;
+                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut edabits_pool)?;
 
                 let poly_keys: Vec<CommittedPolynomial> =
                     AllCommittedPolynomials::iter().copied().collect();
                 let _witness_polys =
-                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx)?;
+                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx, &mut edabits_pool)?;
                 state.prover_state.trace = None;
 
                 compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)

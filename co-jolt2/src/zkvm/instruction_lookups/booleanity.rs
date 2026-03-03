@@ -353,7 +353,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         extend_degree_3_evals::<F>(previous_claim, &base, max_degree)
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         let ps = &mut self.state;
 
         if round < LOG_K_CHUNK {

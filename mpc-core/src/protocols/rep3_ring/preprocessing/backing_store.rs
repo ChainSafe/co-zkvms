@@ -144,6 +144,22 @@ impl<F> BackingStore<F> {
         })
     }
 
+    /// Append additional elements to this store.
+    ///
+    /// Converts `Mapped` → `InMemory` (copies existing + appends).
+    /// Only used during pool extension, not normal consumption.
+    pub(crate) fn extend(&mut self, additional: &[F])
+    where
+        F: Copy,
+    {
+        if additional.is_empty() {
+            return;
+        }
+        let mut combined = self.as_slice().to_vec();
+        combined.extend_from_slice(additional);
+        *self = BackingStore::InMemory(combined);
+    }
+
     /// Zero out consumed elements in the backing store and flush to disk.
     ///
     /// `start..end` are element indices (not byte offsets).

@@ -193,7 +193,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         extend_degree_3_evals::<F>(previous_claim, &base, max_degree)
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         self.val_init.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_final.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_io.bind_parallel(r_j, BindingOrder::HighToLow);
@@ -467,7 +467,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         rayon::join(
             || self.inc.bind(r_j.into(), BindingOrder::HighToLow),
             || self.wa.bind_parallel(r_j, BindingOrder::HighToLow),

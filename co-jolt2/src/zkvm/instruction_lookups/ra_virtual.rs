@@ -237,7 +237,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> crate::zkvm::dag::stage::Rep3SumcheckIn
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         self.bind_inner(r_j);
     }
 

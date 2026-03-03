@@ -9,6 +9,7 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordina
 use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
+use jolt_core::poly::opening_proof::ReducedOpeningProof;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::witness::{
@@ -157,7 +158,7 @@ impl Rep3JoltDAGCoordinator {
             )?;
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(jolt_core::poly::opening_proof::ReducedOpeningProof {
+            ProofData::ReducedOpeningProof(ReducedOpeningProof {
                 sumcheck_proof: reduced.sumcheck_proof,
                 sumcheck_claims: reduced.sumcheck_claims,
                 joint_opening_proof: reduced.joint_opening_proof,

@@ -10,6 +10,7 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
@@ -45,7 +46,13 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
     ) -> Vec<AdditiveShare<F>>;
 
     /// Bind the sumcheck variable for this round to challenge `r_j`.
-    fn bind(&mut self, r_j: F::Challenge, round: usize, io_ctx: &mut IoContextPool<N>);
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        round: usize,
+        io_ctx: &mut IoContextPool<N>,
+        edabits_pool: &mut PreprocessingPool<F>,
+    );
 
     /// Normalize the low-to-high sumcheck opening point to big-endian form.
     fn normalize_opening_point(
@@ -369,6 +376,7 @@ impl Rep3BatchedSumcheckWorker {
         instances: &mut [Box<dyn Rep3SumcheckInstanceWorker<F, N>>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<F::Challenge>>
     where
         F: JoltField,
@@ -478,7 +486,7 @@ impl Rep3BatchedSumcheckWorker {
                 let offset = max_num_rounds - num_rounds;
                 let local_round = round - offset;
 
-                instance.bind(r_j, local_round, io_ctx);
+                instance.bind(r_j, local_round, io_ctx, edabits_pool);
 
                 let msg = active_round_msgs[i]
                     .take()
@@ -640,6 +648,7 @@ impl HybridBatchedSumcheckWorker {
         instances: &mut [BatchedSumcheckWorkerInstance<F, N>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<F::Challenge>>
     where
         F: JoltField,
@@ -807,7 +816,7 @@ impl HybridBatchedSumcheckWorker {
 
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
-                        s.bind(r_j, local_round, io_ctx);
+                        s.bind(r_j, local_round, io_ctx, edabits_pool);
                         let msg = active_secret_msgs[i]
                             .take()
                             .unwrap_or_else(|| unreachable!("active msg missing"));
@@ -1210,6 +1219,7 @@ mod tests {
             _r_j: <Fr as jolt_core::field::JoltField>::Challenge,
             _round: usize,
             _io_ctx: &mut IoContextPool<N>,
+            _edabits_pool: &mut PreprocessingPool<Fr>,
         ) {
         }
 
@@ -1428,7 +1438,8 @@ mod tests {
                         BatchedSumcheckWorkerInstance::Public(Box::new(PanicPublicWorker))
                     },
                 ];
-                let r = HybridBatchedSumcheckWorker::prove(&mut instances, &mut acc, &mut io_ctx)?;
+                let mut pool = PreprocessingPool::empty(party_id);
+                let r = HybridBatchedSumcheckWorker::prove(&mut instances, &mut acc, &mut io_ctx, &mut pool)?;
                 Ok(r.len())
             },
             move |(), net| {
