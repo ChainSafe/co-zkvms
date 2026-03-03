@@ -64,6 +64,7 @@ struct SharedSparseFieldCols<F: JoltField> {
 
 unsafe impl<F: JoltField> Sync for SharedSparseFieldCols<F> {}
 
+#[tracing::instrument(skip_all, fields(jobs=jobs.len()))]
 fn fill_field_from_operands_sparse_u64<F, N>(
     io_ctx: &mut IoContextPool<N>,
     jobs: Vec<SparseCastJob>,
@@ -282,6 +283,8 @@ where
     let mut output_futures: Vec<FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>> =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); trace.len()];
 
+    let _span = tracing::trace_span!("group_by_table").entered();
+
     // Parallel pre-pass: compute discriminant per cycle for lookup-enabled instructions.
     // We still build the final groups deterministically in trace order.
     let discriminants: Vec<Option<mem::Discriminant<Rep3Cycle>>> = trace
@@ -313,13 +316,16 @@ where
         Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
 
+    // TODO: parallelize
     for (i, (cycle, out)) in trace.iter().zip(output_futures.iter_mut()).enumerate() {
         let Some(gid) = group_ids[i] else { continue };
         ops_by_instruction[gid].0.push(cycle);
         ops_by_instruction[gid].1.push(out);
     }
+    drop(_span);
 
     // Process each instruction group via par_chunks
+    let _span = tracing::info_span!("to_lookup_output_batched", num_groups = num_groups).entered();
     io_ctx.par_chunks(
         ops_by_instruction,
         None,
@@ -330,8 +336,10 @@ where
             Ok(vec![()])
         },
     )?;
+    drop(_span);
 
     // Fulfill all pending futures (batched casts via io_ctx)
+    let _span = tracing::info_span!("fulfill_batched").entered();
     output_futures.fulfill_batched(io_ctx, |res, ()| res)
 }
 
@@ -486,6 +494,7 @@ where
 
     fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols))?;
 
+    let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
         .ok()
         .expect("shared cols Arc should have single owner");
@@ -552,7 +561,7 @@ where
 /// - Shared fields (register values) go through `ring_to_field_a2b_many` → `Shared(...)`
 /// - Public fields (flags derived from opcode) → `Public(...)`
 /// - Deferred fields (instruction_ra) are skipped or zeroed
-#[tracing::instrument(skip_all, name = "Witness::generate_witness_rep3")]
+#[tracing::instrument(skip_all, name = "witness_batch_generate_rep3")]
 pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     state: &mut StateManagerWorker<'_, F, PCS>,

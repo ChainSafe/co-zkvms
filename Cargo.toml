@@ -103,10 +103,10 @@ mpc-types = { path = "./mpc-types" }
 anyhow = "1.0.93"
 argh = "0.1.12"
 
-jolt-core = { path = "/home/ubuntu/jolt/jolt-core" }
-jolt2-common = { path = "/home/ubuntu/jolt/common", package = "common" }
-tracer = { path = "/home/ubuntu/jolt/tracer" }
-jolt = { path = "/home/ubuntu/jolt/jolt-sdk", package = "jolt-sdk" }
+jolt-core = { path = "/Users/timofey/repos/examples/jolt/jolt-core" }
+jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "common" }
+tracer = { path = "/Users/timofey/repos/examples/jolt/tracer" }
+jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }

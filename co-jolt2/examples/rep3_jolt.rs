@@ -267,8 +267,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let num_forks = rayon::current_num_threads() as u32;
 
     let mut io_ctx = IoContextPool::init(network, num_forks)?;
-    // populate_operands_casts: convert binary-shared operands to arithmetic
-    populate_operands_casts(&mut trace, io_ctx.main())?;
 
     // Preprocessing: create EdaBits pool for B2A conversions.
     //

@@ -19,13 +19,13 @@ use serde::{Deserialize, Serialize};
 use tracer::instruction::format::NormalizedOperands;
 use tracer::instruction::{Cycle, Instruction, RAMAccess, RISCVCycle, RISCVInstruction};
 
+use self::format::{Rep3InstructionFormat, Rep3RegisterState};
 use crate::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
 pub use crate::utils::instruction_utils::bit_to_ring64;
 use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_u128};
-
-use self::format::{Rep3InstructionFormat, Rep3RegisterState};
+use rayon::prelude::*;
 
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
 
@@ -553,7 +553,7 @@ pub fn populate_operands_casts<N: Rep3Network>(
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<()> {
     let (binary, operands): (Vec<Rep3RingShare<u64>>, Vec<&mut Rep3Operand>) = trace
-        .iter_mut()
+        .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {
             Rep3Operand::Shared {
@@ -572,7 +572,7 @@ pub fn populate_operands_casts<N: Rep3Network>(
     let arithmetic = upcast_many_from_binary(&binary, io_ctx)?;
 
     operands
-        .into_iter()
+        .into_par_iter()
         .zip(arithmetic)
         .for_each(|(operand, arith)| match operand {
             Rep3Operand::Shared {
