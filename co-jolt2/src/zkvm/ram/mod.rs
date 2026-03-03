@@ -12,6 +12,7 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 
 use crate::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
+use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
     Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
@@ -188,10 +189,10 @@ pub struct RamStage4Init<F: JoltField> {
 }
 
 pub struct Rep3RamDagWorker<F: JoltField> {
-    /// Initial memory state (bytecode/inputs as trivial shares, advice as real shares)
-    initial_memory_state: Vec<Rep3PrimeFieldShare<F>>,
-    /// SHARED final memory state (converted from Rep3Memory ring shares → field shares)
-    final_memory_field: Vec<Rep3PrimeFieldShare<F>>,
+    /// val_init (SHARED) — initial RAM state as a dense MLE.
+    val_init: Rep3DensePolynomial<F>,
+    /// val_final (SHARED) — final RAM state as a dense MLE.
+    val_final: Rep3DensePolynomial<F>,
     stage2: Option<(F, F, Vec<F::Challenge>)>,
     stage3: Option<(F, F)>,
     stage4: Option<RamStage4Init<F>>,
@@ -270,9 +271,12 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
                 rep3_arith::promote_to_trivial_share(party_id, F::one());
         }
 
+        let val_init = Rep3DensePolynomial::new(initial_memory_state);
+        let val_final = Rep3DensePolynomial::new(final_memory_field);
+
         Ok(Self {
-            initial_memory_state,
-            final_memory_field,
+            val_init,
+            val_final,
             stage2: None,
             stage3: None,
             stage4: None,
@@ -298,32 +302,34 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let (gamma, input_claim, r_address) = self
             .stage2
             .take()
             .expect("Rep3RamDagWorker stage2 init not set");
         let raf_evaluation = Rep3RafEvaluationWorker::new(sm);
         let read_write_checking =
-            Rep3RamReadWriteCheckingWorker::new(&self.initial_memory_state, sm, gamma, input_claim);
+            Rep3RamReadWriteCheckingWorker::new(self.val_init.coeffs_ref(), sm, gamma, input_claim);
         let output_check = Rep3OutputSumcheckWorker::new(
-            self.initial_memory_state.clone(),
-            self.final_memory_field.clone(),
+            self.val_init.clone(),
+            self.val_final.clone(),
             r_address,
             sm,
         );
 
-        vec![
+        Ok(vec![
             BatchedSumcheckWorkerInstance::Secret(Box::new(raf_evaluation)),
             BatchedSumcheckWorkerInstance::Secret(Box::new(read_write_checking)),
             BatchedSumcheckWorkerInstance::Secret(Box::new(output_check)),
-        ]
+        ])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use jolt_core::poly::opening_proof::SumcheckId;
         use jolt_core::utils::math::Math;
         use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
@@ -372,17 +378,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         };
 
         // Vanilla ordering: ValEvaluation, ValFinal, HammingBooleanity
-        vec![
+        Ok(vec![
             BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval)),
             BatchedSumcheckWorkerInstance::Secret(Box::new(val_final)),
             BatchedSumcheckWorkerInstance::Public(Box::new(hamming_bool)),
-        ]
+        ])
     }
 
     fn stage4_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use jolt_core::poly::dense_mlpoly::DensePolynomial;
         use jolt_core::poly::eq_poly::EqPolynomial;
         use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -404,7 +411,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         let d = compute_d_parameter(ram_K);
         let T = sm.prover_state.cycle_witness.len();
 
-        if sm.party_id == PartyID::ID0 {
+        let instances = if sm.party_id == PartyID::ID0 {
             // ID0 has trace data — create prover instances
             let memory_layout = &sm.program_io.memory_layout;
 
@@ -590,7 +597,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 BatchedSumcheckWorkerInstance::Public(Box::new(booleanity)),
                 BatchedSumcheckWorkerInstance::Public(Box::new(ra_virtual)),
             ]
-        }
+        };
+        Ok(instances)
     }
 }
 
@@ -735,28 +743,32 @@ impl Rep3RamDag {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStagesCoordinator<F, ProofTranscript, PCS> for Rep3RamDag
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>, N>
+    SumcheckStagesCoordinator<F, ProofTranscript, PCS, N> for Rep3RamDag
+where
+    N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let raf_evaluation = Rep3RafEvaluation::new(sm);
         let read_write_checking = Rep3RamReadWriteChecking::new(sm);
         let output_check = Rep3OutputSumcheck::new(sm);
 
-        vec![
+        Ok(vec![
             BatchedSumcheckInstance::Secret(Box::new(raf_evaluation)),
             BatchedSumcheckInstance::Secret(Box::new(read_write_checking)),
             BatchedSumcheckInstance::Secret(Box::new(output_check)),
-        ]
+        ])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         use jolt_core::poly::multilinear_polynomial::{
             MultilinearPolynomial, PolynomialEvaluation,
         };
@@ -782,10 +794,10 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let hamming_bool = HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
 
         // Vanilla ordering: ValEvaluation, ValFinal, HammingBooleanity
-        vec![
+        Ok(vec![
             BatchedSumcheckInstance::Secret(Box::new(val_eval)),
             BatchedSumcheckInstance::Secret(Box::new(val_final)),
             BatchedSumcheckInstance::Public(Box::new(hamming_bool)),
-        ]
+        ])
     }
 }

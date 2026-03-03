@@ -857,6 +857,87 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
         .collect()
 }
 
+pub(crate) fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
+    polynomials: &[Rep3OneHotPolynomial<F>; D],
+    eq_cycle: &[F],
+) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
+    use rayon::prelude::*;
+
+    debug_assert_eq!(eq_cycle.len(), polynomials[0].masked_indices_c.len());
+    debug_assert_eq!(polynomials[0].rand_ohv_e_field.len(), polynomials[0].K);
+
+    let t = eq_cycle.len();
+    let k_len = polynomials[0].K;
+
+    for i in 1..D {
+        debug_assert_eq!(polynomials[i].K, k_len, "K mismatch across chunks");
+        debug_assert_eq!(
+            polynomials[i].masked_indices_c.len(),
+            t,
+            "masked indices length mismatch"
+        );
+        debug_assert_eq!(
+            polynomials[i].rand_ohv_e_field.len(),
+            k_len,
+            "E_field length mismatch"
+        );
+    }
+
+    // Histogram in masked index space for all D chunks in one trace pass.
+    let num_chunks = rayon::current_num_threads()
+        .next_power_of_two()
+        .min(t)
+        .max(1);
+    let chunk_size = (t / num_chunks).max(1);
+
+    let g_c: [Vec<F>; D] = (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk_index| {
+            let start = chunk_index * chunk_size;
+            let end = ((chunk_index + 1) * chunk_size).min(t);
+
+            let mut local: [Vec<F>; D] = std::array::from_fn(|_| vec![F::zero(); k_len]);
+            for j in start..end {
+                let eq = eq_cycle[j];
+                for i in 0..D {
+                    if let Some(c) = polynomials[i].masked_indices_c[j] {
+                        local[i][c as usize] += eq;
+                    }
+                }
+            }
+            local
+        })
+        .reduce(
+            || std::array::from_fn(|_| vec![F::zero(); k_len]),
+            |mut a, b| {
+                for i in 0..D {
+                    for (ai, bi) in a[i].iter_mut().zip(b[i].iter()) {
+                        *ai += *bi;
+                    }
+                }
+                a
+            },
+        );
+
+    // Convert to k-space: G[k] = Σ_c G_c[c] * E_field[c XOR k].
+    std::array::from_fn(|i| {
+        let g_c_i = &g_c[i];
+        let e_field = &polynomials[i].rand_ohv_e_field;
+        let g_i: Vec<Rep3PrimeFieldShare<F>> = (0..k_len)
+            .into_par_iter()
+            .map(|k| {
+                let mut acc = Rep3PrimeFieldShare::zero_share();
+                for c in 0..k_len {
+                    let idx = (c as u8) ^ (k as u8);
+                    acc += e_field[idx as usize] * g_c_i[c];
+                }
+                acc
+            })
+            .collect();
+        Arc::new(g_i)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

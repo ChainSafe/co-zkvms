@@ -34,6 +34,7 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
+use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::info_span;
 
@@ -112,7 +113,7 @@ struct ReadRafProverState<F: JoltField> {
 
     // -- Mask data from witness --
     /// The D Rep3OneHotPolynomials (owned; reused across phases).
-    one_hot_polys: [Rep3OneHotPolynomial<F>; D],
+    one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
     /// Per-phase cached Ehat16 (FWHT of E16 tensor product). Length M.
     ehat16: Option<Vec<Rep3PrimeFieldShare<F>>>,
     /// Per-phase cached c16[j] (public masked 16-bit keys). None means inactive cycle.
@@ -155,7 +156,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         gamma: F,
         rv_claim: F,
         raf_claim: F,
-        one_hot_polys: [Rep3OneHotPolynomial<F>; D],
+        one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
         eq_r_cycle_public: &[F],
         lookup_tables: Vec<Option<LookupTables<XLEN>>>,
         is_interleaved_operands: Vec<bool>,

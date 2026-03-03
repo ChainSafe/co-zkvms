@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
@@ -14,7 +15,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 
 use crate::field::JoltField;
-use crate::poly::one_hot_polynomial::{compute_g_from_masked_indices, Rep3OneHotPolynomial};
+use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
@@ -40,14 +41,14 @@ pub mod read_raf_checking;
 /// of lookup index chunks using the RandOHV representation from witness gen.
 ///
 /// For each chunk `i`, computes `G[i][k] = Σ_j eq(r_cycle, j) * [chunk_i(index_j) == k]`
-/// as a secret-shared vector using the existing `compute_g_from_masked_indices`.
+/// as a secret-shared vector.
 ///
 /// No MPC communication — all operations are `public * shared`.
 fn compute_ra_evals<F: JoltField>(
     one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
     eq_r_cycle: &[F],
-) -> [Vec<Rep3PrimeFieldShare<F>>; D] {
-    std::array::from_fn(|i| compute_g_from_masked_indices(&one_hot_polys[i], eq_r_cycle))
+) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
+    crate::poly::one_hot_polynomial::compute_g_from_masked_indices_many(one_hot_polys, eq_r_cycle)
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +71,11 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
     stage2: Option<([F; D], Vec<F::Challenge>)>,
     stage3: Option<LookupStage3Init<F>>,
     /// Shared G arrays computed in stage2, consumed in stage3.
-    G: Option<[Vec<Rep3PrimeFieldShare<F>>; D]>,
+    G: Option<[Arc<Vec<Rep3PrimeFieldShare<F>>>; D]>,
     /// Public eq(r_cycle) evaluations.
     eq_r_cycle: Option<Vec<F>>,
     /// D Rep3OneHotPolynomials from witness gen, used for compute_ra_evals.
-    pub one_hot_polys: [Rep3OneHotPolynomial<F>; D],
+    pub one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
 }
 
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
@@ -84,7 +85,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             stage3: None,
             G: None,
             eq_r_cycle: None,
-            one_hot_polys,
+            one_hot_polys: Arc::new(one_hot_polys),
         }
     }
 
@@ -159,7 +160,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         let (ra_input_claim, ra_r_address, ra_r_cycle): (F, Vec<F::Challenge>, Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
         let mut ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            &self.one_hot_polys,
+            &*self.one_hot_polys,
             &ra_r_address,
             ra_r_cycle,
             ra_input_claim,
@@ -174,7 +175,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let (gamma, r_address) = self
             .stage2
             .take()
@@ -189,7 +191,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             .r
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let G = compute_ra_evals(&self.one_hot_polys, &eq_r_cycle);
+        let G = compute_ra_evals(&*self.one_hot_polys, &eq_r_cycle);
 
         self.eq_r_cycle = Some(eq_r_cycle);
         self.G = Some(G.clone());
@@ -198,13 +200,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             gamma,
             r_address,
             G,
-            &self.one_hot_polys,
+            &*self.one_hot_polys,
             &r_cycle,
             sm.prover_state.cycle_witness.len(),
             sm.party_id,
         );
 
-        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))]
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))])
     }
 }
 
@@ -282,13 +284,16 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStagesCoordinator<F, ProofTranscript, PCS> for Rep3LookupsDag<F>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>, N>
+    SumcheckStagesCoordinator<F, ProofTranscript, PCS, N> for Rep3LookupsDag<F>
+where
+    N: Rep3NetworkCoordinator,
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let log_T = sm
             .accumulator
             .get_virtual_polynomial_opening(
@@ -301,13 +306,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let booleanity = Rep3BooleanitySumcheck::new(&mut sm.transcript, log_T);
 
-        vec![BatchedSumcheckInstance::Secret(Box::new(booleanity))]
+        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(booleanity))])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         // ReadRaf (created before HammingWeight, matching vanilla ordering).
         // Draws gamma from transcript internally.
         let (_, rv_claim) = sm.accumulator.get_virtual_polynomial_opening(
@@ -342,9 +348,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let hamming_weight = Rep3HammingWeightSumcheck::new(&mut sm.transcript);
 
-        vec![
+        Ok(vec![
             BatchedSumcheckInstance::Secret(Box::new(read_raf)),
             BatchedSumcheckInstance::Secret(Box::new(hamming_weight)),
-        ]
+        ])
     }
 }

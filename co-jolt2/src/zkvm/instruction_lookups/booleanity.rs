@@ -31,7 +31,7 @@ const DEGREE: usize = 3;
 struct BooleanityProverStateWorker<F: JoltField> {
     eq_r_address: GruenSplitEqPolynomial<F>,
     eq_r_cycle: GruenSplitEqPolynomial<F>,
-    G: [Vec<Rep3PrimeFieldShare<F>>; D],
+    G: [Arc<Vec<Rep3PrimeFieldShare<F>>>; D],
     /// Public masked indices from RandOHV (= masked_indices_c from witness gen).
     masked_H_indices: [Arc<Vec<Option<u8>>>; D],
     H: [Rep3RaPolynomial<u8, F>; D],
@@ -55,7 +55,7 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
     pub fn new(
         gamma: [F; D],
         r_address: Vec<F::Challenge>,
-        G: [Vec<Rep3PrimeFieldShare<F>>; D],
+        G: [Arc<Vec<Rep3PrimeFieldShare<F>>>; D],
         one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
         r_cycle: &[F::Challenge],
         trace_len: usize,
@@ -381,10 +381,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
                     ps.H[i] = Rep3RaPolynomial::new(ps.masked_H_indices[i].clone(), shifted_table);
                 }
 
-                // Drop G (no longer needed)
-                for i in 0..D {
-                    ps.G[i] = vec![];
-                }
+                // Drop local refs to G (stage3 still needs it on the DAG worker).
+                ps.G = std::array::from_fn(|_| Arc::new(Vec::new()));
             }
         } else {
             // Phase 2: Bind cycle eq and H polynomials

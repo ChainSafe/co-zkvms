@@ -6,6 +6,7 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
@@ -27,10 +28,10 @@ pub struct Rep3HammingWeightSumcheckWorker<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3HammingWeightSumcheckWorker<F> {
-    pub fn new(G: [Vec<Rep3PrimeFieldShare<F>>; D], gamma: [F; D]) -> Self {
+    pub fn new(G: [Arc<Vec<Rep3PrimeFieldShare<F>>>; D], gamma: [F; D]) -> Self {
         Self {
             gamma,
-            ra: G.map(Rep3DensePolynomial::new),
+            ra: G.map(Rep3DensePolynomial::from_coeffs_arc),
         }
     }
 }
