@@ -281,8 +281,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
             index += 1;
         }
 
@@ -298,8 +297,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
             index += 1;
         }
 
@@ -371,6 +369,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+        _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use jolt_core::poly::opening_proof::SumcheckId;
         use jolt_core::utils::math::Math;

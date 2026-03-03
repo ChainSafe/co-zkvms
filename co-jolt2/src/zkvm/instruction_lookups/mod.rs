@@ -112,7 +112,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: PreprocessingPool<F>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let G = self.G.take().unwrap();
         let init = self

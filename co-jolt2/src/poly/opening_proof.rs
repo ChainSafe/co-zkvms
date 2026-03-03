@@ -258,10 +258,13 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         drop(_span);
 
         // e. Run batched sumcheck
+        let mut empty_pool =
+            mpc_core::protocols::rep3_ring::edabits::PreprocessingPool::empty(self.party_id); // not used
         let r_sumcheck = crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker::prove(
             &mut instances,
             self,
             io_ctx,
+            &mut empty_pool,
         )?;
 
         let _span = tracing::info_span!("rlc_and_hints").entered();
@@ -1057,7 +1060,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         result
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
+    ) {
         self.prover_state.as_mut().unwrap().bind(r_j, round);
     }
 

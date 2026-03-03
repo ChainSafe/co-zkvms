@@ -3,6 +3,7 @@ use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 pub use crate::subprotocols::sumcheck::{
@@ -40,6 +41,7 @@ pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut IoContextPool<N>,
+        _edabits_pool: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         Ok(vec![])
     }
@@ -111,9 +113,6 @@ pub struct Rep3JoltDagStagesWorker<F: JoltField> {
     ram_dag: Option<crate::zkvm::ram::Rep3RamDagWorker<F>>,
     lookups_dag: Option<crate::zkvm::instruction_lookups::Rep3LookupsDagWorker<F>>,
 
-    // Stage3 needs edabits ownership to construct ReadRaf worker.
-    edabits_pool: Option<mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>>,
-
     // Witness-time lookup polynomials (consumed when we create lookups_dag).
     instruction_one_hot_polys: Option<
         [crate::poly::one_hot_polynomial::Rep3OneHotPolynomial<F>;
@@ -128,7 +127,6 @@ impl<F: JoltField> Rep3JoltDagStagesWorker<F> {
         padded_trace_length: usize,
         instruction_one_hot_polys: [crate::poly::one_hot_polynomial::Rep3OneHotPolynomial<F>;
             jolt_core::zkvm::instruction_lookups::D],
-        edabits_pool: mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
     ) -> Self {
         Self {
             outer_sumcheck_r,
@@ -137,7 +135,6 @@ impl<F: JoltField> Rep3JoltDagStagesWorker<F> {
             registers_dag: crate::zkvm::registers::Rep3RegistersDagWorker::new(),
             ram_dag: None,
             lookups_dag: None,
-            edabits_pool: Some(edabits_pool),
             instruction_one_hot_polys: Some(instruction_one_hot_polys),
         }
     }
@@ -224,6 +221,7 @@ where
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
+        edabits_pool: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use crate::subprotocols::sumcheck::BatchedSumcheckWorkerInstance;
         use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
@@ -310,7 +308,9 @@ where
 
         // 2) Registers: ValEvaluation (secret)
         self.registers_dag.set_stage3_init(registers_val_claim);
-        let registers_stage3 = self.registers_dag.stage3_instances(sm, io_ctx)?;
+        let registers_stage3 = self
+            .registers_dag
+            .stage3_instances(sm, io_ctx, edabits_pool)?;
 
         // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
         lookups_dag.set_stage3_init(
@@ -319,15 +319,11 @@ where
             read_raf_rv_claim,
             read_raf_raf_claim,
         );
-        let edabits_pool = self
-            .edabits_pool
-            .take()
-            .expect("edabits_pool already taken");
         let lookups_stage3 = lookups_dag.stage3_instances(sm, io_ctx, edabits_pool);
 
         // 4) RAM: ValEvaluation (secret) + ValFinal (secret) + HammingBooleanity (public)
         ram_dag.set_stage3_init(ram_val_final_input_claim, ram_val_eval_input_claim);
-        let ram_stage3 = ram_dag.stage3_instances(sm, io_ctx)?;
+        let ram_stage3 = ram_dag.stage3_instances(sm, io_ctx, edabits_pool)?;
 
         // Collect all instances in vanilla ordering:
         // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight)

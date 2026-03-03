@@ -169,7 +169,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             .collect()
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
         rayon::join(
             || self.ra.bind_parallel(r_j, BindingOrder::HighToLow),
             || self.unmap.bind_parallel(r_j, BindingOrder::HighToLow),

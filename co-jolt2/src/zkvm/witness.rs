@@ -17,7 +17,8 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::ring_to_field_a2b_many;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
+use mpc_core::protocols::rep3_ring::preprocessing::edabits;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
@@ -69,6 +70,7 @@ fn fill_field_from_operands_sparse_u64<F, N>(
     io_ctx: &mut IoContextPool<N>,
     jobs: Vec<SparseCastJob>,
     out: Arc<SharedSparseFieldCols<F>>,
+    edabits_pool: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
 where
     F: JoltField,
@@ -79,39 +81,31 @@ where
         return Ok(());
     }
 
-    io_ctx.par_chunks(
-        jobs,
-        None,
-        move |chunk, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
-            // Further split each fork's chunk into smaller batches to avoid a single huge send
-            // that can hurt TCP/QUIC pipelining.
-            const MAX_BATCH: usize = 8192;
-            for sub in chunk.chunks(MAX_BATCH) {
-                let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(sub.len());
-                let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(sub.len());
-                for job in sub {
-                    shares.push(job.share);
-                    targets.push((job.col, job.row));
-                }
+    let n = jobs.len();
+    let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
+    let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(n);
+    for job in jobs {
+        shares.push(job.share);
+        targets.push((job.col, job.row));
+    }
 
-                let casted = ring_to_field_a2b_many::<u64, F, _>(&shares, io_ctx)?;
-                debug_assert_eq!(casted.len(), targets.len());
-                for (value, (col, row)) in casted.into_iter().zip(targets.into_iter()) {
-                    unsafe {
-                        match col {
-                            SparseCastCol::Rs1 => (&mut *out.rs1.get())[row] = value,
-                            SparseCastCol::Rs2 => (&mut *out.rs2.get())[row] = value,
-                            SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
-                            SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
-                            SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
-                        }
-                    }
-                }
+    let batch = edabits_pool.take_edabits::<u64>(n);
+    let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
+        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch, ctx)
+    })?;
+
+    debug_assert_eq!(casted.len(), targets.len());
+    for (value, (col, row)) in casted.into_iter().zip(targets.into_iter()) {
+        unsafe {
+            match col {
+                SparseCastCol::Rs1 => (&mut *out.rs1.get())[row] = value,
+                SparseCastCol::Rs2 => (&mut *out.rs2.get())[row] = value,
+                SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
+                SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
+                SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
             }
-
-            Ok(vec![()])
-        },
-    )?;
+        }
+    }
 
     Ok(())
 }
@@ -353,6 +347,7 @@ where
 pub fn populate_cycle_witness_rep3<F, PCS, N>(
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
+    edabits_pool: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
 where
     F: JoltField,
@@ -389,7 +384,7 @@ where
 
     // Shared columns (ring→field), populated sparsely:
     // - public/trivial values are injected directly into field trivial shares
-    // - secret values are batched into pipelined `ring_to_field_a2b_many` calls via IoContextPool
+    // - secret values are batched into EdaBits B2A (`ring_to_field_b2a_many`) via IoContextPool
     let shared_cols = Arc::new(SharedSparseFieldCols::<F> {
         rs1: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         rs2: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
@@ -420,7 +415,7 @@ where
             cast_jobs.push(SparseCastJob {
                 col,
                 row,
-                share: op.as_arithmetic_u64(),
+                share: op.as_binary(),
             });
         }
     };
@@ -492,7 +487,7 @@ where
         }
     }
 
-    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols))?;
+    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), edabits_pool)?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
@@ -558,7 +553,7 @@ where
 /// The trace must have been promoted to shares and arithmetic representations populated
 /// before calling.
 ///
-/// - Shared fields (register values) go through `ring_to_field_a2b_many` → `Shared(...)`
+/// - Shared fields (register values) go through EdaBits B2A (`ring_to_field_b2a_many`) → `Shared(...)`
 /// - Public fields (flags derived from opcode) → `Public(...)`
 /// - Deferred fields (instruction_ra) are skipped or zeroed
 #[tracing::instrument(skip_all, name = "witness_batch_generate_rep3")]
@@ -566,6 +561,7 @@ pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
+    edabits_pool: &mut PreprocessingPool<F>,
 ) -> eyre::Result<HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>>
 where
     F: JoltField,
@@ -629,8 +625,8 @@ where
 
                 // Rd write: (rd_write_flag, pre, post)
                 let (rd_write_flag, pre, post) = cycle.rd_write();
-                batch_ref.rd_pre[i] = pre.as_arithmetic_or_trivial(party_id);
-                batch_ref.rd_post[i] = post.as_arithmetic_or_trivial(party_id);
+                batch_ref.rd_pre[i] = pre.as_binary_or_trivial(party_id);
+                batch_ref.rd_post[i] = post.as_binary_or_trivial(party_id);
 
                 let circuit_flags = cycle.instruction().circuit_flags();
 
@@ -653,8 +649,8 @@ where
 
                 // RAM inc data
                 if let Rep3RAMAccess::Write(w) = cycle.ram_access() {
-                    batch_ref.ram_pre[i] = w.pre_value.as_arithmetic_u64();
-                    batch_ref.ram_post[i] = w.post_value.as_arithmetic_u64();
+                    batch_ref.ram_pre[i] = w.pre_value.as_binary_or_trivial(party_id);
+                    batch_ref.ram_post[i] = w.post_value.as_binary_or_trivial(party_id);
                 }
 
                 // BytecodeRa indices
@@ -830,18 +826,26 @@ where
                 );
             }
             CommittedPolynomial::RdInc => {
-                // rd_inc = rd_post - rd_pre in the field (MPC: subtract after conversion)
-                let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_pre, io_ctx.main())?;
-                let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.rd_post, io_ctx.main())?;
+                // rd_inc = rd_post - rd_pre in the field (binary shares → EdaBits B2A)
+                let n = batch.rd_pre.len();
+                let mut combined = std::mem::take(&mut batch.rd_pre);
+                combined.extend(std::mem::take(&mut batch.rd_post));
+                let batch_eda = edabits_pool.take_edabits::<u64>(2 * n);
+                let mut field_all = io_ctx.par_chunks_preproc(
+                    combined,
+                    batch_eda,
+                    None,
+                    |xs, batch_e, ctx| {
+                        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
+                    },
+                )?;
+                let post_field = field_all.split_off(n);
+                let pre_field = field_all;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
                     .map(|(post, pre)| post - pre)
                     .collect();
-                // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
-                // Arc internally — no data duplication.
                 let dense = Rep3DensePolynomial::new(inc);
                 state
                     .prover_state
@@ -850,17 +854,26 @@ where
                 results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::RamInc => {
-                // ram_inc = post_value - pre_value in the field (MPC: subtract after conversion)
-                let pre_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_pre, io_ctx.main())?;
-                let post_field: Vec<Rep3PrimeFieldShare<F>> =
-                    ring_to_field_a2b_many(&batch.ram_post, io_ctx.main())?;
+                // ram_inc = post_value - pre_value in the field (binary shares → EdaBits B2A)
+                let n = batch.ram_pre.len();
+                let mut combined = std::mem::take(&mut batch.ram_pre);
+                combined.extend(std::mem::take(&mut batch.ram_post));
+                let batch_eda = edabits_pool.take_edabits::<u64>(2 * n);
+                let mut field_all = io_ctx.par_chunks_preproc(
+                    combined,
+                    batch_eda,
+                    None,
+                    |xs, batch_e, ctx| {
+                        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
+                    },
+                )?;
+                let post_field = field_all.split_off(n);
+                let pre_field = field_all;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
                     .into_iter()
                     .zip(pre_field)
                     .map(|(post, pre)| post - pre)
                     .collect();
-                // Store as Rep3DensePolynomial on cycle_witness for stage2 provers.
                 let dense = Rep3DensePolynomial::new(inc);
                 state
                     .prover_state
@@ -1050,6 +1063,17 @@ mod tests {
                     info!(?party, total_shared, unpopulated, "operand check");
                     assert_eq!(unpopulated, 0, "unpopulated arithmetic shares remain");
 
+                    // Create EdaBits pool for B2A conversions in witness gen
+                    let budget =
+                        crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                    let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+                    let mut edabits_pool =
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
+                            counts,
+                            budget.dabits,
+                            &mut io_ctx,
+                        )?;
+
                     let mut state = StateManagerWorker::new(
                         &preprocessing,
                         trace,
@@ -1061,8 +1085,12 @@ mod tests {
                     );
 
                     info!(?party, "generate_witness_batch_rep3 start");
-                    let results =
-                        generate_witness_batch_rep3::<F, PCS, _>(&polys, &mut state, &mut io_ctx)?;
+                    let results = generate_witness_batch_rep3::<F, PCS, _>(
+                        &polys,
+                        &mut state,
+                        &mut io_ctx,
+                        &mut edabits_pool,
+                    )?;
                     info!(
                         ?party,
                         count = results.len(),
