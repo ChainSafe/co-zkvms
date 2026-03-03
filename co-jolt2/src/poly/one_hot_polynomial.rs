@@ -80,20 +80,27 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // Sample one RandOHV for the mask `r` (binary-sharing domain).
         let (r_share, e_bits) = gadgets::ohv::rand_ohv::<u8, _>(log_k, io_ctx)?;
 
-        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles.
-        let masked_vec: Vec<Rep3RingShare<u8>> = nonzero_indices
-            .iter()
-            .map(|opt| {
-                opt.map(|kj| kj ^ r_share)
-                    .unwrap_or_else(Rep3RingShare::zero_share)
-            })
-            .collect();
-        let opened = binary::open_vec(&masked_vec, io_ctx)?;
+        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles only.
+        //
+        // The set of `None` positions is already known to all parties (it's in the
+        // input `Vec<Option<...>>`), so we can save bandwidth by opening only the
+        // active entries.
+        let active_count = nonzero_indices.iter().filter(|opt| opt.is_some()).count();
+        let mut masked_active: Vec<Rep3RingShare<u8>> = Vec::with_capacity(active_count);
+        for opt in nonzero_indices.iter() {
+            if let Some(kj) = opt {
+                masked_active.push(*kj ^ r_share);
+            }
+        }
+        let opened_active = binary::open_vec(&masked_active, io_ctx)?;
+        debug_assert_eq!(opened_active.len(), active_count);
+
+        let mut opened_iter = opened_active.into_iter();
         let masked_indices_c: Vec<Option<u8>> = nonzero_indices
             .iter()
-            .zip(opened.into_iter())
-            .map(|(opt, v)| opt.is_some().then_some(v))
+            .map(|opt| opt.as_ref().map(|_| opened_iter.next().expect("active index open")))
             .collect();
+        debug_assert!(opened_iter.next().is_none(), "opened_active length mismatch");
 
         // Inject the OHV bits into prime-field shares once.
         let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
@@ -340,21 +347,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     ///
     /// Uses the identity:
     /// `table[r XOR c] = Σ_i table[i] * E_field[i XOR c]`.
-    fn select_public_table_at_masked_index(&self, table: &[F], c: u8) -> Rep3PrimeFieldShare<F> {
-        assert_eq!(table.len(), self.K, "table length must equal K");
-        assert_eq!(
-            self.rand_ohv_e_field.len(),
-            self.K,
-            "RandOHV E_field must be initialized (use from_indices_randohv)"
-        );
-
-        let mut acc = Rep3PrimeFieldShare::zero_share();
-        for (i, &table_i) in table.iter().enumerate() {
-            let idx = (i as u8) ^ c;
-            acc += self.rand_ohv_e_field[idx as usize] * table_i;
-        }
-        acc
-    }
 
     /// Computes this party's additive share of the one-hot polynomial's contribution to the
     /// Dory v_vec (vector-matrix product), scaled by `coeff`.
@@ -481,13 +473,17 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         let eq_addr: Vec<F> = EqPolynomial::<F>::evals(r_address);
         let eq_cycle: Vec<F> = EqPolynomial::<F>::evals(r_cycle);
 
+        // Precompute shifted EQ table once:
+        //   shifted[c] = eq_addr[r XOR c]  (in shares), where r is the RandOHV mask.
+        // This turns per-cycle masked selection from O(K) to O(1).
+        let shifted = shifted_table_from_rand_ohv(&eq_addr, &self.rand_ohv_e_field);
+
         self.masked_indices_c
             .par_iter()
             .enumerate()
             .fold(Rep3PrimeFieldShare::zero_share, |mut acc, (j, opt_c)| {
                 let Some(c) = opt_c else { return acc };
-                let eq_kj = self.select_public_table_at_masked_index(&eq_addr, *c);
-                acc += eq_kj * eq_cycle[j];
+                acc += shifted[*c as usize] * eq_cycle[j];
                 acc
             })
             .reduce(Rep3PrimeFieldShare::zero_share, |mut a, b| {
@@ -1092,8 +1088,10 @@ mod tests {
             r_share: Rep3RingShare::default(),
         });
 
-        let shares: [Rep3PrimeFieldShare<F>; 3] =
-            std::array::from_fn(|pid| polys[pid].select_public_table_at_masked_index(&table, c));
+        let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| {
+            let shifted = shifted_table_from_rand_ohv(&table, &polys[pid].rand_ohv_e_field);
+            shifted[c as usize]
+        });
 
         let got = combine_field_element(shares[0], shares[1], shares[2]);
         let want = table[(r ^ c) as usize];

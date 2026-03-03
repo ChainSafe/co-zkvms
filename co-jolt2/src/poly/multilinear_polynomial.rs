@@ -77,7 +77,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             party_coeffs[2].push(shares[2]);
         }
 
-        std::array::from_fn(|pid| Rep3MultilinearPolynomial::from(party_coeffs[pid].clone()))
+        let [c0, c1, c2] = party_coeffs;
+        [
+            Rep3MultilinearPolynomial::from(c0),
+            Rep3MultilinearPolynomial::from(c1),
+            Rep3MultilinearPolynomial::from(c2),
+        ]
     }
 
     pub fn as_shared(&self) -> &Rep3DensePolynomial<F> {

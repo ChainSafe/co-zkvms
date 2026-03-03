@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::{self, arithmetic as rep3_arith};
 use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::{unsafe_allocate_zero_share_vec, Rep3DensePolynomial};
+use crate::utils::fwht::fwht_in_place;
 
 /// Rep3 version of vanilla Jolt's `RaPolynomial`.
 ///
@@ -129,10 +131,17 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         let eq_0_r0 = F::one() - r0_f;
         let eq_1_r0 = r0_f;
 
-        let mut f_0 = self.shifted_table;
-        let mut f_1 = f_0.clone();
-        f_0.par_iter_mut().for_each(|v| *v *= eq_0_r0);
-        f_1.par_iter_mut().for_each(|v| *v *= eq_1_r0);
+        let shifted = self.shifted_table;
+        let k = shifted.len();
+        let mut f_0 = unsafe_allocate_zero_share_vec::<F>(k);
+        let mut f_1 = unsafe_allocate_zero_share_vec::<F>(k);
+        f_0.par_iter_mut()
+            .zip_eq(f_1.par_iter_mut())
+            .zip_eq(shifted.par_iter())
+            .for_each(|((o0, o1), &v)| {
+                *o0 = v * eq_0_r0;
+                *o1 = v * eq_1_r0;
+            });
 
         Rep3RaPolynomialRound2 {
             f_0,
@@ -177,15 +186,27 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         let eq_0_r1 = F::one() - r1_f;
         let eq_1_r1 = r1_f;
 
-        let mut f_00 = self.f_0.clone();
-        let mut f_01 = self.f_0;
-        let mut f_10 = self.f_1.clone();
-        let mut f_11 = self.f_1;
+        let f0 = self.f_0;
+        let f1 = self.f_1;
+        let k = f0.len();
+        debug_assert_eq!(f1.len(), k);
+        let mut f_00 = unsafe_allocate_zero_share_vec::<F>(k);
+        let mut f_01 = unsafe_allocate_zero_share_vec::<F>(k);
+        let mut f_10 = unsafe_allocate_zero_share_vec::<F>(k);
+        let mut f_11 = unsafe_allocate_zero_share_vec::<F>(k);
 
-        f_00.par_iter_mut().for_each(|v| *v *= eq_0_r1);
-        f_01.par_iter_mut().for_each(|v| *v *= eq_1_r1);
-        f_10.par_iter_mut().for_each(|v| *v *= eq_0_r1);
-        f_11.par_iter_mut().for_each(|v| *v *= eq_1_r1);
+        f_00.par_iter_mut()
+            .zip_eq(f0.par_iter())
+            .for_each(|(dst, &src)| *dst = src * eq_0_r1);
+        f_01.par_iter_mut()
+            .zip_eq(f0.par_iter())
+            .for_each(|(dst, &src)| *dst = src * eq_1_r1);
+        f_10.par_iter_mut()
+            .zip_eq(f1.par_iter())
+            .for_each(|(dst, &src)| *dst = src * eq_0_r1);
+        f_11.par_iter_mut()
+            .zip_eq(f1.par_iter())
+            .for_each(|(dst, &src)| *dst = src * eq_1_r1);
 
         Rep3RaPolynomialRound3 {
             f_00,
@@ -361,17 +382,40 @@ pub fn shifted_table_from_rand_ohv<F: JoltField>(
 ) -> Vec<Rep3PrimeFieldShare<F>> {
     assert_eq!(eq_u.len(), e_field.len());
     let k = eq_u.len();
-    (0..k)
-        .into_par_iter()
-        .map(|c| {
-            let mut acc = Rep3PrimeFieldShare::zero_share();
-            for i in 0..k {
-                let idx = i ^ c;
-                acc += e_field[i] * eq_u[idx];
-            }
-            acc
-        })
-        .collect()
+    debug_assert!(k.is_power_of_two(), "K must be power-of-two for FWHT");
+    if k == 0 {
+        return Vec::new();
+    }
+    if k == 1 {
+        return vec![rep3_arith::mul_public(e_field[0], eq_u[0])];
+    }
+
+    // We want: shifted[c] = Σ_i e_field[i] * eq_u[i XOR c].
+    //
+    // This is an XOR-correlation and can be computed via FWHT:
+    //   FWHT(shifted) = FWHT(e_field) ⊙ FWHT(eq_u)
+    // followed by inverse FWHT and scaling by 1/k.
+    let mut e_hat: Vec<Rep3PrimeFieldShare<F>> = e_field.to_vec();
+    fwht_in_place(&mut e_hat);
+
+    let mut u_hat: Vec<F> = eq_u.to_vec();
+    fwht_in_place(&mut u_hat);
+
+    e_hat
+        .par_iter_mut()
+        .zip_eq(u_hat.par_iter())
+        .for_each(|(e, &u)| {
+            *e = rep3::arithmetic::mul_public(*e, u);
+        });
+
+    fwht_in_place(&mut e_hat);
+
+    let inv_k = F::from(k as u64).inverse().expect("K invertible in field");
+    e_hat.par_iter_mut().for_each(|e| {
+        *e = rep3::arithmetic::mul_public(*e, inv_k);
+    });
+
+    e_hat
 }
 
 #[cfg(test)]
