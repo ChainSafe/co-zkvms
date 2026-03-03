@@ -27,3 +27,30 @@ nontrivial branching/method-call overhead when used per-term inside tight inner 
 **Follow-up idea**: keep the “public vs shared” split at the algorithm level (two accumulators),
 or introduce a specialized, branch-minimized fast path for the common cases (Public/Public,
 Shared/Public) while still avoiding `promote_to_trivial_share` cascades.
+
+## Stage 3 (and close) public opening-claims sent as secret shares
+
+Some openings/claims that are logically PUBLIC are currently transmitted and stored as Rep3 shares
+via `promote_to_trivial_share`. This increases bandwidth and can cause accidental downstream
+“share × share” arithmetic paths (e.g., via `AdditiveShare` conversions) when the claim is later
+combined with shared values.
+
+**Known occurrences (not exhaustive):**
+- `src/zkvm/instruction_lookups/read_raf_checking.rs`: table-flag claims and `raf_flag_claim` returned as Rep3 shares.
+- `src/zkvm/registers/val_evaluation.rs`: `wa_claim` returned as a Rep3 share.
+- `src/zkvm/ram/val_evaluation.rs` and `src/zkvm/ram/output_check.rs`: `wa_claim` returned as a Rep3 share.
+- `src/poly/opening_proof.rs`: some public claims promoted to Rep3 shares before sending to the coordinator.
+
+**Goal**: keep these as public scalars end-to-end and only secret-share them when strictly required by
+a downstream protocol interface.
+
+## Make `Rep3Value` support integers (avoid public → F casts)
+
+Several witness/VM paths first interpret public data as integers (PC, immediates, advice words, RAM
+words), then convert to field elements (`F`) and immediately promote to trivial shares. This:
+- adds conversion overhead,
+- encourages downstream code to treat the value as “shared” and accidentally use networked `mul_vec`
+  or “share × share” multiplication paths even when one operand is public.
+
+**Idea**: extend `Rep3Value` (or a sibling type) with integer variants (e.g. `u64`, `i128`), and add
+fast-path arithmetic/conversion routines so public values can stay in the integer domain longer.

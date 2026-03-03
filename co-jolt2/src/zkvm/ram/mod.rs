@@ -13,6 +13,8 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use crate::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::mixed_polynomial::MixedPolynomial;
+use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
     Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
@@ -191,8 +193,9 @@ pub struct RamStage4Init<F: JoltField> {
 pub struct Rep3RamDagWorker<F: JoltField> {
     /// val_init (SHARED) — initial RAM state as a dense MLE.
     val_init: Rep3DensePolynomial<F>,
-    /// val_final (SHARED) — final RAM state as a dense MLE.
-    val_final: Rep3DensePolynomial<F>,
+    /// val_final (MIXED) — final RAM state as an MLE with public regions kept public.
+    /// This avoids materializing a full K-length `Vec<Rep3PrimeFieldShare<F>>`.
+    val_final: MixedPolynomial<F>,
     stage2: Option<(F, F, Vec<F::Challenge>)>,
     stage3: Option<(F, F)>,
     stage4: Option<RamStage4Init<F>>,
@@ -233,46 +236,85 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         let dram_words_available = sm.prover_state.final_memory_state.data.len();
         let dram_convert_len = dram_words_needed.min(dram_words_available);
 
-        let final_memory_ring: Vec<_> =
-            sm.prover_state.final_memory_state.data[..dram_convert_len].to_vec();
-
+        // Take ownership of the final-memory ring buffer and drop it immediately after
+        // ring→field conversion to minimize peak RSS.
+        let mut final_memory_ring = std::mem::take(&mut sm.prover_state.final_memory_state.data);
+        final_memory_ring.truncate(dram_convert_len);
         let dram_field: Vec<Rep3PrimeFieldShare<F>> =
             binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
+        drop(final_memory_ring);
 
-        // Start from initial state (already has shared advice), overlay DRAM
-        let mut final_memory_field = initial_memory_state.clone();
+        // Build val_final as a mixed polynomial: keep known-public regions public,
+        // only storing `Rep3PrimeFieldShare` values where the witness is secret.
+        let mut final_memory_mixed: Vec<Rep3Value<F>> = vec![Rep3Value::Public(F::zero()); K];
+
+        // Copy bytecode (PUBLIC)
+        let mut index =
+            remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+        for word in &ram_preprocessing.bytecode_words {
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(*word));
+            index += 1;
+        }
+
+        // Trusted advice (SHARED) — reuse already-converted initial memory shares.
+        let trusted_advice_start =
+            remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
+        let trusted_words_len = (advice.trusted_advice.len() + 7) / 8;
+        for i in 0..trusted_words_len {
+            final_memory_mixed[trusted_advice_start + i] =
+                Rep3Value::Shared(initial_memory_state[trusted_advice_start + i]);
+        }
+
+        // Untrusted advice (SHARED) — reuse already-converted initial memory shares.
+        let untrusted_advice_start =
+            remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
+        let untrusted_words_len = (advice.untrusted_advice.len() + 7) / 8;
+        for i in 0..untrusted_words_len {
+            final_memory_mixed[untrusted_advice_start + i] =
+                Rep3Value::Shared(initial_memory_state[untrusted_advice_start + i]);
+        }
+
+        // Copy inputs (PUBLIC)
+        index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+        for chunk in sm.program_io.inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            final_memory_mixed[index] =
+                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
+            index += 1;
+        }
 
         // Overlay DRAM region with SHARED final memory values
         for (i, share) in dram_field.into_iter().enumerate() {
-            final_memory_field[dram_start_index + i] = share;
+            final_memory_mixed[dram_start_index + i] = Rep3Value::Shared(share);
         }
 
         // Overlay outputs (PUBLIC) — the verifier knows the expected outputs
-        let mut index = remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
+        index = remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
         for chunk in sm.program_io.outputs.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            let word = u64::from_le_bytes(word);
-            final_memory_field[index] =
-                rep3_arith::promote_to_trivial_share(party_id, F::from_u64(word));
+            final_memory_mixed[index] =
+                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
             index += 1;
         }
 
-        // Copy panic bit to final state
+        // Copy panic bit to final state (PUBLIC)
         let panic_index = remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
-        final_memory_field[panic_index] =
-            rep3_arith::promote_to_trivial_share(party_id, F::from_u64(sm.program_io.panic as u64));
+        final_memory_mixed[panic_index] =
+            Rep3Value::Public(F::from_u64(sm.program_io.panic as u64));
         if !sm.program_io.panic {
             let termination_index =
                 remap_address(memory_layout.termination, memory_layout).unwrap() as usize;
-            final_memory_field[termination_index] =
-                rep3_arith::promote_to_trivial_share(party_id, F::one());
+            final_memory_mixed[termination_index] = Rep3Value::Public(F::one());
         }
 
         let val_init = Rep3DensePolynomial::new(initial_memory_state);
-        let val_final = Rep3DensePolynomial::new(final_memory_field);
+        let val_final = MixedPolynomial::new(final_memory_mixed, party_id);
 
         Ok(Self {
             val_init,

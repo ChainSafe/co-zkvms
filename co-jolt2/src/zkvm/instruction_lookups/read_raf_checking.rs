@@ -1529,33 +1529,38 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         };
 
         let half = len / 2;
+
+        // `Prefixes` is a small enum; materialize it once to avoid per-bucket iteration/allocation.
+        // This is read-only and shared across Rayon threads.
+        let prefix_kinds: Vec<Prefixes> = Prefixes::iter().collect();
+        debug_assert_eq!(prefix_kinds.len(), Prefixes::COUNT);
+
         let (eval_0, eval_2_left, eval_2_right) = (0..half)
             .into_par_iter()
             .map(|b| {
                 let b_bits = LookupBits::new(b as u128, log_len - 1);
 
-                let prefixes_c0: Vec<_> = Prefixes::iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
-                            &ps.prefix_checkpoints,
-                            r_x,
-                            0,
-                            b_bits,
-                            j,
-                        )
-                    })
-                    .collect();
-                let prefixes_c2: Vec<_> = Prefixes::iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
-                            &ps.prefix_checkpoints,
-                            r_x,
-                            2,
-                            b_bits,
-                            j,
-                        )
-                    })
-                    .collect();
+                // Compute prefix evaluations into fixed-size stack arrays to avoid per-bucket Vecs.
+                let prefixes_c0: [PrefixEval<F>; Prefixes::COUNT] = std::array::from_fn(|pi| {
+                    let prefix = &prefix_kinds[pi];
+                    prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                        &ps.prefix_checkpoints,
+                        r_x,
+                        0,
+                        b_bits,
+                        j,
+                    )
+                });
+                let prefixes_c2: [PrefixEval<F>; Prefixes::COUNT] = std::array::from_fn(|pi| {
+                    let prefix = &prefix_kinds[pi];
+                    prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                        &ps.prefix_checkpoints,
+                        r_x,
+                        2,
+                        b_bits,
+                        j,
+                    )
+                });
 
                 let mut e0 = AdditiveShare::<F>::zero();
                 let mut e2l = AdditiveShare::<F>::zero();
@@ -1563,14 +1568,27 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
 
                 for (table, suffixes) in LookupTables::<XLEN>::iter().zip(ps.suffix_polys.iter()) {
                     let table = &table;
-                    let suffixes_left: Vec<AdditiveShare<F>> =
-                        suffixes.iter().map(|s| s.get_coeff(b)).collect();
-                    let suffixes_right: Vec<AdditiveShare<F>> =
-                        suffixes.iter().map(|s| s.get_coeff(b + half)).collect();
+                    let n = suffixes.len();
+                    debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
 
-                    e0 += combine_shared(table, &prefixes_c0, &suffixes_left);
-                    e2l += combine_shared(table, &prefixes_c2, &suffixes_left);
-                    e2r += combine_shared(table, &prefixes_c2, &suffixes_right);
+                    // Gather suffix coefficients without allocating.
+                    let mut suffixes_left: [AdditiveShare<F>; 8] = [AdditiveShare::<F>::zero(); 8];
+                    let mut suffixes_right: [AdditiveShare<F>; 8] = [AdditiveShare::<F>::zero(); 8];
+                    for si in 0..n {
+                        // `get_coeff` is a by-value read of an AdditiveShare.
+                        suffixes_left[si] = suffixes[si].get_coeff(b);
+                        suffixes_right[si] = suffixes[si].get_coeff(b + half);
+                    }
+
+                    // `LookupTables::combine(prefixes, suffixes)` is linear in `suffixes`.
+                    // Compute per-suffix weights once and reuse across both left/right suffix
+                    // coefficient vectors for the same (table, prefixes) pair.
+                    let weights_c0 = combine_shared_weights::<F>(table, &prefixes_c0, n);
+                    let weights_c2 = combine_shared_weights::<F>(table, &prefixes_c2, n);
+
+                    e0 += dot_weights_suffixes::<F>(&weights_c0, &suffixes_left, n);
+                    e2l += dot_weights_suffixes::<F>(&weights_c2, &suffixes_left, n);
+                    e2r += dot_weights_suffixes::<F>(&weights_c2, &suffixes_right, n);
                 }
                 (e0, e2l, e2r)
             })
@@ -1638,25 +1656,40 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// MPC-compatible version of `LookupTables::combine`.
+/// Compute the public per-suffix weights for `LookupTables::combine(prefixes, suffixes)`.
 ///
-/// The vanilla `combine(prefixes, suffixes) -> F` is linear in suffixes.
-/// We extract per-suffix weights by probing with unit vectors, then apply
-/// those weights (public F) to the additive suffix shares.
-fn combine_shared<F: JoltField>(
+/// `LookupTables::combine` is linear in `suffixes`, so:
+///   combine(prefixes, suffixes) = Σ_i weights[i] * suffixes[i].
+///
+/// We obtain `weights[i] = combine(prefixes, e_i)` by probing with unit vectors.
+#[inline]
+fn combine_shared_weights<F: JoltField>(
     table: &LookupTables<XLEN>,
     prefixes: &[PrefixEval<F>],
-    shared_suffixes: &[AdditiveShare<F>],
-) -> AdditiveShare<F> {
-    let n = shared_suffixes.len();
+    n: usize,
+) -> [F; 8] {
     debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
+
     let mut unit = [F::zero(); 8];
-    let mut result = AdditiveShare::<F>::zero();
+    let mut weights = [F::zero(); 8];
     for i in 0..n {
         unit[i] = F::one();
-        let weight: F = table.combine(prefixes, &unit[..n]);
+        weights[i] = table.combine(prefixes, &unit[..n]);
         unit[i] = F::zero();
-        result = result + shared_suffixes[i] * weight;
+    }
+    weights
+}
+
+#[inline]
+fn dot_weights_suffixes<F: JoltField>(
+    weights: &[F; 8],
+    suffixes: &[AdditiveShare<F>; 8],
+    n: usize,
+) -> AdditiveShare<F> {
+    debug_assert!(n <= 8, "suffix count exceeds stack buffer size");
+    let mut result = AdditiveShare::<F>::zero();
+    for i in 0..n {
+        result += suffixes[i] * weights[i];
     }
     result
 }
