@@ -335,12 +335,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             .expect("Rep3RamDagWorker stage3 init not set");
 
         // ValEvaluation must be constructed BEFORE ValFinal because ValFinal `.take()`s ram_inc.
-        let ram_inc = sm
-            .prover_state
-            .cycle_witness
-            .ram_inc
-            .clone()
-            .expect("ram_inc not populated");
+        let ram_inc = sm.prover_state.cycle_witness.ram_inc_ref().clone();
         let val_eval =
             val_evaluation::Rep3RamValEvaluationWorker::new(sm, val_eval_input_claim, ram_inc);
         let val_final = Rep3ValFinalSumcheckWorker::new(sm, val_final_input_claim);
@@ -354,8 +349,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 )
                 .0
                 .r;
+            let memory_layout = &sm.program_io.memory_layout;
+            let ram_addrs: Vec<u64> = sm
+                .prover_state
+                .cycle_witness
+                .meta()
+                .iter()
+                .map(|m| remap_address(m.ram_addr, memory_layout).unwrap_or(0))
+                .collect();
             HammingBooleanitySumcheck::new_prover_from_parts(
-                &sm.prover_state.cycle_witness.ram_addr,
+                &ram_addrs,
                 &r_cycle,
             )
         } else {
@@ -412,9 +415,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             let addresses: Vec<Option<u64>> = sm
                 .prover_state
                 .cycle_witness
-                .ram_addr
+                .meta()
                 .par_iter()
-                .map(|&addr| remap_address(addr, memory_layout))
+                .map(|m| remap_address(m.ram_addr, memory_layout))
                 .collect();
 
             // Compute F_arrays (used for HammingWeight)

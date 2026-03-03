@@ -122,21 +122,17 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         // ReadRaf (created before HammingWeight, matching vanilla ordering)
         let eq_r_cycle = self.eq_r_cycle.take().unwrap();
         let one_hot_polys = self.one_hot_polys.clone();
-        let cw = &mut sm.prover_state.cycle_witness;
-        let lookup_indices = cw.lookup_indices.clone();
-        let lookup_tables = std::mem::take(&mut cw.lookup_tables);
-        let is_interleaved_operands = std::mem::take(&mut cw.is_interleaved_operands);
-        let right_operand_public_mask = std::mem::take(&mut cw.right_operand_public_mask);
+        let rr = sm.prover_state.cycle_witness.take_read_raf();
         let read_raf = Rep3ReadRafSumcheckWorker::new(
             init.read_raf_gamma,
             init.rv_claim,
             init.raf_claim,
             one_hot_polys,
             &eq_r_cycle,
-            lookup_tables,
-            is_interleaved_operands,
-            lookup_indices,
-            right_operand_public_mask,
+            rr.lookup_tables,
+            rr.is_interleaved_operands,
+            rr.lookup_indices,
+            rr.right_operand_public_mask,
             io_ctx,
             sm.party_id,
             edabits_pool,

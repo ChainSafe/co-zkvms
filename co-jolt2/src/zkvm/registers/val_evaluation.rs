@@ -60,22 +60,13 @@ impl<F: JoltField> Rep3ValEvaluationWorker<F> {
 
         // wa: PUBLIC polynomial from eq(r_address) and public rd_addr
         let eq_r_address = EqPolynomial::evals(&r_address);
-        let wa_evals: Vec<F> = sm
-            .prover_state
-            .cycle_witness
-            .rd_addr
-            .par_iter()
-            .map(|&k| eq_r_address[k as usize])
+        let wa_evals: Vec<F> = sm.prover_state.cycle_witness.meta().par_iter()
+            .map(|m| eq_r_address[m.rd_addr as usize])
             .collect();
         let wa = MultilinearPolynomial::from(wa_evals);
 
         // inc = RdInc polynomial (SHARED) — take from cycle_witness (last consumer)
-        let inc = sm
-            .prover_state
-            .cycle_witness
-            .rd_inc
-            .take()
-            .expect("rd_inc not populated");
+        let inc = sm.prover_state.cycle_witness.take_rd_inc();
 
         // LT polynomial (PUBLIC) — same construction as vanilla
         let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);

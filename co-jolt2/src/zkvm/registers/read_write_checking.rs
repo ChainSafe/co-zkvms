@@ -81,23 +81,19 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         // Compute deltas per chunk from the inc_cycle polynomial (SHARED).
         // inc_cycle[j] = rd_write_post[j] - rd_write_pre[j] in field (SHARED).
-        let inc_cycle = sm
-            .prover_state
-            .cycle_witness
-            .rd_inc
-            .clone()
-            .expect("rd_inc not populated on cycle_witness");
+        // Clone is cheap (Rep3DensePolynomial is Arc-backed); we avoid lifetime plumbing here.
+        let inc_cycle = sm.prover_state.cycle_witness.rd_inc_ref().clone();
 
-        let rd_addr = &cycle_witness.rd_addr;
+        let meta = cycle_witness.meta();
 
-        let deltas: Vec<[Rep3PrimeFieldShare<F>; K]> = rd_addr[..T - chunk_size]
+        let deltas: Vec<[Rep3PrimeFieldShare<F>; K]> = meta[..T - chunk_size]
             .par_chunks_exact(chunk_size)
             .enumerate()
             .map(|(chunk_index, addr_chunk)| {
                 let mut delta = [Rep3PrimeFieldShare::<F>::zero_share(); K];
                 let base = chunk_index * chunk_size;
-                for (i, &k) in addr_chunk.iter().enumerate() {
-                    delta[k as usize] += inc_cycle.get_bound_coeff(base + i);
+                for (i, m) in addr_chunk.iter().enumerate() {
+                    delta[m.rd_addr as usize] += inc_cycle.get_bound_coeff(base + i);
                 }
                 delta
             })
@@ -125,18 +121,21 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         A[0] = F::one();
 
         // Build I data structure (inc values are SHARED)
-        let rs1_addr = &cycle_witness.rs1_addr;
-        let rs2_addr = &cycle_witness.rs2_addr;
-        let I: Vec<Vec<(usize, u8, Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>> = rd_addr
+        let I: Vec<Vec<(usize, u8, Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>> = meta
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, addr_chunk)| {
                 let mut j = chunk_index * chunk_size;
                 addr_chunk
                     .iter()
-                    .map(|&k| {
+                    .map(|m| {
                         let inc_val = inc_cycle.get_bound_coeff(j);
-                        let entry = (j, k, Rep3PrimeFieldShare::zero_share(), inc_val);
+                        let entry = (
+                            j,
+                            m.rd_addr,
+                            Rep3PrimeFieldShare::zero_share(),
+                            inc_val,
+                        );
                         j += 1;
                         entry
                     })
@@ -148,7 +147,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         let addresses: Vec<(u8, u8, u8)> = (0..T)
             .into_par_iter()
-            .map(|j| (rs1_addr[j], rs2_addr[j], rd_addr[j]))
+            .map(|j| (meta[j].rs1_addr, meta[j].rs2_addr, meta[j].rd_addr))
             .collect();
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)

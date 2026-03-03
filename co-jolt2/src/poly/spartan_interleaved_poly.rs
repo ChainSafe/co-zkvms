@@ -453,8 +453,6 @@ fn input_as_value<F: JoltField>(
     input: JoltR1CSInputs,
     party_id: PartyID,
 ) -> Rep3Value<F> {
-    use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
-
     match input {
         JoltR1CSInputs::LeftInstructionInput => Rep3Value::Shared(inputs.left_input),
         JoltR1CSInputs::RightInstructionInput => Rep3Value::Shared(inputs.right_input),
@@ -469,14 +467,14 @@ fn input_as_value<F: JoltField>(
         JoltR1CSInputs::RamWriteValue => Rep3Value::Shared(inputs.ram_write_value),
         JoltR1CSInputs::ShouldBranch => Rep3Value::Shared(inputs.should_branch),
 
-        JoltR1CSInputs::WriteLookupOutputToRD => Rep3Value::Shared(promote_to_trivial_share(
-            party_id,
-            F::from_u64(inputs.write_lookup_output_to_rd_addr as u64),
-        )),
-        JoltR1CSInputs::WritePCtoRD => Rep3Value::Shared(promote_to_trivial_share(
-            party_id,
-            F::from_u64(inputs.write_pc_to_rd_addr as u64),
-        )),
+        JoltR1CSInputs::WriteLookupOutputToRD => {
+            let _ = party_id;
+            Rep3Value::Public(F::from_u64(inputs.write_lookup_output_to_rd_addr as u64))
+        }
+        JoltR1CSInputs::WritePCtoRD => {
+            let _ = party_id;
+            Rep3Value::Public(F::from_u64(inputs.write_pc_to_rd_addr as u64))
+        }
 
         JoltR1CSInputs::PC => Rep3Value::Public(F::from_u64(inputs.pc)),
         JoltR1CSInputs::NextPC => Rep3Value::Public(F::from_u64(inputs.next_pc)),

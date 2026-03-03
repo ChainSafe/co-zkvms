@@ -42,8 +42,7 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         input_claim: F,
     ) -> Self {
         let party_id = sm.party_id;
-        let cycle_witness = &sm.prover_state.cycle_witness;
-        let n = cycle_witness.len();
+        let n = sm.prover_state.cycle_witness.len();
 
         let (r_cycle_point, _) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::Product,
@@ -51,22 +50,14 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         );
         let log_T = r_cycle_point.r.len();
 
-        let mut left: Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> =
-            Vec::with_capacity(n);
-        let mut right: Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>> =
-            Vec::with_capacity(n);
-        for t in 0..n {
-            let (l, r) = cycle_witness.row(t).to_instruction_inputs(party_id);
-            left.push(l);
-            right.push(r);
-        }
+        let inputs = sm.prover_state.cycle_witness.take_product_inputs();
 
         Self {
             party_id,
             input_claim,
             log_T,
-            left_input_poly: Rep3DensePolynomial::new(left),
-            right_input_poly: Rep3DensePolynomial::new(right),
+            left_input_poly: Rep3DensePolynomial::new(inputs.left),
+            right_input_poly: Rep3DensePolynomial::new(inputs.right),
             eq_r_cycle: GruenSplitEqPolynomial::new(&r_cycle_point.r, BindingOrder::LowToHigh),
         }
     }
@@ -118,35 +109,35 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
             let num_x_in_bits = eq.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;
+            debug_assert_eq!(x_bitmask, chunk_size - 1);
 
-            (0..eq.len() / 2)
-                .collect::<Vec<_>>()
-                .par_chunks(chunk_size)
-                .enumerate()
-                .map(|(x_out, chunk)| {
+            let num_chunks = (eq.len() / 2).div_ceil(chunk_size);
+
+            (0..num_chunks)
+                .into_par_iter()
+                .map(|x_out| {
                     let E_out_eval = eq.E_out_current()[x_out];
 
-                    let chunk_evals = chunk
-                        .par_iter()
-                        .map(|j| {
-                            let x_in = j & x_bitmask;
-                            let E_in_eval = eq.E_in_current()[x_in];
+                    let mut t0 = AdditiveShare::<F>::zero();
+                    let mut t_inf = AdditiveShare::<F>::zero();
 
-                            let left_0 = self.left_input_poly.get_bound_coeff(2 * j);
-                            let left_1 = self.left_input_poly.get_bound_coeff(2 * j + 1);
-                            let right_0 = self.right_input_poly.get_bound_coeff(2 * j);
-                            let right_1 = self.right_input_poly.get_bound_coeff(2 * j + 1);
+                    let base = x_out * chunk_size;
+                    let end = core::cmp::min(base + chunk_size, eq.len() / 2);
 
-                            let t0 = (left_0 * right_0) * E_in_eval;
-                            let t_inf = ((left_1 - left_0) * (right_1 - right_0)) * E_in_eval;
-                            [t0, t_inf]
-                        })
-                        .reduce(
-                            || [AdditiveShare::zero(), AdditiveShare::zero()],
-                            |running, new| [running[0] + new[0], running[1] + new[1]],
-                        );
+                    for j in base..end {
+                        let x_in = j & x_bitmask;
+                        let E_in_eval = eq.E_in_current()[x_in];
 
-                    [chunk_evals[0] * E_out_eval, chunk_evals[1] * E_out_eval]
+                        let left_0 = self.left_input_poly.get_bound_coeff(2 * j);
+                        let left_1 = self.left_input_poly.get_bound_coeff(2 * j + 1);
+                        let right_0 = self.right_input_poly.get_bound_coeff(2 * j);
+                        let right_1 = self.right_input_poly.get_bound_coeff(2 * j + 1);
+
+                        t0 += (left_0 * right_0) * E_in_eval;
+                        t_inf += ((left_1 - left_0) * (right_1 - right_0)) * E_in_eval;
+                    }
+
+                    [t0 * E_out_eval, t_inf * E_out_eval]
                 })
                 .reduce(
                     || [AdditiveShare::zero(), AdditiveShare::zero()],

@@ -66,12 +66,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
 
-        let inc_cycle = sm
-            .prover_state
-            .cycle_witness
-            .ram_inc
-            .clone()
-            .expect("ram_inc not populated on cycle_witness");
+        // Clone is cheap (Rep3DensePolynomial is Arc-backed); we avoid lifetime plumbing here.
+        let inc_cycle = sm.prover_state.cycle_witness.ram_inc_ref().clone();
 
         let r_prime = sm
             .accumulator
@@ -83,9 +79,9 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         // Compute ram_addresses (PUBLIC)
         let ram_addresses: Vec<Option<u64>> = cycle_witness
-            .ram_addr
+            .meta()
             .par_iter()
-            .map(|&addr| remap_address(addr, memory_layout))
+            .map(|m| remap_address(m.ram_addr, memory_layout))
             .collect();
 
         // Compute deltas per chunk

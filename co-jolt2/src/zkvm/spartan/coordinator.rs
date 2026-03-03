@@ -50,10 +50,8 @@ impl Rep3SpartanDag {
                 network.receive_responses()?;
             eyre::ensure!(round_shares.len() == 3, "expected 3 parties");
 
-            let t0 = additive::combine_additive_share(round_shares.iter().map(|x| x.0).collect());
-            let t_inf =
-                additive::combine_additive_share(round_shares.into_iter().map(|x| x.1).collect());
-
+            let t0: F = round_shares.iter().map(|x| x.0.into_fe()).sum();
+            let t_inf: F = round_shares.iter().map(|x| x.1.into_fe()).sum();
 
             let r_i = process_eq_sumcheck_round(
                 (t0, t_inf),

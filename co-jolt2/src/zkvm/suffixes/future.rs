@@ -162,6 +162,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         io_ctx: &mut IoContextPool<N>,
         pool: &mut mpc_core::protocols::rep3_ring::edabits::EdaBitsPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
+        use mpc_core::protocols::rep3_ring::dabits;
         use mpc_core::protocols::rep3_ring::edabits;
         use rayon::prelude::*;
 

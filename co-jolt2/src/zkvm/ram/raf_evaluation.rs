@@ -58,19 +58,19 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
         let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle_point.r);
 
         // Build ra histogram from public addresses
-        let ram_addr = &cycle_witness.ram_addr;
         let T = cycle_witness.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let ra_evals: Vec<F> = ram_addr
+        let ra_evals: Vec<F> = cycle_witness
+            .meta()
             .par_chunks(chunk_size)
             .enumerate()
-            .map(|(chunk_index, addr_chunk)| {
+            .map(|(chunk_index, meta_chunk)| {
                 let mut result = unsafe_allocate_zero_vec(K);
                 let mut j = chunk_index * chunk_size;
-                for &address in addr_chunk {
-                    if let Some(k) = remap_address(address, memory_layout) {
+                for m in meta_chunk {
+                    if let Some(k) = remap_address(m.ram_addr, memory_layout) {
                         result[k as usize] += eq_r_cycle[j];
                     }
                     j += 1;

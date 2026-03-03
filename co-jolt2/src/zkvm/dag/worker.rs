@@ -9,9 +9,7 @@ use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
-use crate::subprotocols::sumcheck::{
-    BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker,
-};
+use crate::subprotocols::sumcheck::{BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker};
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::SumcheckStagesWorker;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
@@ -64,7 +62,7 @@ impl Rep3JoltDAGWorker {
         N: Rep3NetworkWorker,
         Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
     {
-        let trace_length = state.prover_state.trace.len();
+        let trace_length = state.trace_len();
         let padded_trace_length = trace_length.next_power_of_two();
         let party_id = io_ctx.party_id();
 
@@ -95,6 +93,10 @@ impl Rep3JoltDAGWorker {
         // Stage 1 (Spartan outer sumcheck)
         let (outer_sumcheck_r, claimed_witness_evals) =
             Rep3SpartanDagWorker::stage1_prove::<F, PCS, N>(&mut state, &mut io_ctx)?;
+
+        // Stage 1 witness vectors are no longer needed after Spartan stage 1:
+        // later stages use (meta, inc polynomials, read_raf witness, product inputs).
+        state.prover_state.cycle_witness.drop_stage1();
 
         // --- Prepare RAM worker (ring→field conversion requires MPC communication) ---
         let mut ram_dag = Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
@@ -202,12 +204,13 @@ impl Rep3JoltDAGWorker {
         let pc_sumcheck = if party_id == PartyID::ID0 {
             let cycle_witness = &state.prover_state.cycle_witness;
             let unexpanded_pc_poly: MultilinearPolynomial<F> =
-                cycle_witness.unexpanded_pc.clone().into();
-            let pc_poly: MultilinearPolynomial<F> = cycle_witness.pc.clone().into();
+                cycle_witness.pc_sumcheck_unexpanded_pc().to_vec().into();
+            let pc_indices: Vec<u64> = cycle_witness.meta().iter().map(|m| m.pc_index).collect();
+            let pc_poly: MultilinearPolynomial<F> = pc_indices.into();
 
             let mask = 1u32 << (CircuitFlags::IsNoop as usize);
             let is_noop: Vec<u8> = cycle_witness
-                .flags_bits
+                .pc_sumcheck_flags_bits()
                 .iter()
                 .map(|bits| ((bits & mask) != 0) as u8)
                 .collect();
@@ -233,6 +236,9 @@ impl Rep3JoltDAGWorker {
         } else {
             PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, log_T)
         };
+
+        // PCSumcheck inputs are fully materialized into owned polynomials above.
+        state.prover_state.cycle_witness.drop_pc_sumcheck_inputs();
 
         let product_sumcheck =
             Rep3ProductVirtualizationSumcheckWorker::<F>::new(&mut state, input_claim_product);
@@ -435,9 +441,11 @@ impl Rep3JoltDAGWorker {
         let commit_to_public = party_id == PartyID::ID0;
         let generators = &state.prover_state.preprocessing.generators;
 
-        let ordered_polys: Vec<Rep3MultilinearPolynomial<F>> = poly_keys
+        // Avoid cloning large polynomials just to commit: commit borrows them.
+        let default_poly = Rep3MultilinearPolynomial::<F>::default();
+        let ordered_polys: Vec<&Rep3MultilinearPolynomial<F>> = poly_keys
             .iter()
-            .map(|key| witness_polys.get(key).cloned().unwrap_or_default())
+            .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
         let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
@@ -475,8 +483,7 @@ impl Rep3JoltDAGWorker {
                 .collect();
 
         // Ring-shared trace is no longer needed after witness generation; drop it to free memory.
-        state.prover_state.trace.clear();
-        state.prover_state.trace.shrink_to_fit();
+        state.prover_state.trace = None;
 
         Ok((hint_map, polynomials_map, instruction_one_hot_polys))
     }
