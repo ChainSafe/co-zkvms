@@ -53,13 +53,15 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RafEvaluationSumcheck<F> 
         let y1 = previous_claim - y0;
         let full_evals = vec![y0, y1, base[1]];
         let poly = UniPoly::<F>::from_evals(&full_evals);
+        let coeffs = poly.as_vec();
 
         let mut msg = vec![F::zero(); max_degree];
         msg[0] = y0;
         msg[1] = base[1]; // y2
         for k in 3..=max_degree {
-            let x: F::Challenge = (k as u128).into();
-            msg[k - 1] = poly.evaluate(&x);
+            let x = F::from_u64(k as u64);
+            let eval = coeffs.iter().rev().fold(F::zero(), |acc, c| acc * x + *c);
+            msg[k - 1] = eval;
         }
         msg
     }
@@ -84,6 +86,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RafEvaluationSumcheck<F> 
         &self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
+        party_id: PartyID,
     ) -> Vec<F> {
         let r_cycle = accumulator
             .get_virtual_polynomial_opening(
@@ -94,14 +97,18 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RafEvaluationSumcheck<F> 
         let ra_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
-        let ra_claim = self.ra_final_claim();
+        let ra_claim = if party_id == PartyID::ID0 {
+            self.ra_final_claim()
+        } else {
+            F::zero()
+        };
 
         accumulator.append_virtual_public(
             VirtualPolynomial::RamRa,
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
             ra_claim,
-            PartyID::ID0,
+            party_id,
         );
 
         vec![ra_claim]

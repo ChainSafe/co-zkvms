@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
@@ -15,14 +17,16 @@ use crate::zkvm::registers::val_evaluation::Rep3ValEvaluation;
 use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheck;
 use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::utils::math::Math;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
+use jolt_core::utils::math::Math;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use jolt_core::zkvm::witness::{
+    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
+};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 /// Coordinator side of the MPC DAG prover.
@@ -127,25 +131,58 @@ impl Rep3JoltDAGCoordinator {
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
-        // TODO: re-enable once bytecode stage4 is fully ported
         // -------------------------------------------------------------------
 
-        // let stage4_instances = Self::stage4_collect_instances(&mut state, network)?;
-        //
-        // if !stage4_instances.is_empty() {
-        //     let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
-        //         &stage4_instances,
-        //         &mut state.accumulator,
-        //         &mut state.transcript,
-        //         network,
-        //     )?;
-        //     state.proofs.insert(
-        //         ProofKeys::Stage4Sumcheck,
-        //         ProofData::SumcheckProof(stage4_proof),
-        //     );
-        // }
+        let stage4_instances = Self::stage4_collect_instances(&mut state, network)?;
+
+        if !stage4_instances.is_empty() {
+            let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
+                &stage4_instances,
+                &mut state.accumulator,
+                &mut state.transcript,
+                network,
+            )?;
+            state.proofs.insert(
+                ProofKeys::Stage4Sumcheck,
+                ProofData::SumcheckProof(stage4_proof),
+            );
+        }
 
         // --- Construct stub JoltProof with real commitments, deferred stages ---
+        // -------------------------------------------------------------------
+        // Stage 5: opening proof reduction
+        // -------------------------------------------------------------------
+
+        let poly_keys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> = poly_keys
+            .into_iter()
+            .zip(state.commitments.iter().cloned())
+            .collect();
+
+        let pcs_setup = state
+            .pcs_setup
+            .expect("StateManagerCoordinator::pcs_setup must be set for reduce_and_prove (stage5)");
+        let reduced = state
+            .accumulator
+            .reduce_and_prove::<PCS, ProofTranscript, N>(
+                &mut commitment_map,
+                pcs_setup,
+                &mut state.transcript,
+                network,
+            )?;
+        state.proofs.insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(
+                jolt_core::poly::opening_proof::ReducedOpeningProof {
+                    sumcheck_proof: reduced.sumcheck_proof,
+                    sumcheck_claims: reduced.sumcheck_claims,
+                    joint_opening_proof: reduced.joint_opening_proof,
+                },
+            ),
+        );
+
+        // --- Construct JoltProof ---
         let proof = JoltProof {
             opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
             commitments: std::mem::take(&mut state.commitments),
@@ -348,15 +385,38 @@ impl Rep3JoltDAGCoordinator {
         let lookup_hamming = Rep3HammingWeightSumcheck::<F>::new(&mut state.transcript);
         let lookups_gamma: [F; D] = lookup_hamming.gamma();
 
-        // === 4) RAM: ValFinal (secret) — no transcript draw ===
+        // === 4) RAM: ValEvaluation (secret) + ValFinal (secret) + HammingBooleanity (public) ===
+        // ValEvaluation needs init_eval computed from public initial_ram_state.
+        // No transcript draw for any of these.
+        let (ram_val_eval, ram_val_eval_input_claim) = {
+            use crate::zkvm::ram::{build_initial_memory_state, val_evaluation::Rep3RamValEvaluation};
+            use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+
+            let initial_ram_state = build_initial_memory_state(
+                &state.preprocessing.shared.ram,
+                &state.program_io,
+                state.ram_K,
+            );
+            let (r_val_point, _) = state.accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamVal,
+                SumcheckId::RamReadWriteChecking,
+            );
+            let (r_address, _) = r_val_point.split_at(state.ram_K.log_2());
+            let val_init_poly: MultilinearPolynomial<F> =
+                MultilinearPolynomial::from(initial_ram_state);
+            let ram_init_eval = val_init_poly.evaluate(&r_address.r);
+
+            let val_eval = Rep3RamValEvaluation::<F>::new::<ProofTranscript, PCS>(state, ram_init_eval);
+            let claim = val_eval.input_claim();
+            (val_eval, claim)
+        };
         let ram_val_final = Rep3ValFinalSumcheck::<F>::new(state);
-
-        // === 5) RAM: HammingBooleanity (public) — no transcript draw ===
         let log_T = state.trace_length.log_2();
-        let ram_hamming_bool =
-            jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
+        let ram_hamming_bool = jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck::<
+            F,
+        >::new_verifier_from_parts(log_T);
 
-        // Broadcast stage3 init data to workers in three messages
+        // Broadcast stage3 init data to workers in four messages
         // (ark-serialize tuple impls only go up to small arities).
         network.broadcast_request((gamma_pc, input_claim_pc, product_input_claim))?;
         let lookups_gamma_vec: Vec<F> = lookups_gamma.to_vec();
@@ -364,18 +424,21 @@ impl Rep3JoltDAGCoordinator {
             registers_val_claim,
             lookups_gamma_vec,
             ram_val_final_input_claim,
+            ram_val_eval_input_claim,
         ))?;
         // ReadRaf init data: gamma, rv_claim, raf_claim
         network.broadcast_request((read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim))?;
 
         // Collect all instances in vanilla ordering:
-        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight) → ram(ValFinal, HammingBooleanity)
+        // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight)
+        // → ram(ValEvaluation, ValFinal, HammingBooleanity)
         let stage3_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = vec![
             BatchedSumcheckInstance::Public(Box::new(spartan_pc)),
             BatchedSumcheckInstance::Secret(Box::new(spartan_product)),
             BatchedSumcheckInstance::Secret(Box::new(registers_val)),
             BatchedSumcheckInstance::Secret(Box::new(lookup_read_raf)),
             BatchedSumcheckInstance::Secret(Box::new(lookup_hamming)),
+            BatchedSumcheckInstance::Secret(Box::new(ram_val_eval)),
             BatchedSumcheckInstance::Secret(Box::new(ram_val_final)),
             BatchedSumcheckInstance::Public(Box::new(ram_hamming_bool)),
         ];
@@ -478,7 +541,6 @@ impl Rep3JoltDAGCoordinator {
             network.broadcast_request((ra_claim, r_address.to_vec(), r_cycle.to_vec()))?;
         }
 
-        // Collect all instances in vanilla ordering.
         let mut all_instances = Vec::new();
         all_instances.extend(ram_instances);
         all_instances.extend(bytecode_instances);

@@ -147,6 +147,23 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     //     (T * self.K as u128 / row_length) as usize
     // }
 
+    /// Clone with a fresh (unshared) H. Use this when multiple prover openings
+    /// need independent mutable H state — e.g. in the opening proof reduction
+    /// where multiple entries for the same polynomial would otherwise share
+    /// the same `Arc<RwLock<H>>`.
+    pub fn clone_with_fresh_h(&self) -> Self {
+        Self {
+            K: self.K,
+            masked_indices_c: self.masked_indices_c.clone(),
+            rand_ohv_e_field: self.rand_ohv_e_field.clone(),
+            num_variables_bound: self.num_variables_bound,
+            G: self.G.clone(),
+            H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
+            #[cfg(test)]
+            r_share: self.r_share,
+        }
+    }
+
     pub fn get_num_vars(&self) -> usize {
         self.K.log_2() + self.masked_indices_c.len().log_2()
     }
@@ -685,7 +702,9 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
 
             let q0 = if d_gruen.E_in_current_len() == 1 {
                 let e_out = d_gruen.E_out_current();
-                (0..(d_gruen.len() / 2))
+                let loop_bound = d_gruen.len() / 2;
+                debug_assert!(loop_bound <= H.len());
+                (0..loop_bound)
                     .into_par_iter()
                     .fold(Rep3PrimeFieldShare::zero_share, |mut acc, j| {
                         acc += H.get_bound_coeff(j) * e_out[j];
@@ -701,6 +720,9 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 let num_x_in = d_gruen.E_in_current_len();
                 let num_x_out = d_gruen.E_out_current_len();
                 let num_x_out_bits = num_x_out.log_2();
+                debug_assert!(
+                    num_x_in == 0 || ((num_x_in - 1) << num_x_out_bits | (num_x_out - 1)) < H.len()
+                );
 
                 (0..num_x_in)
                     .into_par_iter()

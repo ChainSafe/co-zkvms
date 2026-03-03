@@ -53,14 +53,16 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
         let y1 = previous_claim - y0;
         let full_evals = vec![y0, y1, base[1], base[2]];
         let poly = UniPoly::<F>::from_evals(&full_evals);
+        let coeffs = poly.as_vec();
 
         let mut msg = vec![F::zero(); max_degree];
         msg[0] = y0;
         msg[1] = base[1]; // y2
         msg[2] = base[2]; // y3
         for k in 4..=max_degree {
-            let x: F::Challenge = (k as u128).into();
-            msg[k - 1] = poly.evaluate(&x);
+            let x = F::from_u64(k as u64);
+            let eval = coeffs.iter().rev().fold(F::zero(), |acc, c| acc * x + *c);
+            msg[k - 1] = eval;
         }
         msg
     }
@@ -83,13 +85,18 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
         &self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        party_id: PartyID,
     ) -> Vec<F> {
         let d = self.d();
-        let claims = self.h_final_claims();
+        let claims: Vec<F> = if party_id == PartyID::ID0 {
+            self.h_final_claims()
+        } else {
+            vec![F::zero(); d]
+        };
 
         let shares: Vec<_> = claims
             .iter()
-            .map(|&claim| rep3_arith::promote_to_trivial_share(PartyID::ID0, claim))
+            .map(|&claim| rep3_arith::promote_to_trivial_share(party_id, claim))
             .collect();
 
         let (r_address, r_cycle) = opening_point.split_at(DTH_ROOT_OF_K.log_2());

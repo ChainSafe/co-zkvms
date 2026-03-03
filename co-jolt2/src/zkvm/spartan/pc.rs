@@ -84,29 +84,34 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
         &self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        party_id: PartyID,
     ) -> Vec<F> {
-        let (unexpanded_pc_eval, pc_eval, is_noop_eval) = self.final_shift_evals();
+        let (unexpanded_pc_eval, pc_eval, is_noop_eval) = if party_id == PartyID::ID0 {
+            self.final_shift_evals()
+        } else {
+            (F::zero(), F::zero(), F::zero())
+        };
 
         accumulator.append_virtual_public(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
-            PartyID::ID0,
+            party_id,
         );
         accumulator.append_virtual_public(
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
-            PartyID::ID0,
+            party_id,
         );
         accumulator.append_virtual_public(
             VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
             is_noop_eval,
-            PartyID::ID0,
+            party_id,
         );
 
         vec![unexpanded_pc_eval, pc_eval, is_noop_eval]

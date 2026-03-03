@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use crate::field::JoltField;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Rep3RLCPolynomial<F: JoltField> {
     /// Random linear combination of dense (i.e. length T) polynomials.
     pub dense_rlc: Vec<Rep3PrimeFieldShare<F>>,
@@ -19,16 +19,11 @@ pub struct Rep3RLCPolynomial<F: JoltField> {
     /// We store a vector of (coefficient, polynomial) pairs and lazily handle the
     /// linear combination in `commit_rows`.
     pub one_hot_rlc: Vec<(F, Arc<Rep3MultilinearPolynomial<F>>)>,
+    /// Party ID for handling public polynomial contributions.
+    pub party_id: PartyID,
 }
 
 impl<F: JoltField> Rep3RLCPolynomial<F> {
-    pub fn new() -> Self {
-        Self {
-            dense_rlc: vec![Rep3PrimeFieldShare::zero_share(); DoryGlobals::get_T()],
-            one_hot_rlc: vec![],
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "Rep3RLCPoly::linear_combination")]
     pub fn linear_combination(
         polynomials: Vec<Arc<Rep3MultilinearPolynomial<F>>>,
@@ -37,7 +32,11 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
     ) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
-        let mut result = Rep3RLCPolynomial::<F>::new();
+        let mut result = Self {
+            dense_rlc: vec![Rep3PrimeFieldShare::zero_share(); DoryGlobals::get_T()],
+            one_hot_rlc: vec![],
+            party_id, // TODO:
+        };
 
         let dense_indices: Vec<usize> = polynomials
             .iter()
@@ -47,19 +46,11 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                     p.as_ref(),
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_))
                         | Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_))
+                        | Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(_))
                 )
             })
             .map(|(i, _)| i)
             .collect();
-
-        if polynomials.iter().any(|p| {
-            matches!(
-                p.as_ref(),
-                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(_))
-            )
-        }) {
-            panic!("Public OneHot polynomials are not supported in Rep3RLCPolynomial");
-        }
 
         if !dense_indices.is_empty() {
             let dense_len = result.dense_rlc.len();
@@ -142,11 +133,13 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
             if matches!(
                 poly.as_ref(),
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_))
+                    | Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(_))
             ) {
                 result.one_hot_rlc.push((coefficients[i], poly));
             }
         }
 
+        result.party_id = party_id;
         result
     }
 
@@ -184,8 +177,20 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
                     one_hot.commit_rows::<G>(bases)?
                 }
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)) => {
+                    // Public one-hot: ID0 holds the full vanilla commitment, others hold zero.
+                    if self.party_id == PartyID::ID0 {
+                        one_hot
+                            .commit_rows::<G>(bases)
+                            .into_iter()
+                            .map(|w| w.0)
+                            .collect()
+                    } else {
+                        vec![]
+                    }
+                }
                 _ => {
-                    eyre::bail!("Expected Shared(OneHot) polynomial in one_hot_rlc");
+                    eyre::bail!("Expected OneHot polynomial in one_hot_rlc");
                 }
             };
 
@@ -230,7 +235,13 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
                     one_hot.compute_v_vec_share(*coeff, l_vec, &mut v_vec);
                 }
-                _ => unreachable!("Expected Shared(OneHot) polynomial in one_hot_rlc"),
+                Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)) => {
+                    // Public one-hot: only ID0 adds the vanilla contribution.
+                    if self.party_id == PartyID::ID0 {
+                        one_hot.vector_matrix_product(l_vec, *coeff, &mut v_vec);
+                    }
+                }
+                _ => unreachable!("Expected OneHot polynomial in one_hot_rlc"),
             }
         }
 
@@ -333,6 +344,11 @@ mod tests {
         let rlc_party: [Rep3RLCPolynomial<Fr>; 3] = std::array::from_fn(|pid| Rep3RLCPolynomial {
             dense_rlc: dense_party_coeffs[pid].clone(),
             one_hot_rlc: vec![],
+            party_id: match pid {
+                0 => PartyID::ID0,
+                1 => PartyID::ID1,
+                _ => PartyID::ID2,
+            },
         });
 
         let bases_proj = (0..row_len)

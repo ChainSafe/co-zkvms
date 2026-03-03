@@ -32,6 +32,7 @@ pub mod ra_virtual;
 pub mod raf_evaluation;
 pub mod raf_evaluation_public;
 pub mod read_write_checking;
+pub mod val_evaluation;
 
 #[allow(dead_code)]
 pub(crate) fn build_initial_memory_state(
@@ -192,7 +193,7 @@ pub struct Rep3RamDagWorker<F: JoltField> {
     /// SHARED final memory state (converted from Rep3Memory ring shares → field shares)
     final_memory_field: Vec<Rep3PrimeFieldShare<F>>,
     stage2: Option<(F, F, Vec<F::Challenge>)>,
-    stage3: Option<F>,
+    stage3: Option<(F, F)>,
     stage4: Option<RamStage4Init<F>>,
 }
 
@@ -282,8 +283,8 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         self.stage2 = Some((gamma, input_claim, r_address));
     }
 
-    pub fn set_stage3_init(&mut self, input_claim: F) {
-        self.stage3 = Some(input_claim);
+    pub fn set_stage3_init(&mut self, val_final_input_claim: F, val_eval_input_claim: F) {
+        self.stage3 = Some((val_final_input_claim, val_eval_input_claim));
     }
 
     pub fn set_stage4_init(&mut self, init: RamStage4Init<F>) {
@@ -323,13 +324,59 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
-        let input_claim = self
+        use jolt_core::poly::opening_proof::SumcheckId;
+        use jolt_core::utils::math::Math;
+        use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
+        use jolt_core::zkvm::witness::VirtualPolynomial;
+
+        let (val_final_input_claim, val_eval_input_claim) = self
             .stage3
             .take()
             .expect("Rep3RamDagWorker stage3 init not set");
-        let val_final = Rep3ValFinalSumcheckWorker::new(sm, input_claim);
-        // TODO: Add ValEvaluationSumcheck and HammingBooleanity when ported
-        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_final))]
+
+        // ValEvaluation must be constructed BEFORE ValFinal because ValFinal `.take()`s ram_inc.
+        let ram_inc = sm
+            .prover_state
+            .cycle_witness
+            .ram_inc
+            .clone()
+            .expect("ram_inc not populated");
+        let val_eval =
+            val_evaluation::Rep3RamValEvaluationWorker::new(sm, val_eval_input_claim, ram_inc);
+        let val_final = Rep3ValFinalSumcheckWorker::new(sm, val_final_input_claim);
+
+        let hamming_bool: HammingBooleanitySumcheck<F> = if sm.party_id == PartyID::ID0 {
+            let r_cycle = sm
+                .accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r;
+            HammingBooleanitySumcheck::new_prover_from_parts(
+                &sm.prover_state.cycle_witness.ram_addr,
+                &r_cycle,
+            )
+        } else {
+            let log_T = sm
+                .accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r
+                .len();
+            HammingBooleanitySumcheck::new_verifier_from_parts(log_T)
+        };
+
+        // Vanilla ordering: ValEvaluation, ValFinal, HammingBooleanity
+        vec![
+            BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval)),
+            BatchedSumcheckWorkerInstance::Secret(Box::new(val_final)),
+            BatchedSumcheckWorkerInstance::Public(Box::new(hamming_bool)),
+        ]
     }
 
     fn stage4_instances(
@@ -417,10 +464,45 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             let hamming_weight = RamHammingWeight::new_prover_from_parts(
                 init.hamming_gamma_powers,
                 init.hamming_input_claim,
-                F_arrays.clone(),
+                F_arrays,
             );
 
-            // Booleanity uses same G_arrays as F_arrays
+            // Booleanity uses its OWN eq_r_cycle (from transcript challenge),
+            // which differs from HammingWeight's r_cycle (from accumulator opening).
+            let bool_eq_r_cycle = EqPolynomial::evals(&init.bool_r_cycle);
+            let G_arrays: Vec<Vec<F>> = (0..d)
+                .map(|i| {
+                    addresses
+                        .par_chunks(chunk_size)
+                        .enumerate()
+                        .map(|(chunk_index, addr_chunk)| {
+                            let mut local = jolt_core::utils::thread::unsafe_allocate_zero_vec(
+                                DTH_ROOT_OF_K,
+                            );
+                            let mut j = chunk_index * chunk_size;
+                            for addr_opt in addr_chunk {
+                                if let Some(address) = addr_opt {
+                                    let idx = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                        % DTH_ROOT_OF_K as u64;
+                                    local[idx as usize] += bool_eq_r_cycle[j];
+                                }
+                                j += 1;
+                            }
+                            local
+                        })
+                        .reduce(
+                            || jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
+                            |mut running, new| {
+                                running
+                                    .par_iter_mut()
+                                    .zip(new.into_par_iter())
+                                    .for_each(|(x, y)| *x += y);
+                                running
+                            },
+                        )
+                })
+                .collect();
+
             let booleanity = RamBooleanity::new_prover_from_parts(
                 d,
                 T,
@@ -428,7 +510,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 init.bool_r_cycle,
                 init.bool_r_address,
                 init.bool_gamma_powers,
-                F_arrays,
+                G_arrays,
                 addresses.clone(),
             );
 
@@ -477,18 +559,17 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 eq_poly,
             );
 
-            // Vanilla ordering: HammingWeight, Booleanity, RaVirtualization
             vec![
                 BatchedSumcheckWorkerInstance::Public(Box::new(hamming_weight)),
                 BatchedSumcheckWorkerInstance::Public(Box::new(booleanity)),
                 BatchedSumcheckWorkerInstance::Public(Box::new(ra_virtual)),
             ]
         } else {
-            // ID1/ID2 — verifier instances (no trace data)
             let hamming_weight = RamHammingWeight::new_verifier_from_parts(
                 init.hamming_gamma_powers,
                 init.hamming_input_claim,
             );
+
             let booleanity = RamBooleanity::new_verifier_from_parts(
                 d,
                 T,
@@ -496,6 +577,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 init.bool_r_address,
                 init.bool_gamma_powers,
             );
+
             let ra_virtual = RamRaSumcheck::new_verifier_from_parts(
                 init.ra_gamma,
                 init.ra_claim,
@@ -670,8 +752,33 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
     ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+        use jolt_core::utils::math::Math;
+        use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
+
+        // Compute init_eval from public initial_ram_state for ValEvaluation input_claim
+        let initial_ram_state =
+            build_initial_memory_state(&sm.preprocessing.shared.ram, &sm.program_io, sm.ram_K);
+        let (opening_point, _) = sm.accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (r_address, _) = opening_point.split_at(sm.ram_K.log_2());
+        let val_init_poly: MultilinearPolynomial<F> =
+            MultilinearPolynomial::from(initial_ram_state);
+        let init_eval = val_init_poly.evaluate(&r_address.r);
+
+        let val_eval =
+            val_evaluation::Rep3RamValEvaluation::<F>::new::<ProofTranscript, PCS>(sm, init_eval);
         let val_final = Rep3ValFinalSumcheck::new(sm);
-        // TODO: Add ValEvaluationSumcheck and HammingBooleanity when ported
-        vec![BatchedSumcheckInstance::Secret(Box::new(val_final))]
+        let log_T = sm.trace_length.log_2();
+        let hamming_bool = HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
+
+        // Vanilla ordering: ValEvaluation, ValFinal, HammingBooleanity
+        vec![
+            BatchedSumcheckInstance::Secret(Box::new(val_eval)),
+            BatchedSumcheckInstance::Secret(Box::new(val_final)),
+            BatchedSumcheckInstance::Public(Box::new(hamming_bool)),
+        ]
     }
 }

@@ -402,6 +402,7 @@ pub struct StateManagerCoordinator<
     pub trace_length: usize,
     pub program_io: JoltDevice,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+    pub pcs_setup: Option<&'a PCS::ProverSetup>,
     pub accumulator: Rep3OpeningAccumulator<F>,
 }
 
@@ -428,8 +429,14 @@ where
             trace_length: 0,
             program_io,
             preprocessing,
+            pcs_setup: None,
             accumulator: Rep3OpeningAccumulator::new(),
         }
+    }
+
+    pub fn with_pcs_setup(mut self, setup: &'a PCS::ProverSetup) -> Self {
+        self.pcs_setup = Some(setup);
+        self
     }
 
     pub fn fiat_shamir_preamble(&mut self, trace_length: usize) {

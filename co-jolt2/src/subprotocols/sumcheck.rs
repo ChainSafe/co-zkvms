@@ -9,7 +9,7 @@ use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
@@ -132,10 +132,15 @@ pub trait PublicSumcheckInstanceWorker<F: JoltField>: Send {
 
     /// Cache polynomial openings into the worker accumulator and return the PUBLIC
     /// claims appended (stable order).
+    ///
+    /// ID0 computes actual claims from prover state; non-ID0 stores zero shares
+    /// (they lack prover state but need matching accumulator structure for the
+    /// opening-proof reduction).
     fn cache_openings_public(
         &self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        party_id: PartyID,
     ) -> Vec<F>;
 }
 
@@ -528,6 +533,7 @@ type HybridOpeningsMsg<F> = Vec<(Vec<AdditiveShare<F>>, Option<Vec<F>>)>;
 
 impl HybridBatchedSumcheck {
     #[tracing::instrument(skip_all, name = "HybridBatchedSumcheck::prove", level = "trace")]
+    #[allow(unused_variables)]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[BatchedSumcheckInstance<F, ProofTranscript>],
         accumulator: &mut Rep3OpeningAccumulator<F>,
@@ -856,9 +862,9 @@ impl HybridBatchedSumcheckWorker {
                     ));
                 }
                 BatchedSumcheckWorkerInstance::Public(p) => {
+                    let opening_point = p.normalize_opening_point(r_slice);
+                    let claims = p.cache_openings_public(accumulator, opening_point, party_id);
                     if is_public_worker {
-                        let opening_point = p.normalize_opening_point(r_slice);
-                        let claims = p.cache_openings_public(accumulator, opening_point);
                         openings_by_instance.push((vec![], Some(claims)));
                     } else {
                         openings_by_instance.push((vec![], None));
@@ -1307,6 +1313,7 @@ mod tests {
             &self,
             _accumulator: &mut Rep3OpeningAccumulatorWorker<Fr>,
             _opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
+            _party_id: PartyID,
         ) -> Vec<Fr> {
             vec![Fr::from_u64(123)]
         }
@@ -1337,16 +1344,17 @@ mod tests {
         }
         fn normalize_opening_point(
             &self,
-            _opening_point: &[<Fr as jolt_core::field::JoltField>::Challenge],
+            opening_point: &[<Fr as jolt_core::field::JoltField>::Challenge],
         ) -> OpeningPoint<BIG_ENDIAN, Fr> {
-            panic!("public worker should not normalize on non-ID0 parties")
+            OpeningPoint::new(opening_point.to_vec())
         }
         fn cache_openings_public(
             &self,
             _accumulator: &mut Rep3OpeningAccumulatorWorker<Fr>,
             _opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
+            _party_id: PartyID,
         ) -> Vec<Fr> {
-            panic!("public worker should not cache on non-ID0 parties")
+            vec![]
         }
     }
 
