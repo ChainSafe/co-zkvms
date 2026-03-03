@@ -24,6 +24,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::instruction_lookups::booleanity::extend_degree_3_evals;
 
 const DEGREE_OUTPUT: usize = 3;
 const DEGREE_VAL_FINAL: usize = 2;
@@ -53,17 +54,14 @@ pub struct Rep3OutputSumcheckWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     pub fn new<PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: Vec<Rep3PrimeFieldShare<F>>,
-        final_ram_field: Vec<Rep3PrimeFieldShare<F>>,
+        val_init: Rep3DensePolynomial<F>,
+        val_final: Rep3DensePolynomial<F>,
         r_address: Vec<F::Challenge>,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Self {
         let party_id = sm.party_id;
-        let K = final_ram_field.len();
+        let K = val_final.len();
         let memory_layout = &sm.program_io.memory_layout;
-
-        let val_final = Rep3DensePolynomial::new(final_ram_field);
-        let val_init = Rep3DensePolynomial::new(initial_ram_state);
 
         // Build val_io (PUBLIC) from program_io — for correct execution this
         // matches val_final at I/O addresses and is 0 elsewhere.
@@ -144,7 +142,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     fn compute_prover_message_share(
         &mut self,
         _round: usize,
-        _previous_claim: AdditiveShare<F>,
+        previous_claim: AdditiveShare<F>,
         max_degree: usize,
         _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
@@ -154,44 +152,30 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let party_id = self.party_id;
         let half_len = self.eq_poly.len() / 2;
 
-        let evals: Vec<AdditiveShare<F>> = (0..half_len)
+        let base: [AdditiveShare<F>; DEGREE_OUTPUT] = (0..half_len)
             .into_par_iter()
             .map(|i| {
-                let eq_evals: Vec<F> =
-                    self.eq_poly
-                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
-                let mask_evals: Vec<F> =
-                    self.io_mask
-                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
-                let vf_evals: Vec<Rep3PrimeFieldShare<F>> =
-                    self.val_final
-                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
-                let vio_evals: Vec<F> =
-                    self.val_io
-                        .sumcheck_evals(i, DEGREE_OUTPUT, BindingOrder::HighToLow);
+                let eq_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.eq_poly, i);
+                let mask_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.io_mask, i);
+                let vf_evals = sumcheck_evals_deg_3_high_to_low_rep3::<F>(&self.val_final, i);
+                let vio_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.val_io, i);
 
-                let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
-                for d in 0..DEGREE_OUTPUT.min(max_degree) {
+                let mut result = [AdditiveShare::<F>::zero(); DEGREE_OUTPUT];
+                for d in 0..DEGREE_OUTPUT {
                     let eq_mask = eq_evals[d] * mask_evals[d]; // PUBLIC
                                                                // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
                     let shared_term = rep3_arith::mul_public(vf_evals[d], eq_mask).into_additive();
                     let public_term = eq_mask * vio_evals[d]; // PUBLIC
-                    result[d] =
-                        shared_term - additive::promote_to_trivial_share(public_term, party_id);
+                    result[d] = additive::sub_shared_by_public(shared_term, public_term, party_id);
                 }
                 result
             })
             .reduce(
-                || vec![AdditiveShare::<F>::zero(); max_degree],
-                |mut running, new| {
-                    for d in 0..max_degree {
-                        running[d] += new[d];
-                    }
-                    running
-                },
+                || [AdditiveShare::<F>::zero(); DEGREE_OUTPUT],
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             );
 
-        evals
+        extend_degree_3_evals::<F>(previous_claim, &base, max_degree)
     }
 
     fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>) {
@@ -232,6 +216,34 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
 
         vec![val_final_claim, val_init_claim]
     }
+}
+
+#[inline]
+fn sumcheck_evals_deg_3_high_to_low_public<F: JoltField>(
+    poly: &MultilinearPolynomial<F>,
+    index: usize,
+) -> [F; DEGREE_OUTPUT] {
+    let half = poly.len() / 2;
+    let eval_0 = poly.get_bound_coeff(index);
+    let eval_1 = poly.get_bound_coeff(index + half);
+    let slope = eval_1 - eval_0;
+    let eval_2 = eval_1 + slope;
+    let eval_3 = eval_2 + slope;
+    [eval_0, eval_2, eval_3]
+}
+
+#[inline]
+fn sumcheck_evals_deg_3_high_to_low_rep3<F: JoltField>(
+    poly: &Rep3DensePolynomial<F>,
+    index: usize,
+) -> [Rep3PrimeFieldShare<F>; DEGREE_OUTPUT] {
+    let half = poly.len() / 2;
+    let eval_0 = poly.get_bound_coeff(index);
+    let eval_1 = poly.get_bound_coeff(index + half);
+    let slope = eval_1 - eval_0;
+    let eval_2 = eval_1 + slope;
+    let eval_3 = eval_2 + slope;
+    [eval_0, eval_2, eval_3]
 }
 
 // ---------------------------------------------------------------------------

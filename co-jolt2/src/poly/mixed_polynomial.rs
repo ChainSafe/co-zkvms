@@ -35,6 +35,17 @@ impl<F: JoltField> MixedPolynomial<F> {
     }
 
     #[inline]
+    pub fn sumcheck_evals_deg_3_high_to_low(&self, index: usize) -> [Rep3Value<F>; 3] {
+        debug_assert!(index < self.len / 2);
+        let eval_0 = self.coeffs[index];
+        let eval_1 = self.coeffs[index + self.len / 2];
+        let slope = eval_1.sub(&eval_0, self.party_id);
+        let eval_2 = eval_1.add(&slope, self.party_id);
+        let eval_3 = eval_2.add(&slope, self.party_id);
+        [eval_0, eval_2, eval_3]
+    }
+
+    #[inline]
     pub fn sumcheck_evals(
         &self,
         index: usize,

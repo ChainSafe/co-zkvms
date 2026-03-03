@@ -263,13 +263,17 @@ impl Rep3JoltDAGCoordinator {
             vec![Box::new(booleanity)];
 
         // Collect all instances in vanilla order
-        let stage2_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
-            std::iter::empty()
-                .chain(spartan_instances)
-                .chain(registers_instances)
-                .chain(ram_instances)
-                .chain(lookups_instances)
-                .collect();
+        let mut stage2_instances: Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>> =
+            Vec::with_capacity(
+                spartan_instances.len()
+                    + registers_instances.len()
+                    + ram_instances.len()
+                    + lookups_instances.len(),
+            );
+        stage2_instances.extend(spartan_instances);
+        stage2_instances.extend(registers_instances);
+        stage2_instances.extend(ram_instances);
+        stage2_instances.extend(lookups_instances);
 
         Ok(stage2_instances)
     }

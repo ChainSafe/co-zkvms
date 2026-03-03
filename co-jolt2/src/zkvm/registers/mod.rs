@@ -55,25 +55,27 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let (gamma, input_claim) = self
             .stage2
             .take()
             .expect("Rep3RegistersDagWorker stage2 init not set");
         let rwc = Rep3RegistersReadWriteCheckingWorker::new(sm, gamma, input_claim);
-        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(rwc))]
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(rwc))])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let val_claim = self
             .stage3
             .take()
             .expect("Rep3RegistersDagWorker stage3 init not set");
         let val_eval = Rep3ValEvaluationWorker::new(sm, val_claim);
-        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval))]
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval))])
     }
 }
 
@@ -83,22 +85,26 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 
 pub struct Rep3RegistersDag;
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStagesCoordinator<F, ProofTranscript, PCS> for Rep3RegistersDag
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>, N>
+    SumcheckStagesCoordinator<F, ProofTranscript, PCS, N> for Rep3RegistersDag
+where
+    N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let rwc = Rep3RegistersReadWriteChecking::new(sm);
-        vec![BatchedSumcheckInstance::Secret(Box::new(rwc))]
+        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(rwc))])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let val_eval = Rep3ValEvaluation::new(sm);
-        vec![BatchedSumcheckInstance::Secret(Box::new(val_eval))]
+        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(val_eval))])
     }
 }

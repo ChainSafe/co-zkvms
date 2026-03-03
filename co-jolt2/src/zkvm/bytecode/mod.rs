@@ -312,7 +312,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage4_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use jolt_core::poly::eq_poly::EqPolynomial;
         use jolt_core::zkvm::bytecode::{
             booleanity::BooleanitySumcheck as BytecodeBooleanity,
@@ -333,7 +334,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         let T = sm.prover_state.cycle_witness.len();
         let log_T = T.log_2();
 
-        if sm.party_id == PartyID::ID0 {
+        let instances = if sm.party_id == PartyID::ID0 {
             // Use cycle_witness.pc which stores bytecode table indices (from get_pc).
             let pc_indices: Vec<u64> = sm
                 .prover_state
@@ -493,6 +494,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 BatchedSumcheckWorkerInstance::Public(Box::new(booleanity)),
                 BatchedSumcheckWorkerInstance::Public(Box::new(hamming_weight)),
             ]
-        }
+        };
+        Ok(instances)
     }
 }

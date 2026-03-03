@@ -84,41 +84,24 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             .map(|m| remap_address(m.ram_addr, memory_layout))
             .collect();
 
-        // Compute deltas per chunk
-        let deltas: Vec<Vec<Rep3PrimeFieldShare<F>>> = ram_addresses[..T - chunk_size]
-            .par_chunks_exact(chunk_size)
-            .enumerate()
-            .map(|(chunk_index, addr_chunk)| {
-                let mut delta = vec![Rep3PrimeFieldShare::<F>::zero_share(); K];
-                let base = chunk_index * chunk_size;
-                for (i, addr) in addr_chunk.iter().enumerate() {
-                    let k = addr.unwrap_or(0) as usize;
-                    delta[k] += inc_cycle.get_bound_coeff(base + i);
-                }
-                delta
-            })
-            .collect();
-
-        // Compute checkpoints: val_checkpoints = initial_memory_state (shared)
-        // + accumulated deltas (SHARED).
-        let mut checkpoints: Vec<Vec<Rep3PrimeFieldShare<F>>> = Vec::with_capacity(num_chunks);
-        checkpoints.push(initial_memory_state.to_vec());
-
-        for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next: Vec<Rep3PrimeFieldShare<F>> = checkpoints[chunk_index]
-                .par_iter()
-                .zip(delta.into_par_iter())
-                .map(|(c, d)| *c + d)
-                .collect();
-            checkpoints.push(next);
-        }
-
+        // Compute checkpoints (val at each chunk start) without materializing per-chunk deltas.
+        //
+        // val_checkpoints[chunk][k] = initial_memory_state[k] + Σ_{j in cycles < chunk_start} inc(j) * [addr(j)==k]
         let mut val_checkpoints: Vec<Rep3PrimeFieldShare<F>> =
             vec![Rep3PrimeFieldShare::zero_share(); K * num_chunks];
-        val_checkpoints
-            .par_chunks_mut(K)
-            .zip(checkpoints.into_par_iter())
-            .for_each(|(dest, src)| dest.copy_from_slice(&src));
+        val_checkpoints[..K].copy_from_slice(initial_memory_state);
+
+        let mut running: Vec<Rep3PrimeFieldShare<F>> = initial_memory_state.to_vec();
+        for chunk_index in 0..(num_chunks.saturating_sub(1)) {
+            let base = chunk_index * chunk_size;
+            for offset in 0..chunk_size {
+                let j = base + offset;
+                let k = ram_addresses[j].unwrap_or(0) as usize;
+                running[k] += inc_cycle.get_bound_coeff(j);
+            }
+            let start = (chunk_index + 1) * K;
+            val_checkpoints[start..start + K].copy_from_slice(&running);
+        }
 
         // EQ table (PUBLIC)
         let mut A: Vec<F> = unsafe_allocate_zero_vec(chunk_size);
@@ -149,7 +132,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
-                val_j_0: Vec::with_capacity(K),
+                val_j_0: vec![Rep3PrimeFieldShare::zero_share(); K],
                 val_j_r: [
                     vec![Rep3PrimeFieldShare::zero_share(); K],
                     vec![Rep3PrimeFieldShare::zero_share(); K],
@@ -243,7 +226,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
                         ra,
                         dirty_indices,
                     } = buffers;
-                    *val_j_0 = checkpoint.to_vec();
+                    val_j_0.copy_from_slice(checkpoint);
 
                     I_chunk
                         .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
@@ -380,7 +363,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
                         ra,
                         dirty_indices,
                     } = buffers;
-                    *val_j_0 = checkpoint.to_vec();
+                    val_j_0.copy_from_slice(checkpoint);
 
                     I_chunk
                         .chunk_by(|a, b| a.0 / 2 == b.0 / 2)

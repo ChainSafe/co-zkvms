@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
@@ -14,7 +15,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::EdaBitsPool;
 
 use crate::field::JoltField;
-use crate::poly::one_hot_polynomial::{compute_g_from_masked_indices, Rep3OneHotPolynomial};
+use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
@@ -46,8 +47,84 @@ pub mod read_raf_checking;
 fn compute_ra_evals<F: JoltField>(
     one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
     eq_r_cycle: &[F],
-) -> [Vec<Rep3PrimeFieldShare<F>>; D] {
-    std::array::from_fn(|i| compute_g_from_masked_indices(&one_hot_polys[i], eq_r_cycle))
+) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
+    use rayon::prelude::*;
+
+    debug_assert_eq!(eq_r_cycle.len(), one_hot_polys[0].masked_indices_c.len());
+    debug_assert_eq!(one_hot_polys[0].rand_ohv_e_field.len(), one_hot_polys[0].K);
+
+    let t = eq_r_cycle.len();
+    let k_len = one_hot_polys[0].K;
+
+    for i in 1..D {
+        debug_assert_eq!(one_hot_polys[i].K, k_len, "K mismatch across chunks");
+        debug_assert_eq!(
+            one_hot_polys[i].masked_indices_c.len(),
+            t,
+            "masked indices length mismatch"
+        );
+        debug_assert_eq!(
+            one_hot_polys[i].rand_ohv_e_field.len(),
+            k_len,
+            "E_field length mismatch"
+        );
+    }
+
+    // Histogram in masked index space for all D chunks in one trace pass.
+    let num_chunks = rayon::current_num_threads()
+        .next_power_of_two()
+        .min(t)
+        .max(1);
+    let chunk_size = (t / num_chunks).max(1);
+
+    let g_c: [Vec<F>; D] = (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk_index| {
+            let start = chunk_index * chunk_size;
+            let end = ((chunk_index + 1) * chunk_size).min(t);
+
+            let mut local: [Vec<F>; D] = std::array::from_fn(|_| vec![F::zero(); k_len]);
+
+            for j in start..end {
+                let eq = eq_r_cycle[j];
+                for i in 0..D {
+                    if let Some(c) = one_hot_polys[i].masked_indices_c[j] {
+                        local[i][c as usize] += eq;
+                    }
+                }
+            }
+
+            local
+        })
+        .reduce(
+            || std::array::from_fn(|_| vec![F::zero(); k_len]),
+            |mut a, b| {
+                for i in 0..D {
+                    for (ai, bi) in a[i].iter_mut().zip(b[i].iter()) {
+                        *ai += *bi;
+                    }
+                }
+                a
+            },
+        );
+
+    // Convert to k-space: G[k] = Σ_c G_c[c] * E_field[c XOR k].
+    std::array::from_fn(|i| {
+        let g_c_i = &g_c[i];
+        let e_field = &one_hot_polys[i].rand_ohv_e_field;
+        let g_i: Vec<Rep3PrimeFieldShare<F>> = (0..k_len)
+            .into_par_iter()
+            .map(|k| {
+                let mut acc = Rep3PrimeFieldShare::zero_share();
+                for c in 0..k_len {
+                    let idx = (c as u8) ^ (k as u8);
+                    acc += e_field[idx as usize] * g_c_i[c];
+                }
+                acc
+            })
+            .collect();
+        Arc::new(g_i)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +147,11 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
     stage2: Option<([F; D], Vec<F::Challenge>)>,
     stage3: Option<LookupStage3Init<F>>,
     /// Shared G arrays computed in stage2, consumed in stage3.
-    G: Option<[Vec<Rep3PrimeFieldShare<F>>; D]>,
+    G: Option<[Arc<Vec<Rep3PrimeFieldShare<F>>>; D]>,
     /// Public eq(r_cycle) evaluations.
     eq_r_cycle: Option<Vec<F>>,
     /// D Rep3OneHotPolynomials from witness gen, used for compute_ra_evals.
-    pub one_hot_polys: [Rep3OneHotPolynomial<F>; D],
+    pub one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
 }
 
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
@@ -84,7 +161,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             stage3: None,
             G: None,
             eq_r_cycle: None,
-            one_hot_polys,
+            one_hot_polys: Arc::new(one_hot_polys),
         }
     }
 
@@ -159,7 +236,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         let (ra_input_claim, ra_r_address, ra_r_cycle): (F, Vec<F::Challenge>, Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
         let mut ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            &self.one_hot_polys,
+            &*self.one_hot_polys,
             &ra_r_address,
             ra_r_cycle,
             ra_input_claim,
@@ -174,7 +251,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
+        _io_ctx: &mut IoContextPool<N>,
+    ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let (gamma, r_address) = self
             .stage2
             .take()
@@ -189,7 +267,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             .r
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let G = compute_ra_evals(&self.one_hot_polys, &eq_r_cycle);
+        let G = compute_ra_evals(&*self.one_hot_polys, &eq_r_cycle);
 
         self.eq_r_cycle = Some(eq_r_cycle);
         self.G = Some(G.clone());
@@ -198,13 +276,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             gamma,
             r_address,
             G,
-            &self.one_hot_polys,
+            &*self.one_hot_polys,
             &r_cycle,
             sm.prover_state.cycle_witness.len(),
             sm.party_id,
         );
 
-        vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))]
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))])
     }
 }
 
@@ -282,13 +360,16 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStagesCoordinator<F, ProofTranscript, PCS> for Rep3LookupsDag<F>
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>, N>
+    SumcheckStagesCoordinator<F, ProofTranscript, PCS, N> for Rep3LookupsDag<F>
+where
+    N: Rep3NetworkCoordinator,
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let log_T = sm
             .accumulator
             .get_virtual_polynomial_opening(
@@ -301,13 +382,14 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let booleanity = Rep3BooleanitySumcheck::new(&mut sm.transcript, log_T);
 
-        vec![BatchedSumcheckInstance::Secret(Box::new(booleanity))]
+        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(booleanity))])
     }
 
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<BatchedSumcheckInstance<F, ProofTranscript>> {
+        _network: &mut N,
+    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         // ReadRaf (created before HammingWeight, matching vanilla ordering).
         // Draws gamma from transcript internally.
         let (_, rv_claim) = sm.accumulator.get_virtual_polynomial_opening(
@@ -342,9 +424,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let hamming_weight = Rep3HammingWeightSumcheck::new(&mut sm.transcript);
 
-        vec![
+        Ok(vec![
             BatchedSumcheckInstance::Secret(Box::new(read_raf)),
             BatchedSumcheckInstance::Secret(Box::new(hamming_weight)),
-        ]
+        ])
     }
 }

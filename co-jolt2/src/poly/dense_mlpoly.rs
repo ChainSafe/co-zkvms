@@ -40,6 +40,22 @@ impl<F: JoltField> Rep3DensePolynomial<F> {
         }
     }
 
+    pub fn from_coeffs_arc(coeffs: Arc<Vec<Rep3PrimeFieldShare<F>>>) -> Self {
+        let len = coeffs.len();
+        let num_vars = len.log_2();
+
+        Rep3DensePolynomial {
+            num_vars,
+            len,
+            full_len: len,
+            chunk_range: (0, len),
+            coeffs,
+            bound_coeffs: vec![],
+            binding_scratch_space: None,
+            global_chunk_range: None,
+        }
+    }
+
     pub(super) fn new_shard(
         coeffs: Vec<Rep3PrimeFieldShare<F>>,
         full_len: usize,
