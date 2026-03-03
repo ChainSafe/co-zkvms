@@ -18,6 +18,8 @@ use tracer::JoltDevice;
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::mixed_polynomial::MixedPolynomial;
+use crate::poly::Polynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
 use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
@@ -42,8 +44,8 @@ pub struct Rep3OutputSumcheckWorker<F: JoltField> {
     K: usize,
     /// val_init (SHARED) — initial RAM state as shared MLE
     val_init: Rep3DensePolynomial<F>,
-    /// val_final (SHARED) — final RAM state in field
-    val_final: Rep3DensePolynomial<F>,
+    /// val_final (MIXED) — final RAM state, keeping known-public regions public
+    val_final: MixedPolynomial<F>,
     /// val_io (PUBLIC) — I/O-masked final state MLE
     val_io: MultilinearPolynomial<F>,
     /// eq_poly (PUBLIC) — EQ(r_address, ·)
@@ -55,7 +57,7 @@ pub struct Rep3OutputSumcheckWorker<F: JoltField> {
 impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
     pub fn new<PCS: CommitmentScheme<Field = F>>(
         val_init: Rep3DensePolynomial<F>,
-        val_final: Rep3DensePolynomial<F>,
+        val_final: MixedPolynomial<F>,
         r_address: Vec<F::Challenge>,
         sm: &mut StateManagerWorker<'_, F, PCS>,
     ) -> Self {
@@ -157,16 +159,29 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             .map(|i| {
                 let eq_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.eq_poly, i);
                 let mask_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.io_mask, i);
-                let vf_evals = sumcheck_evals_deg_3_high_to_low_rep3::<F>(&self.val_final, i);
+                let vf_evals = self.val_final.sumcheck_evals_deg_3_high_to_low(i);
                 let vio_evals = sumcheck_evals_deg_3_high_to_low_public::<F>(&self.val_io, i);
 
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE_OUTPUT];
                 for d in 0..DEGREE_OUTPUT {
                     let eq_mask = eq_evals[d] * mask_evals[d]; // PUBLIC
-                                                               // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
-                    let shared_term = rep3_arith::mul_public(vf_evals[d], eq_mask).into_additive();
-                    let public_term = eq_mask * vio_evals[d]; // PUBLIC
-                    result[d] = additive::sub_shared_by_public(shared_term, public_term, party_id);
+                    let vio = vio_evals[d]; // PUBLIC
+
+                    // eq_mask * (val_final[d] - val_io[d])
+                    match vf_evals[d] {
+                        Rep3Value::Public(vf) => {
+                            let term = eq_mask * (vf - vio);
+                            result[d] += additive::promote_to_trivial_share(term, party_id);
+                        }
+                        Rep3Value::Shared(vf) => {
+                            // eq_mask * val_final[d] (SHARED) - eq_mask * val_io[d] (PUBLIC)
+                            let shared_term = rep3_arith::mul_public(vf, eq_mask).into_additive();
+                            let public_term = eq_mask * vio;
+                            result[d] +=
+                                additive::sub_shared_by_public(shared_term, public_term, party_id);
+                        }
+                        Rep3Value::Additive(_) => unreachable!("val_final must not be additive"),
+                    }
                 }
                 result
             })
@@ -198,7 +213,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let val_final_claim = self.val_final.final_sumcheck_claim();
+        let val_final_claim = match self.val_final.final_sumcheck_claim() {
+            Rep3Value::Public(f) => rep3_arith::promote_to_trivial_share(self.party_id, f),
+            Rep3Value::Shared(s) => s,
+            Rep3Value::Additive(_) => unreachable!("val_final claim must not be additive"),
+        };
         let val_init_claim = self.val_init.final_sumcheck_claim();
 
         accumulator.append_virtual(
@@ -223,20 +242,6 @@ fn sumcheck_evals_deg_3_high_to_low_public<F: JoltField>(
     poly: &MultilinearPolynomial<F>,
     index: usize,
 ) -> [F; DEGREE_OUTPUT] {
-    let half = poly.len() / 2;
-    let eval_0 = poly.get_bound_coeff(index);
-    let eval_1 = poly.get_bound_coeff(index + half);
-    let slope = eval_1 - eval_0;
-    let eval_2 = eval_1 + slope;
-    let eval_3 = eval_2 + slope;
-    [eval_0, eval_2, eval_3]
-}
-
-#[inline]
-fn sumcheck_evals_deg_3_high_to_low_rep3<F: JoltField>(
-    poly: &Rep3DensePolynomial<F>,
-    index: usize,
-) -> [Rep3PrimeFieldShare<F>; DEGREE_OUTPUT] {
     let half = poly.len() / 2;
     let eval_0 = poly.get_bound_coeff(index);
     let eval_1 = poly.get_bound_coeff(index + half);
