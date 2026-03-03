@@ -5,6 +5,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
@@ -169,6 +170,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
 // ---------------------------------------------------------------------------
 
 /// Init data for RAM stage4 instances, broadcast by coordinator.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RamStage4Init<F: JoltField> {
     /// HammingWeight gamma powers
     pub hamming_gamma_powers: Vec<F>,
@@ -469,6 +471,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             // Compute F_arrays (used for HammingWeight)
             let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
             let chunk_size = (T / num_chunks).max(1);
+            let dth_root_log = DTH_ROOT_OF_K.log_2();
 
             // HammingWeight eq_r_cycle from accumulator
             let (r_cycle_point, _) = sm.accumulator.get_virtual_polynomial_opening(
@@ -477,37 +480,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             );
             let eq_r_cycle = EqPolynomial::evals(&r_cycle_point.r);
 
-            let F_arrays: Vec<Vec<F>> = (0..d)
-                .map(|i| {
-                    addresses
-                        .par_chunks(chunk_size)
-                        .enumerate()
-                        .map(|(chunk_index, addr_chunk)| {
-                            let mut local =
-                                jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
-                            let mut j = chunk_index * chunk_size;
-                            for addr_opt in addr_chunk {
-                                if let Some(address) = addr_opt {
-                                    let idx = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                        % DTH_ROOT_OF_K as u64;
-                                    local[idx as usize] += eq_r_cycle[j];
-                                }
-                                j += 1;
-                            }
-                            local
-                        })
-                        .reduce(
-                            || jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
-                            |mut running, new| {
-                                running
-                                    .par_iter_mut()
-                                    .zip(new.into_par_iter())
-                                    .for_each(|(x, y)| *x += y);
-                                running
-                            },
-                        )
-                })
-                .collect();
+            let F_arrays =
+                compute_address_chunk_hists::<F>(&addresses, &eq_r_cycle, d, chunk_size, dth_root_log);
 
             let hamming_weight = RamHammingWeight::new_prover_from_parts(
                 init.hamming_gamma_powers,
@@ -518,48 +492,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             // Booleanity uses its OWN eq_r_cycle (from transcript challenge),
             // which differs from HammingWeight's r_cycle (from accumulator opening).
             let bool_eq_r_cycle = EqPolynomial::evals(&init.bool_r_cycle);
-            let G_arrays: Vec<Vec<F>> = (0..d)
-                .map(|i| {
-                    addresses
-                        .par_chunks(chunk_size)
-                        .enumerate()
-                        .map(|(chunk_index, addr_chunk)| {
-                            let mut local =
-                                jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
-                            let mut j = chunk_index * chunk_size;
-                            for addr_opt in addr_chunk {
-                                if let Some(address) = addr_opt {
-                                    let idx = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                        % DTH_ROOT_OF_K as u64;
-                                    local[idx as usize] += bool_eq_r_cycle[j];
-                                }
-                                j += 1;
-                            }
-                            local
-                        })
-                        .reduce(
-                            || jolt_core::utils::thread::unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
-                            |mut running, new| {
-                                running
-                                    .par_iter_mut()
-                                    .zip(new.into_par_iter())
-                                    .for_each(|(x, y)| *x += y);
-                                running
-                            },
-                        )
-                })
-                .collect();
-
-            let booleanity = RamBooleanity::new_prover_from_parts(
-                d,
-                T,
-                ram_K,
-                init.bool_r_cycle,
-                init.bool_r_address,
-                init.bool_gamma_powers,
-                G_arrays,
-                addresses.clone(),
-            );
+            let G_arrays =
+                compute_address_chunk_hists::<F>(&addresses, &bool_eq_r_cycle, d, chunk_size, dth_root_log);
 
             // RaSumcheck: build ra_i_polys and eq_poly from trace
             let eq_tables: Vec<Vec<F>> = init
@@ -585,8 +519,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                         .par_iter()
                         .map(|addr_opt| {
                             addr_opt.map(|address| {
-                                let idx = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                    % DTH_ROOT_OF_K as u64;
+                                let shift = dth_root_log * (d - 1 - i);
+                                let idx = (address >> shift) % DTH_ROOT_OF_K as u64;
                                 idx as u8
                             })
                         })
@@ -604,6 +538,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 init.ra_r_address_chunks,
                 ra_i_polys,
                 eq_poly,
+            );
+
+            // Consume addresses last (avoid cloning).
+            let booleanity = RamBooleanity::new_prover_from_parts(
+                d,
+                T,
+                ram_K,
+                init.bool_r_cycle,
+                init.bool_r_address,
+                init.bool_gamma_powers,
+                G_arrays,
+                addresses,
             );
 
             vec![
@@ -642,6 +588,63 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         };
         Ok(instances)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Compute `d` eq-weighted address histograms in one pass over the trace.
+///
+/// For each chunk `i`, computes `H[i][k] = Σ_j weights[j] * [addr_chunk_i(j) == k]`.
+///
+/// Mirrors vanilla-style single-pass chunk extraction (shift-by-`log_root`).
+fn compute_address_chunk_hists<F: JoltField>(
+    addresses: &[Option<u64>],
+    weights: &[F],
+    d: usize,
+    chunk_size: usize,
+    log_root: usize,
+) -> Vec<Vec<F>> {
+    use jolt_core::utils::thread::unsafe_allocate_zero_vec;
+    use rayon::prelude::*;
+
+    debug_assert_eq!(addresses.len(), weights.len());
+    let root = DTH_ROOT_OF_K;
+
+    addresses
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, addr_chunk)| {
+            let mut local: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(root)).collect();
+            let j0 = chunk_index * chunk_size;
+            for (off, addr_opt) in addr_chunk.iter().enumerate() {
+                let j = j0 + off;
+                let w = weights[j];
+                if let Some(addr) = addr_opt {
+                    let mut x = *addr;
+                    for i in (0..d).rev() {
+                        let idx = (x % root as u64) as usize;
+                        local[i][idx] += w;
+                        x >>= log_root;
+                    }
+                }
+            }
+            local
+        })
+        .reduce(
+            || (0..d).map(|_| unsafe_allocate_zero_vec(root)).collect(),
+            |mut running: Vec<Vec<F>>, new| {
+                // Avoid nested rayon in the reduce combiner. The reduction tree already
+                // runs in parallel; nesting can oversubscribe or add overhead.
+                for (x, y) in running.iter_mut().zip(new) {
+                    for (x, y) in x.iter_mut().zip(y) {
+                        *x += y;
+                    }
+                }
+                running
+            },
+        )
 }
 
 // ---------------------------------------------------------------------------

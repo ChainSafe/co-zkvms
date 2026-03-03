@@ -358,80 +358,31 @@ where
         let ram_dag = self.ram_dag.as_mut().expect("ram_dag missing");
         let lookups_dag = self.lookups_dag.as_mut().expect("lookups_dag missing");
 
-        // Message 1: has_ra_opening flag
-        let has_ra_opening: bool = io_ctx.network().receive_request()?;
-
-        // Message 2: RAM init (two messages)
-        let (
-            hamming_gamma_powers,
-            hamming_input_claim,
-            bool_r_cycle,
-            bool_r_address,
-            bool_gamma_powers,
-        ): (Vec<F>, F, Vec<F::Challenge>, Vec<F::Challenge>, Vec<F>) =
-            io_ctx.network().receive_request()?;
-        let (ra_gamma, ra_claim, ra_r_cycle, ra_r_address_chunks): (
-            [F; 3],
+        // Single init message (bundle): RAM init + Bytecode init + Lookups RA init.
+        let (ram_init, bytecode_init, ra_input_claim, ra_r_address, ra_r_cycle): (
+            crate::zkvm::ram::RamStage4Init<F>,
+            crate::zkvm::bytecode::BytecodeStage4Init<F>,
             F,
-            [Vec<F::Challenge>; 3],
-            Vec<Vec<F::Challenge>>,
+            Vec<F::Challenge>,
+            Vec<F::Challenge>,
         ) = io_ctx.network().receive_request()?;
 
-        ram_dag.set_stage4_init(crate::zkvm::ram::RamStage4Init {
-            hamming_gamma_powers,
-            hamming_input_claim,
-            bool_r_cycle,
-            bool_r_address,
-            bool_gamma_powers,
-            ra_gamma,
-            ra_claim,
-            ra_r_cycle,
-            ra_r_address_chunks,
-        });
+        ram_dag.set_stage4_init(ram_init);
         let ram_stage4 = ram_dag.stage4_instances(sm, io_ctx)?;
 
-        // Message 3: Bytecode init (two messages)
-        let (read_raf_gamma, rv_claim, val_polys, r_cycles): (
-            F,
-            F,
-            [Vec<F>; 3],
-            [Vec<F::Challenge>; 3],
-        ) = io_ctx.network().receive_request()?;
-        let (bc_bool_gamma_powers, bc_bool_r_address, hw_gamma_powers): (
-            Vec<F>,
-            Vec<F::Challenge>,
-            Vec<F>,
-        ) = io_ctx.network().receive_request()?;
-
         let mut bytecode_dag = crate::zkvm::bytecode::Rep3BytecodeDagWorker::<F>::new();
-        bytecode_dag.set_stage4_init(crate::zkvm::bytecode::BytecodeStage4Init {
-            read_raf_gamma,
-            rv_claim,
-            val_polys,
-            r_cycles,
-            bool_gamma_powers: bc_bool_gamma_powers,
-            bool_r_address: bc_bool_r_address,
-            hw_gamma_powers,
-        });
+        bytecode_dag.set_stage4_init(bytecode_init);
         let bytecode_stage4 = bytecode_dag.stage4_instances(sm, io_ctx)?;
 
-        // Message 4: Lookups RA init (only if active)
-        let lookups_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> = if has_ra_opening {
-            let (ra_input_claim, ra_r_address, ra_r_cycle): (
-                F,
-                Vec<F::Challenge>,
-                Vec<F::Challenge>,
-            ) = io_ctx.network().receive_request()?;
-            let ra_worker = Rep3InstructionRaSumcheckWorker::new(
-                &lookups_dag.one_hot_polys,
-                &ra_r_address,
-                ra_r_cycle,
-                ra_input_claim,
-            );
-            vec![BatchedSumcheckWorkerInstance::Secret(Box::new(ra_worker))]
-        } else {
-            vec![]
-        };
+        // Lookups RA init (always active; mirrors vanilla stage4).
+        let ra_worker = Rep3InstructionRaSumcheckWorker::new(
+            &lookups_dag.one_hot_polys,
+            &ra_r_address,
+            ra_r_cycle,
+            ra_input_claim,
+        );
+        let lookups_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> =
+            vec![BatchedSumcheckWorkerInstance::Secret(Box::new(ra_worker))];
 
         let mut stage4_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> =
             Vec::with_capacity(ram_stage4.len() + bytecode_stage4.len() + lookups_stage4.len());
@@ -699,7 +650,6 @@ where
         use crate::zkvm::bytecode::Rep3BytecodeDag;
         use crate::zkvm::instruction_lookups::ra_virtual::Rep3InstructionRaSumcheck;
         use crate::zkvm::ram::Rep3RamDag;
-        use jolt_core::poly::opening_proof::OpeningId;
         use jolt_core::poly::opening_proof::SumcheckId;
         use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
         use jolt_core::zkvm::witness::VirtualPolynomial;
@@ -712,62 +662,36 @@ where
         let (bytecode_instances, bytecode_init) =
             Rep3BytecodeDag::stage4_instances_with_init::<F, ProofTranscript, PCS>(state);
 
-        // === 3) Lookups: InstructionRa (secret, conditional) ===
-        let ra_key = OpeningId::Virtual(
+        // === 3) Lookups: InstructionRa (secret, always present in vanilla stage4) ===
+        eyre::ensure!(
+            state
+                .accumulator
+                .openings
+                .contains_key(&jolt_core::poly::opening_proof::OpeningId::Virtual(
+                    VirtualPolynomial::InstructionRa,
+                    SumcheckId::InstructionReadRaf
+                )),
+            "missing InstructionRa opening (expected from stage3 ReadRaf)"
+        );
+        let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
-        let has_ra_opening = state.accumulator.openings.contains_key(&ra_key);
-        let lookups_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> = if has_ra_opening
-        {
-            let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionRa,
-                SumcheckId::InstructionReadRaf,
-            );
-            let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
-            let r_address_chunks: Vec<Vec<F::Challenge>> =
-                r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
-            let ra_coord =
-                Rep3InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
-            vec![BatchedSumcheckInstance::Secret(Box::new(ra_coord))]
-        } else {
-            vec![]
-        };
+        let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
+        let r_address_chunks: Vec<Vec<F::Challenge>> =
+            r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+        let ra_coord = Rep3InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
+        let lookups_instances: Vec<BatchedSumcheckInstance<F, ProofTranscript>> =
+            vec![BatchedSumcheckInstance::Secret(Box::new(ra_coord))];
 
-        // Broadcast init data to workers.
-        network.broadcast_request(has_ra_opening)?;
+        // Broadcast init data to workers (single bundled message).
         network.broadcast_request((
-            ram_init.hamming_gamma_powers,
-            ram_init.hamming_input_claim,
-            ram_init.bool_r_cycle,
-            ram_init.bool_r_address,
-            ram_init.bool_gamma_powers,
+            ram_init,
+            bytecode_init,
+            ra_claim,
+            r_address.to_vec(),
+            r_cycle.to_vec(),
         ))?;
-        network.broadcast_request((
-            ram_init.ra_gamma,
-            ram_init.ra_claim,
-            ram_init.ra_r_cycle,
-            ram_init.ra_r_address_chunks,
-        ))?;
-        network.broadcast_request((
-            bytecode_init.read_raf_gamma,
-            bytecode_init.rv_claim,
-            bytecode_init.val_polys,
-            bytecode_init.r_cycles,
-        ))?;
-        network.broadcast_request((
-            bytecode_init.bool_gamma_powers,
-            bytecode_init.bool_r_address,
-            bytecode_init.hw_gamma_powers,
-        ))?;
-        if has_ra_opening {
-            let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::InstructionRa,
-                SumcheckId::InstructionReadRaf,
-            );
-            let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
-            network.broadcast_request((ra_claim, r_address.to_vec(), r_cycle.to_vec()))?;
-        }
 
         let mut all_instances = Vec::new();
         all_instances.extend(ram_instances);
