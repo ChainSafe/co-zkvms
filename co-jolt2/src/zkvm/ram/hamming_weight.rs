@@ -4,7 +4,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstance;
 use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::zkvm::ram::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID};
+use mpc_core::protocols::rep3::PartyID;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
@@ -98,17 +98,12 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingWeightSumcheck<F> 
             .0
             .r;
 
-        let shares: Vec<_> = claims
-            .iter()
-            .map(|&claim| rep3_arith::promote_to_trivial_share(party_id, claim))
-            .collect();
-
-        accumulator.append_sparse(
+        accumulator.append_sparse_public(
             (0..d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamHammingWeight,
             &opening_point.r,
             &r_cycle,
-            shares,
+            claims.clone(),
         );
 
         claims

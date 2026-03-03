@@ -5,7 +5,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstance;
 use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::zkvm::ram::ra_virtual::RaSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID};
+use mpc_core::protocols::rep3::PartyID;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
@@ -98,13 +98,12 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         };
 
         for i in 0..d {
-            let share = rep3_arith::promote_to_trivial_share(party_id, claims[i]);
-            accumulator.append_sparse(
+            accumulator.append_sparse_public(
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,
                 &self.r_address_chunks()[i],
                 &opening_point.r,
-                vec![share],
+                vec![claims[i]],
             );
         }
 
