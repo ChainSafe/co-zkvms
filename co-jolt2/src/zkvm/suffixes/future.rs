@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use mpc_core::protocols::rep3_ring::{dabits, Rep3RingShare};
 
 // ---------------------------------------------------------------------------
 // B2ABucketExtend — compile-time dispatch for typed B2A bucket extension

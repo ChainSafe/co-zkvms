@@ -56,6 +56,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         full_evals.extend_from_slice(&base[1..]); // y2..y_degree
 
         let poly = UniPoly::<F>::from_evals(&full_evals);
+        let coeffs = poly.as_vec();
 
         let mut msg = vec![F::zero(); max_degree];
         msg[0] = y0;
@@ -63,8 +64,9 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
             msg[1] = full_evals[2]; // y2
         }
         for k in 3..=max_degree {
-            let x: F::Challenge = (k as u128).into();
-            msg[k - 1] = poly.evaluate(&x);
+            let x = F::from_u64(k as u64);
+            let eval = coeffs.iter().rev().fold(F::zero(), |acc, c| acc * x + *c);
+            msg[k - 1] = eval;
         }
         msg
     }
@@ -87,12 +89,17 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         &self,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        party_id: PartyID,
     ) -> Vec<F> {
         let d = self.d();
-        let claims = self.ra_i_final_claims();
+        let claims: Vec<F> = if party_id == PartyID::ID0 {
+            self.ra_i_final_claims()
+        } else {
+            vec![F::zero(); d]
+        };
 
         for i in 0..d {
-            let share = rep3_arith::promote_to_trivial_share(PartyID::ID0, claims[i]);
+            let share = rep3_arith::promote_to_trivial_share(party_id, claims[i]);
             accumulator.append_sparse(
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,

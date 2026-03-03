@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ark_bn254::Fr;
@@ -45,7 +46,7 @@ type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 type Challenge = <F as jolt_core::field::JoltField>::Challenge;
 
-fn vanilla_up_to_stage4(
+fn vanilla_up_to_stage5(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
@@ -79,7 +80,11 @@ fn vanilla_up_to_stage4(
         .filter_map(|poly| all_polys.remove(poly))
         .collect();
     let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
-    let (commitments, _hints): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
+    let (commitments, opening_proof_hints): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
+    let opening_proof_hints: HashMap<CommittedPolynomial, <PCS as CommitmentScheme>::OpeningProofHint> = AllCommittedPolynomials::iter()
+        .copied()
+        .zip(opening_proof_hints)
+        .collect();
     sm.set_commitments(commitments);
 
     // Append commitments to transcript (vanilla ordering).
@@ -127,37 +132,17 @@ fn vanilla_up_to_stage4(
         ProofData::SumcheckProof(stage2_proof),
     );
 
-    // Stage 3: create all vanilla instances (for correct transcript draws),
-    // but only include the subset that MPC implements.
-    //
-    // Vanilla stage 3 ordering:
-    //   1. PCSumcheck (Spartan)           — included
-    //   2. ProductVirtualization (Spartan) — included
-    //   3. ValEvaluation (Registers)      — included
-    //   4. ReadRafSumcheck (Lookups)      — included
-    //   5. HammingWeightSumcheck (Lookups)— included
-    //   6. ValEvaluation (RAM)            — SKIP (not ported to MPC)
-    //   7. ValFinalSumcheck (RAM)         — included
-    //   8. HammingBooleanity (RAM)        — included
-    //
-    // Create all instances via subsystem methods (transcript draws happen inside).
+    // Stage 3: all vanilla instances in vanilla order.
     let spartan_stage3 = spartan.stage3_prover_instances(&mut sm);
     let registers_stage3 = registers_dag.stage3_prover_instances(&mut sm);
     let lookups_stage3 = lookups_dag.stage3_prover_instances(&mut sm);
     let ram_stage3 = ram_dag.stage3_prover_instances(&mut sm);
 
-    // Filter to only the instances that MPC implements:
-    // spartan: both (indices 0,1)
-    // registers: val evaluation (index 0)
-    // lookups: ReadRaf (index 0) + HammingWeight (index 1) — both ported to MPC
-    // ram: skip ValEvaluation (index 0), keep ValFinal (index 1) + HammingBooleanity (index 2)
     let mut stage3_instances: Vec<Box<dyn SumcheckInstance<F, FS>>> = Vec::new();
-    stage3_instances.extend(spartan_stage3); // PC + Product
-    stage3_instances.extend(registers_stage3); // Val
-    stage3_instances.extend(lookups_stage3); // ReadRaf + HammingWeight
-    if ram_stage3.len() > 1 {
-        stage3_instances.extend(ram_stage3.into_iter().skip(1));
-    }
+    stage3_instances.extend(spartan_stage3);
+    stage3_instances.extend(registers_stage3);
+    stage3_instances.extend(lookups_stage3);
+    stage3_instances.extend(ram_stage3);
 
     let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage3_instances
         .iter_mut()
@@ -173,34 +158,48 @@ fn vanilla_up_to_stage4(
         ProofData::SumcheckProof(stage3_proof),
     );
 
-    // Stage 4 disabled: vanilla ra_virtual.rs expects RamValEvaluation opening
-    // which is not appended because we skip that sumcheck in stage3.
-    // TODO: re-enable once RamValEvaluation is ported to MPC.
-    // {
-    //     let mut bytecode_dag = BytecodeDag::default();
-    //
-    //     let mut stage4_instances: Vec<_> = std::iter::empty()
-    //         .chain(ram_dag.stage4_prover_instances(&mut sm))
-    //         .chain(bytecode_dag.stage4_prover_instances(&mut sm))
-    //         .chain(lookups_dag.stage4_prover_instances(&mut sm))
-    //         .collect();
-    //
-    //     if !stage4_instances.is_empty() {
-    //         let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage4_instances
-    //             .iter_mut()
-    //             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, FS>)
-    //             .collect();
-    //         let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
-    //             stage4_instances_mut,
-    //             Some(accumulator.clone()),
-    //             &mut *transcript.borrow_mut(),
-    //         );
-    //         sm.proofs.borrow_mut().insert(
-    //             ProofKeys::Stage4Sumcheck,
-    //             ProofData::SumcheckProof(stage4_proof),
-    //         );
-    //     }
-    // }
+    // Stage 4: RAM + Bytecode + Lookups RA.
+    {
+        let mut bytecode_dag = BytecodeDag::default();
+
+        let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(ram_dag.stage4_prover_instances(&mut sm))
+            .chain(bytecode_dag.stage4_prover_instances(&mut sm))
+            .chain(lookups_dag.stage4_prover_instances(&mut sm))
+            .collect();
+
+        if !stage4_instances.is_empty() {
+            let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F, FS>> = stage4_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, FS>)
+                .collect();
+            let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
+                stage4_instances_mut,
+                Some(accumulator.clone()),
+                &mut *transcript.borrow_mut(),
+            );
+            sm.proofs.borrow_mut().insert(
+                ProofKeys::Stage4Sumcheck,
+                ProofData::SumcheckProof(stage4_proof),
+            );
+        }
+    }
+
+    let (preprocessing, trace, _, _) = sm.get_prover_data();
+    let all_poly_keys: Vec<CommittedPolynomial> =
+        AllCommittedPolynomials::iter().copied().collect();
+    let polynomials_map =
+        CommittedPolynomial::generate_witness_batch(&all_poly_keys, preprocessing, trace);
+    let opening_proof = accumulator.borrow_mut().reduce_and_prove(
+        polynomials_map,
+        opening_proof_hints,
+        &preprocessing.generators,
+        &mut *transcript.borrow_mut(),
+    );
+    sm.proofs.borrow_mut().insert(
+        ProofKeys::ReducedOpeningProof,
+        ProofData::ReducedOpeningProof(opening_proof),
+    );
 
     (VanillaJoltProof::from_prover_state_manager(sm), tau)
 }
@@ -245,8 +244,8 @@ fn dag_correct() {
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
-    // 4) Vanilla proof up to Stage4.
-    let (vanilla_proof, tau) = vanilla_up_to_stage4(
+    // 4) Vanilla proof up to Stage3.
+    let (vanilla_proof, tau) = vanilla_up_to_stage5(
         &preprocessing,
         vanilla_trace,
         io_device.clone(),
@@ -286,10 +285,12 @@ fn dag_correct() {
         },
         {
             let verifier_preprocessing_arc = Arc::clone(&verifier_preprocessing_arc_for_coord);
+            let prover_preprocessing_arc = Arc::clone(&preprocessing_arc);
             let io_device_arc = Arc::clone(&io_device_arc_for_coord);
             move || {
                 (
                     Arc::clone(&verifier_preprocessing_arc),
+                    Arc::clone(&prover_preprocessing_arc),
                     Arc::clone(&io_device_arc),
                     ram_K,
                 )
@@ -325,7 +326,7 @@ fn dag_correct() {
             Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, edabits_pool)
         },
         move |input, net| {
-            let (verifier_preprocessing, program_io, ram_K) = input;
+            let (verifier_preprocessing, prover_preprocessing, program_io, ram_K) = input;
             // Match twist_sumcheck_switch_index computation in co-jolt2 zkvm/mod.rs.
             let num_chunks = rayon::current_num_threads()
                 .next_power_of_two()
@@ -345,7 +346,7 @@ fn dag_correct() {
                 (*program_io).clone(),
                 ram_K,
                 twist_sumcheck_switch_index,
-            );
+            ).with_pcs_setup(&prover_preprocessing.generators);
             Rep3JoltDAGCoordinator::prove(state, net)
         },
     );
@@ -561,112 +562,198 @@ fn dag_correct() {
         }
     }
 
-    // 9b) Stage4 comparison disabled: vanilla stage4 can't run without RamValEvaluation.
-    // TODO: re-enable once RamValEvaluation is ported to MPC.
-    // {
-    //     use jolt_core::zkvm::dag::state_manager::ProofData;
-    //
-    //     let rep3_stage4 = rep3_proof
-    //         .proofs
-    //         .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
-    //     let vanilla_stage4 = vanilla_proof
-    //         .proofs
-    //         .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
-    //
-    //     match (rep3_stage4, vanilla_stage4) {
-    //         (Some(rep3_s4), Some(vanilla_s4)) => {
-    //             let rep3_bytes = {
-    //                 let mut v = Vec::new();
-    //                 rep3_s4.serialize_uncompressed(&mut v).unwrap();
-    //                 v
-    //             };
-    //             let vanilla_bytes = {
-    //                 let mut v = Vec::new();
-    //                 vanilla_s4.serialize_uncompressed(&mut v).unwrap();
-    //                 v
-    //             };
-    //             if rep3_bytes != vanilla_bytes {
-    //                 let (rep3_sc, vanilla_sc) = match (rep3_s4, vanilla_s4) {
-    //                     (ProofData::SumcheckProof(a), ProofData::SumcheckProof(b)) => (a, b),
-    //                     _ => panic!("unexpected proof data variants for stage4 sumcheck"),
-    //                 };
-    //
-    //                 eprintln!(
-    //                     "Stage4 sumcheck: rep3 has {} polys, vanilla has {} polys",
-    //                     rep3_sc.compressed_polys.len(),
-    //                     vanilla_sc.compressed_polys.len()
-    //                 );
-    //
-    //                 let mut first_diff_idx = None;
-    //                 for (i, (a, b)) in rep3_sc
-    //                     .compressed_polys
-    //                     .iter()
-    //                     .zip(vanilla_sc.compressed_polys.iter())
-    //                     .enumerate()
-    //                 {
-    //                     let mut a_bytes = Vec::new();
-    //                     let mut b_bytes = Vec::new();
-    //                     a.serialize_uncompressed(&mut a_bytes).unwrap();
-    //                     b.serialize_uncompressed(&mut b_bytes).unwrap();
-    //                     if a_bytes != b_bytes {
-    //                         first_diff_idx = Some(i);
-    //                         break;
-    //                     }
-    //                 }
-    //
-    //                 if let Some(i) = first_diff_idx {
-    //                     panic!(
-    //                         "Stage4 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
-    //                         rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i],
-    //                     );
-    //                 } else if rep3_sc.compressed_polys.len()
-    //                     != vanilla_sc.compressed_polys.len()
-    //                 {
-    //                     panic!(
-    //                         "Stage4 sumcheck proof poly count mismatch: rep3={} vanilla={}",
-    //                         rep3_sc.compressed_polys.len(),
-    //                         vanilla_sc.compressed_polys.len()
-    //                     );
-    //                 } else {
-    //                     panic!(
-    //                         "Stage4 sumcheck proof bytes differ but individual polys match"
-    //                     );
-    //                 }
-    //             }
-    //         }
-    //         (None, None) => {
-    //             // Both absent — OK (ReadRaf not populated).
-    //         }
-    //         (rep3, vanilla) => {
-    //             panic!(
-    //                 "Stage4 proof presence mismatch: rep3={}, vanilla={}",
-    //                 rep3.is_some(),
-    //                 vanilla.is_some()
-    //             );
-    //         }
-    //     }
-    // }
+    // 9b) Compare Stage4 sumcheck proof bytes.
+    {
+        use jolt_core::zkvm::dag::state_manager::ProofData;
 
-    // 10) Compare opening claims bytes (stage1+stage2+stage3+stage4 openings).
-    let rep3_openings_bytes = {
-        let mut v = Vec::new();
-        rep3_proof
-            .opening_claims
-            .serialize_uncompressed(&mut v)
-            .unwrap();
-        v
-    };
-    let vanilla_openings_bytes = {
-        let mut v = Vec::new();
-        vanilla_proof
-            .opening_claims
-            .serialize_uncompressed(&mut v)
-            .unwrap();
-        v
-    };
-    assert_eq!(rep3_openings_bytes, vanilla_openings_bytes);
+        let rep3_stage4 = rep3_proof
+            .proofs
+            .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
+        let vanilla_stage4 = vanilla_proof
+            .proofs
+            .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::Stage4Sumcheck);
 
-    // 10) Metadata invariants.
+        match (rep3_stage4, vanilla_stage4) {
+            (Some(rep3_s4), Some(vanilla_s4)) => {
+                let rep3_bytes = {
+                    let mut v = Vec::new();
+                    rep3_s4.serialize_uncompressed(&mut v).unwrap();
+                    v
+                };
+                let vanilla_bytes = {
+                    let mut v = Vec::new();
+                    vanilla_s4.serialize_uncompressed(&mut v).unwrap();
+                    v
+                };
+                if rep3_bytes != vanilla_bytes {
+                    let (rep3_sc, vanilla_sc) = match (rep3_s4, vanilla_s4) {
+                        (ProofData::SumcheckProof(a), ProofData::SumcheckProof(b)) => (a, b),
+                        _ => panic!("unexpected proof data variants for stage4 sumcheck"),
+                    };
+
+                    eprintln!(
+                        "Stage4 sumcheck: rep3 has {} polys, vanilla has {} polys",
+                        rep3_sc.compressed_polys.len(),
+                        vanilla_sc.compressed_polys.len()
+                    );
+
+                    let mut first_diff_idx = None;
+                    for (i, (a, b)) in rep3_sc
+                        .compressed_polys
+                        .iter()
+                        .zip(vanilla_sc.compressed_polys.iter())
+                        .enumerate()
+                    {
+                        let mut a_bytes = Vec::new();
+                        let mut b_bytes = Vec::new();
+                        a.serialize_uncompressed(&mut a_bytes).unwrap();
+                        b.serialize_uncompressed(&mut b_bytes).unwrap();
+                        if a_bytes != b_bytes {
+                            first_diff_idx = Some(i);
+                            break;
+                        }
+                    }
+
+                    if let Some(i) = first_diff_idx {
+                        panic!(
+                            "Stage4 sumcheck proof mismatch at round {i}: rep3={:?} vanilla={:?}",
+                            rep3_sc.compressed_polys[i], vanilla_sc.compressed_polys[i],
+                        );
+                    } else if rep3_sc.compressed_polys.len()
+                        != vanilla_sc.compressed_polys.len()
+                    {
+                        panic!(
+                            "Stage4 sumcheck proof poly count mismatch: rep3={} vanilla={}",
+                            rep3_sc.compressed_polys.len(),
+                            vanilla_sc.compressed_polys.len()
+                        );
+                    } else {
+                        panic!(
+                            "Stage4 sumcheck proof bytes differ but individual polys match"
+                        );
+                    }
+                }
+            }
+            (None, None) => {
+                // Both absent — OK (ReadRaf not populated).
+            }
+            (rep3, vanilla) => {
+                panic!(
+                    "Stage4 proof presence mismatch: rep3={}, vanilla={}",
+                    rep3.is_some(),
+                    vanilla.is_some()
+                );
+            }
+        }
+    }
+
+    // 10) Compare opening claims bytes.
+    {
+        let rep3_claims_bytes = {
+            let mut v = Vec::new();
+            rep3_proof.opening_claims.serialize_uncompressed(&mut v).unwrap();
+            v
+        };
+        let vanilla_claims_bytes = {
+            let mut v = Vec::new();
+            vanilla_proof.opening_claims.serialize_uncompressed(&mut v).unwrap();
+            v
+        };
+        assert_eq!(
+            rep3_claims_bytes, vanilla_claims_bytes,
+            "Opening claims mismatch"
+        );
+    }
+
+    // 11) Compare Stage5 (ReducedOpeningProof) bytes.
+    {
+        use jolt_core::zkvm::dag::state_manager::ProofData;
+
+        let rep3_stage5 = rep3_proof
+            .proofs
+            .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::ReducedOpeningProof)
+            .expect("rep3 stage5 proof missing");
+        let vanilla_stage5 = vanilla_proof
+            .proofs
+            .get(&jolt_core::zkvm::dag::state_manager::ProofKeys::ReducedOpeningProof)
+            .expect("vanilla stage5 proof missing");
+
+        let rep3_bytes = {
+            let mut v = Vec::new();
+            rep3_stage5.serialize_uncompressed(&mut v).unwrap();
+            v
+        };
+        let vanilla_bytes = {
+            let mut v = Vec::new();
+            vanilla_stage5.serialize_uncompressed(&mut v).unwrap();
+            v
+        };
+        if rep3_bytes != vanilla_bytes {
+            let (rep3_rop, vanilla_rop) = match (rep3_stage5, vanilla_stage5) {
+                (ProofData::ReducedOpeningProof(a), ProofData::ReducedOpeningProof(b)) => (a, b),
+                _ => panic!("unexpected proof data variants for stage5"),
+            };
+
+            // Compare sumcheck proof
+            let rep3_sc_bytes = {
+                let mut v = Vec::new();
+                rep3_rop.sumcheck_proof.serialize_uncompressed(&mut v).unwrap();
+                v
+            };
+            let vanilla_sc_bytes = {
+                let mut v = Vec::new();
+                vanilla_rop.sumcheck_proof.serialize_uncompressed(&mut v).unwrap();
+                v
+            };
+            let sc_match = rep3_sc_bytes == vanilla_sc_bytes;
+
+            // Compare claims
+            let claims_match = rep3_rop.sumcheck_claims == vanilla_rop.sumcheck_claims;
+
+            // Compare PCS proof
+            let rep3_pcs_bytes = {
+                let mut v = Vec::new();
+                rep3_rop.joint_opening_proof.serialize_uncompressed(&mut v).unwrap();
+                v
+            };
+            let vanilla_pcs_bytes = {
+                let mut v = Vec::new();
+                vanilla_rop.joint_opening_proof.serialize_uncompressed(&mut v).unwrap();
+                v
+            };
+            let pcs_match = rep3_pcs_bytes == vanilla_pcs_bytes;
+
+            if !sc_match {
+                // Find first differing round
+                let mut first_diff = None;
+                for (i, (a, b)) in rep3_rop.sumcheck_proof.compressed_polys.iter()
+                    .zip(vanilla_rop.sumcheck_proof.compressed_polys.iter())
+                    .enumerate()
+                {
+                    let mut a_bytes = Vec::new();
+                    let mut b_bytes = Vec::new();
+                    a.serialize_uncompressed(&mut a_bytes).unwrap();
+                    b.serialize_uncompressed(&mut b_bytes).unwrap();
+                    if a_bytes != b_bytes {
+                        first_diff = Some(i);
+                        break;
+                    }
+                }
+                panic!(
+                    "Stage5 mismatch: sumcheck={sc_match} (first diff round: {:?}, rep3_rounds={}, vanilla_rounds={}), claims={claims_match}, pcs={pcs_match}",
+                    first_diff,
+                    rep3_rop.sumcheck_proof.compressed_polys.len(),
+                    vanilla_rop.sumcheck_proof.compressed_polys.len(),
+                );
+            }
+
+            panic!(
+                "Stage5 mismatch: sumcheck={sc_match}, claims={claims_match}, pcs={pcs_match}"
+            );
+        }
+    }
+
+    // 12) Metadata invariants.
     assert_eq!(rep3_proof.trace_length, vanilla_proof.trace_length);
     assert_eq!(rep3_proof.ram_K, vanilla_proof.ram_K);
     assert_eq!(rep3_proof.bytecode_d, vanilla_proof.bytecode_d);

@@ -68,6 +68,7 @@ where
 {
     fn prove<N: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
+        pcs_setup: &PCS::ProverSetup,
         program_io: JoltDevice,
         network: &mut N,
         ram_K: usize,
@@ -130,6 +131,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
 impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
     fn prove<N: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<Fr, DoryCommitmentScheme>,
+        pcs_setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
         program_io: JoltDevice,
         network: &mut N,
         ram_K: usize,
@@ -150,7 +152,8 @@ impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
-        );
+        )
+        .with_pcs_setup(pcs_setup);
         Rep3JoltDAGCoordinator::prove(state, network)
     }
 }
@@ -273,8 +276,9 @@ mod tests {
             },
             || {
                 let verifier_preprocessing = verifier_preprocessing.clone();
+                let prover_preprocessing = Arc::clone(&preprocessing_arc);
                 let io_device = (*io_device_arc).clone();
-                (verifier_preprocessing, io_device, ram_K, padded_len)
+                (verifier_preprocessing, prover_preprocessing, io_device, ram_K, padded_len)
             },
             |input, mut io_ctx| {
                 let (mut trace, memory, preprocessing, io_device, ram_K, advice) = input;
@@ -309,10 +313,11 @@ mod tests {
                 Ok(())
             },
             |input, network| {
-                let (verifier_preprocessing, io_device, ram_K, trace_length) = input;
+                let (verifier_preprocessing, prover_preprocessing, io_device, ram_K, trace_length) = input;
                 let _span = info_span!("coordinator_prove").entered();
                 let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
                     &verifier_preprocessing,
+                    &prover_preprocessing.generators,
                     io_device,
                     network,
                     ram_K,
