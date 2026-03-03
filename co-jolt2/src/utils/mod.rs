@@ -3,7 +3,6 @@ pub mod future_ring;
 pub mod fwht;
 pub mod instruction_utils;
 pub(crate) mod send_ptr;
-pub(crate) mod shared_mul_index;
 pub mod tracing;
 pub mod types;
 
