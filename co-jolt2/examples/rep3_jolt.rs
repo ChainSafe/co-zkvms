@@ -60,6 +60,10 @@ struct Args {
     /// preprocessing is skipped and data is loaded from disk.
     #[clap(short = 'p', long)]
     preproc_dir: Option<PathBuf>,
+
+    /// Preprocess only, without running the main computation.
+    #[clap(short = 'P', long)]
+    preprocess_only: Option<bool>,
 }
 
 /// Payload sent from coordinator to each worker.
@@ -203,6 +207,10 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     network
         .send_requests_blocking(worker_payloads)
         .context("sending worker payloads")?;
+
+    if args.preprocess_only.unwrap_or(false) {
+        return Ok(());
+    }
 
     // Run coordinator prove
     info!("starting coordinator prove");
@@ -354,6 +362,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         }
     };
     drop(_span);
+
+    if args.preprocess_only.unwrap_or(false) {
+        io_ctx.sync_with_parties()?;
+        return Ok(());
+    }
 
     // Prove
     <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(

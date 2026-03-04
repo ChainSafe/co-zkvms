@@ -13,6 +13,8 @@ PREPROC_DIR=${PREPROC_DIR:-./.preprocessing}
 # When set to 1, builds with the `reuse-preproc` feature so that mmap'd
 # backing files are NOT zeroed on read and can be loaded multiple times.
 REUSE_PREPROC=${REUSE_PREPROC:-0}
+# When set to 1, only runs preprocessing and exits.
+PREPROC_ONLY=${PREPROC_ONLY:-0}
 
 mkdir -p "$ARTIFACT_DIR"
 mkdir -p "$TRACE_DIR"
@@ -50,11 +52,14 @@ if [ -n "$PREPROC_DIR" ]; then
   mkdir -p "$PREPROC_DIR"
   PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
 fi
+if [ "$PREPROC_ONLY" = "1" ]; then
+  PREPROC_ARGS+=(--preprocess-only true)
+fi
 
 # Launch coordinator
 ../target/release/examples/rep3_jolt \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
-  -t "$TRACE_DIR" -n "$NUM_ITERS" &
+  -t "$TRACE_DIR" -n "$NUM_ITERS" "${PREPROC_ARGS[@]}" &
 
 # Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.
 for p in 0 1 2; do
