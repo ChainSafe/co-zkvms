@@ -24,7 +24,7 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 pub struct Rep3SpartanDagWorker;
 
 impl Rep3SpartanDagWorker {
-    #[tracing::instrument(skip_all, name = "stage1_prove")]
+    #[tracing::instrument(skip_all, name = "SpartanDag::stage1_prove")]
     pub fn stage1_prove<F, PCS, N>(
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,

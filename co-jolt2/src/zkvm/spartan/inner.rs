@@ -7,6 +7,7 @@ use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::poly::mixed_polynomial::MixedPolynomial;
@@ -16,7 +17,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
 use crate::utils::types::Rep3Value;
-use crate::zkvm::dag::state_manager::StateManagerCoordinator;
+use crate::zkvm::dag::state_manager::StateManager;
 
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 
@@ -143,7 +144,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         let r: F = r_j.into();
         self.poly_abc_small.bind(r, BindingOrder::HighToLow);
         self.poly_z.bind(r, BindingOrder::HighToLow);
@@ -180,7 +187,7 @@ pub struct Rep3InnerSumcheck<F: JoltField> {
 
 impl<F: JoltField> Rep3InnerSumcheck<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Derive gamma from transcript (matches vanilla ordering)
         let gamma: F = sm.transcript.challenge_scalar();

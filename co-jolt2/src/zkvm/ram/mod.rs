@@ -8,8 +8,10 @@ use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
@@ -17,10 +19,10 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::stage::{
-    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
-    Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
+    SumcheckStagesWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 use self::output_check::{
     Rep3OutputSumcheck, Rep3OutputSumcheckWorker, Rep3ValFinalSumcheck, Rep3ValFinalSumcheckWorker,
@@ -372,11 +374,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
-        _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use jolt_core::poly::opening_proof::SumcheckId;
-        use jolt_core::utils::math::Math;
         use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
         use jolt_core::zkvm::witness::VirtualPolynomial;
 
@@ -444,7 +445,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             hamming_weight::HammingWeightSumcheck as RamHammingWeight,
             ra_virtual::RaSumcheck as RamRaSumcheck,
         };
-        use rayon::prelude::*;
         use std::sync::Arc;
 
         let init = self
@@ -608,7 +608,6 @@ fn compute_address_chunk_hists<F: JoltField>(
     log_root: usize,
 ) -> Vec<Vec<F>> {
     use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-    use rayon::prelude::*;
 
     debug_assert_eq!(addresses.len(), weights.len());
     let root = DTH_ROOT_OF_K;
@@ -657,7 +656,7 @@ pub struct Rep3RamDag;
 impl Rep3RamDag {
     /// Create coordinator stage4 instances AND return the init data for workers.
     pub fn stage4_instances_with_init<F, ProofTranscript, PCS>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> (
         Vec<BatchedSumcheckInstance<F, ProofTranscript>>,
         RamStage4Init<F>,
@@ -796,7 +795,7 @@ where
 {
     fn stage2_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let raf_evaluation = Rep3RafEvaluation::new(sm);
@@ -812,7 +811,7 @@ where
 
     fn stage3_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         use jolt_core::poly::multilinear_polynomial::{

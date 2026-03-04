@@ -65,12 +65,16 @@ struct SharedSparseFieldCols<F: JoltField> {
 
 unsafe impl<F: JoltField> Sync for SharedSparseFieldCols<F> {}
 
-#[tracing::instrument(skip_all, fields(jobs=jobs.len()))]
+#[tracing::instrument(
+    skip_all,
+    name = "fill_field_from_operands_sparse_u64",
+    fields(jobs = jobs.len())
+)]
 fn fill_field_from_operands_sparse_u64<F, N>(
     io_ctx: &mut IoContextPool<N>,
     jobs: Vec<SparseCastJob>,
     out: Arc<SharedSparseFieldCols<F>>,
-    edabits_pool: &mut PreprocessingPool<F>,
+    preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
 where
     F: JoltField,
@@ -89,7 +93,7 @@ where
         targets.push((job.col, job.row));
     }
 
-    let batch = edabits_pool.take_edabits::<u64>(n);
+    let batch = preproc.take_edabits::<u64>(n);
     let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
         edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch, ctx)
     })?;
@@ -343,11 +347,11 @@ where
 ///
 /// This cache is the field-domain, per-cycle witness representation used by
 /// Stage 1 Spartan and later stages, allowing the ring-shared trace to be dropped.
-#[tracing::instrument(skip_all, name = "populate_cycle_witness_rep3")]
+#[tracing::instrument(skip_all, name = "populate_cycle_witness")]
 pub fn populate_cycle_witness_rep3<F, PCS, N>(
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
-    edabits_pool: &mut PreprocessingPool<F>,
+    preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
 where
     F: JoltField,
@@ -487,7 +491,7 @@ where
         }
     }
 
-    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), edabits_pool)?;
+    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), preproc)?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
@@ -556,12 +560,12 @@ where
 /// - Shared fields (register values) go through EdaBits B2A (`ring_to_field_b2a_many`) → `Shared(...)`
 /// - Public fields (flags derived from opcode) → `Public(...)`
 /// - Deferred fields (instruction_ra) are skipped or zeroed
-#[tracing::instrument(skip_all, name = "witness_batch_generate_rep3")]
+#[tracing::instrument(skip_all, name = "witness_batch_generate")]
 pub fn generate_witness_batch_rep3<F, PCS, N>(
     polynomials: &[CommittedPolynomial],
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
-    edabits_pool: &mut PreprocessingPool<F>,
+    preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<HashMap<CommittedPolynomial, Rep3MultilinearPolynomial<F>>>
 where
     F: JoltField,
@@ -830,7 +834,7 @@ where
                 let n = batch.rd_pre.len();
                 let mut combined = std::mem::take(&mut batch.rd_pre);
                 combined.extend(std::mem::take(&mut batch.rd_post));
-                let batch_eda = edabits_pool.take_edabits::<u64>(2 * n);
+                let batch_eda = preproc.take_edabits::<u64>(2 * n);
                 let mut field_all = io_ctx.par_chunks_preproc(
                     combined,
                     batch_eda,
@@ -858,7 +862,7 @@ where
                 let n = batch.ram_pre.len();
                 let mut combined = std::mem::take(&mut batch.ram_pre);
                 combined.extend(std::mem::take(&mut batch.ram_post));
-                let batch_eda = edabits_pool.take_edabits::<u64>(2 * n);
+                let batch_eda = preproc.take_edabits::<u64>(2 * n);
                 let mut field_all = io_ctx.par_chunks_preproc(
                     combined,
                     batch_eda,
@@ -1067,7 +1071,7 @@ mod tests {
                     let budget =
                         crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
-                    let mut edabits_pool =
+                    let mut preproc =
                         mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
                             counts,
                             budget.dabits,
@@ -1089,7 +1093,7 @@ mod tests {
                         &polys,
                         &mut state,
                         &mut io_ctx,
-                        &mut edabits_pool,
+                        &mut preproc,
                     )?;
                     info!(
                         ?party,

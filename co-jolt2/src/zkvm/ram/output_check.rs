@@ -13,6 +13,7 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
@@ -25,7 +26,7 @@ use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 use crate::zkvm::instruction_lookups::booleanity::extend_degree_3_evals;
 
 const DEGREE_OUTPUT: usize = 3;
@@ -193,7 +194,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         extend_degree_3_evals::<F>(previous_claim, &base, max_degree)
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         self.val_init.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_final.bind(r_j.into(), BindingOrder::HighToLow);
         self.val_io.bind_parallel(r_j, BindingOrder::HighToLow);
@@ -263,7 +270,7 @@ pub struct Rep3OutputSumcheck<F: JoltField> {
 
 impl<F: JoltField> Rep3OutputSumcheck<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let K = sm.ram_K;
         let r_address = sm.transcript.challenge_vector_optimized::<F>(K.log_2());
@@ -467,7 +474,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         rayon::join(
             || self.inc.bind(r_j.into(), BindingOrder::HighToLow),
             || self.wa.bind_parallel(r_j, BindingOrder::HighToLow),
@@ -531,7 +544,7 @@ pub struct Rep3ValFinalSumcheck<F: JoltField> {
 
 impl<F: JoltField> Rep3ValFinalSumcheck<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let val_init_eval = sm
             .accumulator

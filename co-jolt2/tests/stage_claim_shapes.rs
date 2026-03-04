@@ -21,7 +21,7 @@ use tracer::instruction::Instruction;
 use tracer::JoltDevice;
 
 use co_jolt2::subprotocols::sumcheck::Rep3SumcheckInstance;
-use co_jolt2::zkvm::dag::state_manager::StateManagerCoordinator;
+use co_jolt2::zkvm::dag::state_manager::StateManager;
 use co_jolt2::zkvm::ram::output_check::{Rep3OutputSumcheck, Rep3ValFinalSumcheck};
 use co_jolt2::zkvm::ram::raf_evaluation::Rep3RafEvaluation;
 use co_jolt2::zkvm::ram::read_write_checking::Rep3RamReadWriteChecking;
@@ -35,7 +35,7 @@ type ProofTranscript = KeccakTranscript;
 fn make_state_manager(
     trace_length: usize,
     ram_k: usize,
-) -> StateManagerCoordinator<'static, F, ProofTranscript, PCS> {
+) -> StateManager<'static, F, ProofTranscript, PCS> {
     let mut mem_cfg = MemoryConfig::default();
     mem_cfg.program_size = Some(0);
     let program_io = JoltDevice::new(&mem_cfg);
@@ -60,7 +60,7 @@ fn make_state_manager(
         JoltVerifierPreprocessing::from(&prover_preprocessing),
     ));
 
-    let mut sm = StateManagerCoordinator::<F, ProofTranscript, PCS>::new(
+    let mut sm = StateManager::<F, ProofTranscript, PCS>::new(
         verifier_preprocessing,
         program_io,
         ram_k,
@@ -72,7 +72,7 @@ fn make_state_manager(
 }
 
 fn seed_spartan_outer_openings(
-    sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+    sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     log_t: usize,
 ) {
     let r_cycle = sm.transcript.challenge_vector_optimized::<F>(log_t);

@@ -16,12 +16,12 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
     SumcheckStagesWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 use self::booleanity::{Rep3BooleanitySumcheck, Rep3BooleanitySumcheckWorker};
 use self::hamming_weight::{Rep3HammingWeightSumcheck, Rep3HammingWeightSumcheckWorker};
@@ -112,7 +112,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let G = self.G.take().unwrap();
         let init = self
@@ -136,7 +136,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
             rr.right_operand_public_mask,
             io_ctx,
             sm.party_id,
-            edabits_pool,
+            preproc,
         )
         .expect("Rep3ReadRafSumcheckWorker::new failed");
 
@@ -240,7 +240,7 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     /// Reads the InstructionRa opening from the accumulator, broadcasts init
     /// data to workers, and runs the dedicated proving loop.
     pub fn stage4_prove_coordinator<ProofTranscript, PCS, N>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<Option<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>>
     where
@@ -293,7 +293,7 @@ where
 {
     fn stage2_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let log_T = sm
@@ -313,7 +313,7 @@ where
 
     fn stage3_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         // ReadRaf (created before HammingWeight, matching vanilla ordering).

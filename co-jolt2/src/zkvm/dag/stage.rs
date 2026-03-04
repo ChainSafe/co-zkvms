@@ -10,7 +10,7 @@ pub use crate::subprotocols::sumcheck::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, PublicSumcheckInstance,
     PublicSumcheckInstanceWorker, Rep3SumcheckInstance, Rep3SumcheckInstanceWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 // ---------------------------------------------------------------------------
 // Staged sumcheck pipeline traits (per-subsystem interface)
@@ -41,7 +41,7 @@ pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N
         &mut self,
         _sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut IoContextPool<N>,
-        _edabits_pool: &mut PreprocessingPool<F>,
+        _preproc: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         Ok(vec![])
     }
@@ -68,14 +68,14 @@ pub trait SumcheckStagesCoordinator<
 {
     fn stage1_prove(
         &mut self,
-        _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        _sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), eyre::Report> {
         Ok(())
     }
 
     fn stage2_instances(
         &mut self,
-        _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        _sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         Ok(vec![])
@@ -83,7 +83,7 @@ pub trait SumcheckStagesCoordinator<
 
     fn stage3_instances(
         &mut self,
-        _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        _sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         Ok(vec![])
@@ -91,7 +91,7 @@ pub trait SumcheckStagesCoordinator<
 
     fn stage4_instances(
         &mut self,
-        _sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        _sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         Ok(vec![])
@@ -221,7 +221,7 @@ where
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         use crate::subprotocols::sumcheck::BatchedSumcheckWorkerInstance;
         use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
@@ -308,9 +308,7 @@ where
 
         // 2) Registers: ValEvaluation (secret)
         self.registers_dag.set_stage3_init(registers_val_claim);
-        let registers_stage3 = self
-            .registers_dag
-            .stage3_instances(sm, io_ctx, edabits_pool)?;
+        let registers_stage3 = self.registers_dag.stage3_instances(sm, io_ctx, preproc)?;
 
         // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
         lookups_dag.set_stage3_init(
@@ -319,11 +317,11 @@ where
             read_raf_rv_claim,
             read_raf_raf_claim,
         );
-        let lookups_stage3 = lookups_dag.stage3_instances(sm, io_ctx, edabits_pool);
+        let lookups_stage3 = lookups_dag.stage3_instances(sm, io_ctx, preproc);
 
         // 4) RAM: ValEvaluation (secret) + ValFinal (secret) + HammingBooleanity (public)
         ram_dag.set_stage3_init(ram_val_final_input_claim, ram_val_eval_input_claim);
-        let ram_stage3 = ram_dag.stage3_instances(sm, io_ctx, edabits_pool)?;
+        let ram_stage3 = ram_dag.stage3_instances(sm, io_ctx, preproc)?;
 
         // Collect all instances in vanilla ordering:
         // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight)
@@ -342,7 +340,7 @@ where
         Ok(stage3_instances)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage4_instances")]
     fn stage4_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
@@ -389,10 +387,10 @@ where
     }
 }
 
-pub struct Rep3JoltDagStagesCoordinator;
+pub struct Rep3JoltDagStages;
 
 impl<F, ProofTranscript, PCS, N> SumcheckStagesCoordinator<F, ProofTranscript, PCS, N>
-    for Rep3JoltDagStagesCoordinator
+    for Rep3JoltDagStages
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -403,7 +401,7 @@ where
     #[tracing::instrument(skip_all)]
     fn stage2_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         use crate::zkvm::instruction_lookups::booleanity::Rep3BooleanitySumcheck;
@@ -478,7 +476,7 @@ where
     #[tracing::instrument(skip_all)]
     fn stage3_instances(
         &mut self,
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         use crate::zkvm::instruction_lookups::hamming_weight::Rep3HammingWeightSumcheck;
@@ -640,7 +638,7 @@ where
     #[tracing::instrument(skip_all)]
     fn stage4_instances(
         &mut self,
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         use crate::zkvm::bytecode::Rep3BytecodeDag;
@@ -660,13 +658,12 @@ where
 
         // === 3) Lookups: InstructionRa (secret, always present in vanilla stage4) ===
         eyre::ensure!(
-            state
-                .accumulator
-                .openings
-                .contains_key(&jolt_core::poly::opening_proof::OpeningId::Virtual(
+            state.accumulator.openings.contains_key(
+                &jolt_core::poly::opening_proof::OpeningId::Virtual(
                     VirtualPolynomial::InstructionRa,
                     SumcheckId::InstructionReadRaf
-                )),
+                )
+            ),
             "missing InstructionRa opening (expected from stage3 ReadRaf)"
         );
         let (ra_point, ra_claim) = state.accumulator.get_virtual_polynomial_opening(

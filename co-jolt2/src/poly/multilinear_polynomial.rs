@@ -3,15 +3,11 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::rlc_polynomial::Rep3RLCPolynomial;
 use crate::utils::types::Rep3Value;
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
-use snarks_core::math::Math;
 
 use rayon::prelude::*;
 
@@ -269,7 +265,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         index: usize,
         degree: usize,
         order: BindingOrder,
-        party_id: PartyID,
+        _party_id: PartyID,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
         match self {
             Rep3MultilinearPolynomial::Public(_poly) => {
@@ -288,7 +284,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3MultilinearPolynomial::batch_evaluate_at_chi")]
+    #[tracing::instrument(skip_all, name = "MultilinearPoly::batch_evaluate_at_chi")]
     pub fn batch_evaluate_at_chi(polys: &[&Self], chi: &[F]) -> Vec<Rep3Value<F>> {
         let evals: Vec<_> = polys
             .into_par_iter()

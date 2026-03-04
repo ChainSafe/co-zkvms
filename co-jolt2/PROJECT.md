@@ -45,7 +45,7 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
   - **No `Coordinator` suffix** on coordinator variants — if it's not `*Worker` it's implicitly the coordinator. Worker structs DO get `Worker` suffix.
    - Worker: `Rep3LookupsDagWorker`, `Rep3BooleanitySumcheckWorker`, `Rep3OpeningAccumulatorWorker`
    - Coordinator: `Rep3LookupsDag`, `Rep3BooleanitySumcheck`, `Rep3OpeningAccumulator`
-3. `JoltDAGWorker` and `JoltDAGCoordinator` are **separate structs in separate files** (not methods on a shared enum)
+3. `Rep3JoltDagWorker` and `Rep3JoltDag` are **separate structs in separate files** (not methods on a shared enum)
 4. Methods on Rep3 structs **omit** `_mpc`/`_rep3`, "worker"/"coordinator" suffix (e.g. `compute_ra_evals`, not `compute_ra_evals_mpc`; `prove()`, `stage1_prove()`, `stage2_instances()` — not `prove_worker()`, `stage1_prove_worker()`)
 5. RandOHV Field Naming: Fields containing publicly-opened masked indices (from RandOHV masking) use `masked_` prefix (e.g. `masked_H_indices`, `masked_indices_c`)
 
@@ -212,7 +212,7 @@ COORDINATOR                              WORKER(s)
 | `JoltRep3Prover` (worker) | Worker state machine | `io_ctx`, `polynomials`, `preprocessing`, `r1cs_builder`, `spartan_key` |
 | `JoltRep3` trait (coordinator) | Coordinator interface | `init_rep3()`, `prove_rep3()` |
 | `Rep3OpeningAccumulatorWorker` | Worker opening batching | Accumulates claims, sends to coordinator |
-| `Rep3OpeningAccumulatorCoordinator` | Coordinator opening batching | Receives shares, combines, produces single proof |
+| `Rep3OpeningAccumulator` | Coordinator opening batching | Receives shares, combines, produces single proof |
 | `JoltWitnessMeta` | Init metadata | `padded_trace_length`, `read_write_memory_size`, `memory_layout` |
 
 ---
@@ -321,9 +321,9 @@ Map the vanilla DAG's `StateManager` pattern onto the worker/coordinator split:
 
 | Vanilla | MPC Worker | MPC Coordinator |
 |---------|------------|-----------------|
-| `StateManager` | `StateManagerWorker` | `StateManagerCoordinator` |
+| `StateManager` | `StateManagerWorker` | `StateManager` |
 | `ProverState` (trace + accumulator) | `ProverStateWorker` (shared polys + advice poly) | N/A (no trace) |
-| `ProverOpeningAccumulator` | `Rep3OpeningAccumulatorWorker` | `Rep3OpeningAccumulatorCoordinator` |
+| `ProverOpeningAccumulator` | `Rep3OpeningAccumulatorWorker` | `Rep3OpeningAccumulator` |
 | `transcript` (owns) | N/A (no transcript) | `transcript` (owns) |
 | `commitments` (stores) | sends shares | receives + combines |
 | `SumcheckStages` trait | `SumcheckStagesWorker` trait | `SumcheckStagesCoordinator` trait |
@@ -333,10 +333,10 @@ Map the vanilla DAG's `StateManager` pattern onto the worker/coordinator split:
 ```
 src/zkvm/dag/
 ├── mod.rs                       // Module declarations
-├── state_manager.rs             // StateManagerWorker, StateManagerCoordinator
+├── state_manager.rs             // StateManagerWorker, StateManager
 ├── stage.rs                     // SumcheckStagesWorker, SumcheckStagesCoordinator traits
-├── jolt_dag_worker.rs           // JoltDAGWorker — worker prove flow
-├── jolt_dag_coordinator.rs      // JoltDAGCoordinator — coordinator prove flow
+├── worker.rs                    // Rep3JoltDagWorker — worker prove flow
+├── coordinator.rs               // Rep3JoltDag — coordinator prove flow
 └── (no proof_serialization.rs)  // Re-use vanilla's JoltProof (coordinator assembles it)
 ```
 
@@ -362,10 +362,10 @@ pub struct ProverStateWorker<'a, F, PCS> {
 }
 ```
 
-#### `StateManagerCoordinator`
+#### `StateManager`
 
 ```rust
-pub struct StateManagerCoordinator<'a, F, ProofTranscript, PCS> {
+pub struct StateManager<'a, F, ProofTranscript, PCS> {
     pub transcript: ProofTranscript,
     pub proofs: BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>,
     pub commitments: Vec<PCS::Commitment>,  // combined public commitments
@@ -392,33 +392,33 @@ pub trait SumcheckStagesWorker<F, PCS, N: Rep3Network> {
 
 // Coordinator: drives sumcheck rounds via transcript
 pub trait SumcheckStagesCoordinator<F, ProofTranscript, PCS> {
-    fn stage1_prove(&mut self, state: &mut StateManagerCoordinator<...>) -> Result<()> { Ok(()) }
-    fn stage2_instances(&mut self, state: &mut StateManagerCoordinator<...>) -> Vec<...> { vec![] }
+    fn stage1_prove(&mut self, state: &mut StateManager<...>) -> Result<()> { Ok(()) }
+    fn stage2_instances(&mut self, state: &mut StateManager<...>) -> Vec<...> { vec![] }
     fn stage3_instances(...) -> Vec<...> { vec![] }
     fn stage4_instances(...) -> Vec<...> { vec![] }
 }
 ```
 
-#### `JoltDAGWorker` / `JoltDAGCoordinator`
+#### `Rep3JoltDagWorker` / `Rep3JoltDag`
 
 ```rust
-// jolt_dag_worker.rs
-pub struct JoltDAGWorker;
+// worker.rs
+pub struct Rep3JoltDagWorker;
 
-impl JoltDAGWorker {
+impl Rep3JoltDagWorker {
     /// Worker side: generates shared witness, commits, participates in sumchecks
     pub fn prove<F, PCS, N>(
         state: StateManagerWorker<F, PCS, N>,
     ) -> Result<()>;
 }
 
-// jolt_dag_coordinator.rs
-pub struct JoltDAGCoordinator;
+// coordinator.rs
+pub struct Rep3JoltDag;
 
-impl JoltDAGCoordinator {
+impl Rep3JoltDag {
     /// Coordinator side: drives transcript, coordinates sumchecks, assembles proof
     pub fn prove<F, ProofTranscript, PCS, N>(
-        state: StateManagerCoordinator<F, ProofTranscript, PCS>,
+        state: StateManager<F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> Result<JoltProof<F, PCS, ProofTranscript>>;
 }
@@ -496,7 +496,7 @@ COORDINATOR                              WORKER(s)
 - Advice commitment handling (non-empty case)
 - Subsystem DAG node coordination (stages 1-4)
 - `Rep3BatchedSumcheck` transcript-driven round coordination
-- `Rep3OpeningAccumulatorCoordinator`
+- `Rep3OpeningAccumulator`
 - Proof assembly with real opening proofs
 
 ### Tests (Done)

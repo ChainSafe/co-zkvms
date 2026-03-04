@@ -10,10 +10,10 @@ use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
 use co_jolt2::utils::tracing::init_tracing;
-use co_jolt2::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use co_jolt2::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::Rep3JoltWorker;
-use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDAGCoordinator, dag::worker::Rep3JoltDAGWorker};
+use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDag, dag::worker::Rep3JoltDagWorker};
 
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -306,7 +306,7 @@ fn dag_correct() {
             let party_id = io_ctx.party_id();
 
             // Preprocessing: create EdaBits pool for B2A conversions (2 rounds).
-            let mut edabits_pool = {
+            let mut preproc = {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
@@ -326,7 +326,7 @@ fn dag_correct() {
                 ram_K,
                 Some(advice_shares),
             );
-            Rep3JoltDAGWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, &mut edabits_pool)
+            Rep3JoltDagWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, &mut preproc)
         },
         move |input, net| {
             let (verifier_preprocessing, prover_preprocessing, program_io, ram_K) = input;
@@ -344,14 +344,14 @@ fn dag_correct() {
             } else {
                 0
             };
-            let state: StateManagerCoordinator<'_, F, FS, PCS> = StateManagerCoordinator::new(
+            let state: StateManager<'_, F, FS, PCS> = StateManager::new(
                 &verifier_preprocessing,
                 (*program_io).clone(),
                 ram_K,
                 twist_sumcheck_switch_index,
             )
             .with_pcs_setup(&prover_preprocessing.generators);
-            Rep3JoltDAGCoordinator::prove(state, net)
+            Rep3JoltDag::prove(state, net)
         },
     );
 

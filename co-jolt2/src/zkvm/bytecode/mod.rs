@@ -6,13 +6,14 @@ use jolt_core::zkvm::witness::VirtualPolynomial;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -27,7 +28,7 @@ pub struct Rep3BytecodeDag;
 impl Rep3BytecodeDag {
     /// Create coordinator stage4 instances AND return the init data for workers.
     pub fn stage4_instances_with_init<F, ProofTranscript, PCS>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> (
         Vec<BatchedSumcheckInstance<F, ProofTranscript>>,
         BytecodeStage4Init<F>,
@@ -322,7 +323,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             hamming_weight::HammingWeightSumcheck as BytecodeHammingWeight,
             read_raf_checking::ReadRafSumcheck as BytecodeReadRaf,
         };
-        use rayon::prelude::*;
 
         let init = self
             .stage4
@@ -462,7 +462,6 @@ fn compute_pc_hists<F: JoltField>(
     chunk_size: usize,
 ) -> (Vec<Vec<F>>, [Vec<F>; 3]) {
     use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-    use rayon::prelude::*;
 
     debug_assert_eq!(pc_indices.len(), eq_r_cycle.len());
     debug_assert_eq!(eq_evals[0].len(), pc_indices.len());

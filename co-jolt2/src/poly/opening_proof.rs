@@ -6,14 +6,15 @@ use rayon::prelude::*;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
@@ -205,7 +206,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
     /// 2. Delegate batched sumcheck to `Rep3BatchedSumcheckWorker::prove`
     /// 3. Receive gamma for joint polynomial RLC
     /// 4. Build joint polynomial and combined hint, call PCS::prove_rep3
-    #[tracing::instrument(skip_all, name = "Rep3OpeningAccumulatorWorker::reduce_and_prove")]
+    #[tracing::instrument(skip_all, name = "OpeningAcc::reduce_and_prove")]
     pub fn reduce_and_prove<PCS, ProofTranscript, N>(
         &mut self,
         polynomials: &HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>>,
@@ -259,13 +260,12 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         drop(_span);
 
         // e. Run batched sumcheck
-        let mut empty_pool =
-            mpc_core::protocols::rep3_ring::edabits::PreprocessingPool::empty(self.party_id); // not used
+        let mut preproc = PreprocessingPool::empty(self.party_id);
         let r_sumcheck = crate::subprotocols::sumcheck::Rep3BatchedSumcheckWorker::prove(
             &mut instances,
             self,
             io_ctx,
-            &mut empty_pool,
+            &mut preproc,
         )?;
 
         let _span = tracing::info_span!("rlc_and_hints").entered();
@@ -465,7 +465,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
     ///
     /// Coordinator drives the Fiat-Shamir transcript. After preparing sumcheck
     /// entries, delegates the batched sumcheck to `Rep3BatchedSumcheck::prove`.
-    #[tracing::instrument(skip_all, name = "Rep3OpeningAccumulator::reduce_and_prove")]
+    #[tracing::instrument(skip_all, name = "OpeningAcc::reduce_and_prove")]
     pub fn reduce_and_prove<PCS, ProofTranscript, N>(
         &mut self,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
@@ -654,8 +654,7 @@ impl<F: JoltField> Rep3DensePolynomialProverOpening<F> {
                 let eq_j_half = self.eq_poly.Z[j + mle_half];
                 let eq_2 = (eq_j_half + eq_j_half) - eq_j;
 
-                let (mut e0_shared, mut e2_shared) =
-                    (AdditiveShare::zero(), AdditiveShare::zero());
+                let (mut e0_shared, mut e2_shared) = (AdditiveShare::zero(), AdditiveShare::zero());
                 if let Some(shared) = shared {
                     let poly_j = shared.get_bound_coeff(j);
                     e0_shared = (poly_j * eq_j).into_additive();
@@ -679,7 +678,14 @@ impl<F: JoltField> Rep3DensePolynomialProverOpening<F> {
                 (e0_shared, e2_shared, e0_public, e2_public)
             })
             .reduce(
-                || (AdditiveShare::zero(), AdditiveShare::zero(), F::zero(), F::zero()),
+                || {
+                    (
+                        AdditiveShare::zero(),
+                        AdditiveShare::zero(),
+                        F::zero(),
+                        F::zero(),
+                    )
+                },
                 |(a0, a2, ap0, ap2), (b0, b2, bp0, bp2)| (a0 + b0, a2 + b2, ap0 + bp0, ap2 + bp2),
             );
 
@@ -958,10 +964,7 @@ impl<F: JoltField> Rep3OpeningProofReductionSumcheck<F> {
                             public_terms.into_iter().unzip();
                         let refs: Vec<&MultilinearPolynomial<F>> = polys.iter().collect();
                         let combined = DensePolynomial::linear_combination(&refs, &coeffs);
-                        vec![(
-                            F::one(),
-                            MultilinearPolynomial::LargeScalars(combined),
-                        )]
+                        vec![(F::one(), MultilinearPolynomial::LargeScalars(combined))]
                     };
 
                 self.prover_state =
@@ -1100,7 +1103,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         r_j: F::Challenge,
         round: usize,
         _io_ctx: &mut IoContextPool<N>,
-        _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
+        _preproc: &mut PreprocessingPool<F>,
     ) {
         self.prover_state.as_mut().unwrap().bind(r_j, round);
     }
