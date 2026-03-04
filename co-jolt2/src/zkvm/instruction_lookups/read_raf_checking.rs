@@ -34,6 +34,7 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
+use rayon::prelude::*;
 use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::info_span;
@@ -148,7 +149,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
     /// - `io_ctx`: IoContextPool for MPC operations during phase transitions
     /// - `party_id`: this party's ID
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "ReadRafWorker::new")]
+    #[tracing::instrument(skip_all, name = "ReadRaf::new")]
     pub fn new(
         gamma: F,
         rv_claim: F,
@@ -161,7 +162,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         right_operand_public_mask: Vec<Option<u64>>,
         io_ctx: &mut IoContextPool<N>,
         party_id: PartyID,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Self> {
         let num_cycles = lookup_tables.len();
         eyre::ensure!(
@@ -288,7 +289,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         };
 
         // Initialize phase 0
-        state.init_phase(0, io_ctx, edabits_pool)?;
+        state.init_phase(0, io_ctx, preproc)?;
 
         Ok(Self {
             gamma,
@@ -310,12 +311,16 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// Initialize a new phase. Computes Ehat16, builds suffix polys and Q polys.
     ///
     /// For phase > 0, also does the condensation update on u_evals.
-    #[tracing::instrument(skip(self, io_ctx, edabits_pool), name = "ReadRaf::init_phase", fields(phase))]
+    #[tracing::instrument(
+        skip(self, io_ctx, preproc),
+        name = "ReadRaf::init_phase",
+        fields(phase)
+    )]
     fn init_phase<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
         eyre::ensure!(phase < PHASES, "phase out of range: {phase}");
         let hi = 2 * phase;
@@ -461,7 +466,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         drop(_cond_span);
 
         // -- Build suffix polynomials --
-        self.init_suffix_polys(phase, io_ctx, edabits_pool)?;
+        self.init_suffix_polys(phase, io_ctx, preproc)?;
 
         // -- Initialize prefix decompositions' Q polynomials --
         // We manage our own shared Q arrays ({left,right}_operand_q, identity_q) for
@@ -473,7 +478,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.right_operand_ps.init_Q(&[], &[]);
         self.left_operand_ps.init_Q(&[], &[]);
 
-        self.init_operand_q_polys(phase, io_ctx, edabits_pool)?;
+        self.init_operand_q_polys(phase, io_ctx, preproc)?;
 
         // Initialize P polynomials (public prefix polynomials)
         self.identity_ps.init_P(&mut self.prefix_registry);
@@ -501,10 +506,8 @@ impl<F: JoltField> ReadRafProverState<F> {
         &mut self,
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
-        use rayon::prelude::*;
-
         let ehat16 = self
             .ehat16
             .as_ref()
@@ -525,7 +528,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     suffix_len,
                     io_ctx,
                     self.party_id,
-                    edabits_pool,
+                    preproc,
                 )?,
                 33..=64 => table_suffixes_mle::<u64, F, N>(
                     &self.lookup_indices,
@@ -534,7 +537,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     suffix_len,
                     io_ctx,
                     self.party_id,
-                    edabits_pool,
+                    preproc,
                 )?,
                 17..=32 => table_suffixes_mle::<u32, F, N>(
                     &self.lookup_indices,
@@ -543,7 +546,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     suffix_len,
                     io_ctx,
                     self.party_id,
-                    edabits_pool,
+                    preproc,
                 )?,
                 1..=16 => table_suffixes_mle::<u16, F, N>(
                     &self.lookup_indices,
@@ -552,7 +555,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     suffix_len,
                     io_ctx,
                     self.party_id,
-                    edabits_pool,
+                    preproc,
                 )?,
                 _ => unreachable!("suffix_len must be 1..=128"),
             }
@@ -665,15 +668,14 @@ impl<F: JoltField> ReadRafProverState<F> {
     /// For suffix_len == 0 (final phase), all are public constants.
     /// For suffix_len > 0, the secret operand/identity values are computed via
     /// FWHT-shifted table lookups on the future one-hot chunks.
-    #[tracing::instrument(skip_all, name = "init_operand_q_polys", fields(phase))]
+    #[tracing::instrument(skip_all, name = "ReadRaf::init_operand_q_polys", fields(phase))]
     fn init_operand_q_polys<N: Rep3NetworkWorker>(
         &mut self,
         phase: usize,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
         use jolt_core::utils::uninterleave_bits;
-        use rayon::prelude::*;
 
         let ehat16 = self.ehat16.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -845,28 +847,28 @@ impl<F: JoltField> ReadRafProverState<F> {
                 &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
-                edabits_pool,
+                preproc,
             )?,
             33..=64 => q_polys_b2a::<u64, F, N>(
                 shared_interleaved_masked,
                 &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
-                edabits_pool,
+                preproc,
             )?,
             17..=32 => q_polys_b2a::<u32, F, N>(
                 shared_interleaved_masked,
                 &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
-                edabits_pool,
+                preproc,
             )?,
             1..=16 => q_polys_b2a::<u16, F, N>(
                 shared_interleaved_masked,
                 &shared_right_idx,
                 shared_identity_masked,
                 io_ctx,
-                edabits_pool,
+                preproc,
             )?,
             _ => unreachable!("suffix_len must be 1..=128"),
         };
@@ -1120,7 +1122,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         &mut self,
         _phase: usize,
         io_ctx: &mut IoContextPool<N>,
-        _edabits_pool: &mut PreprocessingPool<F>,
+        _preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
         // ra_acc[j] *= v[bucket] where bucket = prefix(k_j) % M for the current phase.
         // In masked domain: bucket = (c16[j] ^ r16) % M = c16[j] ^ r16 (since M = 2^16).
@@ -1131,8 +1133,6 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Only multiply active cycles (c16 != None) to reduce mul_vec size.
         // Inactive cycles have ra_acc = 0 already (multiplied by zero in condensation
         // or initialized to zero for padding), so skipping them is safe.
-        use rayon::prelude::*;
-
         let num_cycles = self.c16.len();
         match &self.ra_acc {
             None => {
@@ -1301,8 +1301,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             evals
         } else {
             // Cycle rounds: eq_r_cycle * ra * combined_val.
-            use rayon::prelude::*;
-
             let ps = &self.state;
             let ra = ps.ra.as_ref().unwrap();
             let combined_val = ps.combined_val_polynomial.as_ref().unwrap();
@@ -1353,10 +1351,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         r_j: F::Challenge,
         round: usize,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) {
-        use rayon::prelude::*;
-
         let ps = &mut self.state;
         ps.r.push(r_j);
 
@@ -1412,11 +1408,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             // Phase transition at end of each LOG_M rounds
             if (round + 1).is_multiple_of(LOG_M) {
                 let phase = round / LOG_M;
-                ps.cache_phase(phase, io_ctx, edabits_pool)
+                ps.cache_phase(phase, io_ctx, preproc)
                     .expect("cache_phase failed");
 
                 if phase != PHASES - 1 {
-                    ps.init_phase(phase + 1, io_ctx, edabits_pool)
+                    ps.init_phase(phase + 1, io_ctx, preproc)
                         .expect("init_phase failed");
                 }
             }
@@ -1525,8 +1521,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         ps: &ReadRafProverState<F>,
         j: usize,
     ) -> [AdditiveShare<F>; 2] {
-        use rayon::prelude::*;
-
         let len = ps.suffix_polys[0][0].len();
         let log_len = len.log_2();
 
@@ -1624,8 +1618,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         gamma: F,
         gamma_squared: F,
     ) -> [AdditiveShare<F>; 2] {
-        use rayon::prelude::*;
-
         let len = ps.identity_q[0].len();
         let half = len / 2;
 
@@ -1932,8 +1924,6 @@ fn build_suffix_histograms<F: JoltField>(
     Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
     Vec<(usize, usize)>,
 ) {
-    use rayon::prelude::*;
-
     let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
 
     // Build lookup: (table_idx, suffix_idx) → segment in all_field
@@ -2128,7 +2118,6 @@ where
     N: Rep3NetworkWorker,
 {
     use mpc_core::protocols::rep3_ring::edabits;
-    use rayon::prelude::*;
 
     let n_il = interleaved_u128.len();
     let n_id = identity_u128.len();

@@ -13,7 +13,6 @@ use crate::field::JoltField;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::witness::Stage1RowRef;
-use rayon::prelude::*;
 
 pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 
@@ -134,7 +133,7 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
 
 /// Rep3 version of vanilla `compute_claimed_witness_evals`:
 /// returns 41 evaluations in `ALL_R1CS_INPUTS` order.
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, name = "compute_claimed_witness_evals")]
 pub fn compute_claimed_witness_evals_rep3<F, PCS, N>(
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
@@ -168,13 +167,6 @@ where
     let mask_right_rs2 = 1u32 << (CircuitFlags::RightOperandIsRs2Value as usize);
 
     let mask_both_shared = mask_left_rs1 | mask_right_rs2;
-    // Important: keep ordering deterministic across parties.
-    // Do not build this list with a parallel filter+collect (ordering is not guaranteed).
-    let shared_mul_rows: Vec<usize> = (0..trace_len)
-        .into_par_iter()
-        .filter(|&t| (flags_bits[t] & mask_both_shared) == mask_both_shared)
-        .collect();
-    let mut mul_map: Vec<u32> = vec![u32::MAX; trace_len];
     let (shared_mul_rows, mul_map) = build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
 
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
@@ -537,10 +529,9 @@ mod tests {
                 let party_id = io_ctx.party_id();
 
                 // Create EdaBits pool for B2A conversions in witness gen
-                let budget =
-                    crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                let budget = crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                 let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
-                let mut edabits_pool =
+                let mut preproc =
                     mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
                         counts,
                         budget.dabits,
@@ -557,12 +548,16 @@ mod tests {
                     None,
                 );
 
-                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut edabits_pool)?;
+                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
 
                 let poly_keys: Vec<CommittedPolynomial> =
                     AllCommittedPolynomials::iter().copied().collect();
-                let _witness_polys =
-                    generate_witness_batch_rep3::<F, PCS, _>(&poly_keys, &mut state, &mut io_ctx, &mut edabits_pool)?;
+                let _witness_polys = generate_witness_batch_rep3::<F, PCS, _>(
+                    &poly_keys,
+                    &mut state,
+                    &mut io_ctx,
+                    &mut preproc,
+                )?;
                 state.prover_state.trace = None;
 
                 compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)

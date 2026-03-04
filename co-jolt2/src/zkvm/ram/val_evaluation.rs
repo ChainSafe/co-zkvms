@@ -11,6 +11,7 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -20,7 +21,7 @@ use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 const DEGREE: usize = 3;
 
@@ -170,7 +171,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         result
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         self.wa.bind_parallel(r_j, BindingOrder::HighToLow);
         self.lt.bind_parallel(r_j, BindingOrder::HighToLow);
         self.inc.bind(r_j.into(), BindingOrder::HighToLow);
@@ -234,7 +241,7 @@ pub struct Rep3RamValEvaluation<F: JoltField> {
 
 impl<F: JoltField> Rep3RamValEvaluation<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         init_eval: F,
     ) -> Self {
         let (opening_point, claimed_evaluation) = sm.accumulator.get_virtual_polynomial_opening(

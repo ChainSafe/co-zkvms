@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial};
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::types::MaybeShared;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};

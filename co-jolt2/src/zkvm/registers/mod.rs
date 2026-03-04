@@ -1,13 +1,14 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
-use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
-    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, Rep3SumcheckInstance,
-    Rep3SumcheckInstanceWorker, SumcheckStagesCoordinator, SumcheckStagesWorker,
+    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
+    SumcheckStagesWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 use self::read_write_checking::{
     Rep3RegistersReadWriteChecking, Rep3RegistersReadWriteCheckingWorker,
@@ -55,7 +56,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
+        _io_ctx: &mut IoContextPool<N>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let (gamma, input_claim) = self
             .stage2
@@ -68,8 +69,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
     fn stage3_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
-        _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
-        _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
         let val_claim = self
             .stage3
@@ -95,7 +96,7 @@ where
 {
     fn stage2_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let rwc = Rep3RegistersReadWriteChecking::new(sm);
@@ -104,7 +105,7 @@ where
 
     fn stage3_instances(
         &mut self,
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         _network: &mut N,
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let val_eval = Rep3ValEvaluation::new(sm);

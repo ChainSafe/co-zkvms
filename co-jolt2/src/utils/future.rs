@@ -119,12 +119,6 @@ where
                     fut_muls.push(fufilled);
                     args_mul.push(args);
                 }
-                FutureRep3::Pending(FutureOp::Mul(a, b), args) => {
-                    mul_x.push(a);
-                    mul_y.push(b);
-                    fut_muls.push(fufilled);
-                    args_mul.push(args);
-                }
                 FutureRep3::Pending(FutureOp::B2A(x), args) => {
                     b2a_x.push(x);
                     fut_b2a.push(fufilled);

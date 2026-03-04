@@ -14,6 +14,7 @@ use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
+use rayon::prelude::*;
 use snarks_core::math::Math;
 
 use crate::field::JoltField;
@@ -81,20 +82,33 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // Sample one RandOHV for the mask `r` (binary-sharing domain).
         let (r_share, e_bits) = gadgets::ohv::rand_ohv::<u8, _>(log_k, io_ctx)?;
 
-        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles.
-        let masked_vec: Vec<Rep3RingShare<u8>> = nonzero_indices
-            .iter()
-            .map(|opt| {
-                opt.map(|kj| kj ^ r_share)
-                    .unwrap_or_else(Rep3RingShare::zero_share)
-            })
-            .collect();
-        let opened = binary::open_vec(&masked_vec, io_ctx)?;
+        // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles only.
+        //
+        // The set of `None` positions is already known to all parties (it's in the
+        // input `Vec<Option<...>>`), so we can save bandwidth by opening only the
+        // active entries.
+        let active_count = nonzero_indices.iter().filter(|opt| opt.is_some()).count();
+        let mut masked_active: Vec<Rep3RingShare<u8>> = Vec::with_capacity(active_count);
+        for opt in nonzero_indices.iter() {
+            if let Some(kj) = opt {
+                masked_active.push(*kj ^ r_share);
+            }
+        }
+        let opened_active = binary::open_vec(&masked_active, io_ctx)?;
+        debug_assert_eq!(opened_active.len(), active_count);
+
+        let mut opened_iter = opened_active.into_iter();
         let masked_indices_c: Vec<Option<u8>> = nonzero_indices
             .iter()
-            .zip(opened.into_iter())
-            .map(|(opt, v)| opt.is_some().then_some(v))
+            .map(|opt| {
+                opt.as_ref()
+                    .map(|_| opened_iter.next().expect("active index open"))
+            })
             .collect();
+        debug_assert!(
+            opened_iter.next().is_none(),
+            "opened_active length mismatch"
+        );
 
         // Inject the OHV bits into prime-field shares once.
         let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
@@ -192,7 +206,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         G: CurveGroup<ScalarField = F> + VariableBaseMSM + Send + Sync,
     {
         let _guard = tracing::trace_span!(
-            "Rep3OneHotPolynomial::commit_rows",
+            "commit_rows",
             K = %self.K,
             T = %self.masked_indices_c.len()
         )
@@ -239,14 +253,13 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
 
             let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
-                let _guard = tracing::trace_span!("commit_rows.aligned.par").entered();
-                use rayon::prelude::*;
+                let _guard = tracing::trace_span!("aligned_par").entered();
 
                 (0..rows_per_k)
                     .into_par_iter()
                     .map(|chunk_index| -> eyre::Result<Vec<G>> {
                         let _guard = tracing::trace_span!(
-                            "commit_rows.aligned_chunk",
+                            "aligned_chunk",
                             chunk_index,
                             chunk_start = (chunk_index * row_len),
                             rows_per_k
@@ -256,8 +269,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                         // Public aggregation of bases by masked index `c` within this chunk.
                         let mut s: Vec<G> = vec![G::zero(); self.K];
                         {
-                            let _guard =
-                                tracing::trace_span!("commit_rows.aggregate_bases").entered();
+                            let _guard = tracing::trace_span!("aggregate_bases").entered();
                             let chunk_start = chunk_index * row_len;
                             for col in 0..row_len {
                                 let idx_t = chunk_start + col;
@@ -270,7 +282,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                         // Compute all rows for this chunk via FWHT XOR-convolution:
                         // out[k] = Σ_c s[c] * g_hat_fwht[c XOR k].
                         {
-                            let _guard = tracing::trace_span!("commit_rows.fwht").entered();
+                            let _guard = tracing::trace_span!("fwht").entered();
                             fwht_in_place(&mut s);
                             for (si, &gi) in s.iter_mut().zip(g_hat.iter()) {
                                 *si = *si * gi;
@@ -298,7 +310,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         //
         // This directly accumulates (row, col) contributions for each candidate `k` using the
         // shared bit `E_field[c XOR k]` and the public base at `col`.
-        let _guard = tracing::trace_span!("commit_rows.fallback").entered();
+        let _guard = tracing::trace_span!("fallback").entered();
         let active_t = self
             .masked_indices_c
             .iter()
@@ -309,9 +321,9 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // rayon worker thread stack on some platforms/configs. Keep this sequential for now;
         // if we want parallelism, use a dedicated rayon pool with a larger stack size.
         {
-            let _guard = tracing::trace_span!("commit_rows.fallback.row_msm").entered();
+            let _guard = tracing::trace_span!("row_msm").entered();
             for (row, out_row) in out.iter_mut().enumerate() {
-                let _guard = tracing::trace_span!("commit_rows.fallback.row", row).entered();
+                let _guard = tracing::trace_span!("row", row).entered();
 
                 // Fill the per-row scalar vector for this row's MSM.
                 let mut scalars = vec![F::zero(); row_len];
@@ -327,7 +339,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                 }
 
                 *out_row = {
-                    let _guard = tracing::info_span!("commit_rows.fallback.msm").entered();
+                    let _guard = tracing::info_span!("msm").entered();
                     G::msm_field_elements(bases, &scalars)?
                 };
             }
@@ -336,32 +348,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         tracing::info!(active_t, num_scalar_muls = (active_t * self.K));
 
         Ok(out)
-    }
-
-    /// Selects `table[r XOR c]` from a public table using the field-injected RandOHV `E_field`.
-    ///
-    /// Uses the identity:
-    /// `table[r XOR c] = Σ_i table[i] * E_field[i XOR c]`.
-    /// TODO: optimize with FWHT
-    #[tracing::instrument(
-        skip_all,
-        name = "one_hot::select_public_table_at_masked_index",
-        level = "trace"
-    )]
-    fn select_public_table_at_masked_index(&self, table: &[F], c: u8) -> Rep3PrimeFieldShare<F> {
-        assert_eq!(table.len(), self.K, "table length must equal K");
-        assert_eq!(
-            self.rand_ohv_e_field.len(),
-            self.K,
-            "RandOHV E_field must be initialized (use from_indices_randohv)"
-        );
-
-        let mut acc = Rep3PrimeFieldShare::zero_share();
-        for (i, &table_i) in table.iter().enumerate() {
-            let idx = (i as u8) ^ c;
-            acc += self.rand_ohv_e_field[idx as usize] * table_i;
-        }
-        acc
     }
 
     /// Computes this party's additive share of the one-hot polynomial's contribution to the
@@ -376,8 +362,6 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// Mirrors vanilla `OneHotPolynomial::vector_matrix_product` but operates on `.a` shares.
     #[tracing::instrument(skip_all, name = "one_hot::compute_v_vec_share", level = "trace")]
     pub fn compute_v_vec_share(&self, coeff: F, l_vec: &[F], v_vec: &mut [F]) {
-        use rayon::prelude::*;
-
         let t = self.masked_indices_c.len();
         let num_columns = DoryGlobals::get_num_columns();
         let row_len = num_columns;
@@ -483,21 +467,23 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        use rayon::prelude::*;
-
         assert_eq!(r_address.len(), self.K.log_2());
         // assert_eq!(r_cycle.len(), self.masked_indices_c.len().log_2());
 
         let eq_addr: Vec<F> = EqPolynomial::<F>::evals(r_address);
         let eq_cycle: Vec<F> = EqPolynomial::<F>::evals(r_cycle);
 
+        // Precompute shifted EQ table once:
+        //   shifted[c] = eq_addr[r XOR c]  (in shares), where r is the RandOHV mask.
+        // This turns per-cycle masked selection from O(K) to O(1).
+        let shifted = shifted_table_from_rand_ohv(&eq_addr, &self.rand_ohv_e_field);
+
         self.masked_indices_c
             .par_iter()
             .enumerate()
             .fold(Rep3PrimeFieldShare::zero_share, |mut acc, (j, opt_c)| {
                 let Some(c) = opt_c else { return acc };
-                let eq_kj = self.select_public_table_at_masked_index(&eq_addr, *c);
-                acc += eq_kj * eq_cycle[j];
+                acc += shifted[*c as usize] * eq_cycle[j];
                 acc
             })
             .reduce(Rep3PrimeFieldShare::zero_share, |mut a, b| {
@@ -563,8 +549,6 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
         round: usize,
         previous_claim: F,
     ) -> [Rep3PrimeFieldShare<F>; 2] {
-        use rayon::prelude::*;
-
         let log_k = self.polynomial.K.log_2();
 
         if round < log_k {
@@ -692,8 +676,6 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
         round: usize,
         previous_claim: AdditiveShare<F>,
     ) -> [AdditiveShare<F>; 2] {
-        use rayon::prelude::*;
-
         let log_k = self.polynomial.K.log_2();
 
         if round < log_k {
@@ -815,8 +797,6 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
     polynomial: &Rep3OneHotPolynomial<F>,
     eq_cycle: &[F],
 ) -> Vec<Rep3PrimeFieldShare<F>> {
-    use rayon::prelude::*;
-
     assert_eq!(eq_cycle.len(), polynomial.masked_indices_c.len());
     assert_eq!(polynomial.rand_ohv_e_field.len(), polynomial.K);
 
@@ -871,8 +851,6 @@ pub(crate) fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
     polynomials: &[Rep3OneHotPolynomial<F>; D],
     eq_cycle: &[F],
 ) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
-    use rayon::prelude::*;
-
     debug_assert_eq!(eq_cycle.len(), polynomials[0].masked_indices_c.len());
     debug_assert_eq!(polynomials[0].rand_ohv_e_field.len(), polynomials[0].K);
 
@@ -1102,8 +1080,10 @@ mod tests {
             r_share: Rep3RingShare::default(),
         });
 
-        let shares: [Rep3PrimeFieldShare<F>; 3] =
-            std::array::from_fn(|pid| polys[pid].select_public_table_at_masked_index(&table, c));
+        let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| {
+            let shifted = shifted_table_from_rand_ohv(&table, &polys[pid].rand_ohv_e_field);
+            shifted[c as usize]
+        });
 
         let got = combine_field_element(shares[0], shares[1], shares[2]);
         let want = table[(r ^ c) as usize];

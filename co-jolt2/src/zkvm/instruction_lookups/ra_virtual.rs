@@ -13,7 +13,8 @@ use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
-use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -237,7 +238,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> crate::zkvm::dag::stage::Rep3SumcheckIn
         evals
     }
 
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         self.bind_inner(r_j);
     }
 
@@ -562,6 +569,7 @@ mod tests {
     use jolt_core::poly::ra_poly::RaPolynomial;
     use jolt_core::subprotocols::mles_product_sum::compute_mles_product_sum;
     use mpc_core::protocols::rep3::combine_field_element;
+    use mpc_core::protocols::rep3 as rep3;
     use num_traits::{One, Zero};
     use rand::RngCore;
     use std::sync::Arc;

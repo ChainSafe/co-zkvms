@@ -3,7 +3,7 @@ use jolt_core::host::Program;
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::JoltSharedPreprocessing;
-use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
+use mpc_core::protocols::rep3_ring::{self};
 use rand::RngCore;
 use rayon::prelude::*;
 

@@ -3,15 +3,17 @@ use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::VirtualPolynomial;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
+use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
 use crate::field::JoltField;
 use crate::zkvm::dag::stage::{
     BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesWorker,
 };
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -26,7 +28,7 @@ pub struct Rep3BytecodeDag;
 impl Rep3BytecodeDag {
     /// Create coordinator stage4 instances AND return the init data for workers.
     pub fn stage4_instances_with_init<F, ProofTranscript, PCS>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> (
         Vec<BatchedSumcheckInstance<F, ProofTranscript>>,
         BytecodeStage4Init<F>,
@@ -279,6 +281,7 @@ impl Rep3BytecodeDag {
 // ---------------------------------------------------------------------------
 
 /// Init data for Bytecode stage4 instances, broadcast by coordinator.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStage4Init<F: JoltField> {
     // ReadRaf
     pub read_raf_gamma: F,
@@ -320,7 +323,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             hamming_weight::HammingWeightSumcheck as BytecodeHammingWeight,
             read_raf_checking::ReadRafSumcheck as BytecodeReadRaf,
         };
-        use rayon::prelude::*;
 
         let init = self
             .stage4
@@ -336,13 +338,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 
         let instances = if sm.party_id == PartyID::ID0 {
             // Use cycle_witness.pc which stores bytecode table indices (from get_pc).
-            let pc_indices: Vec<u64> = sm
-                .prover_state
-                .cycle_witness
-                .meta()
-                .iter()
-                .map(|m| m.pc_index)
-                .collect();
+            let meta = sm.prover_state.cycle_witness.meta();
+            let (pc_indices, pc): (Vec<u64>, Vec<usize>) = meta
+                .par_iter()
+                .map(|m| (m.pc_index, m.pc_index as usize))
+                .unzip();
 
             // Compute eq_r_cycle from accumulator r_cycle point
             let r_cycle: Vec<F::Challenge> = sm
@@ -361,38 +361,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             let chunk_size = (T / num_chunks).max(1);
             let K_chunk = 1 << log_K_chunk;
 
-            let F_1: Vec<Vec<F>> = (0..d)
-                .map(|i| {
-                    pc_indices
-                        .par_chunks(chunk_size)
-                        .enumerate()
-                        .map(|(chunk_index, pc_chunk)| {
-                            let mut local =
-                                jolt_core::utils::thread::unsafe_allocate_zero_vec(K_chunk);
-                            let mut j = chunk_index * chunk_size;
-                            for &k in pc_chunk {
-                                let k_i = (k as usize >> (log_K_chunk * (d - i - 1))) % K_chunk;
-                                local[k_i] += eq_r_cycle[j];
-                                j += 1;
-                            }
-                            local
-                        })
-                        .reduce(
-                            || jolt_core::utils::thread::unsafe_allocate_zero_vec(K_chunk),
-                            |mut running, new| {
-                                running
-                                    .par_iter_mut()
-                                    .zip(new.into_par_iter())
-                                    .for_each(|(x, y)| *x += y);
-                                running
-                            },
-                        )
-                })
-                .collect();
-
-            // PC indices as usize for ReadRaf
-            let pc: Vec<usize> = pc_indices.iter().map(|&k| k as usize).collect();
-
             // F_polys (3 eq-weighted histograms) for ReadRaf
             let eq_evals = [
                 EqPolynomial::evals(&init.r_cycles[0]),
@@ -400,41 +368,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 EqPolynomial::evals(&init.r_cycles[2]),
             ];
 
-            let F_polys = pc_indices
-                .par_chunks(chunk_size)
-                .enumerate()
-                .map(|(chunk_index, pc_chunk)| {
-                    let mut r1: Vec<F> = jolt_core::utils::thread::unsafe_allocate_zero_vec(K);
-                    let mut r2: Vec<F> = jolt_core::utils::thread::unsafe_allocate_zero_vec(K);
-                    let mut r3: Vec<F> = jolt_core::utils::thread::unsafe_allocate_zero_vec(K);
-                    let mut j = chunk_index * chunk_size;
-                    for &k in pc_chunk {
-                        let pc = k as usize;
-                        r1[pc] += eq_evals[0][j];
-                        r2[pc] += eq_evals[1][j];
-                        r3[pc] += eq_evals[2][j];
-                        j += 1;
-                    }
-                    [r1, r2, r3]
-                })
-                .reduce(
-                    || {
-                        [
-                            jolt_core::utils::thread::unsafe_allocate_zero_vec(K),
-                            jolt_core::utils::thread::unsafe_allocate_zero_vec(K),
-                            jolt_core::utils::thread::unsafe_allocate_zero_vec(K),
-                        ]
-                    },
-                    |mut running, new| {
-                        for s in 0..3 {
-                            running[s]
-                                .par_iter_mut()
-                                .zip(new[s].par_iter())
-                                .for_each(|(x, &y)| *x += y);
-                        }
-                        running
-                    },
-                );
+            let (F_1, F_polys) = compute_pc_hists::<F>(
+                &pc_indices,
+                &eq_r_cycle,
+                &eq_evals,
+                d,
+                log_K_chunk,
+                K_chunk,
+                K,
+                chunk_size,
+            );
 
             let read_raf = BytecodeReadRaf::new_prover_from_parts(
                 init.read_raf_gamma,
@@ -497,4 +440,94 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         };
         Ok(instances)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Compute bytecode stage4 histograms in one pass over `pc_indices`.
+///
+/// Returns:
+/// - `G`: `d` chunk histograms of `eq_r_cycle[j]` binned by `pc_indices[j]` chunk `i`
+/// - `F_polys`: `[r1, r2, r3]` where `rs[pc] = Σ_j eq_evals[s][j] * [pc_indices[j] == pc]`
+fn compute_pc_hists<F: JoltField>(
+    pc_indices: &[u64],
+    eq_r_cycle: &[F],
+    eq_evals: &[Vec<F>; 3],
+    d: usize,
+    log_K_chunk: usize,
+    K_chunk: usize,
+    K: usize,
+    chunk_size: usize,
+) -> (Vec<Vec<F>>, [Vec<F>; 3]) {
+    use jolt_core::utils::thread::unsafe_allocate_zero_vec;
+
+    debug_assert_eq!(pc_indices.len(), eq_r_cycle.len());
+    debug_assert_eq!(eq_evals[0].len(), pc_indices.len());
+    debug_assert_eq!(eq_evals[1].len(), pc_indices.len());
+    debug_assert_eq!(eq_evals[2].len(), pc_indices.len());
+
+    pc_indices
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, pcs)| {
+            let mut local_G: Vec<Vec<F>> =
+                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut r1: Vec<F> = unsafe_allocate_zero_vec(K);
+            let mut r2: Vec<F> = unsafe_allocate_zero_vec(K);
+            let mut r3: Vec<F> = unsafe_allocate_zero_vec(K);
+
+            let j0 = chunk_index * chunk_size;
+            for (off, &pc_u64) in pcs.iter().enumerate() {
+                let j = j0 + off;
+                let pc = pc_u64 as usize;
+
+                r1[pc] += eq_evals[0][j];
+                r2[pc] += eq_evals[1][j];
+                r3[pc] += eq_evals[2][j];
+
+                let mut x = pc;
+                let w = eq_r_cycle[j];
+                for i in (0..d).rev() {
+                    let idx = x % K_chunk;
+                    local_G[i][idx] += w;
+                    x >>= log_K_chunk;
+                }
+            }
+
+            (local_G, [r1, r2, r3])
+        })
+        .reduce(
+            || {
+                let zeros_G: Vec<Vec<F>> =
+                    (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+                let zeros_F = [
+                    unsafe_allocate_zero_vec(K),
+                    unsafe_allocate_zero_vec(K),
+                    unsafe_allocate_zero_vec(K),
+                ];
+                (zeros_G, zeros_F)
+            },
+            |(mut running_G, mut running_F), (new_G, new_F)| {
+                // NOTE: Avoid nested rayon in the reduce combiner. The outer reduction tree is
+                // already parallel; nesting can oversubscribe or add overhead.
+                for (x, y) in running_G.iter_mut().zip(new_G) {
+                    for (x, y) in x.iter_mut().zip(y) {
+                        *x += y;
+                    }
+                }
+                let [nf0, nf1, nf2] = new_F;
+                for (x, y) in running_F[0].iter_mut().zip(nf0) {
+                    *x += y;
+                }
+                for (x, y) in running_F[1].iter_mut().zip(nf1) {
+                    *x += y;
+                }
+                for (x, y) in running_F[2].iter_mut().zip(nf2) {
+                    *x += y;
+                }
+                (running_G, running_F)
+            },
+        )
 }

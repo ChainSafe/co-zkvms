@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-use itertools::Itertools;
 use mpc_core::protocols::{
     rep3::{
         network::{IoContextPool, Rep3NetworkWorker},
@@ -284,7 +283,7 @@ where
 pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
     futures: Vec<FutureRep3Ring<R, T, Args>>,
     io_ctx: &mut IoContextPool<N>,
-    pool: &mut PreprocessingPool<F>,
+    preproc: &mut PreprocessingPool<F>,
     map: MapFn,
 ) -> eyre::Result<Vec<T>>
 where
@@ -377,7 +376,7 @@ where
 
     // Bit Inject (single-bit → field via daBits) — distributed across forks
     if !buckets.bit_x.is_empty() {
-        let batch = pool.take_dabits(buckets.bit_x.len());
+        let batch = preproc.take_dabits(buckets.bit_x.len());
         let c = io_ctx.par_chunks_dabits(buckets.bit_x, batch, None, |xs, batch, ctx| {
             dabits::bit_inject_field_many(&xs, &batch, ctx)
         })?;
@@ -388,7 +387,7 @@ where
 
     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits — distributed across forks
     if !buckets.b2a_x.is_empty() {
-        let batch = pool.take_edabits::<R>(buckets.b2a_x.len());
+        let batch = preproc.take_edabits::<R>(buckets.b2a_x.len());
         let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
             edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
         })?;

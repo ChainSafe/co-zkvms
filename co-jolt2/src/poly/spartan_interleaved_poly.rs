@@ -124,7 +124,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
     #[tracing::instrument(
         skip_all,
-        name = "Rep3SpartanInterleavedPolynomial::streaming_sumcheck_round",
+        name = "SpartanInterleavedPoly::streaming_sumcheck_round",
         level = "trace"
     )]
     pub fn streaming_sumcheck_round<Network: Rep3NetworkWorker>(
@@ -159,7 +159,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
     #[tracing::instrument(
         skip_all,
-        name = "Rep3SpartanInterleavedPolynomial::remaining_sumcheck_round",
+        name = "SpartanInterleavedPoly::remaining_sumcheck_round",
         level = "trace"
     )]
     pub fn remaining_sumcheck_round<Network: Rep3NetworkWorker>(
@@ -204,7 +204,7 @@ fn quadratic_evals_from_unbound<F: JoltField>(
     shards: &[Vec<SparseCoefficient<Rep3Value<F>>>],
     eq_poly: &GruenSplitEqPolynomial<F>,
     party_id: PartyID,
-    padded_num_constraints: usize,
+    _padded_num_constraints: usize,
 ) -> (AdditiveShare<F>, AdditiveShare<F>) {
     let e_in_len = eq_poly.E_in_current_len();
     let num_x_in_bits = if e_in_len > 0 { e_in_len.log_2() } else { 0 };

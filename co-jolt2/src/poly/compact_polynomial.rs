@@ -239,7 +239,7 @@ impl<T: IntRing2k, F: JoltField> PolynomialBinding<F, Rep3Value<F>> for CompactP
         !self.bound_coeffs.is_empty()
     }
 
-    #[tracing::instrument(skip_all, name = "CompactPolynomial::bind", level = "trace")]
+    #[tracing::instrument(skip_all, name = "CompactPoly::bind", level = "trace")]
     fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         self.ensure_no_pending_casts();
 
@@ -302,7 +302,7 @@ impl<T: IntRing2k, F: JoltField> PolynomialBinding<F, Rep3Value<F>> for CompactP
         self.len = n;
     }
 
-    #[tracing::instrument(skip_all, name = "CompactPolynomial::bind_parallel", level = "trace")]
+    #[tracing::instrument(skip_all, name = "CompactPoly::bind_parallel", level = "trace")]
     fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         self.ensure_no_pending_casts();
 
@@ -402,7 +402,7 @@ impl<T: IntRing2k, F: JoltField> PolynomialEvaluation<F, Rep3Value<F>> for Compa
         Rep3Value::Shared(self.dot_product_with_public(&chis))
     }
 
-    #[tracing::instrument(skip_all, name = "CompactPolynomial::batch_evaluate", level = "trace")]
+    #[tracing::instrument(skip_all, name = "CompactPoly::batch_evaluate", level = "trace")]
     fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
     where
         Self: Sized,

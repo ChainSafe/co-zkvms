@@ -126,7 +126,6 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
         r: &[F::Challenge],
     ) -> F {
         let d = self.d();
-        let log_K_chunk = self.log_K_chunk();
 
         let ra_claims: Vec<F> = (0..d)
             .map(|i| {

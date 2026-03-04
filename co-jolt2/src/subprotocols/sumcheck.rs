@@ -3,8 +3,8 @@
 use eyre::Context;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
-use jolt_core::subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof};
-use jolt_core::transcripts::{AppendToTranscript, KeccakTranscript, Transcript};
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
+use jolt_core::transcripts::{AppendToTranscript, Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
@@ -51,7 +51,7 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
         r_j: F::Challenge,
         round: usize,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     );
 
     /// Normalize the low-to-high sumcheck opening point to big-endian form.
@@ -202,12 +202,6 @@ impl<F: JoltField, N: Rep3NetworkWorker> BatchedSumcheckWorkerInstance<F, N> {
             BatchedSumcheckWorkerInstance::Public(s) => s.num_rounds(),
         }
     }
-    fn input_claim(&self) -> Rep3Value<F> {
-        match self {
-            BatchedSumcheckWorkerInstance::Secret(s) => s.input_claim(),
-            BatchedSumcheckWorkerInstance::Public(s) => Rep3Value::Public(s.input_claim_public()),
-        }
-    }
 }
 
 pub enum BatchedSumcheckInstance<F: JoltField, T: Transcript> {
@@ -264,7 +258,7 @@ impl<F: JoltField, T: Transcript> BatchedSumcheckInstance<F, T> {
 pub struct Rep3BatchedSumcheck;
 
 impl Rep3BatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "Rep3BatchedSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove", level = "trace")]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>],
         accumulator: &mut Rep3OpeningAccumulator<F>,
@@ -307,7 +301,7 @@ impl Rep3BatchedSumcheck {
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
-        for round in 0..max_num_rounds {
+        for _round in 0..max_num_rounds {
             let round_evals = receive_batched_round_evals::<F, N>(network)?;
             eyre::ensure!(
                 round_evals.len() == max_degree,
@@ -371,12 +365,12 @@ impl Rep3BatchedSumcheck {
 pub struct Rep3BatchedSumcheckWorker;
 
 impl Rep3BatchedSumcheckWorker {
-    #[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
+    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove")]
     pub fn prove<F, N>(
         instances: &mut [Box<dyn Rep3SumcheckInstanceWorker<F, N>>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<F::Challenge>>
     where
         F: JoltField,
@@ -486,7 +480,7 @@ impl Rep3BatchedSumcheckWorker {
                 let offset = max_num_rounds - num_rounds;
                 let local_round = round - offset;
 
-                instance.bind(r_j, local_round, io_ctx, edabits_pool);
+                instance.bind(r_j, local_round, io_ctx, preproc);
 
                 let msg = active_round_msgs[i]
                     .take()
@@ -536,7 +530,7 @@ type HybridRoundMsg<F> = (Vec<AdditiveShare<F>>, Option<Vec<F>>);
 type HybridOpeningsMsg<F> = Vec<(Vec<AdditiveShare<F>>, Option<Vec<F>>)>;
 
 impl HybridBatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "HybridBatchedSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove", level = "trace")]
     #[allow(unused_variables)]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[BatchedSumcheckInstance<F, ProofTranscript>],
@@ -643,12 +637,12 @@ impl HybridBatchedSumcheck {
 pub struct HybridBatchedSumcheckWorker;
 
 impl HybridBatchedSumcheckWorker {
-    #[tracing::instrument(skip_all, name = "HybridBatchedSumcheckWorker::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove", level = "trace")]
     pub fn prove<F, N>(
         instances: &mut [BatchedSumcheckWorkerInstance<F, N>],
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<F::Challenge>>
     where
         F: JoltField,
@@ -816,7 +810,7 @@ impl HybridBatchedSumcheckWorker {
 
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
-                        s.bind(r_j, local_round, io_ctx, edabits_pool);
+                        s.bind(r_j, local_round, io_ctx, preproc);
                         let msg = active_secret_msgs[i]
                             .take()
                             .unwrap_or_else(|| unreachable!("active msg missing"));
@@ -847,7 +841,7 @@ impl HybridBatchedSumcheckWorker {
         }
 
         let mut openings_by_instance: HybridOpeningsMsg<F> = Vec::with_capacity(instances.len());
-        for (i, instance) in instances.iter_mut().enumerate() {
+        for instance in instances.iter_mut() {
             let num_rounds = instance.num_rounds();
             let r_slice = &r_sumcheck[max_num_rounds - num_rounds..];
 
@@ -1219,7 +1213,7 @@ mod tests {
             _r_j: <Fr as jolt_core::field::JoltField>::Challenge,
             _round: usize,
             _io_ctx: &mut IoContextPool<N>,
-            _edabits_pool: &mut PreprocessingPool<Fr>,
+            _preproc: &mut PreprocessingPool<Fr>,
         ) {
         }
 
@@ -1439,7 +1433,12 @@ mod tests {
                     },
                 ];
                 let mut pool = PreprocessingPool::empty(party_id);
-                let r = HybridBatchedSumcheckWorker::prove(&mut instances, &mut acc, &mut io_ctx, &mut pool)?;
+                let r = HybridBatchedSumcheckWorker::prove(
+                    &mut instances,
+                    &mut acc,
+                    &mut io_ctx,
+                    &mut pool,
+                )?;
                 Ok(r.len())
             },
             move |(), net| {
