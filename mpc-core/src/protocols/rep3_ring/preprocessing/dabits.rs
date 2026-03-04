@@ -278,7 +278,24 @@ impl<F: PrimeField> LazyDaBits<F> {
 
         let stored = if meta.total > 0 && party_id != PartyID::ID1 {
             let data_path = dir.join("dabits.stored");
-            backing_store::BackingStore::load_from_file(&data_path)?
+            let bs = backing_store::BackingStore::load_from_file(&data_path)?;
+            // Validate stored data length matches meta.total.
+            // P0 stores 1 field element per daBit, P2 stores 2.
+            let expected = match party_id {
+                PartyID::ID0 => meta.total,
+                PartyID::ID2 => meta.total * 2,
+                _ => 0,
+            };
+            if bs.len() < expected {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "dabits.stored: expected at least {} elements, got {} (total={}, cursor={}, party={:?})",
+                        expected, bs.len(), meta.total, meta.cursor, party_id,
+                    ),
+                ));
+            }
+            bs
         } else {
             backing_store::BackingStore::Empty
         };

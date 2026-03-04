@@ -68,6 +68,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
     /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
     /// - injects `E` into field shares once (length K).
+    #[tracing::instrument(skip_all, name = "one_hot::from_indices", fields(K))]
     pub fn from_indices<N: Rep3Network>(
         nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
         K: usize,
@@ -185,6 +186,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// selection), in this arithmetic-sharing representation each party only sees dense-looking
     /// field elements and cannot exploit sparsity without switching to an oblivious-access
     /// technique (e.g. MPC lookup / switching network / DPF/FSS-style point function sharing).
+    #[tracing::instrument(skip_all, name = "one_hot::commit_rows", level = "trace")]
     pub fn commit_rows<G>(&self, bases: &[G::Affine]) -> eyre::Result<Vec<G>>
     where
         G: CurveGroup<ScalarField = F> + VariableBaseMSM + Send + Sync,
@@ -340,6 +342,12 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     ///
     /// Uses the identity:
     /// `table[r XOR c] = Σ_i table[i] * E_field[i XOR c]`.
+    /// TODO: optimize with FWHT
+    #[tracing::instrument(
+        skip_all,
+        name = "one_hot::select_public_table_at_masked_index",
+        level = "trace"
+    )]
     fn select_public_table_at_masked_index(&self, table: &[F], c: u8) -> Rep3PrimeFieldShare<F> {
         assert_eq!(table.len(), self.K, "table length must equal K");
         assert_eq!(
@@ -366,6 +374,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     ///   v_vec[col] += coeff * E_field[k XOR c].a * l_vec[row]
     ///
     /// Mirrors vanilla `OneHotPolynomial::vector_matrix_product` but operates on `.a` shares.
+    #[tracing::instrument(skip_all, name = "one_hot::compute_v_vec_share", level = "trace")]
     pub fn compute_v_vec_share(&self, coeff: F, l_vec: &[F], v_vec: &mut [F]) {
         use rayon::prelude::*;
 
@@ -468,6 +477,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
 
     /// Evaluates the true MLE value:
     /// `Σ_j eq(j, r_cycle) * eq(k(j), r_address)`.
+    #[tracing::instrument(skip_all, name = "one_hot::evaluate", level = "trace")]
     pub fn evaluate<C>(&self, r_address: &[C], r_cycle: &[C]) -> Rep3PrimeFieldShare<F>
     where
         C: Copy + Send + Sync + Into<F>,

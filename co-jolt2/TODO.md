@@ -1,8 +1,15 @@
 # co-jolt2 Deferred Optimizations
 
-## Operand Q
+## Missing networked par_chunks
+- `co-jolt2/src/zkvm/witness.rs` `for poly in polynomials` 
+- `co-jolt2/src/zkvm/suffixes/future.rs` `ring_to_field_b2a_many`, `bit_inject_field_many`
 
-Do shared indexing & unmask on rings (ring ehat16) -> b2a
+## Missing misc optimizations
+- Use FWHT in `one_hot::select_public_table_at_masked_index`
+- init_operandQ_polys: Do shared indexing & unmask on rings (ring ehat16) -> b2a
+
+## Memory optimizations
+- ManuallyDrop in Dory::commit_rep3 — safe?
 
 ## Batch condensation + cache_phase `mul_vec` (saves 6 communication rounds)
 
