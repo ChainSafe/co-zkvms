@@ -12,6 +12,8 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 pub mod dory;
 pub use dory::*;
 
+pub mod pst13;
+
 pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     CommitmentScheme<Field = F>
 {
