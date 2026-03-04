@@ -62,12 +62,19 @@ fi
   -t "$TRACE_DIR" -n "$NUM_ITERS" "${PREPROC_ARGS[@]}" &
 
 # Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.
+# Each runs in a subshell so we can capture /usr/bin/time -v stderr and extract Max RSS.
 for p in 0 1 2; do
-  TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-    ../target/release/examples/rep3_jolt \
-      -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
-      -t "$TRACE_DIR" -n "$NUM_ITERS" \
-      "${PREPROC_ARGS[@]}" &
+  (
+    tmpfile=$(mktemp)
+    TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+      /usr/bin/time -v -- ../target/release/examples/rep3_jolt \
+        -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
+        -t "$TRACE_DIR" -n "$NUM_ITERS" \
+        "${PREPROC_ARGS[@]}" 2>"$tmpfile"
+    maxrss=$(grep "Maximum resident set size" "$tmpfile" | awk '{print $NF}')
+    echo "worker${p}: Max RSS = ${maxrss} kB"
+    rm -f "$tmpfile"
+  ) &
 done
 
 wait

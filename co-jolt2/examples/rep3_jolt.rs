@@ -4,7 +4,7 @@ use tracy_client::ProfiledAllocator;
 
 #[global_allocator]
 static GLOBAL: ProfiledAllocator<std::alloc::System> =
-    ProfiledAllocator::new(std::alloc::System, 100);
+    ProfiledAllocator::new(std::alloc::System, 0);
 
 use ark_bn254::Fr;
 use ark_std::test_rng;
@@ -97,7 +97,7 @@ fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(8)
         .build_global()
         .expect("set global Rayon pool");
 
