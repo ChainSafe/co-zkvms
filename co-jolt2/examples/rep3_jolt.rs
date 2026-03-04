@@ -1,5 +1,11 @@
 use std::path::PathBuf;
 
+use tracy_client::ProfiledAllocator;
+
+#[global_allocator]
+static GLOBAL: ProfiledAllocator<std::alloc::System> =
+    ProfiledAllocator::new(std::alloc::System, 100);
+
 use ark_bn254::Fr;
 use ark_std::test_rng;
 use clap::Parser;
@@ -70,6 +76,14 @@ struct WorkerPayload {
 }
 
 fn main() -> eyre::Result<()> {
+    // Start Tracy profiler only when TRACY=1 is set (manual-lifetime mode).
+    // This lets us profile a single process (e.g. worker 0) without port conflicts.
+    let _tracy = if std::env::var("TRACY").is_ok() {
+        Some(tracy_client::Client::start())
+    } else {
+        None
+    };
+
     color_eyre::install()?;
 
     let args = Args::parse();

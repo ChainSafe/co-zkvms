@@ -4,6 +4,10 @@ set -euo pipefail
 NUM_ITERS=${NUM_ITERS:-1}
 TRACE_DIR=${TRACE_DIR:-./.traces}
 ARTIFACT_DIR=.artifacts
+# Base port for Tracy profiling. Worker p listens on TRACY_BASE_PORT + p.
+# Connect with: tracy-capture -a 127.0.0.1 -p <port>
+#   worker 0 → 8086, worker 1 → 8087, worker 2 → 8088
+TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 # When set, preprocessing is saved to (and loaded from) this directory.
 PREPROC_DIR=${PREPROC_DIR:-./.preprocessing}
 # When set to 1, builds with the `reuse-preproc` feature so that mmap'd
@@ -52,12 +56,13 @@ fi
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" &
 
-# Launch 3 workers (party 0, 1, 2)
+# Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.
 for p in 0 1 2; do
-  ../target/release/examples/rep3_jolt \
-    -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
-    -t "$TRACE_DIR" -n "$NUM_ITERS" \
-    "${PREPROC_ARGS[@]}" &
+  TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+    ../target/release/examples/rep3_jolt \
+      -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
+      -t "$TRACE_DIR" -n "$NUM_ITERS" \
+      "${PREPROC_ARGS[@]}" &
 done
 
 wait
