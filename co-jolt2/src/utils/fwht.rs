@@ -225,7 +225,7 @@ where
 ///
 /// Precondition: `shares.len()` must be a power of two.
 #[inline]
-#[tracing::instrument(skip_all, level = "trace")]
+#[tracing::instrument(skip_all, name = "fwht_rep3", level = "trace")]
 pub fn fwht_rep3_in_place<F: JoltField>(shares: &mut [Rep3PrimeFieldShare<F>]) {
     let n = shares.len();
     let mut a_parts: Vec<F> = Vec::with_capacity(n);

@@ -125,10 +125,10 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Coordinator
+// Coordinator (no `Coordinator` suffix by convention)
 // ---------------------------------------------------------------------------
 
-pub struct StateManagerCoordinator<
+pub struct StateManager<
     'a,
     F: JoltField,
     ProofTranscript: Transcript,
@@ -148,7 +148,7 @@ pub struct StateManagerCoordinator<
     pub accumulator: Rep3OpeningAccumulator<F>,
 }
 
-impl<'a, F, ProofTranscript, PCS> StateManagerCoordinator<'a, F, ProofTranscript, PCS>
+impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
 where
     F: JoltField,
     ProofTranscript: Transcript,

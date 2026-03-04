@@ -4,8 +4,8 @@ use crate::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
 use crate::utils::types::MaybeShared;
-use crate::zkvm::dag::stage::{Rep3JoltDagStagesCoordinator, SumcheckStagesCoordinator};
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
+use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::spartan::Rep3SpartanDag;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
@@ -22,12 +22,12 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 /// Owns the Fiat-Shamir transcript, drives sumcheck rounds by broadcasting
 /// challenges, receives evaluation shares from workers, and assembles the
 /// final proof.
-pub struct Rep3JoltDAGCoordinator;
+pub struct Rep3JoltDag;
 
-impl Rep3JoltDAGCoordinator {
-    #[tracing::instrument(skip_all, name = "Rep3JoltDAGCoordinator::prove")]
+impl Rep3JoltDag {
+    #[tracing::instrument(skip_all, name = "JoltDag::prove")]
     pub fn prove<'a, F, ProofTranscript, PCS, N>(
-        mut state: StateManagerCoordinator<'a, F, ProofTranscript, PCS>,
+        mut state: StateManager<'a, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<JoltProof<F, PCS, ProofTranscript>>
     where
@@ -83,7 +83,7 @@ impl Rep3JoltDAGCoordinator {
         // Stage 2: batched sumcheck
         // -------------------------------------------------------------------
 
-        let mut stages = Rep3JoltDagStagesCoordinator;
+        let mut stages = Rep3JoltDagStages;
         let stage2_hybrid: Vec<BatchedSumcheckInstance<F, ProofTranscript>> =
             stages.stage2_instances(&mut state, network)?;
 
@@ -147,7 +147,7 @@ impl Rep3JoltDAGCoordinator {
 
         let pcs_setup = state
             .pcs_setup
-            .expect("StateManagerCoordinator::pcs_setup must be set for reduce_and_prove (stage5)");
+            .expect("StateManager::pcs_setup must be set for reduce_and_prove (stage5)");
         let reduced = state
             .accumulator
             .reduce_and_prove::<PCS, ProofTranscript, N>(
@@ -180,7 +180,7 @@ impl Rep3JoltDAGCoordinator {
     }
 
     fn receive_commitments<F, PCS, ProofTranscript, N>(
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<()>
     where
@@ -228,7 +228,7 @@ impl Rep3JoltDAGCoordinator {
     /// All workers compute the same public commitment, so we verify consistency
     /// and store the first non-None value.
     fn receive_untrusted_advice_commitment<F, PCS, ProofTranscript, N>(
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<()>
     where

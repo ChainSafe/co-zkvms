@@ -114,7 +114,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         }
     }
 
-    #[tracing::instrument(skip_all, name = "Dory::batch_commit_rep3")]
+    #[tracing::instrument(skip_all, name = "Dory::batch_commit")]
     fn batch_commit_rep3<U>(
         polys: &[U],
         setup: &Self::ProverSetup,
@@ -138,7 +138,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "Dory::prove_rep3")]
+    #[tracing::instrument(skip_all, name = "Dory::prove")]
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
@@ -156,7 +156,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         }
 
         let (sigma, num_vars, nu, l_vec, r_vec, g1_all, g2_all, g1_affine_all) = {
-            let _span = tracing::info_span!("prove_rep3::precompute").entered();
+            let _span = tracing::info_span!("precompute").entered();
             let sigma = DoryGlobals::get_num_columns().log_2();
             let num_vars = poly.get_num_vars();
             let nu = dory::vmv::compute_nu(num_vars, sigma);
@@ -185,7 +185,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let num_rows_target = 1usize << nu;
         let num_columns = 1usize << sigma;
         let row_commit_shares: Vec<G1Projective> = {
-            let _span = tracing::info_span!("prove_rep3::row_commits").entered();
+            let _span = tracing::info_span!("row_commits").entered();
             if let Some(hint) = opening_hint {
                 // Pre-combined hint: use directly (already the correct additive shares)
                 let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
@@ -256,7 +256,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
         // c_share + d2_share: MSMs + pairings for VMV message
         let (c_share, d2_share) = {
-            let _span = tracing::info_span!("prove_rep3::vmv_message").entered();
+            let _span = tracing::info_span!("vmv_message").entered();
             let t_vec_v = msm_g1(&row_commitments, &v_vec_share);
             let g_fin_affine = setup.core.g_fin.0.into_affine();
             let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
@@ -272,7 +272,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
         // v2_share[j] = g_fin * v_vec_share[j]  (parallelized)
         let mut v2_share: Vec<G2Projective> = {
-            let _span = tracing::info_span!("prove_rep3::v2_init").entered();
+            let _span = tracing::info_span!("v2_init").entered();
             let g_fin = setup.core.g_fin.0;
             v_vec_share.par_iter().map(|s| g_fin * s).collect()
         };
@@ -284,13 +284,13 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let mut v1_pub: Vec<G1Projective> = row_commitments;
         let mut curr_nu = nu;
 
-        let _loop_span = tracing::info_span!("prove_rep3::reduction_loop").entered();
+        let _loop_span = tracing::info_span!("reduction_loop").entered();
         while curr_nu > 0 {
             let n2 = 1usize << (curr_nu - 1);
 
             // First message: d2_left/d2_right pairings (parallel)
             let (d2_left_share_round, d2_right_share_round) = {
-                let _span = tracing::trace_span!("prove_rep3::d2_pairing", n2).entered();
+                let _span = tracing::trace_span!("d2_pairing", n2).entered();
                 let g1_prime_aff = &g1_affine_all[..n2];
                 let (v2_l, v2_r) = v2_share.split_at(n2);
                 rayon::join(
@@ -306,7 +306,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             // Update v1/v2 with generators
             {
-                let _span = tracing::trace_span!("prove_rep3::v1v2_update", n2).entered();
+                let _span = tracing::trace_span!("v1v2_update", n2).entered();
                 jolt_optimizations::vector_add_scalar_mul_g1_online(
                     &mut v1_pub,
                     &g1_all[..(1 << curr_nu)],
@@ -328,7 +328,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let (s1_l, s1_r) = s1.split_at(n2);
 
             let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = {
-                let _span = tracing::trace_span!("prove_rep3::second_msg", n2).entered();
+                let _span = tracing::trace_span!("second_msg", n2).entered();
                 rayon::join(
                     || rayon::join(
                         || multi_pairing(v1_l, v2_r),
@@ -351,7 +351,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             // Fold v1, v2, s1, s2 — in-place GLV-accelerated for group elements
             {
-                let _span = tracing::trace_span!("prove_rep3::fold", n2).entered();
+                let _span = tracing::trace_span!("fold", n2).entered();
 
                 // v1[i] = alpha * v1_l[i] + v1_r[i] (in-place, GLV 2D Shamir)
                 let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);

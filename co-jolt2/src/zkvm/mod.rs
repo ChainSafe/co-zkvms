@@ -9,21 +9,18 @@ pub mod spartan;
 pub mod suffixes;
 pub mod witness;
 
-use std::collections::HashMap;
-
 use crate::field::JoltField;
 use crate::host::memory::Rep3Memory;
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::zkvm::dag::coordinator::Rep3JoltDAGCoordinator;
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
-use crate::zkvm::dag::worker::Rep3JoltDAGWorker;
+use crate::zkvm::dag::coordinator::Rep3JoltDag;
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
+use crate::zkvm::dag::worker::Rep3JoltDagWorker;
 use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
 use jolt_core::zkvm::dag::proof_serialization::JoltProof;
-use jolt_core::zkvm::witness::CommittedPolynomial;
 use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
@@ -54,7 +51,7 @@ where
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: &mut PreprocessingPool<F>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()>;
 }
 
@@ -104,7 +101,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
         advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
-        edabits_pool: &mut PreprocessingPool<Fr>,
+        preproc: &mut PreprocessingPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
         let state = StateManagerWorker::new(
@@ -116,10 +113,10 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             ram_K,
             advice_shares,
         );
-        Rep3JoltDAGWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
+        Rep3JoltDagWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
             state,
             io_ctx,
-            edabits_pool,
+            preproc,
         )
     }
 }
@@ -143,14 +140,14 @@ impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
             0
         };
 
-        let state = StateManagerCoordinator::new(
+        let state = StateManager::new(
             preprocessing,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
         )
         .with_pcs_setup(pcs_setup);
-        Rep3JoltDAGCoordinator::prove(state, network)
+        Rep3JoltDag::prove(state, network)
     }
 }
 
@@ -291,7 +288,7 @@ mod tests {
                 drop(_span);
 
                 // Preprocessing: create EdaBits pool for B2A conversions (2 rounds).
-                let mut edabits_pool = {
+                let mut preproc = {
                     use crate::zkvm::dag::preproc_budget::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
                     let budget = compute_edabit_budget(trace.len());
@@ -310,7 +307,7 @@ mod tests {
                     &mut io_ctx,
                     ram_K,
                     Some(advice),
-                    &mut edabits_pool,
+                    &mut preproc,
                 )?;
                 Ok(())
             },

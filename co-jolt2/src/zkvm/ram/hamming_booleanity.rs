@@ -5,7 +5,7 @@ use jolt_core::subprotocols::sumcheck::SumcheckInstance;
 use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID};
+use mpc_core::protocols::rep3::PartyID;
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};

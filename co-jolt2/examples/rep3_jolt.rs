@@ -280,7 +280,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // `--features reuse-preproc` so consumed data is NOT zeroed on disk.
     let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
-    let mut edabits_pool = {
+    let mut preproc = {
         use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
         let budget = compute_edabit_budget(trace_len);
@@ -350,10 +350,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         &mut io_ctx,
         ram_k,
         Some(program_io_share),
-        &mut edabits_pool,
+        &mut preproc,
     )?;
 
-    let (rem_eda, rem_da) = edabits_pool.remaining_counts();
+    let (rem_eda, rem_da) = preproc.remaining_counts();
     info!(
         u8 = rem_eda[0],
         u16 = rem_eda[1],

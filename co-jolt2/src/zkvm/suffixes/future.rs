@@ -6,10 +6,11 @@
 use crate::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_core::protocols::rep3_ring::{dabits, Rep3RingShare};
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
 // B2ABucketExtend — compile-time dispatch for typed B2A bucket extension
@@ -156,15 +157,14 @@ impl<F: JoltField> SuffixFutureBatch<F> {
     }
 
     /// Fulfill all pending conversions and scatter into output vec.
-    #[tracing::instrument(skip_all, name = "suffixes_fulfill")]
+    #[tracing::instrument(skip_all, name = "Suffixes::fulfill")]
     pub fn fulfill_with_pool<N: Rep3NetworkWorker>(
         self,
         io_ctx: &mut IoContextPool<N>,
-        pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>,
+        pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
         use mpc_core::protocols::rep3_ring::dabits;
         use mpc_core::protocols::rep3_ring::edabits;
-        use rayon::prelude::*;
 
         let mut out = vec![Rep3Value::zero_share(); self.len];
 

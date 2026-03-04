@@ -145,7 +145,6 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         // Mirrors vanilla ReadRafSumcheck::expected_output_claim.
         let log_K = self.log_K();
         let d = self.d();
-        let log_K_chunk = self.log_K_chunk();
 
         let (r_address_prime, r_cycle_prime_raw) = r.split_at(log_K);
         // r_cycle was bound LowToHigh, so reverse for EqPolynomial::mle

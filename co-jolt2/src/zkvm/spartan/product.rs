@@ -9,6 +9,7 @@ use jolt_core::zkvm::witness::CommittedPolynomial;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
 use crate::field::JoltField;
@@ -18,7 +19,7 @@ use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManagerCoordinator, StateManagerWorker};
+use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
 use crate::zkvm::instruction_lookups::booleanity::{extend_degree_3_evals, gruen_evals_deg_3};
 
 const DEGREE: usize = 3;
@@ -42,7 +43,6 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
         input_claim: F,
     ) -> Self {
         let party_id = sm.party_id;
-        let n = sm.prover_state.cycle_witness.len();
 
         let (r_cycle_point, _) = sm
             .accumulator
@@ -77,7 +77,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         Rep3Value::Public(self.input_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::compute_prover_message_share")]
+    #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::compute_message")]
     fn compute_prover_message_share(
         &mut self,
         _round: usize,
@@ -158,7 +158,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 
     #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        _round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         self.eq_r_cycle.bind(r_j);
         let r: F = r_j.into();
         rayon::join(
@@ -207,7 +213,7 @@ pub struct Rep3ProductVirtualizationSumcheck<F: JoltField> {
 
 impl<F: JoltField> Rep3ProductVirtualizationSumcheck<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (r_point, input_claim) = sm
             .accumulator

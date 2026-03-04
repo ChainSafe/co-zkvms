@@ -10,6 +10,7 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 use snarks_core::math::Math;
 
@@ -44,7 +45,6 @@ struct BooleanityProverStateWorker<F: JoltField> {
 pub struct Rep3BooleanitySumcheckWorker<F: JoltField> {
     party_id: PartyID,
     gamma: [F; D],
-    r_address: Vec<F::Challenge>,
     log_T: usize,
     state: BooleanityProverStateWorker<F>,
 }
@@ -64,7 +64,6 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
         Self {
             party_id,
             gamma,
-            r_address: r_address.clone(),
             log_T: trace_len.log_2(),
             state: BooleanityProverStateWorker {
                 eq_r_address: GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh),
@@ -353,7 +352,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         extend_degree_3_evals::<F>(previous_claim, &base, max_degree)
     }
 
-    fn bind(&mut self, r_j: F::Challenge, round: usize, _io_ctx: &mut IoContextPool<N>, _edabits_pool: &mut mpc_core::protocols::rep3_ring::edabits::PreprocessingPool<F>) {
+    fn bind(
+        &mut self,
+        r_j: F::Challenge,
+        round: usize,
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<F>,
+    ) {
         let ps = &mut self.state;
 
         if round < LOG_K_CHUNK {

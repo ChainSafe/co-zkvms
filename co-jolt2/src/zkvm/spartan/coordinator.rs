@@ -11,15 +11,15 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 use crate::field::JoltField;
 use crate::subprotocols::sumcheck::Rep3SumcheckInstance;
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManagerCoordinator};
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::spartan::inner::Rep3InnerSumcheck;
 
 pub struct Rep3SpartanDag;
 
 impl Rep3SpartanDag {
-    #[tracing::instrument(skip_all, name = "Rep3SpartanDag::stage1_prove")]
+    #[tracing::instrument(skip_all, name = "SpartanDag::stage1_prove")]
     pub fn stage1_prove<F, ProofTranscript, PCS, N>(
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<()>
     where
@@ -75,7 +75,7 @@ impl Rep3SpartanDag {
             .insert(ProofKeys::Stage1Sumcheck, ProofData::SumcheckProof(proof));
 
         // Outer sumcheck is bound from the "top"; reverse challenges to match vanilla.
-        let mut outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
+        let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
 
         // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
         // Vanilla uses append_scalars (with vector framing) for the outer sumcheck claims.
@@ -155,9 +155,9 @@ impl Rep3SpartanDag {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "Rep3SpartanDag::stage2_instances")]
+    #[tracing::instrument(skip_all, name = "SpartanDag::stage2_instances")]
     pub fn stage2_instances<F, ProofTranscript, PCS, N>(
-        state: &mut StateManagerCoordinator<'_, F, ProofTranscript, PCS>,
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
     ) -> eyre::Result<Vec<Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>>>
     where
