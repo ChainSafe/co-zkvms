@@ -46,6 +46,16 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
 }
 
 impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "spartan_stage1_interleaved_new",
+        level = "trace",
+        fields(
+            num_steps = key.num_steps,
+            num_constraints = uniform_constraints.len(),
+            padded_num_constraints = key.padded_row_constraint_per_step()
+        )
+    )]
     pub fn new(
         key: &UniformSpartanKey<F>,
         cycle_inputs: &[Rep3R1CSCycleInputs<F>],
@@ -75,6 +85,9 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         );
         let chunk_size = num_steps.div_ceil(num_chunks);
 
+        let _build_span =
+            tracing::trace_span!("SpartanInterleavedPoly::build_shards", num_chunks, chunk_size)
+                .entered();
         let shards: Vec<Vec<SparseCoefficient<Rep3Value<F>>>> = (0..num_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
@@ -109,6 +122,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
                 coeffs
             })
             .collect();
+        drop(_build_span);
 
         Ok(Self {
             unbound_coeffs_shards: shards,
@@ -178,8 +192,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         r.push(r_i);
         eq_poly.bind(r_i);
 
-        self.bound_coeffs =
-            bind_sparse_coeffs_low_to_high(&self.bound_coeffs, party_id, r_i.into());
+        bind_sparse_coeffs_low_to_high_in_place(&mut self.bound_coeffs, party_id, r_i.into());
         self.dense_len /= 2;
 
         Ok(())
@@ -336,6 +349,13 @@ fn bind_sparse_shards_into_bound<F: JoltField>(
     party_id: PartyID,
     r: F,
 ) -> Vec<SparseCoefficient<Rep3Value<F>>> {
+    let _span = tracing::trace_span!(
+        "bind_sparse_shards_into_bound",
+        shards = shards.len(),
+        r_is_zero = (r == F::zero())
+    )
+    .entered();
+
     // Compute total output length so we can preallocate.
     let output_lens: Vec<usize> = shards
         .par_iter()
@@ -346,7 +366,7 @@ fn bind_sparse_shards_into_bound<F: JoltField>(
 
     for (coeffs, expected_len) in shards.iter().zip(output_lens.into_iter()) {
         let before = out.len();
-        out.extend(bind_sparse_coeffs_low_to_high(coeffs, party_id, r));
+        bind_sparse_coeffs_low_to_high_into(coeffs, party_id, r, &mut out);
         debug_assert_eq!(out.len() - before, expected_len);
     }
 
@@ -375,15 +395,115 @@ fn binding_output_length<F: JoltField>(coeffs: &[SparseCoefficient<Rep3Value<F>>
     out
 }
 
-fn bind_sparse_coeffs_low_to_high<F: JoltField>(
+fn bind_sparse_coeffs_low_to_high_into<F: JoltField>(
     coeffs: &[SparseCoefficient<Rep3Value<F>>],
     party_id: PartyID,
     r: F,
-) -> Vec<SparseCoefficient<Rep3Value<F>>> {
-    let mut out: Vec<SparseCoefficient<Rep3Value<F>>> =
-        Vec::with_capacity(binding_output_length(coeffs));
+    out: &mut Vec<SparseCoefficient<Rep3Value<F>>>,
+) {
+    let _span = tracing::trace_span!(
+        "bind_sparse_coeffs_low_to_high_into",
+        in_len = coeffs.len(),
+        r_is_zero = (r == F::zero())
+    )
+    .entered();
 
-    let mut i = 0;
+    out.reserve(binding_output_length(coeffs));
+
+    bind_sparse_coeffs_low_to_high_visit(coeffs, party_id, r, |index, value| {
+        out.push((index, value).into());
+    });
+    drop(_span);
+}
+
+fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
+    coeffs: &mut Vec<SparseCoefficient<Rep3Value<F>>>,
+    party_id: PartyID,
+    r: F,
+) {
+    let _span = tracing::trace_span!(
+        "bind_sparse_coeffs_low_to_high_in_place",
+        in_len = coeffs.len(),
+        r_is_zero = (r == F::zero())
+    )
+    .entered();
+
+    // We want in-place binding without allocating a new Vec. This requires
+    // simultaneously reading (immutable) and writing (mutable) within `coeffs`.
+    // Rust borrowing rules don't allow that directly, but it's safe here because:
+    // - we only write to indices `< write`, and
+    // - we only read from indices `>= i` as `i` monotonically increases,
+    // so we never overwrite an element that we will read later.
+    let input_ptr = coeffs.as_ptr();
+    let input_len = coeffs.len();
+
+    let mut write = 0usize;
+    let mut i = 0usize;
+    while i < input_len {
+        let block = unsafe { (*input_ptr.add(i)).index / 6 };
+
+        let mut a0: Option<Rep3Value<F>> = None;
+        let mut b0: Option<Rep3Value<F>> = None;
+        let mut c0: Option<Rep3Value<F>> = None;
+        let mut a1: Option<Rep3Value<F>> = None;
+        let mut b1: Option<Rep3Value<F>> = None;
+        let mut c1: Option<Rep3Value<F>> = None;
+
+        while i < input_len {
+            let coeff = unsafe { *input_ptr.add(i) };
+            if coeff.index / 6 != block {
+                break;
+            }
+            match coeff.index % 6 {
+                0 => a0 = Some(coeff.value),
+                1 => b0 = Some(coeff.value),
+                2 => c0 = Some(coeff.value),
+                3 => a1 = Some(coeff.value),
+                4 => b1 = Some(coeff.value),
+                5 => c1 = Some(coeff.value),
+                _ => unreachable!(),
+            }
+            i += 1;
+        }
+
+        let base = 3 * block;
+
+        if a0.is_some() || a1.is_some() {
+            let low = a0.unwrap_or_else(Rep3Value::zero_public);
+            let high = a1.unwrap_or_else(Rep3Value::zero_public);
+            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
+            coeffs[write] = (base, v).into();
+            write += 1;
+        }
+
+        if b0.is_some() || b1.is_some() {
+            let low = b0.unwrap_or_else(Rep3Value::zero_public);
+            let high = b1.unwrap_or_else(Rep3Value::zero_public);
+            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
+            coeffs[write] = (base + 1, v).into();
+            write += 1;
+        }
+
+        if c0.is_some() || c1.is_some() {
+            let low = c0.unwrap_or_else(Rep3Value::zero_public);
+            let high = c1.unwrap_or_else(Rep3Value::zero_public);
+            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
+            coeffs[write] = (base + 2, v).into();
+            write += 1;
+        }
+    }
+
+    coeffs.truncate(write);
+    drop(_span);
+}
+
+fn bind_sparse_coeffs_low_to_high_visit<F: JoltField>(
+    coeffs: &[SparseCoefficient<Rep3Value<F>>],
+    party_id: PartyID,
+    r: F,
+    mut emit: impl FnMut(usize, Rep3Value<F>),
+) {
+    let mut i = 0usize;
     while i < coeffs.len() {
         let block = coeffs[i].index / 6;
 
@@ -413,25 +533,23 @@ fn bind_sparse_coeffs_low_to_high<F: JoltField>(
             let low = a0.unwrap_or_else(Rep3Value::zero_public);
             let high = a1.unwrap_or_else(Rep3Value::zero_public);
             let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base, v).into());
+            emit(base, v);
         }
 
         if b0.is_some() || b1.is_some() {
             let low = b0.unwrap_or_else(Rep3Value::zero_public);
             let high = b1.unwrap_or_else(Rep3Value::zero_public);
             let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base + 1, v).into());
+            emit(base + 1, v);
         }
 
         if c0.is_some() || c1.is_some() {
             let low = c0.unwrap_or_else(Rep3Value::zero_public);
             let high = c1.unwrap_or_else(Rep3Value::zero_public);
             let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base + 2, v).into());
+            emit(base + 2, v);
         }
     }
-
-    out
 }
 
 fn eval_lc_rep3<F: JoltField>(

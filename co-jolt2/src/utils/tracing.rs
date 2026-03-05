@@ -30,8 +30,6 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
         .add_directive("jolt_core=off".parse().unwrap())
-        .add_directive("co_jolt2=info".parse().unwrap())
-        .add_directive("mpc_net=info".parse().unwrap())
         .add_directive("quinn=off".parse().unwrap())
         .add_directive("dory=off".parse().unwrap());
 
