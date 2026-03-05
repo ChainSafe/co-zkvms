@@ -20,8 +20,8 @@ use tracer::JoltDevice;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
-use crate::poly::Polynomial;
 use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::poly::Polynomial;
 use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
@@ -188,7 +188,13 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE_OUTPUT],
-                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
             );
 
         extend_degree_3_evals::<F>(previous_claim, &base, max_degree)

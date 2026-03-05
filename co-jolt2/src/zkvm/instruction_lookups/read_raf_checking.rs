@@ -84,9 +84,11 @@ struct ReadRafProverState<F: JoltField> {
     ra: Option<Rep3DensePolynomial<F>>,
 
     // -- Phase polynomials (length M = 65536) --
+    /// Current logical length of suffix polynomials (halves on each bind in address rounds).
+    suffix_poly_len: usize,
     /// Per-table suffix polynomials stored as additive shares (no reshare needed).
     /// Built via local `Rep3 * Rep3 → Additive` in FWHT unmasking.
-    suffix_polys: Vec<Vec<AdditiveDensePoly<F>>>,
+    suffix_polys: Vec<Vec<Option<AdditiveDensePoly<F>>>>,
     /// Additive Q arrays for operand prefix-suffix decompositions.
     left_operand_q: [AdditiveDensePoly<F>; 2],
     right_operand_q: [AdditiveDensePoly<F>; 2],
@@ -232,15 +234,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         // Phase 0: ra_acc is None (implicit 1s for active cycles, 0 for padding)
         let ra_acc = None;
 
-        // -- Initialize suffix polynomials (empty, filled in init_phase) --
-        let suffix_polys: Vec<Vec<AdditiveDensePoly<F>>> = LookupTables::<XLEN>::iter()
-            .map(|table| {
-                table
-                    .suffixes()
-                    .iter()
-                    .map(|_| AdditiveDensePoly::zeros(M))
-                    .collect()
-            })
+        // -- Initialize suffix polynomials (filled in init_phase) --
+        //
+        // Many tables/suffixes are unused for a given trace; keep them as `None` until a phase
+        // materializes them. This avoids allocating O(#tables * #suffixes * M) upfront.
+        let suffix_polys: Vec<Vec<Option<AdditiveDensePoly<F>>>> = LookupTables::<XLEN>::iter()
+            .map(|table| vec![None; table.suffixes().len()])
             .collect();
 
         // -- Initialize prefix-suffix decompositions (public) --
@@ -257,7 +256,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         let identity_ps =
             PrefixSuffixDecomposition::new(Box::new(IdentityPolynomial::new(LOG_K)), LOG_M, LOG_K);
 
-        let empty_q = || AdditiveDensePoly::zeros(M);
+        let empty_q = || AdditiveDensePoly::empty();
         let mut state = ReadRafProverState {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
@@ -268,6 +267,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             u_evals,
             ra_acc,
             ra: None,
+            suffix_poly_len: M,
             suffix_polys,
             left_operand_q: [empty_q(), empty_q()],
             right_operand_q: [empty_q(), empty_q()],
@@ -323,6 +323,15 @@ impl<F: JoltField> ReadRafProverState<F> {
         preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
         eyre::ensure!(phase < PHASES, "phase out of range: {phase}");
+
+        // Reset per-phase polynomial state (fresh unbound suffix domain of size M).
+        self.suffix_poly_len = M;
+        for table in self.suffix_polys.iter_mut() {
+            for slot in table.iter_mut() {
+                *slot = None;
+            }
+        }
+
         let hi = 2 * phase;
         let lo = 2 * phase + 1;
         eyre::ensure!(lo < D, "phase pair out of range: ({hi}, {lo})");
@@ -574,9 +583,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                 suffix_len,
                 self.party_id,
             );
-        for (ti, si) in zero_polys {
-            self.suffix_polys[ti][si] = AdditiveDensePoly::zeros(M);
-        }
+        drop(zero_polys);
 
         // -- Step 3: Batch reshare all additive histograms to Rep3 in one round --
         let _span = info_span!("reshare_hists", n = hist_entries_to_reshare.len()).entered();
@@ -642,7 +649,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             .collect();
 
         for (table_idx, suffix_idx, poly) in pub_polys.into_iter().chain(rep3_polys) {
-            self.suffix_polys[table_idx][suffix_idx] = poly;
+            self.suffix_polys[table_idx][suffix_idx] = Some(poly);
         }
         drop(_span);
 
@@ -1250,6 +1257,18 @@ impl<F: JoltField> ReadRafProverState<F> {
             .take()
             .expect("ra_acc must be Some after all cache_phase calls");
         self.ra = Some(Rep3DensePolynomial::new(ra_vec));
+
+        // Address-round scratch is no longer needed for the cycle rounds.
+        // Free it eagerly to reduce stage3 peak RSS.
+        for table in self.suffix_polys.iter_mut() {
+            for slot in table.iter_mut() {
+                *slot = None;
+            }
+        }
+        self.left_operand_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.right_operand_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.identity_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.v = ExpandingTable::new(1);
     }
 }
 
@@ -1366,7 +1385,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
                 s.spawn(|_| {
                     ps.suffix_polys.par_iter_mut().for_each(|polys| {
                         for poly in polys.iter_mut() {
-                            poly.bind(r);
+                            if let Some(p) = poly.as_mut() {
+                                p.bind(r);
+                            }
                         }
                     });
                 });
@@ -1394,6 +1415,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
                     ps.v.update(r_j);
                 });
             });
+
+            // All suffix/Q polynomials have been bound once (halve their logical length).
+            ps.suffix_poly_len /= 2;
 
             // Update prefix checkpoints every 2 rounds
             if ps.r.len().is_multiple_of(2) {
@@ -1521,7 +1545,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         ps: &ReadRafProverState<F>,
         j: usize,
     ) -> [AdditiveShare<F>; 2] {
-        let len = ps.suffix_polys[0][0].len();
+        let len = ps.suffix_poly_len;
+        debug_assert!(len > 0, "suffix_poly_len must be > 0 during address rounds");
         let log_len = len.log_2();
 
         let r_x = if j % 2 == 1 {
@@ -1578,8 +1603,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                     let mut suffixes_right: [AdditiveShare<F>; 8] = [AdditiveShare::<F>::zero(); 8];
                     for si in 0..n {
                         // `get_coeff` is a by-value read of an AdditiveShare.
-                        suffixes_left[si] = suffixes[si].get_coeff(b);
-                        suffixes_right[si] = suffixes[si].get_coeff(b + half);
+                        if let Some(poly) = suffixes[si].as_ref() {
+                            suffixes_left[si] = poly.get_coeff(b);
+                            suffixes_right[si] = poly.get_coeff(b + half);
+                        }
                     }
 
                     // `LookupTables::combine(prefixes, suffixes)` is linear in `suffixes`.

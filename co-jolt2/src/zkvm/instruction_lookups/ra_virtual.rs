@@ -23,6 +23,7 @@ use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorW
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::subprotocols::mles_product_sum::compute_mles_product_16_rep3;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -38,7 +39,7 @@ pub struct Rep3InstructionRaSumcheckWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
     pub fn new(
-        one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
+        one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
         r_address: &[F::Challenge],
         r_cycle: Vec<F::Challenge>,
         input_claim: F,
@@ -568,8 +569,8 @@ mod tests {
     use jolt_core::ark_bn254::Fr;
     use jolt_core::poly::ra_poly::RaPolynomial;
     use jolt_core::subprotocols::mles_product_sum::compute_mles_product_sum;
+    use mpc_core::protocols::rep3;
     use mpc_core::protocols::rep3::combine_field_element;
-    use mpc_core::protocols::rep3 as rep3;
     use num_traits::{One, Zero};
     use rand::RngCore;
     use std::sync::Arc;
@@ -753,7 +754,8 @@ mod tests {
             ),
              mut io_ctx| {
                 let (ohp, r_addr, r_cyc, claim) = input;
-                let mut worker = Rep3InstructionRaSumcheckWorker::new(&ohp, &r_addr, r_cyc, claim);
+                let mut worker =
+                    Rep3InstructionRaSumcheckWorker::new(Arc::new(ohp), &r_addr, r_cyc, claim);
                 let party_id = io_ctx.party_id();
                 let mut prev_claim: AdditiveShare<Fr> =
                     additive::promote_to_trivial_share(claim, party_id);

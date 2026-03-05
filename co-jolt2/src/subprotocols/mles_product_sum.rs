@@ -173,9 +173,8 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
             let start = idx * level1_block_len;
             let in_block = &level1_rep3[start..start + level1_block_len];
 
-            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] = std::array::from_fn(|t| {
-                std::array::from_fn(|k| in_block[t * 3 + k])
-            });
+            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] =
+                std::array::from_fn(|t| std::array::from_fn(|k| in_block[t * 3 + k]));
 
             for group in 0..4 {
                 let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
@@ -201,9 +200,8 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
             let start = idx * level2_block_len;
             let in_block = &level2_rep3[start..start + level2_block_len];
 
-            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] = std::array::from_fn(|q| {
-                std::array::from_fn(|k| in_block[q * 5 + k])
-            });
+            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] =
+                std::array::from_fn(|q| std::array::from_fn(|k| in_block[q * 5 + k]));
 
             for group in 0..2 {
                 let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);

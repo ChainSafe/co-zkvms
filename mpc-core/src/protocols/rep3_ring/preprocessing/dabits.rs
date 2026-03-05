@@ -113,6 +113,15 @@ impl<F: PrimeField> LazyDaBits<F> {
         self.total - self.cursor
     }
 
+    /// Reset the consumption cursor to 0 in `reuse-preproc` mode.
+    ///
+    /// This is intended for benchmark harnesses that run multiple proofs in one process and
+    /// want to re-use the same persisted preprocessing pool across iterations.
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+    }
+
     /// Drain `n` daBit tuples from the pool.
     pub fn take_batch(&mut self, n: usize) -> DaBitBatch<F> {
         assert!(
@@ -135,11 +144,36 @@ impl<F: PrimeField> LazyDaBits<F> {
 
             // Stored layout: [s₂₀_0, s₁₂_0, s₂₀_1, s₁₂_1, …]
             let store_base = cursor_base * 2;
-            let stored_slice = self.stored.as_slice();
+            let stored_slice = {
+                #[cfg(feature = "reuse-preproc")]
+                {
+                    self.stored
+                        .read_reuse(store_base, store_base + 2 * n)
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "LazyDaBits(P2): read_reuse({}..{}) failed: {e}",
+                                store_base,
+                                store_base + 2 * n
+                            );
+                        })
+                }
+                #[cfg(not(feature = "reuse-preproc"))]
+                {
+                    self.stored
+                        .read_consume(store_base, store_base + 2 * n)
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "LazyDaBits(P2): read_consume({}..{}) failed: {e}",
+                                store_base,
+                                store_base + 2 * n
+                            );
+                        })
+                }
+            };
             let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                 .map(|i| {
-                    let s20 = stored_slice[store_base + 2 * i]; // v.a for P2
-                    let s12 = stored_slice[store_base + 2 * i + 1]; // v.b for P2
+                    let s20 = stored_slice[2 * i]; // v.a for P2
+                    let s12 = stored_slice[2 * i + 1]; // v.b for P2
                     Rep3PrimeFieldShare::new(s20, s12)
                 })
                 .collect();
@@ -177,11 +211,36 @@ impl<F: PrimeField> LazyDaBits<F> {
                     .map(|i| ((s1_buf[i * da_stride] ^ g2_bytes[i]) & 1) != 0)
                     .collect();
 
-                let stored_slice = self.stored.as_slice();
+                let stored_slice = {
+                    #[cfg(feature = "reuse-preproc")]
+                    {
+                        self.stored
+                            .read_reuse(cursor_base, cursor_base + n)
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "LazyDaBits(P0): read_reuse({}..{}) failed: {e}",
+                                    cursor_base,
+                                    cursor_base + n
+                                );
+                            })
+                    }
+                    #[cfg(not(feature = "reuse-preproc"))]
+                    {
+                        self.stored
+                            .read_consume(cursor_base, cursor_base + n)
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "LazyDaBits(P0): read_consume({}..{}) failed: {e}",
+                                    cursor_base,
+                                    cursor_base + n
+                                );
+                            })
+                    }
+                };
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                     .map(|i| {
                         let r1: F = parse_field(&s1_buf, i * da_stride + 1 + fb);
-                        let s20 = stored_slice[cursor_base + i]; // received from P2
+                        let s20 = stored_slice[i]; // received from P2
                         Rep3PrimeFieldShare::new(r1, s20) // (.a=s₀₁=r₁, .b=s₂₀)
                     })
                     .collect();
@@ -291,7 +350,11 @@ impl<F: PrimeField> LazyDaBits<F> {
                     std::io::ErrorKind::InvalidData,
                     format!(
                         "dabits.stored: expected at least {} elements, got {} (total={}, cursor={}, party={:?})",
-                        expected, bs.len(), meta.total, meta.cursor, party_id,
+                        expected,
+                        bs.len(),
+                        meta.total,
+                        meta.cursor,
+                        party_id,
                     ),
                 ));
             }

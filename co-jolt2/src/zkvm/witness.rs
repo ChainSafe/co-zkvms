@@ -85,28 +85,35 @@ where
         return Ok(());
     }
 
-    let n = jobs.len();
-    let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
-    let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(n);
-    for job in jobs {
-        shares.push(job.share);
-        targets.push((job.col, job.row));
-    }
+    let chunk_size: usize = std::env::var("B2A_CHUNK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8192);
 
-    let batch = preproc.take_edabits::<u64>(n);
-    let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
-        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch, ctx)
-    })?;
+    for chunk in jobs.chunks(chunk_size) {
+        let n = chunk.len();
+        let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
+        let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(n);
+        for job in chunk {
+            shares.push(job.share);
+            targets.push((job.col, job.row));
+        }
 
-    debug_assert_eq!(casted.len(), targets.len());
-    for (value, (col, row)) in casted.into_iter().zip(targets.into_iter()) {
-        unsafe {
-            match col {
-                SparseCastCol::Rs1 => (&mut *out.rs1.get())[row] = value,
-                SparseCastCol::Rs2 => (&mut *out.rs2.get())[row] = value,
-                SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
-                SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
-                SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
+        let batch = preproc.take_edabits::<u64>(n);
+        let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
+            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch, ctx)
+        })?;
+
+        debug_assert_eq!(casted.len(), targets.len());
+        for (value, (col, row)) in casted.into_iter().zip(targets.into_iter()) {
+            unsafe {
+                match col {
+                    SparseCastCol::Rs1 => (&mut *out.rs1.get())[row] = value,
+                    SparseCastCol::Rs2 => (&mut *out.rs2.get())[row] = value,
+                    SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
+                    SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
+                    SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
+                }
             }
         }
     }
@@ -491,7 +498,12 @@ where
         }
     }
 
-    fill_field_from_operands_sparse_u64::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), preproc)?;
+    fill_field_from_operands_sparse_u64::<F, N>(
+        io_ctx,
+        cast_jobs,
+        Arc::clone(&shared_cols),
+        preproc,
+    )?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
@@ -835,14 +847,10 @@ where
                 let mut combined = std::mem::take(&mut batch.rd_pre);
                 combined.extend(std::mem::take(&mut batch.rd_post));
                 let batch_eda = preproc.take_edabits::<u64>(2 * n);
-                let mut field_all = io_ctx.par_chunks_preproc(
-                    combined,
-                    batch_eda,
-                    None,
-                    |xs, batch_e, ctx| {
+                let mut field_all =
+                    io_ctx.par_chunks_preproc(combined, batch_eda, None, |xs, batch_e, ctx| {
                         edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
-                    },
-                )?;
+                    })?;
                 let post_field = field_all.split_off(n);
                 let pre_field = field_all;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
@@ -863,14 +871,10 @@ where
                 let mut combined = std::mem::take(&mut batch.ram_pre);
                 combined.extend(std::mem::take(&mut batch.ram_post));
                 let batch_eda = preproc.take_edabits::<u64>(2 * n);
-                let mut field_all = io_ctx.par_chunks_preproc(
-                    combined,
-                    batch_eda,
-                    None,
-                    |xs, batch_e, ctx| {
+                let mut field_all =
+                    io_ctx.par_chunks_preproc(combined, batch_eda, None, |xs, batch_e, ctx| {
                         edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
-                    },
-                )?;
+                    })?;
                 let post_field = field_all.split_off(n);
                 let pre_field = field_all;
                 let inc: Vec<Rep3PrimeFieldShare<F>> = post_field

@@ -243,6 +243,15 @@ where
         self.total - self.cursor
     }
 
+    /// Reset the consumption cursor to 0 in `reuse-preproc` mode.
+    ///
+    /// This is intended for benchmark harnesses that run multiple proofs in one process and
+    /// want to re-use the same persisted preprocessing pool across iterations.
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+    }
+
     /// Drain `n` edaBits as a flat `EdaBitsBatch` with zero per-edaBit allocations.
     ///
     /// Two allocations total: `gammas` (len n) + `alphas_flat` (len n*K).
@@ -273,7 +282,26 @@ where
         if party_id == PartyID::ID2 {
             let flat_start = cursor_base * k;
             let flat_end = flat_start + n * k;
-            let alphas_flat = self.alpha2_flat.as_slice()[flat_start..flat_end].to_vec();
+            let alphas_flat = {
+                #[cfg(feature = "reuse-preproc")]
+                {
+                    self.alpha2_flat
+                        .read_reuse(flat_start, flat_end)
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "LazyEdaBits(P2): read_reuse({flat_start}..{flat_end}) failed: {e}"
+                            );
+                        })
+                }
+                #[cfg(not(feature = "reuse-preproc"))]
+                {
+                    self.alpha2_flat
+                        .read_consume(flat_start, flat_end)
+                        .unwrap_or_else(|e| {
+                            panic!("LazyEdaBits(P2): read_consume({flat_start}..{flat_end}) failed: {e}");
+                        })
+                }
+            };
             let gammas = vec![RingElement(T::zero()); n];
             self.cursor += n;
             self.persist_cursor();
@@ -1504,6 +1532,21 @@ impl<F: PrimeField> PreprocessingPool<F> {
             ],
             self.dabits.remaining(),
         )
+    }
+
+    /// Reset all internal cursors to 0 in `reuse-preproc` mode.
+    ///
+    /// This makes the pool re-usable across multiple proof iterations in a single process.
+    /// Not safe for production use (re-using preprocessing randomness breaks security),
+    /// hence gated behind `reuse-preproc`.
+    #[cfg(feature = "reuse-preproc")]
+    pub fn reset_cursors_for_reuse(&mut self) {
+        self.edabits_u8.reset_cursor_for_reuse();
+        self.edabits_u16.reset_cursor_for_reuse();
+        self.edabits_u32.reset_cursor_for_reuse();
+        self.edabits_u64.reset_cursor_for_reuse();
+        self.edabits_u128.reset_cursor_for_reuse();
+        self.dabits.reset_cursor_for_reuse();
     }
 
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.

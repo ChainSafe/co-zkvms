@@ -99,11 +99,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
                 let hint_share: Vec<JoltG1Wrapper> = unsafe {
                     let mut v = std::mem::ManuallyDrop::new(row_commitments);
-                    Vec::from_raw_parts(
-                        v.as_mut_ptr() as *mut JoltG1Wrapper,
-                        v.len(),
-                        v.capacity(),
-                    )
+                    Vec::from_raw_parts(v.as_mut_ptr() as *mut JoltG1Wrapper, v.len(), v.capacity())
                 };
 
                 (
@@ -126,16 +122,40 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
     where
         U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
     {
-        polys
-            .par_iter()
-            .map(|p| {
-                <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
-                    p.borrow(),
-                    setup,
-                    commit_to_public,
-                )
-            })
-            .collect()
+        // Dory commitment involves large transient MSM/pairing buffers. Committing in smaller
+        // batches reduces peak RSS (at a small throughput cost).
+        let batch_size: usize = std::env::var("DORY_COMMIT_BATCH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(8);
+        if batch_size == 0 || polys.len() <= batch_size {
+            return polys
+                .par_iter()
+                .map(|p| {
+                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                        p.borrow(),
+                        setup,
+                        commit_to_public,
+                    )
+                })
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(polys.len());
+        for chunk in polys.chunks(batch_size) {
+            let mut results: Vec<_> = chunk
+                .par_iter()
+                .map(|p| {
+                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                        p.borrow(),
+                        setup,
+                        commit_to_public,
+                    )
+                })
+                .collect();
+            out.append(&mut results);
+        }
+        out
     }
 
     #[tracing::instrument(skip_all, name = "Dory::prove")]
@@ -178,7 +198,16 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             // Pre-compute affine generators once (used for pairing/MSM across all rounds)
             let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << nu)]);
-            (sigma, num_vars, nu, l_vec, r_vec, g1_all, g2_all, g1_affine_all)
+            (
+                sigma,
+                num_vars,
+                nu,
+                l_vec,
+                r_vec,
+                g1_all,
+                g2_all,
+                g1_affine_all,
+            )
         };
 
         // 1) Compute row commitment shares — dispatch based on variant + hint
@@ -199,14 +228,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                         rows.resize(num_rows_target, G1Projective::zero());
                         rows
                     }
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
-                        one_hot.commit_rows::<G1Projective>(g1_col_affine)
-                            .map(|mut rows| { rows.resize(num_rows_target, G1Projective::zero()); rows })?
-                    }
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
-                        rlc.commit_rows::<G1Projective>(g1_col_affine)
-                            .map(|mut rows| { rows.resize(num_rows_target, G1Projective::zero()); rows })?
-                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => one_hot
+                        .commit_rows::<G1Projective>(g1_col_affine)
+                        .map(|mut rows| {
+                            rows.resize(num_rows_target, G1Projective::zero());
+                            rows
+                        })?,
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc
+                        .commit_rows::<G1Projective>(g1_col_affine)
+                        .map(|mut rows| {
+                            rows.resize(num_rows_target, G1Projective::zero());
+                            rows
+                        })?,
                     Rep3MultilinearPolynomial::Public(_) => {
                         return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
                     }
@@ -330,14 +363,13 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = {
                 let _span = tracing::trace_span!("second_msg", n2).entered();
                 rayon::join(
-                    || rayon::join(
-                        || multi_pairing(v1_l, v2_r),
-                        || multi_pairing(v1_r, v2_l),
-                    ),
-                    || rayon::join(
-                        || msm_g2(v2_r, s1_l).into_affine(),
-                        || msm_g2(v2_l, s1_r).into_affine(),
-                    ),
+                    || rayon::join(|| multi_pairing(v1_l, v2_r), || multi_pairing(v1_r, v2_l)),
+                    || {
+                        rayon::join(
+                            || msm_g2(v2_r, s1_l).into_affine(),
+                            || msm_g2(v2_l, s1_r).into_affine(),
+                        )
+                    },
                 )
             };
 
@@ -493,14 +525,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 let g1_aff_nu = &g1_affine_all[..(1 << curr_nu)];
                 let g2_aff_nu = &g2_affine_all[..(1 << curr_nu)];
                 rayon::join(
-                    || rayon::join(
-                        || multi_pairing_g2_affine(v1_l, g2_prime_aff),
-                        || multi_pairing_g2_affine(v1_r, g2_prime_aff),
-                    ),
-                    || rayon::join(
-                        || msm_g1_affine(g1_aff_nu, &s2),
-                        || msm_g2_affine(g2_aff_nu, &s1),
-                    ),
+                    || {
+                        rayon::join(
+                            || multi_pairing_g2_affine(v1_l, g2_prime_aff),
+                            || multi_pairing_g2_affine(v1_r, g2_prime_aff),
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || msm_g1_affine(g1_aff_nu, &s2),
+                            || msm_g2_affine(g2_aff_nu, &s1),
+                        )
+                    },
                 )
             };
 
@@ -545,10 +581,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             let (s2_l, s2_r) = s2.split_at(n2);
             let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let (e1_plus, e1_minus) = rayon::join(
-                || msm_g1(v1_l, s2_r),
-                || msm_g1(v1_r, s2_l),
-            );
+            let (e1_plus, e1_minus) = rayon::join(|| msm_g1(v1_l, s2_r), || msm_g1(v1_r, s2_l));
 
             let second_msg =
                 dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -568,9 +601,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
             // Fold v1 (in-place GLV) and s1,s2 for next round (public)
             let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-                v1_l_mut, alpha, v1_r_ref,
-            );
+            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
             v1_pub.truncate(n2);
 
             let (s1_l, s1_r) = s1.split_at(n2);
@@ -723,10 +754,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 )
             };
             let rlc_row_commitments: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(
-                    rlc_hint.as_ptr() as *const G1Projective,
-                    rlc_hint.len(),
-                )
+                std::slice::from_raw_parts(rlc_hint.as_ptr() as *const G1Projective, rlc_hint.len())
             };
 
             // v[i] = coeff * v[i] + accumulated[i]
@@ -839,8 +867,7 @@ fn msm_g1(bases: &[G1Projective], scalars: &[Fr]) -> G1Projective {
 
 /// MSM with pre-computed affine bases (avoids redundant normalization).
 fn msm_g1_affine(bases_aff: &[G1Affine], scalars: &[Fr]) -> G1Projective {
-    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars)
-        .expect("msm should succeed")
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
 }
 
 fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
@@ -850,8 +877,7 @@ fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
 
 /// MSM with pre-computed affine bases (avoids redundant normalization).
 fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
-    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars)
-        .expect("msm should succeed")
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
 }
 
 fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {

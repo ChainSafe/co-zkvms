@@ -220,8 +220,7 @@ where
 
         assert!(msm_size <= powers_of_g.len(), "Key length error");
 
-        let commitments =
-            <E::G1 as VariableBaseMSM>::batch_msm(&powers_of_g[..msm_size], polys);
+        let commitments = <E::G1 as VariableBaseMSM>::batch_msm(&powers_of_g[..msm_size], polys);
         commitments
             .into_iter()
             .map(|c| {
@@ -401,12 +400,9 @@ where
         }
         let scalars: Vec<_> = (0..(1 << k)).map(|x| q[k][x >> 1]).collect();
 
-        let pi_g = <E::G1 as VariableBaseMSM>::msm_field_elements(
-            &ck.powers_of_g[i],
-            &scalars,
-        )
-        .unwrap()
-        .into_affine();
+        let pi_g = <E::G1 as VariableBaseMSM>::msm_field_elements(&ck.powers_of_g[i], &scalars)
+            .unwrap()
+            .into_affine();
         proofs.push(pi_g);
     }
 
@@ -470,9 +466,8 @@ where
             }
             Rep3MultilinearPolynomial::Shared(shared_poly) => match shared_poly {
                 Rep3SharedPoly::Dense(poly) => {
-                    let poly_a = MultilinearPolynomial::LargeScalars(
-                        poly.into_distributed_commit_form(),
-                    );
+                    let poly_a =
+                        MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form());
                     let (commitment, hint) = <Self as CommitmentScheme>::commit(&poly_a, setup);
                     (MaybeShared::Shared(commitment), MaybeShared::Shared(hint))
                 }
@@ -566,9 +561,7 @@ where
             opening_point.iter().rev().map(|c| (*c).into()).collect();
 
         let dense_poly = match poly {
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
-                dense.copy_share_a()
-            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => dense.copy_share_a(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
                 materialize_one_hot_share_a(one_hot)
             }
@@ -684,11 +677,7 @@ fn commit_one_hot_shared(
         .collect();
 
     // Step 2: MSM(K) with shared scalars e_field[k].a
-    let scalars: Vec<ark_bn254::Fr> = one_hot
-        .rand_ohv_e_field
-        .iter()
-        .map(|s| s.a)
-        .collect();
+    let scalars: Vec<ark_bn254::Fr> = one_hot.rand_ohv_e_field.iter().map(|s| s.a).collect();
 
     let buckets_affine: Vec<<ark_bn254::Bn254 as Pairing>::G1Affine> =
         G1::normalize_batch(&buckets);
@@ -819,12 +808,7 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test");
         let proof = PST13::<E>::prove(&setup, &poly, &point, hint, &mut transcript);
 
-        let opening = poly.evaluate(
-            &point
-                .iter()
-                .map(|c| (*c).into())
-                .collect::<Vec<F>>(),
-        );
+        let opening = poly.evaluate(&point.iter().map(|c| (*c).into()).collect::<Vec<F>>());
 
         let mut transcript = ProofTranscript::new(b"test");
         PST13::<E>::verify(

@@ -1,9 +1,9 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;

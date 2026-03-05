@@ -10,7 +10,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN>
         )
     }
 
-    #[tracing::instrument(skip_all, name = "VirtualAssertValidUnsignedRemainder::output", level = "trace")]
+    #[tracing::instrument(
+        skip_all,
+        name = "VirtualAssertValidUnsignedRemainder::output",
+        level = "trace"
+    )]
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],

@@ -160,7 +160,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         let (ra_input_claim, ra_r_address, ra_r_cycle): (F, Vec<F::Challenge>, Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
         let mut ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            &*self.one_hot_polys,
+            self.one_hot_polys.clone(),
             &ra_r_address,
             ra_r_cycle,
             ra_input_claim,

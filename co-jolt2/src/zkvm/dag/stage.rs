@@ -350,7 +350,7 @@ where
         use crate::zkvm::instruction_lookups::ra_virtual::Rep3InstructionRaSumcheckWorker;
 
         let ram_dag = self.ram_dag.as_mut().expect("ram_dag missing");
-        let lookups_dag = self.lookups_dag.as_mut().expect("lookups_dag missing");
+        let lookups_dag = self.lookups_dag.take().expect("lookups_dag missing");
 
         // Single init message (bundle): RAM init + Bytecode init + Lookups RA init.
         let (ram_init, bytecode_init, ra_input_claim, ra_r_address, ra_r_cycle): (
@@ -369,8 +369,10 @@ where
         let bytecode_stage4 = bytecode_dag.stage4_instances(sm, io_ctx)?;
 
         // Lookups RA init (always active; mirrors vanilla stage4).
+        let one_hot_polys = lookups_dag.one_hot_polys.clone();
+        drop(lookups_dag);
         let ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            &lookups_dag.one_hot_polys,
+            one_hot_polys,
             &ra_r_address,
             ra_r_cycle,
             ra_input_claim,

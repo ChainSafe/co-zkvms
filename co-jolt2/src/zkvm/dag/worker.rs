@@ -11,6 +11,7 @@ use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck::HybridBatchedSumcheckWorker;
+use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
@@ -106,6 +107,7 @@ impl Rep3JoltDagWorker {
             preproc,
         )?;
         drop(_stage2);
+        maybe_purge_jemalloc();
 
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
@@ -120,6 +122,7 @@ impl Rep3JoltDagWorker {
             preproc,
         )?;
         drop(_stage3);
+        maybe_purge_jemalloc();
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
@@ -133,7 +136,14 @@ impl Rep3JoltDagWorker {
                 &mut io_ctx,
                 preproc,
             )?;
+            drop(_stage4);
         }
+
+        // Stage 2-4 DAG state can be dropped before the opening reduction.
+        let _drop_stages = info_span!("drop_stages").entered();
+        drop(stages);
+        drop(_drop_stages);
+        maybe_purge_jemalloc();
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
@@ -147,6 +157,7 @@ impl Rep3JoltDagWorker {
                 &mut io_ctx,
             )?;
         drop(_stage5);
+        maybe_purge_jemalloc();
 
         Ok(())
     }

@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-// #[cfg(feature = "tracy-mem")]
-// #[global_allocator]
-// static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
-//     tracy_client::ProfiledAllocator::new(std::alloc::System, 0);
+#[cfg(feature = "tracy-mem")]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<tikv_jemallocator::Jemalloc> =
+    tracy_client::ProfiledAllocator::new(tikv_jemallocator::Jemalloc, 0);
 
+#[cfg(not(feature = "tracy-mem"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -22,8 +23,9 @@ use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
+use co_jolt2::utils::memory::start_jemalloc_monitor;
 use co_jolt2::utils::tracing::init_tracing_bench;
-use co_jolt2::zkvm::instruction::{populate_operands_casts, Rep3Cycle};
+use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::{Rep3Jolt, Rep3JoltWorker};
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
@@ -66,6 +68,16 @@ struct Args {
     /// Preprocess only, without running the main computation.
     #[clap(short = 'P', long)]
     preprocess_only: Option<bool>,
+
+    /// Number of Rayon threads to use in this process.
+    #[clap(long, default_value = "4")]
+    rayon_threads: usize,
+
+    /// Repeat the full proof pipeline N times in the same process.
+    ///
+    /// Requires `--features reuse-preproc` (or the pool will be consumed).
+    #[clap(long, default_value = "1")]
+    repeat_proofs: usize,
 }
 
 /// Payload sent from coordinator to each worker.
@@ -142,6 +154,7 @@ fn main() -> eyre::Result<()> {
     let _tracy = if std::env::var("TRACY").is_ok() {
         let client = tracy_client::Client::start();
         start_rss_monitor(std::time::Duration::from_millis(10));
+        start_jemalloc_monitor(std::time::Duration::from_millis(50));
         Some(client)
     } else {
         None
@@ -156,7 +169,7 @@ fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("Could not install default rustls crypto provider"))?;
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
+        .num_threads(args.rayon_threads)
         .build_global()
         .expect("set global Rayon pool");
 
@@ -227,7 +240,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Generate shares
     info!("generating trace shares");
     let mut rng = test_rng();
-    let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
+    let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
     // Pad shared traces
     // for (trace, _, _) in shares.iter_mut() {
     //     trace.resize(padded_len, Rep3Cycle::NoOp);
@@ -244,7 +257,6 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
     // Send shares to workers
-    info!("sending shares to workers");
     let worker_payloads: Vec<Vec<u8>> = shares
         .into_iter()
         .map(|(trace, memory, program_io_share)| {
@@ -263,26 +275,43 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         .collect::<bincode::Result<Vec<_>>>()
         .context("serializing worker payloads")?;
 
-    network
-        .send_requests_blocking(worker_payloads)
-        .context("sending worker payloads")?;
-
     if args.preprocess_only.unwrap_or(false) {
+        info!("preprocess-only: sending worker payload once and exiting");
+        network
+            .send_requests_blocking(worker_payloads)
+            .context("sending worker payloads")?;
         return Ok(());
     }
 
-    // Run coordinator prove
-    info!("starting coordinator prove");
-    let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
-        &verifier_preprocessing,
-        &preprocessing.generators,
-        io_device,
-        &mut network,
-        ram_k,
-        padded_len,
-    )?;
+    for iter in 0..args.repeat_proofs {
+        info!(
+            iter,
+            total = args.repeat_proofs,
+            "sending shares to workers"
+        );
+        network
+            .send_requests_blocking(worker_payloads.clone())
+            .context("sending worker payloads")?;
 
-    info!(commitments = proof.commitments.len(), "coordinator done");
+        // Run coordinator prove
+        info!(iter, "starting coordinator prove");
+        let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
+            &verifier_preprocessing,
+            &preprocessing.generators,
+            io_device.clone(),
+            &mut network,
+            ram_k,
+            padded_len,
+        )?;
+
+        info!(
+            iter,
+            commitments = proof.commitments.len(),
+            "coordinator done"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     network.log_connection_stats(None);
 
@@ -303,28 +332,34 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     info!("creating worker network");
     let mut network = Rep3QuicMpcNetWorker::new(config, 0)?;
 
+    if args.repeat_proofs > 1 && !cfg!(feature = "reuse-preproc") {
+        return Err(eyre::eyre!(
+            "--repeat-proofs > 1 requires building with --features reuse-preproc"
+        ));
+    }
+
     // Receive share from coordinator (includes bytecode + memory_init)
     info!("receiving share from coordinator");
-    let payload_bytes: Vec<u8> = network.receive_request()?;
-    let payload: WorkerPayload =
-        bincode::deserialize(&payload_bytes).context("deserializing worker payload")?;
+    let first_payload_bytes: Vec<u8> = network.receive_request()?;
+    let first_payload: WorkerPayload =
+        bincode::deserialize(&first_payload_bytes).context("deserializing worker payload")?;
 
     let WorkerPayload {
-        mut trace,
-        memory,
-        program_io_share,
+        trace: first_trace,
+        memory: first_memory,
+        program_io_share: first_program_io_share,
         io_device,
         bytecode,
         memory_init,
         padded_len,
         ram_k,
-    } = payload;
+    } = first_payload;
+    let mut first_trace = Some(first_trace);
+    let mut first_memory = Some(first_memory);
+    let mut first_program_io_share = Some(first_program_io_share);
 
-    let trace_len = trace.len();
+    let trace_len = first_trace.as_ref().expect("worker trace present").len();
     tracing::info!("trace length: {}", trace_len);
-
-    // Pad trace if needed (should already be padded by coordinator)
-    trace.resize(padded_len, Rep3Cycle::NoOp);
 
     // Build prover preprocessing
     info!("building preprocessing");
@@ -427,28 +462,55 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         return Ok(());
     }
 
-    // Prove
-    <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
-        &preprocessing,
-        trace,
-        io_device,
-        memory,
-        &mut io_ctx,
-        ram_k,
-        Some(program_io_share),
-        &mut preproc,
-    )?;
+    for iter in 0..args.repeat_proofs {
+        let (mut trace, memory, program_io_share) = if iter == 0 {
+            (
+                first_trace.take().expect("missing first trace"),
+                first_memory.take().expect("missing first memory"),
+                first_program_io_share
+                    .take()
+                    .expect("missing first program_io_share"),
+            )
+        } else {
+            let payload_bytes: Vec<u8> = io_ctx.network().receive_request()?;
+            let payload: WorkerPayload =
+                bincode::deserialize(&payload_bytes).context("deserializing worker payload")?;
+            (payload.trace, payload.memory, payload.program_io_share)
+        };
 
-    let (rem_eda, rem_da) = preproc.remaining_counts();
-    info!(
-        u8 = rem_eda[0],
-        u16 = rem_eda[1],
-        u32 = rem_eda[2],
-        u64 = rem_eda[3],
-        u128 = rem_eda[4],
-        dabits = rem_da,
-        "remaining preprocessing"
-    );
+        // Pad trace if needed (should already be padded by coordinator)
+        trace.resize(padded_len, Rep3Cycle::NoOp);
+
+        if iter > 0 && cfg!(feature = "reuse-preproc") {
+            preproc.reset_cursors_for_reuse();
+        }
+
+        info!(iter, total = args.repeat_proofs, "starting worker prove");
+        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+            &preprocessing,
+            trace,
+            io_device.clone(),
+            memory,
+            &mut io_ctx,
+            ram_k,
+            Some(program_io_share),
+            &mut preproc,
+        )?;
+
+        let (rem_eda, rem_da) = preproc.remaining_counts();
+        info!(
+            iter,
+            u8 = rem_eda[0],
+            u16 = rem_eda[1],
+            u32 = rem_eda[2],
+            u64 = rem_eda[3],
+            u128 = rem_eda[4],
+            dabits = rem_da,
+            "remaining preprocessing"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     io_ctx.network().log_connection_stats();
 

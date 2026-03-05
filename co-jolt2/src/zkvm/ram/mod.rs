@@ -1,3 +1,4 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt2_common::constants::RAM_START_ADDRESS;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
@@ -5,11 +6,10 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 
@@ -285,8 +285,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
             index += 1;
         }
 
@@ -302,8 +301,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
             }
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(u64::from_le_bytes(word)));
             index += 1;
         }
 
@@ -481,8 +479,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             );
             let eq_r_cycle = EqPolynomial::evals(&r_cycle_point.r);
 
-            let F_arrays =
-                compute_address_chunk_hists::<F>(&addresses, &eq_r_cycle, d, chunk_size, dth_root_log);
+            let F_arrays = compute_address_chunk_hists::<F>(
+                &addresses,
+                &eq_r_cycle,
+                d,
+                chunk_size,
+                dth_root_log,
+            );
 
             let hamming_weight = RamHammingWeight::new_prover_from_parts(
                 init.hamming_gamma_powers,
@@ -493,8 +496,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             // Booleanity uses its OWN eq_r_cycle (from transcript challenge),
             // which differs from HammingWeight's r_cycle (from accumulator opening).
             let bool_eq_r_cycle = EqPolynomial::evals(&init.bool_r_cycle);
-            let G_arrays =
-                compute_address_chunk_hists::<F>(&addresses, &bool_eq_r_cycle, d, chunk_size, dth_root_log);
+            let G_arrays = compute_address_chunk_hists::<F>(
+                &addresses,
+                &bool_eq_r_cycle,
+                d,
+                chunk_size,
+                dth_root_log,
+            );
 
             // RaSumcheck: build ra_i_polys and eq_poly from trace
             let eq_tables: Vec<Vec<F>> = init

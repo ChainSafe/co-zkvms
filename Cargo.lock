@@ -805,6 +805,7 @@ dependencies = [
  "snarks-core",
  "strum",
  "strum_macros",
+ "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
@@ -2481,7 +2482,7 @@ dependencies = [
  "eyre",
  "fancy-garbling",
  "itertools 0.12.1",
- "memmap2",
+ "libc",
  "mpc-net",
  "mpc-types",
  "nom",
@@ -3977,6 +3978,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "661f1f6a57b3a36dc9174a2c10f19513b4866816e13425d3e418b11cc37bc24c"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
