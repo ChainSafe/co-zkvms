@@ -12,6 +12,7 @@ mod jemalloc {
     static P_RESIDENT: tracy_client::PlotName = plot_name!("jemalloc.resident");
     static P_RETAINED: tracy_client::PlotName = plot_name!("jemalloc.retained");
     static P_MAPPED: tracy_client::PlotName = plot_name!("jemalloc.mapped");
+    static P_METADATA: tracy_client::PlotName = plot_name!("jemalloc.metadata");
 
     fn config_plot() -> PlotConfiguration {
         PlotConfiguration::default()
@@ -30,6 +31,7 @@ mod jemalloc {
         client.plot_config(P_RESIDENT, config_plot());
         client.plot_config(P_RETAINED, config_plot());
         client.plot_config(P_MAPPED, config_plot());
+        client.plot_config(P_METADATA, config_plot());
 
         std::thread::Builder::new()
             .name("jemalloc-monitor".into())
@@ -40,6 +42,7 @@ mod jemalloc {
                 let resident = stats::resident::read().unwrap_or(0);
                 let retained = stats::retained::read().unwrap_or(0);
                 let mapped = stats::mapped::read().unwrap_or(0);
+                let metadata = stats::metadata::read().unwrap_or(0);
 
                 if let Some(c) = Client::running() {
                     c.plot(P_ALLOCATED, allocated as f64);
@@ -47,6 +50,7 @@ mod jemalloc {
                     c.plot(P_RESIDENT, resident as f64);
                     c.plot(P_RETAINED, retained as f64);
                     c.plot(P_MAPPED, mapped as f64);
+                    c.plot(P_METADATA, metadata as f64);
                 }
                 std::thread::sleep(interval);
             })

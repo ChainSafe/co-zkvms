@@ -481,7 +481,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         // Pad trace if needed (should already be padded by coordinator)
         trace.resize(padded_len, Rep3Cycle::NoOp);
 
-        if iter > 0 && cfg!(feature = "reuse-preproc") {
+        if iter > 0 {
+            #[cfg(feature = "reuse-preproc")]
             preproc.reset_cursors_for_reuse();
         }
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
+
 NUM_ITERS=${NUM_ITERS:-1}
 TRACE_DIR=${TRACE_DIR:-./.traces}
 ARTIFACT_DIR=.artifacts
@@ -21,6 +23,13 @@ TRACY_ALLOC=${TRACY_ALLOC:-0}
 TRACY_CAPTURE=${TRACY_CAPTURE:-0}
 # When set to 1, writes tracy-capture logs to TRACE_DIR (otherwise suppresses them).
 TRACY_CAPTURE_LOG=${TRACY_CAPTURE_LOG:-0}
+# Optional: jemalloc tuning preset (Linux most useful). Applied via MALLOC_CONF unless MALLOC_CONF is already set.
+# Values:
+#   default     - do nothing
+#   return_os   - prefer returning memory to OS (may reduce RSS retention, may cost perf)
+#   aggressive  - aggressively purge/decay (diagnostic; higher perf/noise risk)
+#   narenas1    - use a single arena (diagnostic; can reduce retention with many threads)
+JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 # Optional: override rayon thread count used by the example (passed as CLI arg).
 RAYON_THREADS=${RAYON_THREADS:-}
 # Optional: run multiple proofs in the same worker process (requires `reuse-preproc`).
@@ -35,6 +44,28 @@ if [ "$REUSE_PREPROC" = "1" ]; then
 fi
 if [ "$TRACY_ALLOC" = "1" ]; then
   FEATURES="$FEATURES,tracy-mem,jemalloc-stats"
+fi
+
+MALLOC_CONF_EFFECTIVE=${MALLOC_CONF:-}
+if [ -z "${MALLOC_CONF_EFFECTIVE}" ] && [ "$JEMALLOC_PRESET" != "default" ]; then
+  case "$JEMALLOC_PRESET" in
+    return_os)
+      MALLOC_CONF_EFFECTIVE="background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000,retain:false"
+      ;;
+    aggressive)
+      MALLOC_CONF_EFFECTIVE="background_thread:true,dirty_decay_ms:0,muzzy_decay_ms:0,retain:false"
+      ;;
+    narenas1)
+      MALLOC_CONF_EFFECTIVE="background_thread:true,narenas:1,percpu_arena:disabled,dirty_decay_ms:1000,muzzy_decay_ms:1000,retain:false"
+      ;;
+    *)
+      echo "Unknown JEMALLOC_PRESET=$JEMALLOC_PRESET (expected default|return_os|aggressive|narenas1)" >&2
+      exit 1
+      ;;
+  esac
+fi
+if [ -n "${MALLOC_CONF_EFFECTIVE}" ]; then
+  export MALLOC_CONF="${MALLOC_CONF_EFFECTIVE}"
 fi
 
 PROOF_ARGS=()
@@ -116,6 +147,9 @@ for p in 0 1 2; do
         ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
     maxrss=$(grep "Maximum resident set size" "$tmpfile" | awk '{print $NF}')
     echo "worker${p}: Max RSS = ${maxrss} kB"
+    if [ "$JEMALLOC_PRESET" != "default" ]; then
+      echo "worker${p}: JEMALLOC_PRESET=$JEMALLOC_PRESET"
+    fi
     rm -f "$tmpfile"
   ) &
 done

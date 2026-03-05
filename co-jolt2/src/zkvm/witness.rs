@@ -34,6 +34,7 @@ use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
+use crate::utils::memory::maybe_purge_jemalloc;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 
@@ -585,6 +586,19 @@ where
     N: Rep3NetworkWorker,
     Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
 {
+    let fulfill_index_chunk: usize = std::env::var("FULFILL_INDEX_CHUNK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16 * 1024);
+    let inc_b2a_chunk: usize = std::env::var("INC_B2A_CHUNK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8 * 1024);
+    let inc_b2a_max_forks: usize = std::env::var("INC_B2A_MAX_FORKS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
     let party_id = state.party_id;
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
     let trace: &[Rep3Cycle] = state.trace_ref();
@@ -702,8 +716,34 @@ where
 
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
     let indices: Vec<Rep3RingShare<u128>> = {
-        let _span = info_span!("fulfill_index_futures", count = index_futures.len()).entered();
-        index_futures.fulfill_batched(io_ctx, |r, ()| r)?
+        let total = index_futures.len();
+        let _span = info_span!("fulfill_index_futures", count = total).entered();
+        let mut out: Vec<Rep3RingShare<u128>> = Vec::with_capacity(total);
+        let mut iter = index_futures.into_iter();
+        let mut chunk_id: usize = 0;
+        loop {
+            let mut chunk: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> =
+                Vec::with_capacity(fulfill_index_chunk);
+            for _ in 0..fulfill_index_chunk {
+                let Some(f) = iter.next() else { break };
+                chunk.push(f);
+            }
+            if chunk.is_empty() {
+                break;
+            }
+            let _chunk_span = info_span!(
+                "fulfill_index_futures_chunk",
+                chunk_id,
+                chunk_len = chunk.len()
+            )
+            .entered();
+            let resolved: Vec<Rep3RingShare<u128>> = chunk.fulfill_batched(io_ctx, |r, ()| r)?;
+            drop(_chunk_span);
+            out.extend(resolved);
+            chunk_id += 1;
+        }
+        drop(_span);
+        out
     };
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
@@ -844,20 +884,45 @@ where
             CommittedPolynomial::RdInc => {
                 // rd_inc = rd_post - rd_pre in the field (binary shares → EdaBits B2A)
                 let n = batch.rd_pre.len();
-                let mut combined = std::mem::take(&mut batch.rd_pre);
-                combined.extend(std::mem::take(&mut batch.rd_post));
-                let batch_eda = preproc.take_edabits::<u64>(2 * n);
-                let mut field_all =
-                    io_ctx.par_chunks_preproc(combined, batch_eda, None, |xs, batch_e, ctx| {
-                        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
-                    })?;
-                let post_field = field_all.split_off(n);
-                let pre_field = field_all;
-                let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
-                    .into_iter()
-                    .zip(pre_field)
-                    .map(|(post, pre)| post - pre)
-                    .collect();
+                let rd_pre = std::mem::take(&mut batch.rd_pre);
+                let rd_post = std::mem::take(&mut batch.rd_post);
+                debug_assert_eq!(rd_pre.len(), n);
+                debug_assert_eq!(rd_post.len(), n);
+
+                let _span = info_span!(
+                    "rd_inc_b2a",
+                    n,
+                    chunk = inc_b2a_chunk,
+                    max_forks = inc_b2a_max_forks
+                )
+                .entered();
+                let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                for off in (0..n).step_by(inc_b2a_chunk) {
+                    let end = (off + inc_b2a_chunk).min(n);
+                    let chunk_len = end - off;
+                    let mut combined: Vec<Rep3RingShare<u64>> = Vec::with_capacity(2 * chunk_len);
+                    combined.extend_from_slice(&rd_pre[off..end]);
+                    combined.extend_from_slice(&rd_post[off..end]);
+
+                    let batch_eda = preproc.take_edabits::<u64>(2 * chunk_len);
+                    let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                        edabits::ring_to_field_b2a_many::<u64, F, _>(
+                            &combined,
+                            &batch_eda,
+                            io_ctx.main(),
+                        )?
+                    } else {
+                        let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
+                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
+                            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &b, c)
+                        })?
+                    };
+                    debug_assert_eq!(field_all.len(), 2 * chunk_len);
+                    for i in 0..chunk_len {
+                        inc.push(field_all[chunk_len + i] - field_all[i]);
+                    }
+                }
+                drop(_span);
                 let dense = Rep3DensePolynomial::new(inc);
                 state
                     .prover_state
@@ -868,20 +933,45 @@ where
             CommittedPolynomial::RamInc => {
                 // ram_inc = post_value - pre_value in the field (binary shares → EdaBits B2A)
                 let n = batch.ram_pre.len();
-                let mut combined = std::mem::take(&mut batch.ram_pre);
-                combined.extend(std::mem::take(&mut batch.ram_post));
-                let batch_eda = preproc.take_edabits::<u64>(2 * n);
-                let mut field_all =
-                    io_ctx.par_chunks_preproc(combined, batch_eda, None, |xs, batch_e, ctx| {
-                        edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch_e, ctx)
-                    })?;
-                let post_field = field_all.split_off(n);
-                let pre_field = field_all;
-                let inc: Vec<Rep3PrimeFieldShare<F>> = post_field
-                    .into_iter()
-                    .zip(pre_field)
-                    .map(|(post, pre)| post - pre)
-                    .collect();
+                let ram_pre = std::mem::take(&mut batch.ram_pre);
+                let ram_post = std::mem::take(&mut batch.ram_post);
+                debug_assert_eq!(ram_pre.len(), n);
+                debug_assert_eq!(ram_post.len(), n);
+
+                let _span = info_span!(
+                    "ram_inc_b2a",
+                    n,
+                    chunk = inc_b2a_chunk,
+                    max_forks = inc_b2a_max_forks
+                )
+                .entered();
+                let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                for off in (0..n).step_by(inc_b2a_chunk) {
+                    let end = (off + inc_b2a_chunk).min(n);
+                    let chunk_len = end - off;
+                    let mut combined: Vec<Rep3RingShare<u64>> = Vec::with_capacity(2 * chunk_len);
+                    combined.extend_from_slice(&ram_pre[off..end]);
+                    combined.extend_from_slice(&ram_post[off..end]);
+
+                    let batch_eda = preproc.take_edabits::<u64>(2 * chunk_len);
+                    let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                        edabits::ring_to_field_b2a_many::<u64, F, _>(
+                            &combined,
+                            &batch_eda,
+                            io_ctx.main(),
+                        )?
+                    } else {
+                        let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
+                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
+                            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &b, c)
+                        })?
+                    };
+                    debug_assert_eq!(field_all.len(), 2 * chunk_len);
+                    for i in 0..chunk_len {
+                        inc.push(field_all[chunk_len + i] - field_all[i]);
+                    }
+                }
+                drop(_span);
                 let dense = Rep3DensePolynomial::new(inc);
                 state
                     .prover_state
@@ -926,6 +1016,9 @@ where
             }
         }
     }
+
+    // Diagnostic: force arena purging at a known lifetime boundary (witness → commit)
+    maybe_purge_jemalloc();
 
     Ok(results)
 }
