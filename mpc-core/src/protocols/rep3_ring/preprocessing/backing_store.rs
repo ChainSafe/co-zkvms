@@ -136,6 +136,8 @@ impl<F> BackingStore<F> {
             ));
         }
         let mmap = unsafe { MmapMut::map_mut(&file)? };
+        // Hint sequential access: OS will prefetch ahead and may evict behind.
+        let _ = mmap.advise(memmap2::Advice::Sequential);
         let len = file_len / elem_size;
         Ok(BackingStore::Mapped {
             mmap,
@@ -160,20 +162,40 @@ impl<F> BackingStore<F> {
         *self = BackingStore::InMemory(combined);
     }
 
-    /// Zero out consumed elements in the backing store and flush to disk.
+    /// Release consumed pages from RSS and optionally zero on disk.
     ///
     /// `start..end` are element indices (not byte offsets).
     /// No-op for `InMemory` / `Empty` (in-memory data dies with the process).
-    /// No-op when the `reuse-preproc` feature is enabled.
+    ///
+    /// When `reuse-preproc` is disabled: zeroes the data and flushes to disk.
+    /// Always: advises the OS to drop physical pages (`MADV_DONTNEED`) so they
+    /// no longer count toward RSS. Pages will re-fault from the file if accessed
+    /// again (only relevant with `reuse-preproc`).
     pub(crate) fn consume(&mut self, start: usize, end: usize) {
-        #[cfg(not(feature = "reuse-preproc"))]
         if let BackingStore::Mapped { mmap, .. } = self {
             let elem_size = std::mem::size_of::<F>();
             let byte_start = start * elem_size;
             let byte_end = end * elem_size;
-            mmap[byte_start..byte_end].fill(0);
-            // Best-effort flush; ignore errors (crash safety handled by cursor).
-            let _ = mmap.flush_range(byte_start, byte_end - byte_start);
+
+            #[cfg(not(feature = "reuse-preproc"))]
+            {
+                mmap[byte_start..byte_end].fill(0);
+                // Best-effort flush; ignore errors (crash safety handled by cursor).
+                let _ = mmap.flush_range(byte_start, byte_end - byte_start);
+            }
+
+            // Release physical pages from RSS. Page-align inward so we only
+            // drop fully-consumed pages.
+            const PAGE: usize = 4096;
+            let aligned_start = (byte_start + PAGE - 1) & !(PAGE - 1);
+            let aligned_end = byte_end & !(PAGE - 1);
+            if aligned_start < aligned_end {
+                let _ = mmap.advise_range(
+                    memmap2::Advice::DontNeed,
+                    aligned_start,
+                    aligned_end - aligned_start,
+                );
+            }
         }
     }
 }

@@ -67,7 +67,7 @@ for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
     TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-      /usr/bin/time -v -- ../target/release/examples/rep3_jolt \
+      gtime -v -- ../target/release/examples/rep3_jolt \
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         "${PREPROC_ARGS[@]}" 2>"$tmpfile"

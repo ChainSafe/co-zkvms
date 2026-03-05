@@ -97,10 +97,10 @@ impl Rep3JoltDagWorker {
             instruction_one_hot_polys,
         );
 
-        let mut stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
+        let stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
         let _stage2 = info_span!("stage2_prove").entered();
         HybridBatchedSumcheckWorker::prove(
-            &mut stage2_instances,
+            stage2_instances,
             &mut state.accumulator,
             &mut io_ctx,
             preproc,
@@ -111,10 +111,10 @@ impl Rep3JoltDagWorker {
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
-        let mut stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx, preproc)?;
+        let stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx, preproc)?;
         let _stage3 = info_span!("stage3_prove").entered();
         HybridBatchedSumcheckWorker::prove(
-            &mut stage3_instances,
+            stage3_instances,
             &mut state.accumulator,
             &mut io_ctx,
             preproc,
@@ -124,11 +124,11 @@ impl Rep3JoltDagWorker {
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
         // -------------------------------------------------------------------
-        let mut stage4_instances = stages.stage4_instances(&mut state, &mut io_ctx)?;
+        let stage4_instances = stages.stage4_instances(&mut state, &mut io_ctx)?;
         if !stage4_instances.is_empty() {
             let _stage4 = info_span!("stage4_prove").entered();
             HybridBatchedSumcheckWorker::prove(
-                &mut stage4_instances,
+                stage4_instances,
                 &mut state.accumulator,
                 &mut io_ctx,
                 preproc,

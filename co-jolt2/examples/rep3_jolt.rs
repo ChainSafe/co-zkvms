@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
-use tracy_client::ProfiledAllocator;
+// #[cfg(feature = "tracy-mem")]
+// #[global_allocator]
+// static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+//     tracy_client::ProfiledAllocator::new(std::alloc::System, 0);
 
 #[global_allocator]
-static GLOBAL: ProfiledAllocator<std::alloc::System> =
-    ProfiledAllocator::new(std::alloc::System, 0);
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ark_bn254::Fr;
 use ark_std::test_rng;
@@ -79,11 +81,68 @@ struct WorkerPayload {
     ram_k: usize,
 }
 
+/// Spawn a daemon thread that polls RSS every `interval` and reports it as a Tracy plot.
+fn start_rss_monitor(interval: std::time::Duration) {
+    use tracy_client::{plot_name, Client, PlotConfiguration, PlotFormat, PlotLineStyle};
+
+    static RSS_PLOT: tracy_client::PlotName = plot_name!("RSS");
+    let client = Client::running().expect("Tracy client must be running");
+    client.plot_config(
+        RSS_PLOT,
+        PlotConfiguration::default()
+            .format(PlotFormat::Memory)
+            .line_style(PlotLineStyle::Smooth)
+            .fill(true)
+            .color(Some(0xFF6600)),
+    );
+
+    std::thread::Builder::new()
+        .name("rss-monitor".into())
+        .spawn(move || loop {
+            let rss = get_rss_bytes();
+            if let Some(c) = Client::running() {
+                c.plot(RSS_PLOT, rss as f64);
+            }
+            std::thread::sleep(interval);
+        })
+        .expect("spawn rss-monitor thread");
+}
+
+#[cfg(target_os = "macos")]
+fn get_rss_bytes() -> u64 {
+    unsafe {
+        let mut info: libc::mach_task_basic_info_data_t = std::mem::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        let ret = libc::task_info(
+            libc::mach_task_self(),
+            libc::MACH_TASK_BASIC_INFO,
+            &mut info as *mut _ as *mut i32,
+            &mut count,
+        );
+        if ret == 0 {
+            info.resident_size
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn get_rss_bytes() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map(|pages| pages * 4096)
+        .unwrap_or(0)
+}
+
 fn main() -> eyre::Result<()> {
     // Start Tracy profiler only when TRACY=1 is set (manual-lifetime mode).
     // This lets us profile a single process (e.g. worker 0) without port conflicts.
     let _tracy = if std::env::var("TRACY").is_ok() {
-        Some(tracy_client::Client::start())
+        let client = tracy_client::Client::start();
+        start_rss_monitor(std::time::Duration::from_millis(10));
+        Some(client)
     } else {
         None
     };
