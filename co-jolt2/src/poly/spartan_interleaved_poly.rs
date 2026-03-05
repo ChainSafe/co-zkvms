@@ -3,6 +3,7 @@
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::constraints::LC;
+use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use jolt_core::zkvm::r1cs::inputs::JoltR1CSInputs;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use mpc_core::protocols::additive::AdditiveShare;
@@ -24,7 +25,7 @@ use crate::zkvm::r1cs::inputs::Rep3R1CSCycleInputs;
 /// so a block of 6 entries (two rows × 3 polys) shares the same `index / 6`.
 #[derive(Clone, Debug)]
 pub struct Rep3SpartanInterleavedPolynomial<F: JoltField> {
-    pub(crate) unbound_coeffs_shards: Vec<Vec<SparseCoefficient<Rep3Value<F>>>>,
+    cycle_inputs: Option<Vec<Rep3R1CSCycleInputs<F>>>,
     pub(crate) bound_coeffs: BoundCoeffs<F>,
     dense_len: usize,
     padded_num_constraints: usize,
@@ -59,15 +60,13 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         level = "trace",
         fields(
             num_steps = key.num_steps,
-            num_constraints = uniform_constraints.len(),
+            num_constraints = UNIFORM_R1CS.len(),
             padded_num_constraints = key.padded_row_constraint_per_step()
         )
     )]
     pub fn new(
         key: &UniformSpartanKey<F>,
-        cycle_inputs: &[Rep3R1CSCycleInputs<F>],
-        uniform_constraints: &[jolt_core::zkvm::r1cs::constraints::NamedConstraint],
-        party_id: PartyID,
+        cycle_inputs: Vec<Rep3R1CSCycleInputs<F>>,
     ) -> eyre::Result<Self> {
         eyre::ensure!(
             cycle_inputs.len() == key.num_steps,
@@ -77,7 +76,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         );
         let padded_num_constraints = key.padded_row_constraint_per_step();
         eyre::ensure!(
-            padded_num_constraints >= uniform_constraints.len(),
+            padded_num_constraints >= UNIFORM_R1CS.len(),
             "padded constraints too small"
         );
 
@@ -85,54 +84,8 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let dense_len = num_steps * padded_num_constraints;
         eyre::ensure!(dense_len.is_power_of_two(), "dense_len must be pow2");
 
-        // Chunk by steps; each shard produces sparse (Az,Bz,Cz) coefficients.
-        let num_chunks = core::cmp::min(
-            rayon::current_num_threads().next_power_of_two() * 16,
-            core::cmp::max(1, num_steps / 2),
-        );
-        let chunk_size = num_steps.div_ceil(num_chunks);
-
-        let _build_span =
-            tracing::trace_span!("SpartanInterleavedPoly::build_shards", num_chunks, chunk_size)
-                .entered();
-        let shards: Vec<Vec<SparseCoefficient<Rep3Value<F>>>> = (0..num_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let start = chunk_idx * chunk_size;
-                let end = core::cmp::min((chunk_idx + 1) * chunk_size, num_steps);
-                let mut coeffs: Vec<SparseCoefficient<Rep3Value<F>>> =
-                    Vec::with_capacity((end - start) * uniform_constraints.len() * 3);
-
-                for step_idx in start..end {
-                    let inputs = &cycle_inputs[step_idx];
-                    for (constraint_idx, named) in uniform_constraints.iter().enumerate() {
-                        let row_index = step_idx * padded_num_constraints + constraint_idx;
-                        let base = 3 * row_index;
-
-                        let az = eval_lc_rep3(named.cons.a, inputs, party_id);
-                        if az.shared_or_not_zero() {
-                            coeffs.push((base, az).into());
-                        }
-
-                        let bz = eval_lc_rep3(named.cons.b, inputs, party_id);
-                        if bz.shared_or_not_zero() {
-                            coeffs.push((base + 1, bz).into());
-                        }
-
-                        let cz = eval_lc_rep3(named.cons.c, inputs, party_id);
-                        if cz.shared_or_not_zero() {
-                            coeffs.push((base + 2, cz).into());
-                        }
-                    }
-                }
-
-                coeffs
-            })
-            .collect();
-        drop(_build_span);
-
         Ok(Self {
-            unbound_coeffs_shards: shards,
+            cycle_inputs: Some(cycle_inputs),
             bound_coeffs: BoundCoeffs::None,
             dense_len,
             padded_num_constraints,
@@ -157,8 +110,13 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let party_id = io_ctx.party_id();
         eyre::ensure!(!self.is_bound(), "expected unbound coefficients");
 
-        let (t0, t_inf) = quadratic_evals_from_unbound(
-            &self.unbound_coeffs_shards,
+        let cycle_inputs = self
+            .cycle_inputs
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("missing cycle_inputs for round0"))?;
+
+        let (t0, t_inf) = round0_quadratic_evals_from_cycle_inputs(
+            cycle_inputs,
             eq_poly,
             party_id,
             self.padded_num_constraints,
@@ -169,9 +127,14 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         r.push(r_i);
         eq_poly.bind(r_i);
 
-        let mut shards = core::mem::take(&mut self.unbound_coeffs_shards);
-        bind_shards_low_to_high_in_place(&mut shards, party_id, r_i.into());
-        self.bound_coeffs = BoundCoeffs::Sharded(shards);
+        let bound_shards = round0_build_bound_shards_from_cycle_inputs(
+            cycle_inputs,
+            party_id,
+            r_i.into(),
+            self.padded_num_constraints,
+        );
+        self.cycle_inputs = None;
+        self.bound_coeffs = BoundCoeffs::Sharded(bound_shards);
         self.maybe_flatten_bound_shards(eq_poly);
         self.dense_len /= 2;
 
@@ -278,11 +241,11 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
     }
 }
 
-fn quadratic_evals_from_unbound<F: JoltField>(
-    shards: &[Vec<SparseCoefficient<Rep3Value<F>>>],
+fn round0_quadratic_evals_from_cycle_inputs<F: JoltField>(
+    cycle_inputs: &[Rep3R1CSCycleInputs<F>],
     eq_poly: &GruenSplitEqPolynomial<F>,
     party_id: PartyID,
-    _padded_num_constraints: usize,
+    padded_num_constraints: usize,
 ) -> (AdditiveShare<F>, AdditiveShare<F>) {
     let e_in_len = eq_poly.E_in_current_len();
     let num_x_in_bits = if e_in_len > 0 { e_in_len.log_2() } else { 0 };
@@ -292,52 +255,90 @@ fn quadratic_evals_from_unbound<F: JoltField>(
         0
     };
 
-    shards
-        .par_iter()
-        .map(|coeffs| {
+    let num_steps = cycle_inputs.len();
+    let num_constraints = UNIFORM_R1CS.len();
+    let num_pairs = padded_num_constraints / 2;
+
+    let num_chunks = core::cmp::min(
+        rayon::current_num_threads().next_power_of_two() * 16,
+        core::cmp::max(1, num_steps / 2),
+    );
+    let chunk_size = num_steps.div_ceil(num_chunks);
+
+    let _span = tracing::trace_span!(
+        "SpartanInterleavedPoly::round0_quadratic_evals_from_trace",
+        num_steps,
+        num_constraints,
+        padded_num_constraints,
+        num_chunks,
+        chunk_size
+    )
+    .entered();
+
+    (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk_idx| {
+            let step_start = chunk_idx * chunk_size;
+            let step_end = core::cmp::min((chunk_idx + 1) * chunk_size, num_steps);
+
             let mut t0 = AdditiveShare::<F>::zero();
             let mut t_inf = AdditiveShare::<F>::zero();
 
-            let mut i = 0;
-            while i < coeffs.len() {
-                let block = coeffs[i].index / 6;
+            for step_idx in step_start..step_end {
+                let inputs = &cycle_inputs[step_idx];
+                for pair in 0..num_pairs {
+                    let c0_idx = pair * 2;
+                    let c1_idx = c0_idx + 1;
 
-                let mut az0 = Rep3Value::<F>::zero_public();
-                let mut bz0 = Rep3Value::<F>::zero_public();
-                let mut cz0 = Rep3Value::<F>::zero_public();
-                let mut az1 = Rep3Value::<F>::zero_public();
-                let mut bz1 = Rep3Value::<F>::zero_public();
-                let mut _cz1 = Rep3Value::<F>::zero_public();
+                    let (az0, bz0, cz0) = if c0_idx < num_constraints {
+                        let named = &UNIFORM_R1CS[c0_idx];
+                        (
+                            eval_lc_rep3(named.cons.a, inputs, party_id),
+                            eval_lc_rep3(named.cons.b, inputs, party_id),
+                            eval_lc_rep3(named.cons.c, inputs, party_id),
+                        )
+                    } else {
+                        (
+                            Rep3Value::<F>::zero_public(),
+                            Rep3Value::<F>::zero_public(),
+                            Rep3Value::<F>::zero_public(),
+                        )
+                    };
 
-                while i < coeffs.len() && coeffs[i].index / 6 == block {
-                    match coeffs[i].index % 6 {
-                        0 => az0 = coeffs[i].value,
-                        1 => bz0 = coeffs[i].value,
-                        2 => cz0 = coeffs[i].value,
-                        3 => az1 = coeffs[i].value,
-                        4 => bz1 = coeffs[i].value,
-                        5 => _cz1 = coeffs[i].value,
-                        _ => unreachable!(),
-                    }
-                    i += 1;
+                    let (az1, bz1, _cz1) = if c1_idx < num_constraints {
+                        let named = &UNIFORM_R1CS[c1_idx];
+                        (
+                            eval_lc_rep3(named.cons.a, inputs, party_id),
+                            eval_lc_rep3(named.cons.b, inputs, party_id),
+                            eval_lc_rep3(named.cons.c, inputs, party_id),
+                        )
+                    } else {
+                        (
+                            Rep3Value::<F>::zero_public(),
+                            Rep3Value::<F>::zero_public(),
+                            Rep3Value::<F>::zero_public(),
+                        )
+                    };
+
+                    let block = step_idx * num_pairs + pair;
+                    let x_in = block & x_in_mask;
+                    let x_out = block >> num_x_in_bits;
+                    let weight = if eq_poly.E_in_current_len() == 0 {
+                        eq_poly.E_out_current()[block]
+                    } else {
+                        eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out]
+                    };
+
+                    let az_inf = az1.sub(&az0, party_id);
+                    let bz_inf = bz1.sub(&bz0, party_id);
+
+                    let abc0 =
+                        az0.mul(&bz0).into_additive(party_id) - cz0.into_additive(party_id);
+                    let ab_inf = az_inf.mul(&bz_inf).into_additive(party_id);
+
+                    t0 += abc0 * weight;
+                    t_inf += ab_inf * weight;
                 }
-
-                let x_in = block & x_in_mask;
-                let x_out = block >> num_x_in_bits;
-                let weight = if eq_poly.E_in_current_len() == 0 {
-                    eq_poly.E_out_current()[block]
-                } else {
-                    eq_poly.E_in_current()[x_in] * eq_poly.E_out_current()[x_out]
-                };
-
-                let az_inf = az1.sub(&az0, party_id);
-                let bz_inf = bz1.sub(&bz0, party_id);
-
-                let abc0 = az0.mul(&bz0).into_additive(party_id) - cz0.into_additive(party_id);
-                let ab_inf = az_inf.mul(&bz_inf).into_additive(party_id);
-
-                t0 += abc0 * weight;
-                t_inf += ab_inf * weight;
             }
 
             (t0, t_inf)
@@ -346,6 +347,125 @@ fn quadratic_evals_from_unbound<F: JoltField>(
             || (AdditiveShare::<F>::zero(), AdditiveShare::<F>::zero()),
             |a, b| (a.0 + b.0, a.1 + b.1),
         )
+}
+
+fn round0_build_bound_shards_from_cycle_inputs<F: JoltField>(
+    cycle_inputs: &[Rep3R1CSCycleInputs<F>],
+    party_id: PartyID,
+    r: F,
+    padded_num_constraints: usize,
+) -> Vec<Vec<SparseCoefficient<Rep3Value<F>>>> {
+    let num_steps = cycle_inputs.len();
+    let num_constraints = UNIFORM_R1CS.len();
+    let num_pairs = padded_num_constraints / 2;
+
+    let num_chunks = core::cmp::min(
+        rayon::current_num_threads().next_power_of_two() * 16,
+        core::cmp::max(1, num_steps / 2),
+    );
+    let chunk_size = num_steps.div_ceil(num_chunks);
+
+    let _span = tracing::trace_span!(
+        "SpartanInterleavedPoly::round0_build_bound_shards",
+        num_steps,
+        num_constraints,
+        padded_num_constraints,
+        num_chunks,
+        chunk_size,
+        r_is_zero = (r == F::zero())
+    )
+    .entered();
+
+    let shards: Vec<Vec<SparseCoefficient<Rep3Value<F>>>> = (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk_idx| {
+            let step_start = chunk_idx * chunk_size;
+            let step_end = core::cmp::min((chunk_idx + 1) * chunk_size, num_steps);
+
+            let mut out: Vec<SparseCoefficient<Rep3Value<F>>> = Vec::with_capacity(
+                (step_end - step_start) * num_constraints.saturating_div(2) * 3,
+            );
+
+            for step_idx in step_start..step_end {
+                let inputs = &cycle_inputs[step_idx];
+                for pair in 0..num_pairs {
+                    let c0_idx = pair * 2;
+                    let c1_idx = c0_idx + 1;
+
+                    let (az0, bz0, cz0, a0_present, b0_present, c0_present) =
+                        if c0_idx < num_constraints {
+                            let named = &UNIFORM_R1CS[c0_idx];
+                            let az0 = eval_lc_rep3(named.cons.a, inputs, party_id);
+                            let bz0 = eval_lc_rep3(named.cons.b, inputs, party_id);
+                            let cz0 = eval_lc_rep3(named.cons.c, inputs, party_id);
+                            (
+                                az0,
+                                bz0,
+                                cz0,
+                                az0.shared_or_not_zero(),
+                                bz0.shared_or_not_zero(),
+                                cz0.shared_or_not_zero(),
+                            )
+                        } else {
+                            (
+                                Rep3Value::<F>::zero_public(),
+                                Rep3Value::<F>::zero_public(),
+                                Rep3Value::<F>::zero_public(),
+                                false,
+                                false,
+                                false,
+                            )
+                        };
+
+                    let (az1, bz1, cz1, a1_present, b1_present, c1_present) =
+                        if c1_idx < num_constraints {
+                            let named = &UNIFORM_R1CS[c1_idx];
+                            let az1 = eval_lc_rep3(named.cons.a, inputs, party_id);
+                            let bz1 = eval_lc_rep3(named.cons.b, inputs, party_id);
+                            let cz1 = eval_lc_rep3(named.cons.c, inputs, party_id);
+                            (
+                                az1,
+                                bz1,
+                                cz1,
+                                az1.shared_or_not_zero(),
+                                bz1.shared_or_not_zero(),
+                                cz1.shared_or_not_zero(),
+                            )
+                        } else {
+                            (
+                                Rep3Value::<F>::zero_public(),
+                                Rep3Value::<F>::zero_public(),
+                                Rep3Value::<F>::zero_public(),
+                                false,
+                                false,
+                                false,
+                            )
+                        };
+
+                    let block = step_idx * num_pairs + pair;
+                    let base = 3 * block;
+
+                    if a0_present || a1_present {
+                        let v = az0.add(&az1.sub(&az0, party_id).mul_public(r), party_id);
+                        out.push((base, v).into());
+                    }
+                    if b0_present || b1_present {
+                        let v = bz0.add(&bz1.sub(&bz0, party_id).mul_public(r), party_id);
+                        out.push((base + 1, v).into());
+                    }
+                    if c0_present || c1_present {
+                        let v = cz0.add(&cz1.sub(&cz0, party_id).mul_public(r), party_id);
+                        out.push((base + 2, v).into());
+                    }
+                }
+            }
+
+            out
+        })
+        .collect();
+
+    drop(_span);
+    shards
 }
 
 fn quadratic_evals_from_bound<F: JoltField>(

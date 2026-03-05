@@ -152,8 +152,7 @@ impl Rep3SpartanDagWorker {
         };
 
         let mut az_bz_cz_poly =
-            Rep3SpartanInterleavedPolynomial::<F>::new(&key, &cycle_inputs, &UNIFORM_R1CS, party_id)?;
-        drop(cycle_inputs);
+            Rep3SpartanInterleavedPolynomial::<F>::new(&key, cycle_inputs)?;
         drop(product_per_cycle);
         drop(mul_products);
         drop(shared_mul_rows);
