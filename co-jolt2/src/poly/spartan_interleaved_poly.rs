@@ -40,15 +40,19 @@ pub enum BoundCoeffs<F: JoltField> {
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SparseCoefficient<T> {
-    pub index: usize,
+    pub index: u32,
     pub value: T,
 }
 
 impl<T> From<(usize, T)> for SparseCoefficient<T> {
-    fn from(x: (usize, T)) -> Self {
+    fn from((index, value): (usize, T)) -> Self {
+        debug_assert!(
+            index <= u32::MAX as usize,
+            "SparseCoefficient index too large for u32: {index}"
+        );
         Self {
-            index: x.0,
-            value: x.1,
+            index: index as u32,
+            value,
         }
     }
 }
@@ -199,14 +203,14 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
             BoundCoeffs::Sharded(shards) => {
                 for shard in shards {
                     for coeff in shard.iter() {
-                        let which = coeff.index % 3;
+                        let which = (coeff.index as usize) % 3;
                         out[which] = coeff.value.into_additive(party_id);
                     }
                 }
             }
             BoundCoeffs::Flat(coeffs) => {
                 for coeff in coeffs.iter() {
-                    let which = coeff.index % 3;
+                    let which = (coeff.index as usize) % 3;
                     out[which] = coeff.value.into_additive(party_id);
                 }
             }
@@ -486,7 +490,7 @@ fn quadratic_evals_from_bound<F: JoltField>(
 
     let mut i = 0;
     while i < coeffs.len() {
-        let block = coeffs[i].index / 6;
+        let block = (coeffs[i].index as usize) / 6;
 
         let mut az0 = Rep3Value::<F>::zero_public();
         let mut bz0 = Rep3Value::<F>::zero_public();
@@ -495,8 +499,8 @@ fn quadratic_evals_from_bound<F: JoltField>(
         let mut bz1 = Rep3Value::<F>::zero_public();
         let mut _cz1 = Rep3Value::<F>::zero_public();
 
-        while i < coeffs.len() && coeffs[i].index / 6 == block {
-            match coeffs[i].index % 6 {
+        while i < coeffs.len() && (coeffs[i].index as usize) / 6 == block {
+            match (coeffs[i].index as usize) % 6 {
                 0 => az0 = coeffs[i].value,
                 1 => bz0 = coeffs[i].value,
                 2 => cz0 = coeffs[i].value,
@@ -565,12 +569,12 @@ fn binding_output_length<F: JoltField>(coeffs: &[SparseCoefficient<Rep3Value<F>>
     let mut out = 0usize;
     let mut i = 0;
     while i < coeffs.len() {
-        let block = coeffs[i].index / 6;
+        let block = (coeffs[i].index as usize) / 6;
         let mut has_a = false;
         let mut has_b = false;
         let mut has_c = false;
-        while i < coeffs.len() && coeffs[i].index / 6 == block {
-            match coeffs[i].index % 6 {
+        while i < coeffs.len() && (coeffs[i].index as usize) / 6 == block {
+            match (coeffs[i].index as usize) % 6 {
                 0 | 3 => has_a = true,
                 1 | 4 => has_b = true,
                 2 | 5 => has_c = true,
@@ -607,7 +611,7 @@ fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
     let mut write = 0usize;
     let mut i = 0usize;
     while i < input_len {
-        let block = unsafe { (*input_ptr.add(i)).index / 6 };
+        let block = (unsafe { (*input_ptr.add(i)).index } as usize) / 6;
 
         let mut a0: Option<Rep3Value<F>> = None;
         let mut b0: Option<Rep3Value<F>> = None;
@@ -618,10 +622,10 @@ fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
 
         while i < input_len {
             let coeff = unsafe { *input_ptr.add(i) };
-            if coeff.index / 6 != block {
+            if (coeff.index as usize) / 6 != block {
                 break;
             }
-            match coeff.index % 6 {
+            match (coeff.index as usize) % 6 {
                 0 => a0 = Some(coeff.value),
                 1 => b0 = Some(coeff.value),
                 2 => c0 = Some(coeff.value),
