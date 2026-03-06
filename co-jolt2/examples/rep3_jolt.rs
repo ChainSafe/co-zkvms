@@ -257,6 +257,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     // Init DoryGlobals (must stay alive during proving)
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+    let dory_num_columns = DoryGlobals::get_num_columns();
 
     // Init AllCommittedPolynomials
     let bytecode_d = preprocessing.shared.bytecode.d;
@@ -280,11 +281,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // `--features reuse-preproc` so consumed data is NOT zeroed on disk.
     let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
-    let mut preproc = {
+    let budget = {
         use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
+        let b = compute_edabit_budget(trace_len);
+        tracing::info!("budget: {:?}", b);
+        b
+    };
+    let mut preproc = {
         use mpc_core::protocols::rep3_ring::edabits;
-        let budget = compute_edabit_budget(trace_len);
-        tracing::info!("budget: {:?}", budget);
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
         let num_dabits = budget.dabits;
 
@@ -339,6 +343,17 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?
         }
     };
+
+    // daPoints for Dory U64Scalars wrap correction (offline, not persisted)
+    if budget.dapoints > 0 {
+        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+            &preprocessing.generators,
+            budget.dapoints / 2,
+            dory_num_columns,
+        );
+        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+        preproc.set_dapoints(lazy_dp);
+    }
     drop(_span);
 
     // Prove

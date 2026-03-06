@@ -19,13 +19,19 @@ pub struct PreprocessingBudget {
     pub u128: usize,
     /// daBits for BitInject (single-bit → field) suffix conversions.
     pub dabits: usize,
+    /// daPoints for Dory U64Scalars wrap correction (2 per committed coefficient).
+    pub dapoints: usize,
+    /// Wrap masks for DaBit-based wrap-m extraction (1 per committed coefficient).
+    pub wrap_masks: usize,
+    /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
+    pub ring_edabits_u66: usize,
 }
 
 impl std::fmt::Debug for PreprocessingBudget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
-            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
+            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}; daPoints: {}; wrapMasks: {}; ringEdaBitsU66: {}",
+            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits, self.dapoints, self.wrap_masks, self.ring_edabits_u66
         ))
     }
 }
@@ -83,6 +89,12 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
         .max()
         .unwrap_or(0);
     budget.dabits = max_dabits_per_cycle * n;
+    // Dory U64Scalars wrap correction: 2 daPoints per committed coefficient.
+    budget.dapoints = 2 * n;
+    // Wrap masks for DaBit-based wrap-m extraction: 1 per committed coefficient.
+    budget.wrap_masks = n;
+    // Ring edaBits (U66) for ring-domain B2A: 1 per committed coefficient.
+    budget.ring_edabits_u66 = n;
 
     for phase in 0..PHASES {
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
@@ -185,4 +197,3 @@ fn add_to_budget(budget: &mut PreprocessingBudget, ring_bits: usize, count: usiz
         _ => unreachable!(),
     }
 }
-

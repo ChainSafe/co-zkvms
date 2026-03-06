@@ -35,13 +35,14 @@ where
 {
     let t0 = rng.r#gen::<T>();
     let t1 = rng.r#gen::<T>();
-    let t2 = val - t0 - t1;
+    let t2 = val.wrapping_sub(&t0).wrapping_sub(&t1);
 
     let p_share_0 = Rep3RingShare::new(t0, t2);
     let p_share_1 = Rep3RingShare::new(t1, t0);
     let p_share_2 = Rep3RingShare::new(t2, t1);
     vec![p_share_0, p_share_1, p_share_2]
 }
+
 /// Performs addition between two shared values.
 pub fn add<T: IntRing2k>(a: RingShare<T>, b: RingShare<T>) -> RingShare<T> {
     a + b

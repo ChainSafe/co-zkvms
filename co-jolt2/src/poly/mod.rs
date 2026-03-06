@@ -7,6 +7,7 @@ pub mod multilinear_polynomial;
 pub mod one_hot_polynomial;
 pub mod opening_proof;
 pub mod ra_poly;
+pub mod rep3_compact_polynomial;
 pub mod rlc_polynomial;
 pub mod spartan_interleaved_poly;
 
@@ -14,6 +15,7 @@ pub use commitment::*;
 pub use compact_polynomial::*;
 pub use dense_mlpoly::*;
 pub use multilinear_polynomial::*;
+pub use rep3_compact_polynomial::*;
 pub use rlc_polynomial::*;
 
 use crate::{field::JoltField, utils::types::Rep3Value};

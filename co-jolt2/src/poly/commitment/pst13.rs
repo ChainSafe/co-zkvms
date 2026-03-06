@@ -480,6 +480,9 @@ where
                     let (commitment, hint) = commit_one_hot_shared(one_hot, setup);
                     (MaybeShared::Shared(commitment), MaybeShared::Shared(hint))
                 }
+                Rep3SharedPoly::U64Scalars(_) => {
+                    panic!("PST13 commit_rep3: U64Scalars unsupported (Dory-only)")
+                }
                 Rep3SharedPoly::RLC(_) => {
                     unreachable!("RLC polynomials should not be committed directly")
                 }
@@ -571,6 +574,11 @@ where
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
                 materialize_one_hot_share_a(one_hot)
+            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                return Err(eyre::eyre!(
+                    "PST13 prove_rep3: U64Scalars unsupported (Dory-only)"
+                ));
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
                 materialize_rlc_share_a(rlc)

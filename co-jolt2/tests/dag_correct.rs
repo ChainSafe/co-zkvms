@@ -246,6 +246,12 @@ fn dag_correct() {
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
+    let bytecode_d = shared.bytecode.d;
+
+    // Initialize DoryGlobals early so worker threads can access num_columns for daPoint preprocessing.
+    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+    let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+    let dory_num_columns = DoryGlobals::get_num_columns();
 
     // 4) Vanilla proof up to Stage3.
     let (vanilla_proof, tau) = vanilla_up_to_stage5(
@@ -310,11 +316,23 @@ fn dag_correct() {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
-                edabits::preprocess_pool::<F, _>(
+                let mut pool = edabits::preprocess_pool::<F, _>(
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
                     &mut io_ctx,
-                )?
+                )?;
+
+                // daPoints for Dory U64Scalars wrap correction (offline)
+                if budget.dapoints > 0 {
+                    let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+                        &preprocessing.generators,
+                        budget.dapoints / 2,
+                        dory_num_columns,
+                    );
+                    let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                    pool.set_dapoints(lazy_dp);
+                }
+                pool
             };
 
             let state = StateManagerWorker::new(

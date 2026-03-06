@@ -1145,6 +1145,9 @@ mod tests {
                         &format!("{poly_key:?} (shared dense)"),
                     );
                 }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                    unreachable!("U64Scalars variant should not appear in witness polynomials");
+                }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                     unreachable!("RLC variant should not appear in witness polynomials");
                 }

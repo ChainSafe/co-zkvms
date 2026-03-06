@@ -78,6 +78,11 @@ required-features = ["test-utils"]
 name = "fwht"
 harness = false
 
+[[bench]]
+name = "dory_commit"
+harness = false
+required-features = ["test-utils"]
+
 [features]
 default = ["std", "debug"]
 std = [
