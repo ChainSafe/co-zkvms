@@ -24,6 +24,7 @@ use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::subprotocols::mles_product_sum::compute_mles_product_16_rep3;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use std::sync::Arc;
+use tracing::trace_span;
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -95,6 +96,23 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
         let half = 1usize << w.len();
 
         // Compute the 16-fold product tree via 4 levels with 3 reshares.
+        let n_wl = eq_wl_evals.len();
+        let n_wr = eq_wr_evals.len();
+        let level1_len = n_wr * n_wl * (8 * 3);
+        let level2_len = n_wr * n_wl * (4 * 5);
+        let level3_len = n_wr * n_wl * (2 * 9);
+        let _span = trace_span!(
+            "compute_mles_product_16_rep3",
+            round,
+            w_len = w.len(),
+            n_wl,
+            n_wr,
+            half,
+            level1_len,
+            level2_len,
+            level3_len
+        )
+        .entered();
         let sum_evals = compute_mles_product_16_rep3(
             &eq_wl_evals,
             &eq_wr_evals,
@@ -103,6 +121,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
             wl.len(),
             io_ctx,
         )?;
+        drop(_span);
 
         // sum_evals[0..D] are evaluations at {1, 2, ..., 15, ∞} as AdditiveShare<F>.
         // This is the product polynomial WITHOUT the eq(X, r[round]) factor.

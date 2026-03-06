@@ -279,125 +279,125 @@ where
 ///
 /// Only handles `CastToFieldB2A` and `Ready` variants; other `FutureOp`
 /// variants will panic.
-#[tracing::instrument(skip_all, name = "fulfill_batched_with_pool", level = "trace")]
-pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
-    futures: Vec<FutureRep3Ring<R, T, Args>>,
-    io_ctx: &mut IoContextPool<N>,
-    preproc: &mut PreprocessingPool<F>,
-    map: MapFn,
-) -> eyre::Result<Vec<T>>
-where
-    R: IntRing2k,
-    Standard: Distribution<R>,
-    F: JoltField,
-    T: Clone + Default + Send,
-    Args: Send + Copy,
-    N: Rep3NetworkWorker,
-    MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
-{
-    use mpc_core::protocols::rep3_ring::{dabits, edabits};
+// #[tracing::instrument(skip_all, name = "fulfill_batched_with_pool", level = "trace")]
+// pub fn fulfill_batched_with_pool<R, F, T, Args, N, MapFn>(
+//     futures: Vec<FutureRep3Ring<R, T, Args>>,
+//     io_ctx: &mut IoContextPool<N>,
+//     preproc: &mut PreprocessingPool<F>,
+//     map: MapFn,
+// ) -> eyre::Result<Vec<T>>
+// where
+//     R: IntRing2k,
+//     Standard: Distribution<R>,
+//     F: JoltField,
+//     T: Clone + Default + Send,
+//     Args: Send + Copy,
+//     N: Rep3NetworkWorker,
+//     MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
+// {
+//     use mpc_core::protocols::rep3_ring::{dabits, edabits};
 
-    let len = futures.len();
+//     let len = futures.len();
 
-    // Parallel fold/reduce partition into indexed buckets
-    struct PoolBuckets<R: IntRing2k, T, Args> {
-        ready_idx: Vec<usize>,
-        ready_val: Vec<T>,
-        bit_idx: Vec<usize>,
-        bit_x: Vec<Rep3RingShare<Bit>>,
-        bit_args: Vec<Args>,
-        b2a_idx: Vec<usize>,
-        b2a_x: Vec<Rep3RingShare<R>>,
-        b2a_args: Vec<Args>,
-    }
+//     // Parallel fold/reduce partition into indexed buckets
+//     struct PoolBuckets<R: IntRing2k, T, Args> {
+//         ready_idx: Vec<usize>,
+//         ready_val: Vec<T>,
+//         bit_idx: Vec<usize>,
+//         bit_x: Vec<Rep3RingShare<Bit>>,
+//         bit_args: Vec<Args>,
+//         b2a_idx: Vec<usize>,
+//         b2a_x: Vec<Rep3RingShare<R>>,
+//         b2a_args: Vec<Args>,
+//     }
 
-    impl<R: IntRing2k, T, Args> PoolBuckets<R, T, Args> {
-        fn new() -> Self {
-            Self {
-                ready_idx: Vec::new(),
-                ready_val: Vec::new(),
-                bit_idx: Vec::new(),
-                bit_x: Vec::new(),
-                bit_args: Vec::new(),
-                b2a_idx: Vec::new(),
-                b2a_x: Vec::new(),
-                b2a_args: Vec::new(),
-            }
-        }
-        fn extend(&mut self, other: Self) {
-            self.ready_idx.extend(other.ready_idx);
-            self.ready_val.extend(other.ready_val);
-            self.bit_idx.extend(other.bit_idx);
-            self.bit_x.extend(other.bit_x);
-            self.bit_args.extend(other.bit_args);
-            self.b2a_idx.extend(other.b2a_idx);
-            self.b2a_x.extend(other.b2a_x);
-            self.b2a_args.extend(other.b2a_args);
-        }
-    }
+//     impl<R: IntRing2k, T, Args> PoolBuckets<R, T, Args> {
+//         fn new() -> Self {
+//             Self {
+//                 ready_idx: Vec::new(),
+//                 ready_val: Vec::new(),
+//                 bit_idx: Vec::new(),
+//                 bit_x: Vec::new(),
+//                 bit_args: Vec::new(),
+//                 b2a_idx: Vec::new(),
+//                 b2a_x: Vec::new(),
+//                 b2a_args: Vec::new(),
+//             }
+//         }
+//         fn extend(&mut self, other: Self) {
+//             self.ready_idx.extend(other.ready_idx);
+//             self.ready_val.extend(other.ready_val);
+//             self.bit_idx.extend(other.bit_idx);
+//             self.bit_x.extend(other.bit_x);
+//             self.bit_args.extend(other.bit_args);
+//             self.b2a_idx.extend(other.b2a_idx);
+//             self.b2a_x.extend(other.b2a_x);
+//             self.b2a_args.extend(other.b2a_args);
+//         }
+//     }
 
-    let buckets: PoolBuckets<R, T, Args> = futures
-        .into_par_iter()
-        .enumerate()
-        .fold(PoolBuckets::new, |mut acc, (i, f)| {
-            match f {
-                FutureRep3Ring::Ready(x) => {
-                    acc.ready_idx.push(i);
-                    acc.ready_val.push(x);
-                }
-                FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
-                    acc.bit_idx.push(i);
-                    acc.bit_x.push(x);
-                    acc.bit_args.push(args);
-                }
-                FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
-                    acc.b2a_idx.push(i);
-                    acc.b2a_x.push(x);
-                    acc.b2a_args.push(args);
-                }
-                other => panic!(
-                    "fulfill_batched_with_pool: unexpected variant {:?}",
-                    std::mem::discriminant(&other)
-                ),
-            }
-            acc
-        })
-        .reduce(PoolBuckets::new, |mut a, b| {
-            a.extend(b);
-            a
-        });
+//     let buckets: PoolBuckets<R, T, Args> = futures
+//         .into_par_iter()
+//         .enumerate()
+//         .fold(PoolBuckets::new, |mut acc, (i, f)| {
+//             match f {
+//                 FutureRep3Ring::Ready(x) => {
+//                     acc.ready_idx.push(i);
+//                     acc.ready_val.push(x);
+//                 }
+//                 FutureRep3Ring::Pending(FutureOp::BitInject(x), args) => {
+//                     acc.bit_idx.push(i);
+//                     acc.bit_x.push(x);
+//                     acc.bit_args.push(args);
+//                 }
+//                 FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
+//                     acc.b2a_idx.push(i);
+//                     acc.b2a_x.push(x);
+//                     acc.b2a_args.push(args);
+//                 }
+//                 other => panic!(
+//                     "fulfill_batched_with_pool: unexpected variant {:?}",
+//                     std::mem::discriminant(&other)
+//                 ),
+//             }
+//             acc
+//         })
+//         .reduce(PoolBuckets::new, |mut a, b| {
+//             a.extend(b);
+//             a
+//         });
 
-    let mut out = vec![T::default(); len];
+//     let mut out = vec![T::default(); len];
 
-    // Ready — direct write
-    for k in 0..buckets.ready_idx.len() {
-        out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
-    }
+//     // Ready — direct write
+//     for k in 0..buckets.ready_idx.len() {
+//         out[buckets.ready_idx[k]] = buckets.ready_val[k].clone();
+//     }
 
-    // Bit Inject (single-bit → field via daBits) — distributed across forks
-    if !buckets.bit_x.is_empty() {
-        let batch = preproc.take_dabits(buckets.bit_x.len());
-        let c = io_ctx.par_chunks_dabits(buckets.bit_x, batch, None, |xs, batch, ctx| {
-            dabits::bit_inject_field_many(&xs, &batch, ctx)
-        })?;
-        for k in 0..c.len() {
-            out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
-        }
-    }
+//     // Bit Inject (single-bit → field via daBits) — distributed across forks
+//     if !buckets.bit_x.is_empty() {
+//         let batch = preproc.take_dabits(buckets.bit_x.len());
+//         let c = io_ctx.par_chunks_dabits(buckets.bit_x, batch, None, |xs, batch, ctx| {
+//             dabits::bit_inject_field_many(&xs, &batch, ctx)
+//         })?;
+//         for k in 0..c.len() {
+//             out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
+//         }
+//     }
 
-    // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits — distributed across forks
-    if !buckets.b2a_x.is_empty() {
-        let batch = preproc.take_edabits::<R>(buckets.b2a_x.len());
-        let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
-        })?;
-        for k in 0..shares.len() {
-            out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
-        }
-    }
+//     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits — distributed across forks
+//     if !buckets.b2a_x.is_empty() {
+//         let batch = preproc.take_edabits::<R>(buckets.b2a_x.len());
+//         let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
+//             edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
+//         })?;
+//         for k in 0..shares.len() {
+//             out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
+//         }
+//     }
 
-    Ok(out)
-}
+//     Ok(out)
+// }
 
 impl<R, T, Args> Rep3RingFutureExt<R, Rep3RingShare<R>, T, Args> for Vec<FutureRep3Ring<R, T, Args>>
 where
