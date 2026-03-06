@@ -79,8 +79,8 @@ fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>
     let chunk_hists = chunk_hists.max(1);
     let max_forks = io_ctx.max_forks();
 
-    let _span = trace_span!(
-        "reshare_hists_chunked",
+    let _span = info_span!(
+        "reshare_hists",
         n = hists.len(),
         chunk = chunk_hists,
         m = M,
@@ -1137,12 +1137,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         let _fwht_span = info_span!("fwht_unmask", phase).entered();
 
         let shift_in_rep3 = shift_half_f.is_none();
-        let _seq = trace_span!(
-            "init_operand_q_polys_unmask_seq",
-            phase,
-            shift_in_rep3
-        )
-        .entered();
+        let _seq = trace_span!("init_operand_q_polys_unmask_seq", phase, shift_in_rep3).entered();
 
         let (q02, q1, q3, q4, q5) = if shift_in_rep3 {
             // Phase 1+: all 5 from rep3; unmask sequentially and drop each histogram immediately.
@@ -1157,8 +1152,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             let party_id = self.party_id;
             let mut hsh = shift_half_f.unwrap();
             let mut hs = shift_f.unwrap();
-            let q02 =
-                AdditiveDensePoly::new(unmask_histogram_public(&mut hsh, ehat16, party_id));
+            let q02 = AdditiveDensePoly::new(unmask_histogram_public(&mut hsh, ehat16, party_id));
             let q4 = AdditiveDensePoly::new(unmask_histogram_public(&mut hs, ehat16, party_id));
 
             let q1 = fwht_unmask(hist_left);
@@ -2007,8 +2001,7 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
     Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
     Vec<(usize, usize)>,
 ) {
-    let _span =
-        trace_span!("build_suffix_histograms_streaming", n = eval_segments.len()).entered();
+    let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
     let inv_m = F::from(M as u64).inverse().expect("M invertible");
 
     // Build lookup: (table_idx, suffix_idx) → segment in all_field
@@ -2218,14 +2211,7 @@ where
         .unwrap_or(8192)
         .max(1);
 
-    let _span = trace_span!(
-        "q_polys_b2a",
-        n_il,
-        n_id,
-        chunk = chunk_size,
-        k = T::K
-    )
-    .entered();
+    let _span = trace_span!("q_polys_b2a", n_il, n_id, chunk = chunk_size, k = T::K).entered();
 
     let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) = interleaved_u128
         .par_iter()
@@ -2245,8 +2231,8 @@ where
         let _lr = trace_span!("q_polys_b2a_lr", n = lr.len()).entered();
         let mut lr_result: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(lr.len());
         for lr_chunk in lr.chunks(chunk_size) {
-            let _c = trace_span!("q_polys_b2a_chunk", kind = "lr", chunk_len = lr_chunk.len())
-                .entered();
+            let _c =
+                trace_span!("q_polys_b2a_chunk", kind = "lr", chunk_len = lr_chunk.len()).entered();
             let lr_batch = pool.take_edabits::<T::Half>(lr_chunk.len());
             let out = edabits::ring_to_field_b2a_many::<T::Half, F, _>(
                 lr_chunk,
@@ -2270,8 +2256,8 @@ where
         let _id = trace_span!("q_polys_b2a_id", n = n_id).entered();
         let mut out_all: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n_id);
         for id_chunk in identity_u128.chunks(chunk_size) {
-            let _c = trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len())
-                .entered();
+            let _c =
+                trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len()).entered();
             let id_shares: Vec<Rep3RingShare<T>> =
                 id_chunk.iter().map(|b| downcast::<u128, T>(*b)).collect();
             let id_batch = pool.take_edabits::<T>(id_shares.len());
