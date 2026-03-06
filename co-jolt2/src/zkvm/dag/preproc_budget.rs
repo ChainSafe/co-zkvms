@@ -1,8 +1,8 @@
 use crate::zkvm::suffixes::suffix_edabit_ring_bits;
 use jolt2_common::constants::XLEN;
 use jolt_core::zkvm::instruction_lookups::LOG_M;
-use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
+use jolt_core::zkvm::lookup_table::LookupTables;
 use strum::IntoEnumIterator;
 
 const PHASES: usize = 8;

@@ -37,7 +37,7 @@ use rand::prelude::Distribution;
 use rayon::prelude::*;
 use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
-use tracing::info_span;
+use tracing::{info_span, trace_span};
 
 use crate::poly::additive_dense_poly::AdditiveDensePoly;
 use crate::utils::lagrange_interp_4;
@@ -46,6 +46,108 @@ const LOG_K: usize = XLEN * 2; // 128
 const PHASES: usize = 8;
 const M: usize = 1 << LOG_M; // 65536
 const DEGREE: usize = 3;
+
+fn fwht_unmask_rep3_to_additive<F: JoltField>(
+    h: &mut [Rep3PrimeFieldShare<F>],
+    ehat16: &[Rep3PrimeFieldShare<F>],
+    inv_m: F,
+) -> Vec<AdditiveShare<F>> {
+    debug_assert_eq!(h.len(), M);
+    debug_assert_eq!(ehat16.len(), M);
+
+    fwht_rep3_in_place(h);
+    let mut h_k: Vec<AdditiveShare<F>> = h
+        .iter()
+        .zip(ehat16.iter())
+        .map(|(&a, &b)| (a * inv_m) * b)
+        .collect();
+    fwht_in_place(&mut h_k);
+    h_k
+}
+
+fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>(
+    hists: Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
+    ehat16: &[Rep3PrimeFieldShare<F>],
+    inv_m: F,
+    party_id: PartyID,
+    io_ctx: &mut IoContextPool<N>,
+    chunk_hists: usize,
+) -> eyre::Result<Vec<(usize, usize, AdditiveDensePoly<F>)>> {
+    if hists.is_empty() {
+        return Ok(Vec::new());
+    }
+    let chunk_hists = chunk_hists.max(1);
+    let max_forks = io_ctx.max_forks();
+
+    let _span = info_span!(
+        "reshare_hists",
+        n = hists.len(),
+        chunk = chunk_hists,
+        m = M,
+        max_forks,
+        party_id = ?party_id
+    )
+    .entered();
+
+    let mut do_one_chunk = |chunk: Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
+                            ctx: &mut mpc_core::protocols::rep3::network::IoContext<N>|
+     -> eyre::Result<Vec<(usize, usize, AdditiveDensePoly<F>)>> {
+        let _chunk_span = trace_span!(
+            "reshare_hists_chunk",
+            n = chunk.len(),
+            total_len = chunk.len() * M
+        )
+        .entered();
+
+        let mut meta: Vec<(usize, usize)> = Vec::with_capacity(chunk.len());
+        let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(chunk.len() * M);
+        for (ti, si, mut hist) in chunk {
+            meta.push((ti, si));
+            flat.append(&mut hist);
+        }
+
+        let mut flat_rep3 = rep3_arith::reshare_additive_many(&flat, ctx)?;
+        drop(flat);
+
+        let mut out: Vec<(usize, usize, AdditiveDensePoly<F>)> = Vec::with_capacity(meta.len());
+        for (k, (ti, si)) in meta.into_iter().enumerate() {
+            let seg = &mut flat_rep3[k * M..(k + 1) * M];
+            let h_k = fwht_unmask_rep3_to_additive(seg, ehat16, inv_m);
+            out.push((ti, si, AdditiveDensePoly::new(h_k)));
+        }
+
+        drop(_chunk_span);
+        Ok(out)
+    };
+
+    if max_forks < 2 {
+        let mut out = Vec::with_capacity(hists.len());
+        let mut iter = hists.into_iter();
+        loop {
+            let mut chunk = Vec::with_capacity(chunk_hists);
+            for _ in 0..chunk_hists {
+                match iter.next() {
+                    Some(v) => chunk.push(v),
+                    None => break,
+                }
+            }
+            if chunk.is_empty() {
+                break;
+            }
+            out.extend(do_one_chunk(chunk, io_ctx.main())?);
+        }
+        return Ok(out);
+    }
+
+    let adjusted_chunk = chunk_hists.max(hists.len().div_ceil(max_forks)).max(1);
+    debug_assert!(hists.len().div_ceil(adjusted_chunk) <= max_forks);
+
+    io_ctx.par_chunks(
+        hists.into_par_iter(),
+        Some(adjusted_chunk),
+        move |chunk, ctx| do_one_chunk(chunk, ctx),
+    )
+}
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -84,9 +186,11 @@ struct ReadRafProverState<F: JoltField> {
     ra: Option<Rep3DensePolynomial<F>>,
 
     // -- Phase polynomials (length M = 65536) --
+    /// Current logical length of suffix polynomials (halves on each bind in address rounds).
+    suffix_poly_len: usize,
     /// Per-table suffix polynomials stored as additive shares (no reshare needed).
     /// Built via local `Rep3 * Rep3 → Additive` in FWHT unmasking.
-    suffix_polys: Vec<Vec<AdditiveDensePoly<F>>>,
+    suffix_polys: Vec<Vec<Option<AdditiveDensePoly<F>>>>,
     /// Additive Q arrays for operand prefix-suffix decompositions.
     left_operand_q: [AdditiveDensePoly<F>; 2],
     right_operand_q: [AdditiveDensePoly<F>; 2],
@@ -232,15 +336,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         // Phase 0: ra_acc is None (implicit 1s for active cycles, 0 for padding)
         let ra_acc = None;
 
-        // -- Initialize suffix polynomials (empty, filled in init_phase) --
-        let suffix_polys: Vec<Vec<AdditiveDensePoly<F>>> = LookupTables::<XLEN>::iter()
-            .map(|table| {
-                table
-                    .suffixes()
-                    .iter()
-                    .map(|_| AdditiveDensePoly::zeros(M))
-                    .collect()
-            })
+        // -- Initialize suffix polynomials (filled in init_phase) --
+        //
+        // Many tables/suffixes are unused for a given trace; keep them as `None` until a phase
+        // materializes them. This avoids allocating O(#tables * #suffixes * M) upfront.
+        let suffix_polys: Vec<Vec<Option<AdditiveDensePoly<F>>>> = LookupTables::<XLEN>::iter()
+            .map(|table| vec![None; table.suffixes().len()])
             .collect();
 
         // -- Initialize prefix-suffix decompositions (public) --
@@ -257,7 +358,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         let identity_ps =
             PrefixSuffixDecomposition::new(Box::new(IdentityPolynomial::new(LOG_K)), LOG_M, LOG_K);
 
-        let empty_q = || AdditiveDensePoly::zeros(M);
+        let empty_q = || AdditiveDensePoly::empty();
         let mut state = ReadRafProverState {
             r: Vec::with_capacity(log_T + LOG_K),
             lookup_tables,
@@ -268,6 +369,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             u_evals,
             ra_acc,
             ra: None,
+            suffix_poly_len: M,
             suffix_polys,
             left_operand_q: [empty_q(), empty_q()],
             right_operand_q: [empty_q(), empty_q()],
@@ -323,6 +425,15 @@ impl<F: JoltField> ReadRafProverState<F> {
         preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
         eyre::ensure!(phase < PHASES, "phase out of range: {phase}");
+
+        // Reset per-phase polynomial state (fresh unbound suffix domain of size M).
+        self.suffix_poly_len = M;
+        for table in self.suffix_polys.iter_mut() {
+            for slot in table.iter_mut() {
+                *slot = None;
+            }
+        }
+
         let hi = 2 * phase;
         let lo = 2 * phase + 1;
         eyre::ensure!(lo < D, "phase pair out of range: ({hi}, {lo})");
@@ -563,88 +674,44 @@ impl<F: JoltField> ReadRafProverState<F> {
             (Vec::new(), Vec::new())
         };
 
-        // -- Step 2: Build histograms in parallel --
-        let (pub_f_entries, rep3_hist_entries, hist_entries_to_reshare, zero_polys) =
-            build_suffix_histograms(
+        // -- Step 2: Build+unmask public/Rep3 histograms in parallel (no materialization) --
+        // Returns:
+        // - already-unmasked additive polys for public and rep3 histograms
+        // - additive histograms that still require communication (reshare)
+        let (pub_polys, rep3_polys, hist_entries_to_reshare, zero_polys) =
+            build_suffix_polys_and_additive_hists(
                 &eval_segments,
                 &all_field,
                 &self.u_evals,
                 &self.c16,
                 &self.lookup_indices_by_table,
                 suffix_len,
+                ehat16,
                 self.party_id,
             );
-        for (ti, si) in zero_polys {
-            self.suffix_polys[ti][si] = AdditiveDensePoly::zeros(M);
-        }
-
-        // -- Step 3: Batch reshare all additive histograms to Rep3 in one round --
-        let _span = info_span!("reshare_hists", n = hist_entries_to_reshare.len()).entered();
-        let reshared_histograms = if !hist_entries_to_reshare.is_empty() {
-            let total_len = hist_entries_to_reshare.len() * M;
-            let mut flat_additive = Vec::with_capacity(total_len);
-            for (_, _, ref hist) in &hist_entries_to_reshare {
-                flat_additive.extend_from_slice(hist);
-            }
-            let flat_rep3 = rep3_arith::reshare_additive_many(&flat_additive, io_ctx.main())?;
-            flat_rep3
-                .chunks_exact(M)
-                .map(|c| c.to_vec())
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        drop(_span);
-
-        // -- Step 4: FWHT unmask all histograms (parallel, local) --
-        // Public F histograms use unmask_histogram_public (FWHT on F, ~2x cheaper).
-        // Rep3 histograms use standard FWHT on Rep3.
-        let mut all_rep3_entries: Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)> =
-            rep3_hist_entries;
-        for ((ti, si, _additive), reshared) in hist_entries_to_reshare
-            .into_iter()
-            .zip(reshared_histograms.into_iter())
-        {
-            all_rep3_entries.push((ti, si, reshared));
-        }
-
-        let _span = info_span!(
-            "fwht_unmask",
-            n_pub = pub_f_entries.len(),
-            n_rep3 = all_rep3_entries.len()
-        )
-        .entered();
-
-        let party_id = self.party_id;
-
-        // Public F histograms: FWHT on F then F×Rep3→Additive (~2x cheaper)
-        let pub_polys: Vec<(usize, usize, AdditiveDensePoly<F>)> = pub_f_entries
-            .into_par_iter()
-            .map(|(ti, si, mut h_f)| {
-                let h = unmask_histogram_public(&mut h_f, ehat16, party_id);
-                (ti, si, AdditiveDensePoly::new(h))
-            })
-            .collect();
-
-        // Rep3 histograms: FWHT unmask each independently (parallelized via rayon)
-        let rep3_polys: Vec<(usize, usize, AdditiveDensePoly<F>)> = all_rep3_entries
-            .into_par_iter()
-            .map(|(ti, si, mut h)| {
-                fwht_rep3_in_place(&mut h);
-                let mut h_k: Vec<AdditiveShare<F>> = h
-                    .iter()
-                    .zip(ehat16.iter())
-                    .map(|(&a, &b)| (a * inv_m) * b)
-                    .collect();
-                fwht_in_place(&mut h_k);
-                (ti, si, AdditiveDensePoly::new(h_k))
-            })
-            .collect();
+        drop(zero_polys);
 
         for (table_idx, suffix_idx, poly) in pub_polys.into_iter().chain(rep3_polys) {
-            self.suffix_polys[table_idx][suffix_idx] = poly;
+            self.suffix_polys[table_idx][suffix_idx] = Some(poly);
         }
-        drop(_span);
+
+        // -- Step 3: Chunked reshare+unmask additive histograms --
+        let chunk_hists = std::env::var("RESHARE_HISTS_CHUNK")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(8);
+
+        let reshared_polys = reshare_and_unmask_additive_hists_chunked(
+            hist_entries_to_reshare,
+            ehat16,
+            inv_m,
+            self.party_id,
+            io_ctx,
+            chunk_hists,
+        )?;
+        for (table_idx, suffix_idx, poly) in reshared_polys {
+            self.suffix_polys[table_idx][suffix_idx] = Some(poly);
+        }
 
         Ok(())
     }
@@ -713,15 +780,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                         }
                     }
                     let party_id = self.party_id;
-                    let polys: Vec<_> = [h0_f, h4_f]
-                        .into_par_iter()
-                        .map(|mut h| {
-                            AdditiveDensePoly::new(unmask_histogram_public(
-                                &mut h, ehat16, party_id,
-                            ))
-                        })
-                        .collect();
-                    let [q0, q4]: [AdditiveDensePoly<F>; 2] = polys.try_into().unwrap();
+                    let q0 = AdditiveDensePoly::new(unmask_histogram_public(
+                        &mut h0_f, ehat16, party_id,
+                    ));
+                    let q4 = AdditiveDensePoly::new(unmask_histogram_public(
+                        &mut h4_f, ehat16, party_id,
+                    ));
                     (q0, q4)
                 }
                 Either::Shared(u_shared) => {
@@ -737,9 +801,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                             hist4[c as usize] += u_shared[j];
                         }
                     }
-                    let hists = vec![hist0, hist4];
-                    let polys: Vec<_> = hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
-                    let [q0, q4]: [AdditiveDensePoly<F>; 2] = polys.try_into().unwrap();
+                    let q0 = fwht_unmask(hist0);
+                    let q4 = fwht_unmask(hist4);
                     (q0, q4)
                 }
             };
@@ -1073,38 +1136,31 @@ impl<F: JoltField> ReadRafProverState<F> {
         // Phase 0: shift histograms are F → use unmask_histogram_public (~2x cheaper).
         let _fwht_span = info_span!("fwht_unmask", phase).entered();
 
-        // Rep3 histograms: left, right, identity (always Rep3)
-        // + shift histograms if phase 1+ (shift_half_f is None)
-        let mut rep3_hists: Vec<Vec<Rep3PrimeFieldShare<F>>> = Vec::with_capacity(5);
         let shift_in_rep3 = shift_half_f.is_none();
-        if shift_in_rep3 {
-            rep3_hists.push(hist_shift_half);
-        }
-        rep3_hists.push(hist_left);
-        rep3_hists.push(hist_right);
-        if shift_in_rep3 {
-            rep3_hists.push(hist_shift);
-        }
-        rep3_hists.push(hist_identity);
-
-        let rep3_polys: Vec<_> = rep3_hists.into_par_iter().map(|h| fwht_unmask(h)).collect();
+        let _seq = trace_span!("init_operand_q_polys_unmask_seq", phase, shift_in_rep3).entered();
 
         let (q02, q1, q3, q4, q5) = if shift_in_rep3 {
-            // Phase 1+: all 5 from rep3
-            let [q02, q1, q3, q4, q5]: [AdditiveDensePoly<F>; 5] = rep3_polys.try_into().unwrap();
+            // Phase 1+: all 5 from rep3; unmask sequentially and drop each histogram immediately.
+            let q02 = fwht_unmask(hist_shift_half);
+            let q1 = fwht_unmask(hist_left);
+            let q3 = fwht_unmask(hist_right);
+            let q4 = fwht_unmask(hist_shift);
+            let q5 = fwht_unmask(hist_identity);
             (q02, q1, q3, q4, q5)
         } else {
-            // Phase 0: shift histograms from F, operand histograms from Rep3
+            // Phase 0: shift histograms from F, operand histograms from Rep3.
             let party_id = self.party_id;
-            let f_polys: Vec<_> = [shift_half_f.unwrap(), shift_f.unwrap()]
-                .into_par_iter()
-                .map(|mut h| {
-                    AdditiveDensePoly::new(unmask_histogram_public(&mut h, ehat16, party_id))
-                })
-                .collect();
-            let [q1, q3, q5]: [AdditiveDensePoly<F>; 3] = rep3_polys.try_into().unwrap();
-            (f_polys[0].clone(), q1, q3, f_polys[1].clone(), q5)
+            let mut hsh = shift_half_f.unwrap();
+            let mut hs = shift_f.unwrap();
+            let q02 = AdditiveDensePoly::new(unmask_histogram_public(&mut hsh, ehat16, party_id));
+            let q4 = AdditiveDensePoly::new(unmask_histogram_public(&mut hs, ehat16, party_id));
+
+            let q1 = fwht_unmask(hist_left);
+            let q3 = fwht_unmask(hist_right);
+            let q5 = fwht_unmask(hist_identity);
+            (q02, q1, q3, q4, q5)
         };
+        drop(_seq);
         drop(_fwht_span);
 
         self.left_operand_q[0] = q02.clone();
@@ -1250,6 +1306,18 @@ impl<F: JoltField> ReadRafProverState<F> {
             .take()
             .expect("ra_acc must be Some after all cache_phase calls");
         self.ra = Some(Rep3DensePolynomial::new(ra_vec));
+
+        // Address-round scratch is no longer needed for the cycle rounds.
+        // Free it eagerly to reduce stage3 peak RSS.
+        for table in self.suffix_polys.iter_mut() {
+            for slot in table.iter_mut() {
+                *slot = None;
+            }
+        }
+        self.left_operand_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.right_operand_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.identity_q = [AdditiveDensePoly::empty(), AdditiveDensePoly::empty()];
+        self.v = ExpandingTable::new(1);
     }
 }
 
@@ -1366,7 +1434,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
                 s.spawn(|_| {
                     ps.suffix_polys.par_iter_mut().for_each(|polys| {
                         for poly in polys.iter_mut() {
-                            poly.bind(r);
+                            if let Some(p) = poly.as_mut() {
+                                p.bind(r);
+                            }
                         }
                     });
                 });
@@ -1394,6 +1464,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
                     ps.v.update(r_j);
                 });
             });
+
+            // All suffix/Q polynomials have been bound once (halve their logical length).
+            ps.suffix_poly_len /= 2;
 
             // Update prefix checkpoints every 2 rounds
             if ps.r.len().is_multiple_of(2) {
@@ -1521,7 +1594,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
         ps: &ReadRafProverState<F>,
         j: usize,
     ) -> [AdditiveShare<F>; 2] {
-        let len = ps.suffix_polys[0][0].len();
+        let len = ps.suffix_poly_len;
+        debug_assert!(len > 0, "suffix_poly_len must be > 0 during address rounds");
         let log_len = len.log_2();
 
         let r_x = if j % 2 == 1 {
@@ -1578,8 +1652,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                     let mut suffixes_right: [AdditiveShare<F>; 8] = [AdditiveShare::<F>::zero(); 8];
                     for si in 0..n {
                         // `get_coeff` is a by-value read of an AdditiveShare.
-                        suffixes_left[si] = suffixes[si].get_coeff(b);
-                        suffixes_right[si] = suffixes[si].get_coeff(b + half);
+                        if let Some(poly) = suffixes[si].as_ref() {
+                            suffixes_left[si] = poly.get_coeff(b);
+                            suffixes_right[si] = poly.get_coeff(b + half);
+                        }
                     }
 
                     // `LookupTables::combine(prefixes, suffixes)` is linear in `suffixes`.
@@ -1910,21 +1986,23 @@ where
 /// - `rep3`: histogram is Rep3 (no reshare needed)
 /// - `additive`: histogram is additive (needs reshare before FWHT)
 /// - `zero`: table has no cycles or suffix is identically zero
-fn build_suffix_histograms<F: JoltField>(
+fn build_suffix_polys_and_additive_hists<F: JoltField>(
     eval_segments: &[EvalSegment],
     all_field: &[Rep3Value<F>],
     u_evals: &Either<Vec<F>, Vec<Rep3PrimeFieldShare<F>>>,
     c16: &[Option<u16>],
     lookup_indices_by_table: &[Vec<usize>],
     suffix_len: usize,
+    ehat16: &[Rep3PrimeFieldShare<F>],
     party_id: PartyID,
 ) -> (
-    Vec<(usize, usize, Vec<F>)>,
-    Vec<(usize, usize, Vec<Rep3PrimeFieldShare<F>>)>,
+    Vec<(usize, usize, AdditiveDensePoly<F>)>,
+    Vec<(usize, usize, AdditiveDensePoly<F>)>,
     Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
     Vec<(usize, usize)>,
 ) {
     let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
+    let inv_m = F::from(M as u64).inverse().expect("M invertible");
 
     // Build lookup: (table_idx, suffix_idx) → segment in all_field
     let segment_lookup: std::collections::HashMap<(usize, usize), (usize, usize)> = eval_segments
@@ -1944,8 +2022,8 @@ fn build_suffix_histograms<F: JoltField>(
         .collect();
 
     enum HistResult<F: JoltField> {
-        PublicF(usize, usize, Vec<F>),
-        Rep3(usize, usize, Vec<Rep3PrimeFieldShare<F>>),
+        PublicPoly(usize, usize, AdditiveDensePoly<F>),
+        Rep3Poly(usize, usize, AdditiveDensePoly<F>),
         Additive(usize, usize, Vec<AdditiveShare<F>>),
         Zero(usize, usize),
     }
@@ -1973,7 +2051,8 @@ fn build_suffix_histograms<F: JoltField>(
                                 h[c as usize] += u_pub[j] * constant_f;
                             }
                         }
-                        HistResult::PublicF(ti, si, h)
+                        let unmasked = unmask_histogram_public(&mut h, ehat16, party_id);
+                        HistResult::PublicPoly(ti, si, AdditiveDensePoly::new(unmasked))
                     } else if matches!(suffix, Suffixes::One) {
                         let mut h = vec![F::zero(); M];
                         for &j in table_cycles {
@@ -1981,7 +2060,8 @@ fn build_suffix_histograms<F: JoltField>(
                                 h[c as usize] += u_pub[j];
                             }
                         }
-                        HistResult::PublicF(ti, si, h)
+                        let unmasked = unmask_histogram_public(&mut h, ehat16, party_id);
+                        HistResult::PublicPoly(ti, si, AdditiveDensePoly::new(unmasked))
                     } else {
                         let &(seg_base, seg_n) =
                             segment_lookup.get(&(ti, si)).expect("missing eval segment");
@@ -2003,7 +2083,8 @@ fn build_suffix_histograms<F: JoltField>(
                                 }
                             }
                         }
-                        HistResult::Rep3(ti, si, h)
+                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     }
                 })
                 .collect()
@@ -2030,7 +2111,8 @@ fn build_suffix_histograms<F: JoltField>(
                                 h[c as usize] += u_shared[j] * constant_f;
                             }
                         }
-                        HistResult::Rep3(ti, si, h)
+                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     } else if matches!(suffix, Suffixes::One) {
                         let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
                         for &j in table_cycles {
@@ -2038,7 +2120,8 @@ fn build_suffix_histograms<F: JoltField>(
                                 h[c as usize] += u_shared[j];
                             }
                         }
-                        HistResult::Rep3(ti, si, h)
+                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     } else {
                         let &(seg_base, seg_n) =
                             segment_lookup.get(&(ti, si)).expect("missing eval segment");
@@ -2055,7 +2138,8 @@ fn build_suffix_histograms<F: JoltField>(
                                     h[c as usize] += u_shared[j] * f;
                                 }
                             }
-                            HistResult::Rep3(ti, si, h)
+                            let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                            HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                         } else {
                             let mut h = vec![AdditiveShare::<F>::zero(); M];
                             for (local, &j) in table_cycles.iter().enumerate() {
@@ -2076,19 +2160,19 @@ fn build_suffix_histograms<F: JoltField>(
         }
     };
 
-    let mut pub_f = Vec::new();
-    let mut rep3 = Vec::new();
+    let mut pub_polys = Vec::new();
+    let mut rep3_polys = Vec::new();
     let mut additive = Vec::new();
     let mut zero = Vec::new();
     for result in hist_results {
         match result {
-            HistResult::PublicF(ti, si, h) => pub_f.push((ti, si, h)),
-            HistResult::Rep3(ti, si, h) => rep3.push((ti, si, h)),
+            HistResult::PublicPoly(ti, si, poly) => pub_polys.push((ti, si, poly)),
+            HistResult::Rep3Poly(ti, si, poly) => rep3_polys.push((ti, si, poly)),
             HistResult::Additive(ti, si, h) => additive.push((ti, si, h)),
             HistResult::Zero(ti, si) => zero.push((ti, si)),
         }
     }
-    (pub_f, rep3, additive, zero)
+    (pub_polys, rep3_polys, additive, zero)
 }
 
 /// B2A conversion for operand Q: uninterleave interleaved shares into left/right halves,
@@ -2121,16 +2205,19 @@ where
 
     let n_il = interleaved_u128.len();
     let n_id = identity_u128.len();
+    let chunk_size = std::env::var("READRAF_Q_B2A_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8192)
+        .max(1);
 
-    let all_downcast: Vec<Rep3RingShare<T>> = interleaved_u128
+    let _span = trace_span!("q_polys_b2a", n_il, n_id, chunk = chunk_size, k = T::K).entered();
+
+    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) = interleaved_u128
         .par_iter()
-        .chain(identity_u128.par_iter())
         .map(|b| downcast::<u128, T>(*b))
-        .collect();
-    let (il_bits, id_bits) = all_downcast.split_at(n_il);
-
-    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) =
-        il_bits.par_iter().map(|b| T::uninterleave(*b)).unzip();
+        .map(|b| T::uninterleave(b))
+        .unzip();
 
     let s_left;
     let mut s_right: Vec<Option<Rep3PrimeFieldShare<F>>> = vec![None; n_il];
@@ -2140,11 +2227,22 @@ where
         for &i in shared_right_idx {
             lr.push(ys[i]);
         }
-        let lr_batch = pool.take_edabits::<T::Half>(lr.len());
-        let mut lr_result =
-            io_ctx.par_chunks_preproc(lr, lr_batch, None, |shares, batch, ctx| {
-                edabits::ring_to_field_b2a_many::<T::Half, F, _>(&shares, &batch, ctx)
-            })?;
+
+        let _lr = trace_span!("q_polys_b2a_lr", n = lr.len()).entered();
+        let mut lr_result: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(lr.len());
+        for lr_chunk in lr.chunks(chunk_size) {
+            let _c =
+                trace_span!("q_polys_b2a_chunk", kind = "lr", chunk_len = lr_chunk.len()).entered();
+            let lr_batch = pool.take_edabits::<T::Half>(lr_chunk.len());
+            let out = edabits::ring_to_field_b2a_many::<T::Half, F, _>(
+                lr_chunk,
+                &lr_batch,
+                io_ctx.main(),
+            )?;
+            lr_result.extend(out);
+        }
+        drop(_lr);
+
         let shared_rights = lr_result.split_off(n_il);
         s_left = lr_result;
         for (idx, &i) in shared_right_idx.iter().enumerate() {
@@ -2155,10 +2253,20 @@ where
     }
 
     let s_identity = if n_id > 0 {
-        let id_batch = pool.take_edabits::<T>(n_id);
-        io_ctx.par_chunks_preproc(id_bits.to_vec(), id_batch, None, |shares, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<T, F, _>(&shares, &batch, ctx)
-        })?
+        let _id = trace_span!("q_polys_b2a_id", n = n_id).entered();
+        let mut out_all: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n_id);
+        for id_chunk in identity_u128.chunks(chunk_size) {
+            let _c =
+                trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len()).entered();
+            let id_shares: Vec<Rep3RingShare<T>> =
+                id_chunk.iter().map(|b| downcast::<u128, T>(*b)).collect();
+            let id_batch = pool.take_edabits::<T>(id_shares.len());
+            let out =
+                edabits::ring_to_field_b2a_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;
+            out_all.extend(out);
+        }
+        drop(_id);
+        out_all
     } else {
         vec![]
     };

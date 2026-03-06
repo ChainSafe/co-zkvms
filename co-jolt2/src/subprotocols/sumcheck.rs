@@ -639,7 +639,7 @@ pub struct HybridBatchedSumcheckWorker;
 impl HybridBatchedSumcheckWorker {
     #[tracing::instrument(skip_all, name = "HybridSumcheck::prove", level = "trace")]
     pub fn prove<F, N>(
-        instances: &mut [BatchedSumcheckWorkerInstance<F, N>],
+        mut instances: Vec<BatchedSumcheckWorkerInstance<F, N>>,
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<F>,
@@ -1418,7 +1418,7 @@ mod tests {
             move |(), mut io_ctx| {
                 let party_id = io_ctx.party_id();
                 let mut acc = Rep3OpeningAccumulatorWorker::<Fr>::new(party_id);
-                let mut instances: Vec<BatchedSumcheckWorkerInstance<Fr, _>> = vec![
+                let instances: Vec<BatchedSumcheckWorkerInstance<Fr, _>> = vec![
                     BatchedSumcheckWorkerInstance::Secret(Box::new(ConstSecretWorker {
                         input_claim: secret_claim,
                         rounds,
@@ -1434,7 +1434,7 @@ mod tests {
                 ];
                 let mut pool = PreprocessingPool::empty(party_id);
                 let r = HybridBatchedSumcheckWorker::prove(
-                    &mut instances,
+                    instances,
                     &mut acc,
                     &mut io_ctx,
                     &mut pool,

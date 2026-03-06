@@ -1,4 +1,4 @@
-# co-jolt2 (Claude Code)
+# co-jolt2
 
 ## Context
 - Read: `co-jolt2/PROJECT.md`

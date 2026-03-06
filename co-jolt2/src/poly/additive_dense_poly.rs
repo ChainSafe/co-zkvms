@@ -28,6 +28,10 @@ impl<F: JoltField> AdditiveDensePoly<F> {
         }
     }
 
+    pub(crate) fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
     pub(crate) fn zeros(len: usize) -> Self {
         Self::new(vec![AdditiveShare::zero(); len])
     }
@@ -65,6 +69,9 @@ impl<F: JoltField> AdditiveDensePoly<F> {
                 self.bound[i] = left + (right - left) * r;
             }
             self.is_bound = true;
+            // The unbound coefficient table is no longer needed after the first bind.
+            // Dropping it materially reduces peak memory during long sumchecks.
+            self.coeffs = Vec::new();
         }
         self.current_len = n;
     }

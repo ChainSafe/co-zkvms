@@ -114,9 +114,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
             advice_shares,
         );
         Rep3JoltDagWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
-            state,
-            io_ctx,
-            preproc,
+            state, io_ctx, preproc,
         )
     }
 }

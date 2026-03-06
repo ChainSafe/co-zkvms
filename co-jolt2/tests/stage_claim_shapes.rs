@@ -71,10 +71,7 @@ fn make_state_manager(
     sm
 }
 
-fn seed_spartan_outer_openings(
-    sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    log_t: usize,
-) {
+fn seed_spartan_outer_openings(sm: &mut StateManager<'_, F, ProofTranscript, PCS>, log_t: usize) {
     let r_cycle = sm.transcript.challenge_vector_optimized::<F>(log_t);
     let r_cycle_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_cycle);
 

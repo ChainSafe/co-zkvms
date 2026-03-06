@@ -133,7 +133,12 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
 
 /// Rep3 version of vanilla `compute_claimed_witness_evals`:
 /// returns 41 evaluations in `ALL_R1CS_INPUTS` order.
-#[tracing::instrument(skip_all, name = "compute_claimed_witness_evals")]
+#[tracing::instrument(
+    skip_all,
+    name = "compute_claimed_witness_evals",
+    level = "trace",
+    fields(trace_len = tracing::field::Empty, r_cycle_len = r_cycle.len())
+)]
 pub fn compute_claimed_witness_evals_rep3<F, PCS, N>(
     state: &mut StateManagerWorker<'_, F, PCS>,
     io_ctx: &mut IoContextPool<N>,
@@ -146,6 +151,7 @@ where
 {
     let cycle_witness = &state.prover_state.cycle_witness;
     let trace_len = cycle_witness.len();
+    tracing::Span::current().record("trace_len", trace_len);
     eyre::ensure!(
         trace_len.is_power_of_two(),
         "trace length must be power-of-two"

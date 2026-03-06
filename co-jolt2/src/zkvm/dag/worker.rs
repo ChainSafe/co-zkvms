@@ -11,6 +11,7 @@ use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::subprotocols::sumcheck::HybridBatchedSumcheckWorker;
+use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
@@ -97,43 +98,52 @@ impl Rep3JoltDagWorker {
             instruction_one_hot_polys,
         );
 
-        let mut stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
+        let stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
         let _stage2 = info_span!("stage2_prove").entered();
         HybridBatchedSumcheckWorker::prove(
-            &mut stage2_instances,
+            stage2_instances,
             &mut state.accumulator,
             &mut io_ctx,
             preproc,
         )?;
         drop(_stage2);
+        maybe_purge_jemalloc();
 
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
-        let mut stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx, preproc)?;
+        let stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx, preproc)?;
         let _stage3 = info_span!("stage3_prove").entered();
         HybridBatchedSumcheckWorker::prove(
-            &mut stage3_instances,
+            stage3_instances,
             &mut state.accumulator,
             &mut io_ctx,
             preproc,
         )?;
         drop(_stage3);
+        maybe_purge_jemalloc();
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
         // -------------------------------------------------------------------
-        let mut stage4_instances = stages.stage4_instances(&mut state, &mut io_ctx)?;
+        let stage4_instances = stages.stage4_instances(&mut state, &mut io_ctx)?;
         if !stage4_instances.is_empty() {
             let _stage4 = info_span!("stage4_prove").entered();
             HybridBatchedSumcheckWorker::prove(
-                &mut stage4_instances,
+                stage4_instances,
                 &mut state.accumulator,
                 &mut io_ctx,
                 preproc,
             )?;
+            drop(_stage4);
         }
+
+        // Stage 2-4 DAG state can be dropped before the opening reduction.
+        let _drop_stages = info_span!("drop_stages").entered();
+        drop(stages);
+        drop(_drop_stages);
+        maybe_purge_jemalloc();
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
@@ -147,6 +157,7 @@ impl Rep3JoltDagWorker {
                 &mut io_ctx,
             )?;
         drop(_stage5);
+        maybe_purge_jemalloc();
 
         Ok(())
     }

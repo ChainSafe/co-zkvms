@@ -1,7 +1,7 @@
 //! Backing store for persisted preprocessing data (edaBits / daBits).
 //!
 //! Provides [`BackingStore`] — a dual-mode container that holds field elements
-//! either in memory (`Vec<F>`) or as a memory-mapped file (`MmapMut`).
+//! either in memory (`Vec<F>`) or as a file-backed store (`File` + range reads).
 //!
 //! When the `reuse-preproc` feature is **disabled** (production), consumed
 //! elements are zeroed on disk and the cursor is persisted crash-safely.
@@ -9,7 +9,6 @@
 //! can be loaded multiple times.
 
 use crate::protocols::rep3::PartyID;
-use memmap2::MmapMut;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
@@ -40,14 +39,15 @@ pub(crate) const fn assert_field_layout<F>() {
 // BackingStore<F>
 // ---------------------------------------------------------------------------
 
-/// Dual-mode backing store: either in-memory `Vec` or mutable memory-mapped file.
+/// Dual-mode backing store: either in-memory `Vec` or file-backed range reads.
 pub(crate) enum BackingStore<F> {
     /// In-memory storage (after preprocessing, before save to disk).
     InMemory(Vec<F>),
-    /// Memory-mapped file with optional consume-on-read zeroing.
-    Mapped {
-        mmap: MmapMut,
-        /// Number of `F` elements in the mapping.
+    /// File-backed store for sequential / range reads without mmap'ing the file.
+    FileBacked {
+        file: File,
+        path: PathBuf,
+        /// Number of `F` elements in the file.
         len: usize,
         _phantom: PhantomData<F>,
     },
@@ -56,22 +56,14 @@ pub(crate) enum BackingStore<F> {
 }
 
 impl<F> BackingStore<F> {
-    /// Return a slice over all elements.
-    ///
-    /// # Safety (internal)
-    ///
-    /// For the `Mapped` variant this performs an `unsafe` pointer cast.
-    /// Soundness relies on:
-    /// - `mmap` is page-aligned (≥ 4096), satisfying `align_of::<F>() ≤ 8`
-    /// - `F` has the same in-memory representation that was written to disk
-    ///   (guaranteed: same binary, same architecture)
-    /// - No padding bytes in `F` (true for `Fp<P, N>` = `[u64; N]` + ZST)
     pub(crate) fn as_slice(&self) -> &[F] {
         match self {
             BackingStore::InMemory(v) => v.as_slice(),
-            BackingStore::Mapped { mmap, len, .. } => unsafe {
-                std::slice::from_raw_parts(mmap.as_ptr() as *const F, *len)
-            },
+            BackingStore::FileBacked { .. } => {
+                panic!(
+                    "BackingStore::FileBacked does not support as_slice(); use read_reuse/read_consume"
+                )
+            }
             BackingStore::Empty => &[],
         }
     }
@@ -79,13 +71,169 @@ impl<F> BackingStore<F> {
     pub(crate) fn len(&self) -> usize {
         match self {
             BackingStore::InMemory(v) => v.len(),
-            BackingStore::Mapped { len, .. } => *len,
+            BackingStore::FileBacked { len, .. } => *len,
             BackingStore::Empty => 0,
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    fn validate_range(&self, start: usize, end: usize) -> io::Result<()> {
+        if start > end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid range: start({start}) > end({end})"),
+            ));
+        }
+        if end > self.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("range end({end}) exceeds len({})", self.len()),
+            ));
+        }
+        Ok(())
+    }
+
+    fn elem_size_bytes() -> usize {
+        std::mem::size_of::<F>()
+    }
+
+    fn byte_range(start: usize, end: usize) -> (u64, usize) {
+        let elem_size = Self::elem_size_bytes();
+        let byte_start = start * elem_size;
+        let byte_len = (end - start) * elem_size;
+        (byte_start as u64, byte_len)
+    }
+
+    fn file_read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.read_exact_at(buf, offset)?;
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            file.seek_read(buf, offset)?;
+            return Ok(());
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let mut f = file.try_clone()?;
+            f.seek(SeekFrom::Start(offset))?;
+            f.read_exact(buf)?;
+            Ok(())
+        }
+    }
+
+    fn file_write_all_at(file: &File, offset: u64, buf: &[u8]) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.write_all_at(buf, offset)?;
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            file.seek_write(buf, offset)?;
+            return Ok(());
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let mut f = file.try_clone()?;
+            f.seek(SeekFrom::Start(offset))?;
+            f.write_all(buf)?;
+            Ok(())
+        }
+    }
+
+    fn read_file_backed_range(&self, file: &File, start: usize, end: usize) -> io::Result<Vec<F>> {
+        self.validate_range(start, end)?;
+        let count = end - start;
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let (byte_offset, byte_len) = Self::byte_range(start, end);
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                start,
+                end,
+                count,
+                byte_offset,
+                byte_len,
+                "BackingStore file-backed read"
+            );
+        }
+
+        // SAFETY: We read exactly `byte_len` bytes from disk into a
+        // `Vec<MaybeUninit<F>>`, then transmute to `Vec<F>`. This is sound
+        // under the existing `assert_field_layout::<F>()` contract and because
+        // we fully initialize all elements via `read_exact_at`.
+        let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(count);
+        unsafe { out.set_len(count) };
+        let out_bytes =
+            unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+
+        Self::file_read_exact_at(file, byte_offset, out_bytes)?;
+        let out: Vec<F> = unsafe { std::mem::transmute(out) };
+        Ok(out)
+    }
+
+    /// Read a range of elements in **reuse** mode (never mutates the file).
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn read_reuse(&self, start: usize, end: usize) -> io::Result<Vec<F>>
+    where
+        F: Copy,
+    {
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                Ok(v[start..end].to_vec())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_reuse"
+                    );
+                }
+                self.read_file_backed_range(file, start, end)
+            }
+            BackingStore::Empty => Ok(Vec::new()),
+        }
+    }
+
+    /// Read a range of elements in **consume** mode (call `consume()` after use).
+    #[cfg(not(feature = "reuse-preproc"))]
+    pub(crate) fn read_consume(&self, start: usize, end: usize) -> io::Result<Vec<F>>
+    where
+        F: Copy,
+    {
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                Ok(v[start..end].to_vec())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_consume"
+                    );
+                }
+                self.read_file_backed_range(file, start, end)
+            }
+            BackingStore::Empty => Ok(Vec::new()),
+        }
     }
 
     /// Wrap a `Vec<F>`, returning `Empty` if the vec is empty.
@@ -99,26 +247,35 @@ impl<F> BackingStore<F> {
 
     /// Write raw bytes to a file.  No-op for `Empty`.
     pub(crate) fn save_to_file(&self, path: &Path) -> io::Result<()> {
-        let slice = match self {
-            BackingStore::InMemory(v) => v.as_slice(),
-            BackingStore::Mapped { mmap, len, .. } => unsafe {
-                std::slice::from_raw_parts(mmap.as_ptr() as *const F, *len)
-            },
-            BackingStore::Empty => return Ok(()),
-        };
-        let bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice))
-        };
-        let file = File::create(path)?;
-        let mut w = BufWriter::new(file);
-        w.write_all(bytes)?;
-        w.flush()?;
-        Ok(())
+        match self {
+            BackingStore::InMemory(v) => {
+                let bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        v.as_ptr() as *const u8,
+                        std::mem::size_of_val(v.as_slice()),
+                    )
+                };
+                let file = File::create(path)?;
+                let mut w = BufWriter::new(file);
+                w.write_all(bytes)?;
+                w.flush()?;
+                Ok(())
+            }
+            BackingStore::FileBacked { path: src, .. } => {
+                if src == path {
+                    return Ok(());
+                }
+                std::fs::copy(src, path)?;
+                Ok(())
+            }
+            BackingStore::Empty => Ok(()),
+        }
     }
 
-    /// Open a file and memory-map it (read-write).
+    /// Open a file for file-backed range reads.
     ///
-    /// Returns `Empty` if the file is zero-length.
+    /// Returns `Empty` if the file is zero-length. The file is opened read+write
+    /// (even with `reuse-preproc`) so pool extension can append to it if needed.
     pub(crate) fn load_from_file(path: &Path) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         let file_len = file.metadata()?.len() as usize;
@@ -135,10 +292,19 @@ impl<F> BackingStore<F> {
                 ),
             ));
         }
-        let mmap = unsafe { MmapMut::map_mut(&file)? };
         let len = file_len / elem_size;
-        Ok(BackingStore::Mapped {
-            mmap,
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                path = %path.display(),
+                file_len_bytes = file_len,
+                elem_size,
+                len_elems = len,
+                "BackingStore::load_from_file"
+            );
+        }
+        Ok(BackingStore::FileBacked {
+            file,
+            path: path.to_path_buf(),
             len,
             _phantom: PhantomData,
         })
@@ -146,7 +312,6 @@ impl<F> BackingStore<F> {
 
     /// Append additional elements to this store.
     ///
-    /// Converts `Mapped` → `InMemory` (copies existing + appends).
     /// Only used during pool extension, not normal consumption.
     pub(crate) fn extend(&mut self, additional: &[F])
     where
@@ -155,25 +320,174 @@ impl<F> BackingStore<F> {
         if additional.is_empty() {
             return;
         }
-        let mut combined = self.as_slice().to_vec();
-        combined.extend_from_slice(additional);
-        *self = BackingStore::InMemory(combined);
+        match self {
+            BackingStore::InMemory(v) => v.extend_from_slice(additional),
+            BackingStore::FileBacked { file, len, .. } => {
+                let bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        additional.as_ptr() as *const u8,
+                        std::mem::size_of_val(additional),
+                    )
+                };
+                // Best-effort append; panic is fine here because preprocessing pools
+                // can't recover from persistence failure anyway.
+                file.seek(SeekFrom::End(0))
+                    .and_then(|_| file.write_all(bytes))
+                    .unwrap_or_else(|e| {
+                        panic!("BackingStore::extend file append failed: {e}");
+                    });
+                *len += additional.len();
+            }
+            BackingStore::Empty => {
+                *self = BackingStore::InMemory(additional.to_vec());
+            }
+        }
     }
 
-    /// Zero out consumed elements in the backing store and flush to disk.
+    /// Consume a range and reclaim backing storage in non-reuse mode.
     ///
     /// `start..end` are element indices (not byte offsets).
     /// No-op for `InMemory` / `Empty` (in-memory data dies with the process).
-    /// No-op when the `reuse-preproc` feature is enabled.
+    ///
     pub(crate) fn consume(&mut self, start: usize, end: usize) {
+        let (file, path, len) = match self {
+            BackingStore::FileBacked {
+                file, path, len, ..
+            } => (file, path, *len),
+            _ => return,
+        };
+
+        #[cfg(feature = "reuse-preproc")]
+        {
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    path = %path.display(),
+                    start,
+                    end,
+                    "BackingStore::consume noop (reuse-preproc)"
+                );
+            }
+            let _ = (file, path, start, end);
+            return;
+        }
+
         #[cfg(not(feature = "reuse-preproc"))]
-        if let BackingStore::Mapped { mmap, .. } = self {
-            let elem_size = std::mem::size_of::<F>();
-            let byte_start = start * elem_size;
-            let byte_end = end * elem_size;
-            mmap[byte_start..byte_end].fill(0);
-            // Best-effort flush; ignore errors (crash safety handled by cursor).
-            let _ = mmap.flush_range(byte_start, byte_end - byte_start);
+        {
+            if start > end || end > len {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        len,
+                        "BackingStore::consume invalid range"
+                    );
+                }
+                return;
+            }
+
+            let (byte_offset, byte_len) = Self::byte_range(start, end);
+            if byte_len == 0 {
+                return;
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::io::AsRawFd;
+                let fd = file.as_raw_fd();
+                // SAFETY: libc call; parameters are validated and come from file offsets.
+                let rc = unsafe {
+                    libc::fallocate(
+                        fd,
+                        libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
+                        byte_offset as libc::off_t,
+                        byte_len as libc::off_t,
+                    )
+                };
+                if rc == 0 {
+                    if tracing::enabled!(tracing::Level::TRACE) {
+                        tracing::trace!(
+                            path = %path.display(),
+                            start,
+                            end,
+                            byte_offset,
+                            byte_len,
+                            "BackingStore::consume punched hole"
+                        );
+                    }
+                    return;
+                }
+
+                let err = io::Error::last_os_error();
+                let errno = err.raw_os_error().unwrap_or(0);
+                // If unsupported, fall back to explicit zeroing.
+                if matches!(
+                    errno,
+                    libc::EOPNOTSUPP | libc::ENOSYS | libc::EINVAL | libc::ENODEV
+                ) {
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(
+                            path = %path.display(),
+                            start,
+                            end,
+                            byte_offset,
+                            byte_len,
+                            errno,
+                            "BackingStore::consume punch-hole unsupported; falling back to zero"
+                        );
+                    }
+                } else {
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(
+                            path = %path.display(),
+                            start,
+                            end,
+                            byte_offset,
+                            byte_len,
+                            errno,
+                            err = %err,
+                            "BackingStore::consume punch-hole failed"
+                        );
+                    }
+                }
+            }
+
+            // Fallback: overwrite with zeros in fixed-size chunks.
+            let mut remaining = byte_len;
+            let mut cur = byte_offset;
+            let zero_buf = [0u8; 64 * 1024];
+            while remaining > 0 {
+                let chunk = remaining.min(zero_buf.len());
+                if let Err(e) = Self::file_write_all_at(file, cur, &zero_buf[..chunk]) {
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(
+                            path = %path.display(),
+                            start,
+                            end,
+                            byte_offset,
+                            byte_len,
+                            cur,
+                            chunk,
+                            err = %e,
+                            "BackingStore::consume zero fallback failed"
+                        );
+                    }
+                    break;
+                }
+                cur += chunk as u64;
+                remaining -= chunk;
+            }
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    path = %path.display(),
+                    start,
+                    end,
+                    byte_offset,
+                    byte_len,
+                    "BackingStore::consume zeroed range"
+                );
+            }
         }
     }
 }

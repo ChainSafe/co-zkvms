@@ -48,6 +48,12 @@ impl Rep3SpartanDagWorker {
         );
 
         let key = UniformSpartanKey::<F>::new(num_steps);
+        let num_constraints = UNIFORM_R1CS.len();
+        let padded_num_constraints = key.padded_row_constraint_per_step();
+        let num_chunks = core::cmp::min(
+            rayon::current_num_threads().next_power_of_two() * 16,
+            core::cmp::max(1, num_steps / 2),
+        );
 
         // Precompute Product shares = left_input * right_input for ALL rows.
         // We only batch MPC shared×shared multiplication for the rows where BOTH inputs are shared.
@@ -66,65 +72,91 @@ impl Rep3SpartanDagWorker {
         let (shared_mul_rows, mul_map) =
             build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
 
-        let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
-            let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
-                .par_iter()
-                .map(|&t| {
-                    let row = cycle_witness.row_stage1(t);
-                    (row.rs1_value(), row.rs2_value())
-                })
-                .unzip();
-            rep3_arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
-        } else {
-            vec![]
+        let mul_products: Vec<Rep3PrimeFieldShare<F>> = {
+            let _span = tracing::trace_span!(
+                "spartan_stage1_mul_products",
+                num_steps,
+                num_constraints,
+                padded_num_constraints,
+                shared_mul_rows = shared_mul_rows.len()
+            )
+            .entered();
+            if !shared_mul_rows.is_empty() {
+                let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
+                    .par_iter()
+                    .map(|&t| {
+                        let row = cycle_witness.row_stage1(t);
+                        (row.rs1_value(), row.rs2_value())
+                    })
+                    .unzip();
+                rep3_arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
+            } else {
+                vec![]
+            }
         };
 
-        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> = (0..num_steps)
-            .into_par_iter()
-            .map(|t| {
-                if mul_map[t] != u32::MAX {
-                    return mul_products[mul_map[t] as usize];
-                }
+        let product_per_cycle: Vec<Rep3PrimeFieldShare<F>> = {
+            let _span = tracing::trace_span!(
+                "spartan_stage1_product_per_cycle",
+                num_steps,
+                num_constraints,
+                padded_num_constraints
+            )
+            .entered();
+            (0..num_steps)
+                .into_par_iter()
+                .map(|t| {
+                    if mul_map[t] != u32::MAX {
+                        return mul_products[mul_map[t] as usize];
+                    }
 
-                let row = cycle_witness.row_stage1(t);
-                let fb = flags_bits[t];
-                let left_shared = (fb & mask_left_rs1) != 0;
-                let right_shared = (fb & mask_right_rs2) != 0;
+                    let row = cycle_witness.row_stage1(t);
+                    let fb = flags_bits[t];
+                    let left_shared = (fb & mask_left_rs1) != 0;
+                    let right_shared = (fb & mask_right_rs2) != 0;
 
-                match (left_shared, right_shared) {
-                    (true, false) => {
-                        rep3_arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
+                    match (left_shared, right_shared) {
+                        (true, false) => {
+                            rep3_arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
+                        }
+                        (false, true) => {
+                            rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
+                        }
+                        (false, false) => {
+                            let l = row.to_left_public_input();
+                            let r = row.to_right_public_input();
+                            rep3_arithmetic::promote_to_trivial_share(party_id, l * r)
+                        }
+                        (true, true) => unreachable!("shared×shared row must be in mul_map"),
                     }
-                    (false, true) => {
-                        rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
-                    }
-                    (false, false) => {
-                        let l = row.to_left_public_input();
-                        let r = row.to_right_public_input();
-                        rep3_arithmetic::promote_to_trivial_share(party_id, l * r)
-                    }
-                    (true, true) => unreachable!("shared×shared row must be in mul_map"),
-                }
-            })
-            .collect();
+                })
+                .collect()
+        };
 
         // Materialize per-cycle R1CS inputs (cheap; uses cached cycle witness).
-        let mut cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = Vec::with_capacity(num_steps);
-        for t in 0..num_steps {
-            let row = cycle_witness.row_stage1(t);
-            cycle_inputs.push(Rep3R1CSCycleInputs::from_trace(
-                party_id,
-                row,
-                product_per_cycle[t],
-            ));
-        }
+        let cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = {
+            let _span = tracing::trace_span!(
+                "spartan_stage1_cycle_inputs",
+                num_steps,
+                num_constraints,
+                padded_num_constraints
+            )
+            .entered();
+            (0..num_steps)
+                .into_par_iter()
+                .map(|t| {
+                    let row = cycle_witness.row_stage1(t);
+                    Rep3R1CSCycleInputs::from_trace(party_id, row, product_per_cycle[t])
+                })
+                .collect()
+        };
 
-        let mut az_bz_cz_poly = Rep3SpartanInterleavedPolynomial::<F>::new(
-            &key,
-            &cycle_inputs,
-            &UNIFORM_R1CS,
-            party_id,
-        )?;
+        let mut az_bz_cz_poly =
+            Rep3SpartanInterleavedPolynomial::<F>::new(&key, cycle_inputs)?;
+        drop(product_per_cycle);
+        drop(mul_products);
+        drop(shared_mul_rows);
+        drop(mul_map);
 
         let mut eq_poly = GruenSplitEqPolynomial::<F>::new(&tau, BindingOrder::LowToHigh);
 
@@ -133,8 +165,12 @@ impl Rep3SpartanDagWorker {
 
         for round in 0..num_rounds_x {
             if round == 0 {
+                let _span =
+                    tracing::trace_span!("spartan_stage1_round_streaming", round).entered();
                 az_bz_cz_poly.streaming_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
             } else {
+                let _span =
+                    tracing::trace_span!("spartan_stage1_round_remaining", round).entered();
                 az_bz_cz_poly.remaining_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
             }
         }

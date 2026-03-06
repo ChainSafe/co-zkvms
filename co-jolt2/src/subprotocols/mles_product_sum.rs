@@ -121,133 +121,165 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
     let n_wl = eq_wl_evals.len();
     let n_wr = eq_wr_evals.len();
 
-    // ---- Level 1: local rep3 × rep3 → additive, per (j_wr, j_wl) ----
-    // Layout: blocks of 8 triples per (j_wr, j_wl), each triple stored as 3 additive shares.
+    let mut wr_tile: usize = std::env::var("RA_MLES_WR_TILE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(32);
+    wr_tile = wr_tile.max(1).min(n_wr.max(1));
+
+    // Small instances are cheap; avoid tiling overhead.
+    if n_wr * n_wl <= 4096 {
+        wr_tile = n_wr.max(1);
+    }
+
+    // Layout constants.
     let level1_block_len = 8 * 3;
-    let level1_len = n_wr * n_wl * level1_block_len;
-    let mut level1_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level1_len];
-
-    level1_additive
-        .par_chunks_mut(n_wl * level1_block_len)
-        .enumerate()
-        .for_each(|(j_wr, out_wr)| {
-            for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
-                let j = j_wl + (j_wr << wl_len);
-                let out = &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
-
-                let mut pairs: [(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>); D] =
-                    std::array::from_fn(|i| {
-                        let e0 = ra_i_polys[i].get_bound_coeff(j);
-                        let e1 = ra_i_polys[i].get_bound_coeff(j + half);
-                        (e0, e1)
-                    });
-
-                // Fold eq_wl into the first pair (public × rep3).
-                pairs[0].0 *= eq_wl_eval;
-                pairs[0].1 *= eq_wl_eval;
-
-                for pair_idx in 0..8 {
-                    let triple = eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
-                    let base = pair_idx * 3;
-                    out[base] = triple[0];
-                    out[base + 1] = triple[1];
-                    out[base + 2] = triple[2];
-                }
-            }
-        });
-
-    // ---- Reshare level 1 → rep3 ----
-    let level1_rep3 = rep3::arithmetic::reshare_additive_many(&level1_additive, io_ctx.main())
-        .context("reshare level 1")?;
-    drop(level1_additive);
-
-    // ---- Level 2: eval_inter4 on rep3 shares → additive ----
     let level2_block_len = 4 * 5;
-    let level2_len = n_wr * n_wl * level2_block_len;
-    let mut level2_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level2_len];
-
-    level2_additive
-        .par_chunks_mut(level2_block_len)
-        .enumerate()
-        .for_each(|(idx, out)| {
-            let start = idx * level1_block_len;
-            let in_block = &level1_rep3[start..start + level1_block_len];
-
-            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] = std::array::from_fn(|t| {
-                std::array::from_fn(|k| in_block[t * 3 + k])
-            });
-
-            for group in 0..4 {
-                let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
-                let base = group * 5;
-                out[base..base + 5].copy_from_slice(&result);
-            }
-        });
-
-    // ---- Reshare level 2 → rep3 ----
-    let level2_rep3 = rep3::arithmetic::reshare_additive_many(&level2_additive, io_ctx.main())
-        .context("reshare level 2")?;
-    drop(level2_additive);
-
-    // ---- Level 3: eval_inter8 on rep3 shares → additive ----
     let level3_block_len = 2 * 9;
-    let level3_len = n_wr * n_wl * level3_block_len;
-    let mut level3_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level3_len];
 
-    level3_additive
-        .par_chunks_mut(level3_block_len)
-        .enumerate()
-        .for_each(|(idx, out)| {
-            let start = idx * level2_block_len;
-            let in_block = &level2_rep3[start..start + level2_block_len];
+    let mut global_sum = [AdditiveShare::<F>::zero(); D];
 
-            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] = std::array::from_fn(|q| {
-                std::array::from_fn(|k| in_block[q * 5 + k])
+    for wr0 in (0..n_wr).step_by(wr_tile) {
+        let wr1 = (wr0 + wr_tile).min(n_wr);
+        let tile_wr = wr1 - wr0;
+        debug_assert!(tile_wr > 0);
+
+        // ---- Level 1 (tile): local rep3 × rep3 → additive ----
+        let level1_len = tile_wr * n_wl * level1_block_len;
+        let mut level1_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level1_len];
+
+        level1_additive
+            .par_chunks_mut(n_wl * level1_block_len)
+            .enumerate()
+            .for_each(|(local_wr, out_wr)| {
+                let j_wr = wr0 + local_wr;
+                for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
+                    let j = j_wl + (j_wr << wl_len);
+                    let out =
+                        &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
+
+                    let mut pairs: [(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>); D] =
+                        std::array::from_fn(|i| {
+                            let e0 = ra_i_polys[i].get_bound_coeff(j);
+                            let e1 = ra_i_polys[i].get_bound_coeff(j + half);
+                            (e0, e1)
+                        });
+
+                    // Fold eq_wl into the first pair (public × rep3).
+                    pairs[0].0 *= eq_wl_eval;
+                    pairs[0].1 *= eq_wl_eval;
+
+                    for pair_idx in 0..8 {
+                        let triple =
+                            eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
+                        let base = pair_idx * 3;
+                        out[base] = triple[0];
+                        out[base + 1] = triple[1];
+                        out[base + 2] = triple[2];
+                    }
+                }
             });
 
-            for group in 0..2 {
-                let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);
-                let base = group * 9;
-                out[base..base + 9].copy_from_slice(&result);
-            }
-        });
+        // ---- Reshare level 1 → rep3 ----
+        let _reshare1 = tracing::trace_span!("reshare_level1").entered();
+        let level1_rep3 = rep3::arithmetic::reshare_additive_many(&level1_additive, io_ctx.main())
+            .context("reshare level 1")?;
+        drop(_reshare1);
+        drop(level1_additive);
 
-    // ---- Reshare level 3 → rep3 ----
-    let level3_rep3 = rep3::arithmetic::reshare_additive_many(&level3_additive, io_ctx.main())
-        .context("reshare level 3")?;
-    drop(level3_additive);
+        // ---- Level 2 (tile): eval_inter4 on rep3 shares → additive ----
+        let level2_len = tile_wr * n_wl * level2_block_len;
+        let mut level2_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level2_len];
 
-    // ---- Level 4: eval_inter16 final accumulate → additive, sum over j ----
-    let sum = (0..n_wr)
-        .into_par_iter()
-        .map(|j_wr| {
-            let mut local = [AdditiveShare::<F>::zero(); D];
-            let eq_wr_eval = eq_wr_evals[j_wr];
+        level2_additive
+            .par_chunks_mut(level2_block_len)
+            .enumerate()
+            .for_each(|(idx, out)| {
+                let start = idx * level1_block_len;
+                let in_block = &level1_rep3[start..start + level1_block_len];
 
-            let base = j_wr * n_wl * level3_block_len;
-            for j_wl in 0..n_wl {
-                let start = base + j_wl * level3_block_len;
-                let in_block = &level3_rep3[start..start + level3_block_len];
+                let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] =
+                    std::array::from_fn(|t| std::array::from_fn(|k| in_block[t * 3 + k]));
 
-                let a: [Rep3PrimeFieldShare<F>; 9] = std::array::from_fn(|k| in_block[k]);
-                let b: [Rep3PrimeFieldShare<F>; 9] = std::array::from_fn(|k| in_block[9 + k]);
-
-                eval_inter16_final_accumulate_rep3(&a, &b, eq_wr_eval, &mut local);
-            }
-
-            local
-        })
-        .reduce(
-            || [AdditiveShare::<F>::zero(); D],
-            |mut running, new| {
-                for i in 0..D {
-                    running[i] += new[i];
+                for group in 0..4 {
+                    let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
+                    let base = group * 5;
+                    out[base..base + 5].copy_from_slice(&result);
                 }
-                running
-            },
-        );
+            });
 
-    Ok(sum.to_vec())
+        // ---- Reshare level 2 → rep3 ----
+        let _reshare2 = tracing::trace_span!("reshare_level2").entered();
+        let level2_rep3 = rep3::arithmetic::reshare_additive_many(&level2_additive, io_ctx.main())
+            .context("reshare level 2")?;
+        drop(_reshare2);
+        drop(level2_additive);
+
+        // ---- Level 3 (tile): eval_inter8 on rep3 shares → additive ----
+        let level3_len = tile_wr * n_wl * level3_block_len;
+        let mut level3_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level3_len];
+
+        level3_additive
+            .par_chunks_mut(level3_block_len)
+            .enumerate()
+            .for_each(|(idx, out)| {
+                let start = idx * level2_block_len;
+                let in_block = &level2_rep3[start..start + level2_block_len];
+
+                let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] =
+                    std::array::from_fn(|q| std::array::from_fn(|k| in_block[q * 5 + k]));
+
+                for group in 0..2 {
+                    let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);
+                    let base = group * 9;
+                    out[base..base + 9].copy_from_slice(&result);
+                }
+            });
+
+        // ---- Reshare level 3 → rep3 ----
+        let _reshare3 = tracing::trace_span!("reshare_level3").entered();
+        let level3_rep3 = rep3::arithmetic::reshare_additive_many(&level3_additive, io_ctx.main())
+            .context("reshare level 3")?;
+        drop(_reshare3);
+        drop(level3_additive);
+
+        // ---- Level 4 (tile): final accumulate ----
+        let tile_sum = (0..tile_wr)
+            .into_par_iter()
+            .map(|local_wr| {
+                let mut local = [AdditiveShare::<F>::zero(); D];
+                let j_wr = wr0 + local_wr;
+                let eq_wr_eval = eq_wr_evals[j_wr];
+
+                let base = local_wr * n_wl * level3_block_len;
+                for j_wl in 0..n_wl {
+                    let start = base + j_wl * level3_block_len;
+                    let in_block = &level3_rep3[start..start + level3_block_len];
+
+                    let a: [Rep3PrimeFieldShare<F>; 9] = std::array::from_fn(|k| in_block[k]);
+                    let b: [Rep3PrimeFieldShare<F>; 9] =
+                        std::array::from_fn(|k| in_block[9 + k]);
+
+                    eval_inter16_final_accumulate_rep3(&a, &b, eq_wr_eval, &mut local);
+                }
+                local
+            })
+            .reduce(
+                || [AdditiveShare::<F>::zero(); D],
+                |mut running, new| {
+                    for i in 0..D {
+                        running[i] += new[i];
+                    }
+                    running
+                },
+            );
+
+        for i in 0..D {
+            global_sum[i] += tile_sum[i];
+        }
+    }
+
+    Ok(global_sum.to_vec())
 }
 
 // ---------------------------------------------------------------------------

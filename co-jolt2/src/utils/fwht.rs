@@ -220,26 +220,13 @@ where
 
 /// Fast Walsh-Hadamard Transform in-place on a slice of Rep3 field shares.
 ///
-/// Decomposes into two independent field FWHTs on the `a` and `b` components.
-/// This halves the per-FWHT working set (64B→32B elements), improving cache utilization.
+/// Runs FWHT directly on the share type using componentwise `Add/Sub`.
 ///
 /// Precondition: `shares.len()` must be a power of two.
 #[inline]
 #[tracing::instrument(skip_all, name = "fwht_rep3", level = "trace")]
 pub fn fwht_rep3_in_place<F: JoltField>(shares: &mut [Rep3PrimeFieldShare<F>]) {
-    let n = shares.len();
-    let mut a_parts: Vec<F> = Vec::with_capacity(n);
-    let mut b_parts: Vec<F> = Vec::with_capacity(n);
-    for s in shares.iter() {
-        a_parts.push(s.a);
-        b_parts.push(s.b);
-    }
-    fwht_in_place(&mut a_parts);
-    fwht_in_place(&mut b_parts);
-    for (s, (a, b)) in shares.iter_mut().zip(a_parts.into_iter().zip(b_parts)) {
-        s.a = a;
-        s.b = b;
-    }
+    fwht_in_place(shares);
 }
 
 /// Unmask a public (plain F) histogram using FWHT and ehat.

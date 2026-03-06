@@ -23,6 +23,8 @@ use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorW
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::subprotocols::mles_product_sum::compute_mles_product_16_rep3;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use std::sync::Arc;
+use tracing::trace_span;
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -38,7 +40,7 @@ pub struct Rep3InstructionRaSumcheckWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
     pub fn new(
-        one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
+        one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
         r_address: &[F::Challenge],
         r_cycle: Vec<F::Challenge>,
         input_claim: F,
@@ -94,6 +96,23 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
         let half = 1usize << w.len();
 
         // Compute the 16-fold product tree via 4 levels with 3 reshares.
+        let n_wl = eq_wl_evals.len();
+        let n_wr = eq_wr_evals.len();
+        let level1_len = n_wr * n_wl * (8 * 3);
+        let level2_len = n_wr * n_wl * (4 * 5);
+        let level3_len = n_wr * n_wl * (2 * 9);
+        let _span = trace_span!(
+            "compute_mles_product_16_rep3",
+            round,
+            w_len = w.len(),
+            n_wl,
+            n_wr,
+            half,
+            level1_len,
+            level2_len,
+            level3_len
+        )
+        .entered();
         let sum_evals = compute_mles_product_16_rep3(
             &eq_wl_evals,
             &eq_wr_evals,
@@ -102,6 +121,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
             wl.len(),
             io_ctx,
         )?;
+        drop(_span);
 
         // sum_evals[0..D] are evaluations at {1, 2, ..., 15, ∞} as AdditiveShare<F>.
         // This is the product polynomial WITHOUT the eq(X, r[round]) factor.
@@ -568,8 +588,8 @@ mod tests {
     use jolt_core::ark_bn254::Fr;
     use jolt_core::poly::ra_poly::RaPolynomial;
     use jolt_core::subprotocols::mles_product_sum::compute_mles_product_sum;
+    use mpc_core::protocols::rep3;
     use mpc_core::protocols::rep3::combine_field_element;
-    use mpc_core::protocols::rep3 as rep3;
     use num_traits::{One, Zero};
     use rand::RngCore;
     use std::sync::Arc;
@@ -753,7 +773,8 @@ mod tests {
             ),
              mut io_ctx| {
                 let (ohp, r_addr, r_cyc, claim) = input;
-                let mut worker = Rep3InstructionRaSumcheckWorker::new(&ohp, &r_addr, r_cyc, claim);
+                let mut worker =
+                    Rep3InstructionRaSumcheckWorker::new(Arc::new(ohp), &r_addr, r_cyc, claim);
                 let party_id = io_ctx.party_id();
                 let mut prev_claim: AdditiveShare<Fr> =
                     additive::promote_to_trivial_share(claim, party_id);

@@ -2,9 +2,12 @@ use crate::poly::{
     Rep3CompactPolynomial, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly,
 };
 use crate::utils::types::MaybeShared;
+use ark_ec::pairing::MillerLoopOutput;
 use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::bn::BnConfig as ArkBnConfig;
+use ark_ff::{CyclotomicMultSubgroup, Field, One};
 use ark_ff::{AdditiveGroup, One};
 use ark_std::Zero;
 use dory::{DoryProofBuilder, ProofBuilder};
@@ -60,6 +63,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
+                    let _span = tracing::trace_span!("commit_public").entered();
                     let (c, hint) = <Self as CommitmentScheme>::commit(poly, setup);
                     (
                         MaybeShared::Public(Some(c)),
@@ -98,6 +102,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                         unreachable!("RLC polynomials should not be committed directly")
                     }
                 };
+                let _span = tracing::trace_span!("combine_rows").entered();
 
                 let nu = dory::vmv::compute_nu(num_vars, sigma);
                 let num_rows_target = 1usize << nu;
@@ -107,11 +112,33 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
                 let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
 
-                let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
-                let g2_aff = G2Projective::normalize_batch(g2_proj);
+                let _pairing_span = tracing::trace_span!("multi_pairing").entered();
+                let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
+                    let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
 
-                let commitment_share = Bn254::multi_pairing(&row_commitments_aff, &g2_aff);
-
+                    // Chunked parallel Miller loops + single final exponentiation.
+                    //
+                    // Important: avoid `Bn254::multi_miller_loop_ref`, which clones `G2Prepared`
+                    // (deep-cloning `ell_coeffs`) and causes large transient allocations. We
+                    // instead borrow cached `ell_coeffs` directly.
+                    let num_chunks = rayon::current_num_threads();
+                    let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
+                    let ml_result = row_commitments_aff
+                        .par_chunks(chunk_size)
+                        .zip(g2_entries.par_chunks(chunk_size))
+                        .map(|(g1_chunk, g2_chunk)| {
+                            bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk)
+                        })
+                        .product();
+                    Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+                        .expect("final exponentiation should not fail")
+                } else {
+                    // Fallback: no prepared cache available (slower and typically higher-churn).
+                    let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
+                    let g2_aff = G2Projective::normalize_batch(g2_proj);
+                    Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
+                };
+                drop(_pairing_span);
                 // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
                 let hint_share: Vec<JoltG1Wrapper> = unsafe {
                     let mut v = std::mem::ManuallyDrop::new(row_commitments);
@@ -138,16 +165,40 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
     where
         U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
     {
-        polys
-            .par_iter()
-            .map(|p| {
-                <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
-                    p.borrow(),
-                    setup,
-                    commit_to_public,
-                )
-            })
-            .collect()
+        // Dory commitment involves large transient MSM/pairing buffers. Committing in smaller
+        // batches reduces peak RSS (at a small throughput cost).
+        let batch_size: usize = std::env::var("DORY_COMMIT_BATCH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(8);
+        if batch_size == 0 || polys.len() <= batch_size {
+            return polys
+                .par_iter()
+                .map(|p| {
+                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                        p.borrow(),
+                        setup,
+                        commit_to_public,
+                    )
+                })
+                .collect();
+        }
+
+        let mut out = Vec::with_capacity(polys.len());
+        for chunk in polys.chunks(batch_size) {
+            let mut results: Vec<_> = chunk
+                .par_iter()
+                .map(|p| {
+                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                        p.borrow(),
+                        setup,
+                        commit_to_public,
+                    )
+                })
+                .collect();
+            out.append(&mut results);
+        }
+        out
     }
 
     fn batch_commit_rep3_preproc<U, N>(
@@ -879,6 +930,7 @@ fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
     (global_offset, local)
 }
 
+#[tracing::instrument(skip_all, name = "dense::commit_rows", level = "trace")]
 fn compute_row_commitment_shares_a(
     poly: &Rep3DensePolynomial<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
@@ -1153,6 +1205,87 @@ fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
 /// MSM with pre-computed affine bases (avoids redundant normalization).
 fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
     ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
+}
+
+type Bn254EllCoeff = (
+    jolt_core::ark_bn254::Fq2,
+    jolt_core::ark_bn254::Fq2,
+    jolt_core::ark_bn254::Fq2,
+);
+
+fn bn254_ell(f: &mut Fq12, coeffs: &Bn254EllCoeff, p: &G1Affine) {
+    let (mut c0, mut c1, mut c2) = *coeffs;
+    // BN254 has D-twist.
+    c0.mul_assign_by_fp(&p.y);
+    c1.mul_assign_by_fp(&p.x);
+    f.mul_by_034(&c0, &c1, &c2);
+}
+
+fn bn254_miller_loop_from_cached_g2_chunk(
+    ps_aff: &[G1Affine],
+    qs: &[dory::curve::G2CacheEntry],
+) -> Fq12 {
+    debug_assert_eq!(ps_aff.len(), qs.len());
+
+    struct PairState<'a> {
+        p: G1Affine,
+        coeffs: &'a [Bn254EllCoeff],
+        idx: usize,
+    }
+
+    let mut pairs: Vec<PairState<'_>> = Vec::with_capacity(ps_aff.len());
+    for (p, q) in ps_aff.iter().zip(qs.iter()) {
+        if p.is_zero() || q.prepared.infinity {
+            continue;
+        }
+        pairs.push(PairState {
+            p: *p,
+            coeffs: &q.prepared.ell_coeffs,
+            idx: 0,
+        });
+    }
+
+    if pairs.is_empty() {
+        return Fq12::one();
+    }
+
+    // Mirror arkworks BN multi_miller_loop, but borrow cached `ell_coeffs` instead of consuming them.
+    let ate_loop = <jolt_core::ark_bn254::Config as ArkBnConfig>::ATE_LOOP_COUNT;
+
+    let mut f = Fq12::one();
+    for i in (1..ate_loop.len()).rev() {
+        if i != ate_loop.len() - 1 {
+            f.square_in_place();
+        }
+
+        for pair in pairs.iter_mut() {
+            bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
+            pair.idx += 1;
+        }
+
+        let bit = ate_loop[i - 1];
+        if bit == 1 || bit == -1 {
+            for pair in pairs.iter_mut() {
+                bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
+                pair.idx += 1;
+            }
+        }
+    }
+
+    if <jolt_core::ark_bn254::Config as ArkBnConfig>::X_IS_NEGATIVE {
+        f.cyclotomic_inverse_in_place();
+    }
+
+    // Two final ell evaluations.
+    for _ in 0..2 {
+        for pair in pairs.iter_mut() {
+            bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
+            pair.idx += 1;
+        }
+    }
+
+    debug_assert!(pairs.iter().all(|p| p.idx == p.coeffs.len()));
+    f
 }
 
 fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {

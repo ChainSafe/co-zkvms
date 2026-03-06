@@ -30,18 +30,32 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
         .add_directive("jolt_core=off".parse().unwrap())
-        .add_directive("co_jolt2=info".parse().unwrap())
-        .add_directive("mpc_net=info".parse().unwrap())
         .add_directive("quinn=off".parse().unwrap())
         .add_directive("dory=off".parse().unwrap());
 
+    // Only enable Tracy layer when TRACY env var is set, so only the target
+    // process starts the Tracy client and binds port 8086.
+    let tracy_layer = std::env::var("TRACY")
+        .is_ok()
+        .then(tracing_tracy::TracyLayer::default);
     let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
-    let _ = tracing::subscriber::set_global_default(
+    if tracing::subscriber::set_global_default(
         Registry::default()
             .with(env_filter)
             .with(chrome_layer)
+            .with(tracy_layer)
             .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
-    );
+    )
+    .is_err()
+    {
+        // If some dependency already installed a global tracing subscriber, we silently lose:
+        // - Tracy zones/plots (TracyLayer)
+        // - chrome trace output (ChromeLayer)
+        // This is rare, but when it happens it looks exactly like "missing zones" in `.tracy`.
+        eprintln!(
+            "warning: global tracing subscriber already set; tracy/chrome layers may be missing"
+        );
+    }
     info!("tracing_chrome writes to file: {}", file);
     TracingGuard {
         _guard: Some(_guard),
