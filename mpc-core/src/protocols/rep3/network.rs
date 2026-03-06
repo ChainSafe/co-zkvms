@@ -548,6 +548,10 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         self.party_id().into()
     }
 
+    pub fn max_forks(&self) -> usize {
+        self.forks.len()
+    }
+
     pub fn forks(&mut self, num_forks: usize) -> &mut [IoContext<Network>] {
         &mut self.forks[..num_forks]
     }
