@@ -1242,6 +1242,7 @@ where
                 if num == 0 {
                     return Ok(());
                 }
+                let _span = tracing::info_span!("edabits_send_alphas", k = idx, n = num).entered();
                 let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
                 let seeds = snaps[idx];
                 let max_items_per_msg = (max_msg_elems / k).max(1);
@@ -1285,6 +1286,10 @@ where
                 let da_stride = 1 + 2 * fb;
                 let max_items_per_msg = max_msg_elems.max(1);
                 let mut remaining = num_dabits;
+                let _span =
+                    tracing::info_span!("dabits_stream_chunks", n = num_dabits, stride = da_stride)
+                        .entered();
+
                 while remaining > 0 {
                     let items = remaining.min(max_items_per_msg);
                     let slen1 = items * da_stride;
@@ -1312,9 +1317,13 @@ where
             // Round 2: P0 ← P2 receive daBit s₂₀ and persist it file-backed.
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let dabits_store_path = dir.join("dabits.stored");
-            let mut dabits_store =
-                backing_store::BackingStore::create_file_backed_sized(&dabits_store_path, num_dabits)?;
+            let mut dabits_store = backing_store::BackingStore::create_file_backed_sized(
+                &dabits_store_path,
+                num_dabits,
+            )?;
             if num_dabits > 0 {
+                let _span = tracing::info_span!("dabits_resv", n = num_dabits).entered();
+
                 let max_items_per_msg = max_msg_elems.max(1);
                 let mut write_pair_offset = 0usize;
                 let mut remaining = num_dabits;
@@ -1343,10 +1352,10 @@ where
             let (s1, p1, s2, p2) = mk(3);
             let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
             let (s1, p1, s2, p2) = mk(4);
-            let e4 =
-                LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
+            let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
 
-            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+            let d =
+                LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
             let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
@@ -1354,6 +1363,7 @@ where
         PartyID::ID1 => {
             // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
             if num_dabits > 0 {
+                let _span = tracing::info_span!("dabits_send_thetas", n = num_dabits).entered();
                 let r = &mut rands[5];
                 let da_stride = 1 + 2 * fb;
                 let max_items_per_msg = max_msg_elems.max(1);
@@ -1395,8 +1405,7 @@ where
             let (s1, p1, s2, p2) = mk(3);
             let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
             let (s1, p1, s2, p2) = mk(4);
-            let e4 =
-                LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
+            let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id);
             let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
@@ -1406,6 +1415,7 @@ where
         PartyID::ID2 => {
             // P2 advances daBit RNGs (to stay in sync) but doesn't use them.
             if num_dabits > 0 {
+                let _span = tracing::info_span!("dabits_rng_advance", n = num_dabits).entered();
                 let r = &mut rands[5];
                 let max_items_per_super = (max_msg_elems * forks_cap).max(1);
                 let mut remaining = num_dabits;
@@ -1425,8 +1435,7 @@ where
                 let path = dir.join(format!("edabits_{suffix}.alpha2"));
                 let total = counts[idx] * suffix;
                 eda_stores_vec.push(backing_store::BackingStore::create_file_backed_sized(
-                    &path,
-                    total,
+                    &path, total,
                 )?);
             }
             let mut eda_stores_iter = eda_stores_vec.into_iter();
@@ -1450,6 +1459,7 @@ where
             debug_assert!(eda_stores_iter.next().is_none());
 
             for (idx, &c) in counts.iter().enumerate() {
+                let _span = tracing::info_span!("edabits_resv_store", k = idx, n = c).entered();
                 let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
                 let total_elems = c * k;
                 if total_elems == 0 {
@@ -1484,20 +1494,28 @@ where
             )?;
 
             if num_dabits > 0 {
+                let _span = tracing::info_span!("dabits_resv_store", n = num_dabits).entered();
                 let (_, _, ds2_seed, ds2_pos) = snaps[5];
                 let max_items_per_msg = max_msg_elems.max(1);
                 let mut offset = 0usize;
                 while offset < num_dabits {
                     let items = (num_dabits - offset).min(max_items_per_msg);
 
-                    let alpha2 =
-                        recv_field_messages_collect::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
-                    let s12 =
-                        recv_field_messages_collect::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+                    let alpha2 = recv_field_messages_collect::<F, _>(
+                        PartyID::ID0,
+                        items,
+                        io,
+                        max_msg_elems,
+                    )?;
+                    let s12 = recv_field_messages_collect::<F, _>(
+                        PartyID::ID1,
+                        items,
+                        io,
+                        max_msg_elems,
+                    )?;
 
-                    let _span = tracing::trace_span!(
+                    let _span_chunk = tracing::trace_span!(
                         "dabit_s20_forward_chunk",
-                        party_id = ?party_id,
                         items,
                         bytes = items * std::mem::size_of::<F>()
                     )
@@ -1531,9 +1549,11 @@ where
             let (s1, p1, s2, p2) = mk(3);
             let e3 = LazyEdaBits::<u64, F>::new_with_store(s1, p1, s2, p2, counts[3], a3, party_id);
             let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
+            let e4 =
+                LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
-            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+            let d =
+                LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
             let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
@@ -1610,41 +1630,87 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     match party_id {
         PartyID::ID0 => {
             // Round 1: send edaBit α₂ extensions per type (chunked), then daBit α₂.
-            let send_edabit = |k: usize,
-                               deficit: usize,
-                               old_total: usize,
-                               seeds: ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128),
-                               ty: usize,
-                               io: &mut IoContextPool<N>|
-             -> eyre::Result<()> {
-                if deficit == 0 {
-                    return Ok(());
-                }
-                let (seed1, pos1, seed2, pos2) = seeds;
-                let max_items_per_msg = (max_msg_elems / k).max(1);
-                let mut done = 0usize;
-                while done < deficit {
-                    let items = (deficit - done).min(max_items_per_msg);
-                    let start = old_total + done;
-                    let alpha2 = match ty {
-                        0 => edabit_alpha2_ext_chunk::<u8, F>(seed1, pos1, seed2, pos2, start, items, fb),
-                        1 => edabit_alpha2_ext_chunk::<u16, F>(seed1, pos1, seed2, pos2, start, items, fb),
-                        2 => edabit_alpha2_ext_chunk::<u32, F>(seed1, pos1, seed2, pos2, start, items, fb),
-                        3 => edabit_alpha2_ext_chunk::<u64, F>(seed1, pos1, seed2, pos2, start, items, fb),
-                        4 => edabit_alpha2_ext_chunk::<u128, F>(seed1, pos1, seed2, pos2, start, items, fb),
-                        _ => unreachable!(),
-                    };
-                    send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
-                    done += items;
-                }
-                Ok(())
-            };
+            let send_edabit =
+                |k: usize,
+                 deficit: usize,
+                 old_total: usize,
+                 seeds: ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128),
+                 ty: usize,
+                 io: &mut IoContextPool<N>|
+                 -> eyre::Result<()> {
+                    if deficit == 0 {
+                        return Ok(());
+                    }
+                    let (seed1, pos1, seed2, pos2) = seeds;
+                    let max_items_per_msg = (max_msg_elems / k).max(1);
+                    let mut done = 0usize;
+                    while done < deficit {
+                        let items = (deficit - done).min(max_items_per_msg);
+                        let start = old_total + done;
+                        let alpha2 = match ty {
+                            0 => edabit_alpha2_ext_chunk::<u8, F>(
+                                seed1, pos1, seed2, pos2, start, items, fb,
+                            ),
+                            1 => edabit_alpha2_ext_chunk::<u16, F>(
+                                seed1, pos1, seed2, pos2, start, items, fb,
+                            ),
+                            2 => edabit_alpha2_ext_chunk::<u32, F>(
+                                seed1, pos1, seed2, pos2, start, items, fb,
+                            ),
+                            3 => edabit_alpha2_ext_chunk::<u64, F>(
+                                seed1, pos1, seed2, pos2, start, items, fb,
+                            ),
+                            4 => edabit_alpha2_ext_chunk::<u128, F>(
+                                seed1, pos1, seed2, pos2, start, items, fb,
+                            ),
+                            _ => unreachable!(),
+                        };
+                        send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
+                        done += items;
+                    }
+                    Ok(())
+                };
 
-            send_edabit(u8::K, deficit_counts[0], pool.edabits_u8.total(), pool.edabits_u8.extension_seeds(), 0, io)?;
-            send_edabit(u16::K, deficit_counts[1], pool.edabits_u16.total(), pool.edabits_u16.extension_seeds(), 1, io)?;
-            send_edabit(u32::K, deficit_counts[2], pool.edabits_u32.total(), pool.edabits_u32.extension_seeds(), 2, io)?;
-            send_edabit(u64::K, deficit_counts[3], pool.edabits_u64.total(), pool.edabits_u64.extension_seeds(), 3, io)?;
-            send_edabit(u128::K, deficit_counts[4], pool.edabits_u128.total(), pool.edabits_u128.extension_seeds(), 4, io)?;
+            send_edabit(
+                u8::K,
+                deficit_counts[0],
+                pool.edabits_u8.total(),
+                pool.edabits_u8.extension_seeds(),
+                0,
+                io,
+            )?;
+            send_edabit(
+                u16::K,
+                deficit_counts[1],
+                pool.edabits_u16.total(),
+                pool.edabits_u16.extension_seeds(),
+                1,
+                io,
+            )?;
+            send_edabit(
+                u32::K,
+                deficit_counts[2],
+                pool.edabits_u32.total(),
+                pool.edabits_u32.extension_seeds(),
+                2,
+                io,
+            )?;
+            send_edabit(
+                u64::K,
+                deficit_counts[3],
+                pool.edabits_u64.total(),
+                pool.edabits_u64.extension_seeds(),
+                3,
+                io,
+            )?;
+            send_edabit(
+                u128::K,
+                deficit_counts[4],
+                pool.edabits_u128.total(),
+                pool.edabits_u128.extension_seeds(),
+                4,
+                io,
+            )?;
 
             // daBit α₂ extension (chunked).
             if deficit_dabits > 0 {
@@ -1680,19 +1746,28 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 let mut remaining = deficit_dabits;
                 while remaining > 0 {
                     let items = remaining.min(max_items_per_msg);
-                    let s20 =
-                        recv_field_messages_collect::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
+                    let s20 = recv_field_messages_collect::<F, _>(
+                        PartyID::ID2,
+                        items,
+                        io,
+                        max_msg_elems,
+                    )?;
                     pool.dabits.apply_extension(items, s20);
                     remaining -= items;
                 }
             }
 
             // Apply edaBits total extensions (P0 stores no α₂).
-            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
+            pool.edabits_u8
+                .apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16
+                .apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32
+                .apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64
+                .apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128
+                .apply_extension(deficit_counts[4], Vec::new());
         }
         PartyID::ID1 => {
             // P1: send daBit s₁₂ extension in chunks.
@@ -1727,11 +1802,16 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             }
 
             // Apply edaBits total extensions (P1 stores no α₂).
-            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
+            pool.edabits_u8
+                .apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16
+                .apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32
+                .apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64
+                .apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128
+                .apply_extension(deficit_counts[4], Vec::new());
         }
         PartyID::ID2 => {
             // Receive edaBit α₂ extensions per type in chunks and append immediately.
@@ -1777,10 +1857,18 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 let mut done = 0usize;
                 while done < deficit_dabits {
                     let items = (deficit_dabits - done).min(max_items_per_msg);
-                    let alpha2 =
-                        recv_field_messages_collect::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
-                    let s12 =
-                        recv_field_messages_collect::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+                    let alpha2 = recv_field_messages_collect::<F, _>(
+                        PartyID::ID0,
+                        items,
+                        io,
+                        max_msg_elems,
+                    )?;
+                    let s12 = recv_field_messages_collect::<F, _>(
+                        PartyID::ID1,
+                        items,
+                        io,
+                        max_msg_elems,
+                    )?;
                     let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total + done, items);
 
                     let _span = tracing::trace_span!(
@@ -2739,7 +2827,10 @@ mod tests {
         // Verify B2A
         let b2a_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
         let b2a_expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
-        assert_eq!(b2a_combined, b2a_expected, "preprocess_into_dir B2A mismatch");
+        assert_eq!(
+            b2a_combined, b2a_expected,
+            "preprocess_into_dir B2A mismatch"
+        );
 
         // Verify bit injection
         let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
