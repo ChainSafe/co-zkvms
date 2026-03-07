@@ -988,10 +988,6 @@ fn preproc_max_msg_mb() -> usize {
     env_usize("PREPROC_MAX_MSG_MB", 8)
 }
 
-fn preproc_min_fork_elems() -> usize {
-    env_usize("PREPROC_MIN_FORK_ELEMS", 2048)
-}
-
 fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
     let mb = preproc_max_msg_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
@@ -1000,52 +996,6 @@ fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
         1
     } else {
         bytes.div_ceil(elem).max(1)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ForkChunkPlan {
-    chunk_elems: usize,
-    num_msgs: usize,
-}
-
-fn plan_fork_chunks(len: usize, forks_cap: usize, max_msg_elems: usize) -> ForkChunkPlan {
-    if len == 0 {
-        return ForkChunkPlan {
-            chunk_elems: 0,
-            num_msgs: 0,
-        };
-    }
-    if forks_cap == 0 {
-        return ForkChunkPlan {
-            chunk_elems: len,
-            num_msgs: 1,
-        };
-    }
-
-    let min_fork = preproc_min_fork_elems().max(1);
-    let mut forks = (len.div_ceil(min_fork)).max(1).min(forks_cap);
-    let mut chunk_elems = len.div_ceil(forks).max(1);
-
-    if chunk_elems > max_msg_elems {
-        forks = forks_cap;
-        chunk_elems = len.div_ceil(forks).max(1);
-    }
-    chunk_elems = chunk_elems.min(max_msg_elems).max(1);
-
-    let num_msgs = len.div_ceil(chunk_elems);
-    assert!(
-        num_msgs <= forks_cap,
-        "plan_fork_chunks: caller must cap len so that num_msgs <= forks_cap (len={}, chunk_elems={}, num_msgs={}, forks_cap={})",
-        len,
-        chunk_elems,
-        num_msgs,
-        forks_cap
-    );
-
-    ForkChunkPlan {
-        chunk_elems,
-        num_msgs,
     }
 }
 
@@ -1066,26 +1016,14 @@ fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
         bytes = data.len() * std::mem::size_of::<F>(),
     )
     .entered();
-
-    let forks_cap = io.max_forks();
-    let ForkChunkPlan {
-        chunk_elems,
-        num_msgs,
-    } = plan_fork_chunks(data.len(), forks_cap, max_msg_elems);
-
-    if num_msgs <= 1 {
+    if data.len() <= max_msg_elems {
         io.network().send_many(target, &data)?;
         return Ok(());
     }
 
-    io.par_chunks(
-        data.into_par_iter(),
-        Some(chunk_elems),
-        |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-            ctx.network.send_many(target, &chunk)?;
-            Ok(vec![])
-        },
-    )?;
+    for chunk in data.chunks(max_msg_elems) {
+        io.network().send_many(target, chunk)?;
+    }
     Ok(())
 }
 
@@ -1099,11 +1037,7 @@ fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
         return Ok(Vec::new());
     }
 
-    let forks_cap = io.max_forks();
-    let ForkChunkPlan {
-        chunk_elems: _,
-        num_msgs,
-    } = plan_fork_chunks(expected_len, forks_cap, max_msg_elems);
+    let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
 
     let _span = tracing::trace_span!(
         "recv_field_messages_collect",
@@ -1115,19 +1049,10 @@ fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
     )
     .entered();
 
-    let chunks: Vec<Vec<F>> = if num_msgs <= 1 {
-        vec![io.network().recv_many(from)?]
-    } else {
-        io.par_iter(
-            0..num_msgs,
-            Some(num_msgs),
-            |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
-        )?
-    };
-
     let mut out = Vec::with_capacity(expected_len);
-    for c in chunks {
-        out.extend_from_slice(&c);
+    while out.len() < expected_len {
+        let recv: Vec<F> = io.network().recv_many(from)?;
+        out.extend_from_slice(&recv);
     }
     debug_assert_eq!(out.len(), expected_len);
     Ok(out)
@@ -1135,6 +1060,7 @@ fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
 
 fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
     from: PartyID,
+    start_elem: usize,
     expected_len: usize,
     io: &mut IoContextPool<N>,
     max_msg_elems: usize,
@@ -1144,48 +1070,45 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
         return Ok(());
     }
 
-    let forks_cap = io.max_forks();
-    let ForkChunkPlan {
-        chunk_elems: _,
-        num_msgs,
-    } = plan_fork_chunks(expected_len, forks_cap, max_msg_elems);
+    let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
     let _span = tracing::trace_span!(
         "recv_field_messages_into_store",
         party_id = ?io.party_id(),
         from = ?from,
+        start_elem,
         elems = expected_len,
         bytes = expected_len * std::mem::size_of::<F>(),
         num_msgs
     )
     .entered();
 
-    if num_msgs <= 1 {
+    let mut write_elem_offset = start_elem;
+    let mut received = 0usize;
+    while received < expected_len {
         let recv: Vec<F> = io.network().recv_many(from)?;
-        append_to_store(store, &recv);
-        return Ok(());
+        write_to_store(store, write_elem_offset, &recv)?;
+        write_elem_offset += recv.len();
+        received += recv.len();
     }
-
-    let chunks: Vec<Vec<F>> = io.par_iter(
-        0..num_msgs,
-        Some(num_msgs),
-        |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
-    )?;
-
-    for recv in chunks {
-        append_to_store(store, &recv);
-    }
+    debug_assert_eq!(received, expected_len);
 
     Ok(())
 }
 
-fn append_to_store<F: PrimeField + Copy>(store: &mut backing_store::BackingStore<F>, data: &[F]) {
+fn write_to_store<F: PrimeField + Copy>(
+    store: &mut backing_store::BackingStore<F>,
+    start_elem: usize,
+    data: &[F],
+) -> eyre::Result<()> {
     let _span = tracing::trace_span!(
         "append_to_store",
+        start_elem,
         elems = data.len(),
         bytes = data.len() * std::mem::size_of::<F>()
     )
     .entered();
-    store.extend(data);
+    store.write_at(start_elem, data)?;
+    Ok(())
 }
 
 fn read_file_backed_range<F: PrimeField + Copy>(
@@ -1393,16 +1316,19 @@ where
                 backing_store::BackingStore::create_file_backed_sized(&dabits_store_path, num_dabits)?;
             if num_dabits > 0 {
                 let max_items_per_msg = max_msg_elems.max(1);
+                let mut write_pair_offset = 0usize;
                 let mut remaining = num_dabits;
                 while remaining > 0 {
                     let items = remaining.min(max_items_per_msg);
                     recv_field_messages_into_store::<F, _>(
                         PartyID::ID2,
+                        write_pair_offset,
                         items,
                         io,
                         max_msg_elems,
                         &mut dabits_store,
                     )?;
+                    write_pair_offset += items;
                     remaining -= items;
                 }
             }
@@ -1531,17 +1457,20 @@ where
                 }
 
                 let max_items_per_msg = (max_msg_elems / k).max(1);
+                let mut write_elem_offset = 0usize;
                 let mut remaining = c;
                 while remaining > 0 {
                     let items = remaining.min(max_items_per_msg);
                     let expected = items * k;
                     recv_field_messages_into_store::<F, _>(
                         PartyID::ID0,
+                        write_elem_offset,
                         expected,
                         io,
                         max_msg_elems,
                         &mut eda_stores[idx],
                     )?;
+                    write_elem_offset += expected;
                     remaining -= items;
                 }
             }
@@ -1584,12 +1513,7 @@ where
                         })
                         .collect();
 
-                    let mut stored_chunk = Vec::with_capacity(2 * items);
-                    for i in 0..items {
-                        stored_chunk.push(s20[i]);
-                        stored_chunk.push(s12[i]);
-                    }
-                    append_to_store(&mut dabits_store, &stored_chunk);
+                    dabits_store.write_interleaved_at(offset, &s20, &s12)?;
                     send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;
 
                     offset += items;

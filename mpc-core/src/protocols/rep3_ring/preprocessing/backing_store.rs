@@ -267,7 +267,7 @@ impl<F> BackingStore<F> {
         Ok(BackingStore::FileBacked {
             file,
             path: path.to_path_buf(),
-            len: 0,
+            len: capacity_elems,
             append_offset: 0,
             _phantom: PhantomData,
         })
@@ -375,6 +375,88 @@ impl<F> BackingStore<F> {
                 *self = BackingStore::InMemory(additional.to_vec());
             }
         }
+    }
+
+    /// Write `data` at the exact element offset `start_elem`.
+    ///
+    /// Unlike `extend()`, this does not depend on append state and is therefore
+    /// suitable for deterministic chunk writes into pre-sized file-backed stores.
+    pub(crate) fn write_at(&mut self, start_elem: usize, data: &[F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let end_elem = start_elem.saturating_add(data.len());
+        match self {
+            BackingStore::InMemory(v) => {
+                if end_elem > v.len() {
+                    v.resize(end_elem, data[0]);
+                }
+                v[start_elem..end_elem].copy_from_slice(data);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, len, .. } => {
+                if end_elem > *len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "BackingStore::write_at range end({end_elem}) exceeds len({len})"
+                        ),
+                    ));
+                }
+                let (byte_offset, _) = Self::byte_range(start_elem, end_elem);
+                let bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        data.as_ptr() as *const u8,
+                        std::mem::size_of_val(data),
+                    )
+                };
+                Self::file_write_all_at(file, byte_offset, bytes)
+            }
+            BackingStore::Empty => {
+                if start_elem != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("BackingStore::write_at on Empty with non-zero offset {start_elem}"),
+                    ));
+                }
+                *self = BackingStore::InMemory(data.to_vec());
+                Ok(())
+            }
+        }
+    }
+
+    /// Write interleaved `[left[i], right[i]]` pairs starting at pair index `start_pair`.
+    pub(crate) fn write_interleaved_at(
+        &mut self,
+        start_pair: usize,
+        left: &[F],
+        right: &[F],
+    ) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if left.len() != right.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "BackingStore::write_interleaved_at length mismatch: left={} right={}",
+                    left.len(),
+                    right.len()
+                ),
+            ));
+        }
+        if left.is_empty() {
+            return Ok(());
+        }
+        let mut interleaved = Vec::with_capacity(left.len() * 2);
+        for i in 0..left.len() {
+            interleaved.push(left[i]);
+            interleaved.push(right[i]);
+        }
+        self.write_at(start_pair.saturating_mul(2), &interleaved)
     }
 
     /// Consume a range and reclaim backing storage in non-reuse mode.
@@ -522,6 +604,53 @@ impl<F> BackingStore<F> {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackingStore;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{}_{}", name, nanos))
+    }
+
+    #[test]
+    fn write_at_file_backed_correct() {
+        let path = temp_path("backing_store_write_at");
+        let mut store = BackingStore::<u64>::create_file_backed_sized(&path, 8).unwrap();
+        store.write_at(0, &[10, 11, 12]).unwrap();
+        store.write_at(3, &[20, 21, 22, 23, 24]).unwrap();
+
+        let loaded = BackingStore::<u64>::load_from_file(&path).unwrap();
+        #[cfg(feature = "reuse-preproc")]
+        let data = loaded.read_reuse(0, 8).unwrap();
+        #[cfg(not(feature = "reuse-preproc"))]
+        let data = loaded.read_consume(0, 8).unwrap();
+        assert_eq!(data, vec![10, 11, 12, 20, 21, 22, 23, 24]);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_interleaved_at_file_backed_correct() {
+        let path = temp_path("backing_store_write_interleaved");
+        let mut store = BackingStore::<u64>::create_file_backed_sized(&path, 6).unwrap();
+        store.write_interleaved_at(0, &[1, 2], &[11, 12]).unwrap();
+        store.write_interleaved_at(2, &[3], &[13]).unwrap();
+
+        let loaded = BackingStore::<u64>::load_from_file(&path).unwrap();
+        #[cfg(feature = "reuse-preproc")]
+        let data = loaded.read_reuse(0, 6).unwrap();
+        #[cfg(not(feature = "reuse-preproc"))]
+        let data = loaded.read_consume(0, 6).unwrap();
+        assert_eq!(data, vec![1, 11, 2, 12, 3, 13]);
+
+        let _ = std::fs::remove_file(path);
     }
 }
 
