@@ -17,7 +17,7 @@ use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
-use tracing::{info, info_span};
+use tracing::{info, info_span, warn};
 
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
@@ -25,6 +25,7 @@ use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::memory::start_jemalloc_monitor;
 use co_jolt2::utils::tracing::init_tracing_bench;
+use co_jolt2::zkvm::dag::preproc_budget::{compute_edabit_budget, PreprocessingBudget};
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::{Rep3Jolt, Rep3JoltWorker};
 use jolt_core::host::Program;
@@ -91,6 +92,53 @@ struct WorkerPayload {
     memory_init: Vec<(u64, u8)>,
     padded_len: usize,
     ram_k: usize,
+}
+
+/// Coordinator → worker message.
+///
+/// For `--preprocess-only`, we only need `trace_len` (to compute the preprocessing
+/// budget). Sending the full shared trace would dominate RSS and is unused.
+#[derive(Serialize, Deserialize)]
+enum CoordToWorkerMsg {
+    Full(WorkerPayload),
+    PreprocOnly(PreprocPayload),
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreprocPayload {
+    trace_len: usize,
+    budget: PreprocessingBudget,
+}
+
+fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize) {
+    let elem = std::mem::size_of::<F>() as u64;
+    let warn_gb = std::env::var("PREPROC_WARN_GB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+    let warn_bytes = warn_gb * 1024 * 1024 * 1024;
+
+    let sizes = [
+        ("edabits_8.alpha2", counts[0] as u64 * 8 * elem),
+        ("edabits_16.alpha2", counts[1] as u64 * 16 * elem),
+        ("edabits_32.alpha2", counts[2] as u64 * 32 * elem),
+        ("edabits_64.alpha2", counts[3] as u64 * 64 * elem),
+        ("edabits_128.alpha2", counts[4] as u64 * 128 * elem),
+        // dabits.stored size depends on party; this is the smaller (P0) bound.
+        ("dabits.stored (P0)", num_dabits as u64 * elem),
+        ("dabits.stored (P2)", num_dabits as u64 * 2 * elem),
+    ];
+
+    for (name, bytes) in sizes {
+        if bytes >= warn_bytes {
+            warn!(
+                file = name,
+                bytes,
+                gb = (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                "large preprocessing artifact expected"
+            );
+        }
+    }
 }
 
 /// Spawn a daemon thread that polls RSS every `interval` and reports it as a Tracy plot.
@@ -222,6 +270,35 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Trace to get vanilla trace and IO device
     info!("tracing guest program");
     let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+    let raw_trace_len = vanilla_trace.len();
+
+    if args.preprocess_only.unwrap_or(false) {
+        let budget = compute_edabit_budget(raw_trace_len);
+        info!(
+            trace_len = raw_trace_len,
+            u8 = budget.u8,
+            u16 = budget.u16,
+            u32 = budget.u32,
+            u64 = budget.u64,
+            u128 = budget.u128,
+            dabits = budget.dabits,
+            "preprocess-only: sending minimal payload and exiting"
+        );
+        log_preproc_size_estimates(
+            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+            budget.dabits,
+        );
+
+        let msg = CoordToWorkerMsg::PreprocOnly(PreprocPayload {
+            trace_len: raw_trace_len,
+            budget,
+        });
+        let msg_bytes = bincode::serialize(&msg).context("serializing preproc-only payload")?;
+        network
+            .send_requests_blocking(vec![msg_bytes; 3])
+            .context("sending preproc-only payloads")?;
+        return Ok(());
+    }
 
     // Pad trace
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
@@ -270,18 +347,10 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 padded_len,
                 ram_k,
             };
-            bincode::serialize(&payload)
+            bincode::serialize(&CoordToWorkerMsg::Full(payload))
         })
         .collect::<bincode::Result<Vec<_>>>()
         .context("serializing worker payloads")?;
-
-    if args.preprocess_only.unwrap_or(false) {
-        info!("preprocess-only: sending worker payload once and exiting");
-        network
-            .send_requests_blocking(worker_payloads)
-            .context("sending worker payloads")?;
-        return Ok(());
-    }
 
     for iter in 0..args.repeat_proofs {
         info!(
@@ -338,11 +407,51 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         ));
     }
 
-    // Receive share from coordinator (includes bytecode + memory_init)
-    info!("receiving share from coordinator");
+    // Receive initial request from coordinator.
+    info!("receiving request from coordinator");
     let first_payload_bytes: Vec<u8> = network.receive_request()?;
-    let first_payload: WorkerPayload =
-        bincode::deserialize(&first_payload_bytes).context("deserializing worker payload")?;
+    let first_msg: CoordToWorkerMsg =
+        bincode::deserialize(&first_payload_bytes).context("deserializing coordinator message")?;
+
+    if let CoordToWorkerMsg::PreprocOnly(pp) = first_msg {
+        // Wrap network in IoContextPool (required for preprocessing network rounds).
+        let num_forks = rayon::current_num_threads() as u32;
+        let mut io_ctx = IoContextPool::init(network, num_forks)?;
+        let party_id = io_ctx.party_id();
+
+        let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
+        let counts = [
+            pp.budget.u8,
+            pp.budget.u16,
+            pp.budget.u32,
+            pp.budget.u64,
+            pp.budget.u128,
+        ];
+        let num_dabits = pp.budget.dabits;
+        log_preproc_size_estimates(counts, num_dabits);
+
+        if let Some(ref base_dir) = args.preproc_dir {
+            let pool_dir = base_dir.join(format!("party_{}", my_id));
+            use mpc_core::protocols::rep3_ring::edabits;
+            info!("preprocess-only: creating preprocessing pool into {:?}", pool_dir);
+            let _pool = edabits::preprocess_pool_batched_into_dir::<F, _>(
+                &pool_dir,
+                counts,
+                num_dabits,
+                &mut io_ctx,
+            )?;
+            io_ctx.sync_with_parties()?;
+            return Ok(());
+        }
+
+        return Err(eyre::eyre!(
+            "preprocess-only requires --preproc-dir so alpha2/stored data can be persisted without OOM"
+        ));
+    }
+
+    let CoordToWorkerMsg::Full(first_payload) = first_msg else {
+        unreachable!("handled PreprocOnly above");
+    };
 
     let WorkerPayload {
         trace: first_trace,
@@ -397,12 +506,12 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
     let mut preproc = {
-        use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
         use mpc_core::protocols::rep3_ring::edabits;
         let budget = compute_edabit_budget(trace_len);
         tracing::info!("budget: {:?}", budget);
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
         let num_dabits = budget.dabits;
+        log_preproc_size_estimates(counts, num_dabits);
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
@@ -437,18 +546,12 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 }
                 Err(e) => {
                     info!("no cached preprocessing ({e}); running preprocessing...");
-                    let pool =
-                        edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?;
-                    match pool.save(&pool_dir) {
-                        Ok(()) => info!("saved preprocessing to {:?}", pool_dir),
-                        Err(save_err) => {
-                            tracing::warn!(
-                                "failed to save preprocessing to {:?}: {save_err}",
-                                pool_dir
-                            )
-                        }
-                    }
-                    pool
+                    edabits::preprocess_pool_batched_into_dir::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        &mut io_ctx,
+                    )?
                 }
             }
         } else {
@@ -473,8 +576,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             )
         } else {
             let payload_bytes: Vec<u8> = io_ctx.network().receive_request()?;
-            let payload: WorkerPayload =
-                bincode::deserialize(&payload_bytes).context("deserializing worker payload")?;
+            let msg: CoordToWorkerMsg =
+                bincode::deserialize(&payload_bytes).context("deserializing coordinator message")?;
+            let CoordToWorkerMsg::Full(payload) = msg else {
+                return Err(eyre::eyre!("unexpected PreprocOnly message during proving"));
+            };
             (payload.trace, payload.memory, payload.program_io_share)
         };
 

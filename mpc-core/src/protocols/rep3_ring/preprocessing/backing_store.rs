@@ -245,6 +245,24 @@ impl<F> BackingStore<F> {
         }
     }
 
+    /// Create a file-backed store at `path` for incremental `extend()` appends.
+    ///
+    /// The file is created (or truncated if it exists) and opened read+write.
+    pub(crate) fn create_file_backed(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        Ok(BackingStore::FileBacked {
+            file,
+            path: path.to_path_buf(),
+            len: 0,
+            _phantom: PhantomData,
+        })
+    }
+
     /// Write raw bytes to a file.  No-op for `Empty`.
     pub(crate) fn save_to_file(&self, path: &Path) -> io::Result<()> {
         match self {

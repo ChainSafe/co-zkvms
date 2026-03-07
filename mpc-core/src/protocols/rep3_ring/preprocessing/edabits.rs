@@ -24,6 +24,7 @@ use rand::prelude::Distribution;
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::marker::PhantomData;
+use std::path::Path;
 use tracing::info_span;
 
 /// An edaBits *mask-only* value linking the same random `r` across:
@@ -220,6 +221,26 @@ where
         alpha2_flat: Vec<F>,
         party_id: PartyID,
     ) -> Self {
+        Self::new_with_store(
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            total,
+            backing_store::BackingStore::from_vec(alpha2_flat),
+            party_id,
+        )
+    }
+
+    pub(crate) fn new_with_store(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        total: usize,
+        alpha2_flat: backing_store::BackingStore<F>,
+        party_id: PartyID,
+    ) -> Self {
         let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE)
             .expect("u32 fits into usize")
             .div_ceil(8);
@@ -231,7 +252,7 @@ where
             total,
             field_bytes,
             cursor: 0,
-            alpha2_flat: backing_store::BackingStore::from_vec(alpha2_flat),
+            alpha2_flat,
             party_id,
             meta_path: None,
             _phantom: PhantomData,
@@ -956,6 +977,552 @@ pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     }
 }
 
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn preproc_max_msg_mb() -> usize {
+    env_usize("PREPROC_MAX_MSG_MB", 8)
+}
+
+fn preproc_min_fork_elems() -> usize {
+    env_usize("PREPROC_MIN_FORK_ELEMS", 2048)
+}
+
+fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
+    let mb = preproc_max_msg_mb();
+    let bytes = mb.saturating_mul(1024 * 1024);
+    let elem = std::mem::size_of::<F>();
+    if elem == 0 {
+        1
+    } else {
+        bytes.div_ceil(elem).max(1)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ForkChunkPlan {
+    chunk_elems: usize,
+    num_msgs: usize,
+}
+
+fn plan_fork_chunks(len: usize, forks_cap: usize, max_msg_elems: usize) -> ForkChunkPlan {
+    if len == 0 {
+        return ForkChunkPlan {
+            chunk_elems: 0,
+            num_msgs: 0,
+        };
+    }
+    if forks_cap == 0 {
+        return ForkChunkPlan {
+            chunk_elems: len,
+            num_msgs: 1,
+        };
+    }
+
+    let min_fork = preproc_min_fork_elems().max(1);
+    let mut forks = (len.div_ceil(min_fork)).max(1).min(forks_cap);
+    let mut chunk_elems = len.div_ceil(forks).max(1);
+
+    if chunk_elems > max_msg_elems {
+        forks = forks_cap;
+        chunk_elems = len.div_ceil(forks).max(1);
+    }
+    chunk_elems = chunk_elems.min(max_msg_elems).max(1);
+
+    let num_msgs = len.div_ceil(chunk_elems);
+    assert!(
+        num_msgs <= forks_cap,
+        "plan_fork_chunks: caller must cap len so that num_msgs <= forks_cap (len={}, chunk_elems={}, num_msgs={}, forks_cap={})",
+        len,
+        chunk_elems,
+        num_msgs,
+        forks_cap
+    );
+
+    ForkChunkPlan {
+        chunk_elems,
+        num_msgs,
+    }
+}
+
+fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
+    data: Vec<F>,
+    target: PartyID,
+    io: &mut IoContextPool<N>,
+    max_msg_elems: usize,
+) -> eyre::Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    let forks_cap = io.max_forks();
+    let ForkChunkPlan {
+        chunk_elems,
+        num_msgs,
+    } = plan_fork_chunks(data.len(), forks_cap, max_msg_elems);
+
+    if num_msgs <= 1 {
+        io.network().send_many(target, &data)?;
+        return Ok(());
+    }
+
+    io.par_chunks(
+        data.into_par_iter(),
+        Some(chunk_elems),
+        |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+            ctx.network.send_many(target, &chunk)?;
+            Ok(vec![])
+        },
+    )?;
+    Ok(())
+}
+
+fn recv_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
+    from: PartyID,
+    expected_len: usize,
+    io: &mut IoContextPool<N>,
+    max_msg_elems: usize,
+) -> eyre::Result<Vec<F>> {
+    if expected_len == 0 {
+        return Ok(Vec::new());
+    }
+
+    let forks_cap = io.max_forks();
+    let ForkChunkPlan {
+        chunk_elems: _,
+        num_msgs,
+    } = plan_fork_chunks(expected_len, forks_cap, max_msg_elems);
+
+    if num_msgs <= 1 {
+        let v: Vec<F> = io.network().recv_many(from)?;
+        return Ok(v);
+    }
+
+    let chunks: Vec<Vec<F>> = io.par_iter(
+        0..num_msgs,
+        Some(num_msgs),
+        |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
+    )?;
+
+    let mut out = Vec::with_capacity(expected_len);
+    for c in chunks {
+        out.extend_from_slice(&c);
+    }
+    debug_assert_eq!(out.len(), expected_len);
+    Ok(out)
+}
+
+fn append_to_store<F: PrimeField + Copy>(store: &mut backing_store::BackingStore<F>, data: &[F]) {
+    store.extend(data);
+}
+
+fn read_file_backed_range<F: PrimeField + Copy>(
+    file: &std::fs::File,
+    start: usize,
+    end: usize,
+) -> std::io::Result<Vec<F>> {
+    const { backing_store::assert_field_layout::<F>() };
+    if start >= end {
+        return std::result::Result::Ok(Vec::new());
+    }
+    let count = end - start;
+    let elem_size = std::mem::size_of::<F>();
+    let byte_offset = start * elem_size;
+    let byte_len = count * elem_size;
+
+    // SAFETY: same contract as BackingStore::read_file_backed_range.
+    let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(count);
+    unsafe { out.set_len(count) };
+    let out_bytes =
+        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        file.read_exact_at(out_bytes, byte_offset as u64)?;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        file.seek_read(out_bytes, byte_offset as u64)?;
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = file.try_clone()?;
+        f.seek(SeekFrom::Start(byte_offset as u64))?;
+        f.read_exact(out_bytes)?;
+    }
+
+    let out: Vec<F> = unsafe { std::mem::transmute(out) };
+    std::result::Result::Ok(out)
+}
+
+/// Batched preprocessing into a persistence directory, using bounded-memory chunking.
+///
+/// This is intended for large-trace benchmark harnesses. It avoids allocating
+/// monolithic `Vec<F>` buffers for all α₂ values at once, and for P2 it writes
+/// α₂/stored data directly to file-backed stores under `dir`.
+#[tracing::instrument(skip_all, name = "preprocess_pool_batched_into_dir")]
+pub fn preprocess_pool_batched_into_dir<F, N>(
+    dir: &Path,
+    counts: [usize; 5], // [u8, u16, u32, u64, u128]
+    num_dabits: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<PreprocessingPool<F>>
+where
+    F: PrimeField + Copy,
+    N: Rep3NetworkWorker,
+{
+    use super::dabits;
+    use crate::protocols::rep3::rngs::Rep3Rand;
+
+    std::fs::create_dir_all(dir)?;
+
+    let party_id = io.party_id();
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
+        .expect("u32 fits into usize")
+        .div_ceil(8);
+    let max_msg_elems = preproc_max_elems_per_msg::<F>();
+
+    // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
+    let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
+    let snaps: [_; 6] = std::array::from_fn(|i| rands[i].snapshot());
+
+    // Helper: compute edaBit α₂ chunk for P0 given a forked Rep3Rand.
+    fn edabit_alpha2_p0_chunk<T: IntRing2k, Fp: PrimeField>(
+        num: usize,
+        eda_rand: &mut Rep3Rand,
+        fb: usize,
+    ) -> Vec<Fp>
+    where
+        Standard: Distribution<T>,
+    {
+        if num == 0 {
+            return Vec::new();
+        }
+        let t_bytes = std::mem::size_of::<T>();
+        let k = T::K;
+        let stride = t_bytes + k * fb;
+        let gamma_total = num * t_bytes;
+        let (all1, g2) = {
+            let mut a = vec![0u8; num * stride];
+            let mut b = vec![0u8; gamma_total];
+            rayon::join(
+                || eda_rand.rng1.fill_bytes(&mut a),
+                || eda_rand.rng2.fill_bytes(&mut b),
+            );
+            (a, b)
+        };
+        let mut out = vec![Fp::zero(); num * k];
+        out.par_chunks_mut(k)
+            .enumerate()
+            .with_min_len(256)
+            .for_each(|(i, chunk)| {
+                let base = i * stride;
+                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
+                let gamma = g1v ^ g2v;
+                for j in 0..k {
+                    let s = base + t_bytes + j * fb;
+                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
+                    let gbit = ((gamma >> j) & T::one()) == T::one();
+                    chunk[j] = Fp::from(gbit as u64) - alpha1;
+                }
+            });
+        out
+    }
+
+    let forks_cap = io.max_forks().max(1);
+
+    match party_id {
+        PartyID::ID0 => {
+            // Round 1: P0 → P2 sends edaBit α₂ streams per type, then daBit α₂.
+            let mut send_edabit_type = |idx: usize, num: usize, rand: &mut Rep3Rand| {
+                if num == 0 {
+                    return Ok(());
+                }
+                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let mut remaining = num;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let alpha2 = match idx {
+                        0 => edabit_alpha2_p0_chunk::<u8, F>(items, rand, fb),
+                        1 => edabit_alpha2_p0_chunk::<u16, F>(items, rand, fb),
+                        2 => edabit_alpha2_p0_chunk::<u32, F>(items, rand, fb),
+                        3 => edabit_alpha2_p0_chunk::<u64, F>(items, rand, fb),
+                        4 => edabit_alpha2_p0_chunk::<u128, F>(items, rand, fb),
+                        _ => unreachable!(),
+                    };
+                    debug_assert_eq!(alpha2.len(), items * k);
+                    send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
+                    remaining -= items;
+                }
+                Ok(())
+            };
+
+            send_edabit_type(0, counts[0], &mut rands[0])?;
+            send_edabit_type(1, counts[1], &mut rands[1])?;
+            send_edabit_type(2, counts[2], &mut rands[2])?;
+            send_edabit_type(3, counts[3], &mut rands[3])?;
+            send_edabit_type(4, counts[4], &mut rands[4])?;
+
+            // daBit α₂ — stream in chunks.
+            if num_dabits > 0 {
+                let r = &mut rands[5];
+                let da_stride = 1 + 2 * fb;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut remaining = num_dabits;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let slen1 = items * da_stride;
+                    let slen2 = items;
+                    let (s1, s2) = {
+                        let mut a = vec![0u8; slen1];
+                        let mut b = vec![0u8; slen2];
+                        rayon::join(|| r.rng1.fill_bytes(&mut a), || r.rng2.fill_bytes(&mut b));
+                        (a, b)
+                    };
+                    let da_alpha2 = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
+                            let alpha1: F = dabits::parse_field(&s1, i * da_stride + 1);
+                            F::from(gbit as u64) - alpha1
+                        })
+                        .collect::<Vec<F>>();
+                    send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
+                    remaining -= items;
+                }
+            }
+
+            // Round 2: P0 ← P2 receive daBit s₂₀ and persist it file-backed.
+            let (ds1, dp1, ds2, dp2) = snaps[5];
+            let dabits_store_path = dir.join("dabits.stored");
+            let mut dabits_store = backing_store::BackingStore::create_file_backed(&dabits_store_path)?;
+            if num_dabits > 0 {
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut remaining = num_dabits;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let recv = recv_field_superchunk::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
+                    append_to_store(&mut dabits_store, &recv);
+                    remaining -= items;
+                }
+            }
+
+            let mk = |i: usize| snaps[i];
+            let (s1, p1, s2, p2) = mk(0);
+            let e0 = LazyEdaBits::<u8, F>::new(s1, p1, s2, p2, counts[0], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(1);
+            let e1 = LazyEdaBits::<u16, F>::new(s1, p1, s2, p2, counts[1], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(2);
+            let e2 = LazyEdaBits::<u32, F>::new(s1, p1, s2, p2, counts[2], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(3);
+            let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(4);
+            let e4 =
+                LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
+
+            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+            let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
+            pool.save(dir)?;
+            Ok(pool)
+        }
+        PartyID::ID1 => {
+            // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
+            if num_dabits > 0 {
+                let r = &mut rands[5];
+                let da_stride = 1 + 2 * fb;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut remaining = num_dabits;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let slen2 = items * da_stride;
+                    let slen1 = items;
+                    let (s2, theta_bytes) = {
+                        let mut a = vec![0u8; slen2];
+                        let mut b = vec![0u8; slen1];
+                        rayon::join(|| r.rng2.fill_bytes(&mut a), || r.rng1.fill_bytes(&mut b));
+                        (a, b)
+                    };
+
+                    let s12: Vec<F> = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let theta = (theta_bytes[i] & 1) != 0;
+                            let neg1_theta = if theta { -F::one() } else { F::one() };
+                            let alpha1: F = dabits::parse_field(&s2, i * da_stride + 1);
+                            let r1_val: F = dabits::parse_field(&s2, i * da_stride + 1 + fb);
+                            neg1_theta * alpha1 - r1_val
+                        })
+                        .collect();
+                    send_field_superchunk(s12, PartyID::ID2, io, max_msg_elems)?;
+                    remaining -= items;
+                }
+            }
+
+            let mk = |i: usize| snaps[i];
+            let (s1, p1, s2, p2) = mk(0);
+            let e0 = LazyEdaBits::<u8, F>::new(s1, p1, s2, p2, counts[0], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(1);
+            let e1 = LazyEdaBits::<u16, F>::new(s1, p1, s2, p2, counts[1], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(2);
+            let e2 = LazyEdaBits::<u32, F>::new(s1, p1, s2, p2, counts[2], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(3);
+            let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
+            let (s1, p1, s2, p2) = mk(4);
+            let e4 =
+                LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
+            let (ds1, dp1, ds2, dp2) = snaps[5];
+            let d = LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id);
+            let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
+            pool.save(dir)?;
+            Ok(pool)
+        }
+        PartyID::ID2 => {
+            // P2 advances daBit RNGs (to stay in sync) but doesn't use them.
+            if num_dabits > 0 {
+                let r = &mut rands[5];
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut remaining = num_dabits;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let mut s2 = vec![0u8; items];
+                    let mut s1 = vec![0u8; items];
+                    rayon::join(|| r.rng2.fill_bytes(&mut s2), || r.rng1.fill_bytes(&mut s1));
+                    remaining -= items;
+                }
+            }
+
+            // Round 1: receive edaBit α₂ streams from P0 and append to file-backed stores.
+            let mut eda_stores_vec: Vec<backing_store::BackingStore<F>> = Vec::with_capacity(5);
+            for idx in 0..5 {
+                let suffix = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                let path = dir.join(format!("edabits_{suffix}.alpha2"));
+                eda_stores_vec.push(backing_store::BackingStore::create_file_backed(&path)?);
+            }
+            let mut eda_stores_iter = eda_stores_vec.into_iter();
+            let mut eda_stores: [backing_store::BackingStore<F>; 5] = [
+                eda_stores_iter
+                    .next()
+                    .expect("eda store vec must have len=5"),
+                eda_stores_iter
+                    .next()
+                    .expect("eda store vec must have len=5"),
+                eda_stores_iter
+                    .next()
+                    .expect("eda store vec must have len=5"),
+                eda_stores_iter
+                    .next()
+                    .expect("eda store vec must have len=5"),
+                eda_stores_iter
+                    .next()
+                    .expect("eda store vec must have len=5"),
+            ];
+            debug_assert!(eda_stores_iter.next().is_none());
+
+            for (idx, &c) in counts.iter().enumerate() {
+                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                let total_elems = c * k;
+                if total_elems == 0 {
+                    continue;
+                }
+
+                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let mut remaining = c;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let expected = items * k;
+                    let recv = recv_field_superchunk::<F, _>(PartyID::ID0, expected, io, max_msg_elems)?;
+                    append_to_store(&mut eda_stores[idx], &recv);
+                    remaining -= items;
+                }
+            }
+
+            // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
+            // persist interleaved stored, and also persist s20 to a temp file for round-2 send.
+            let dabits_store_path = dir.join("dabits.stored");
+            let mut dabits_store = backing_store::BackingStore::create_file_backed(&dabits_store_path)?;
+            let s20_tmp_path = dir.join("dabits.s20.tmp");
+            let mut s20_tmp = backing_store::BackingStore::create_file_backed(&s20_tmp_path)?;
+
+            if num_dabits > 0 {
+                let (_, _, ds2_seed, ds2_pos) = snaps[5];
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut offset = 0usize;
+                while offset < num_dabits {
+                    let items = (num_dabits - offset).min(max_items_per_super);
+
+                    let alpha2 = recv_field_superchunk::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
+                    let s12 = recv_field_superchunk::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+
+                    let theta_buf = dabits::seek_and_generate(ds2_seed, ds2_pos, offset, items);
+                    let s20: Vec<F> = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let theta = (theta_buf[i] & 1) != 0;
+                            let neg1_theta = if theta { -F::one() } else { F::one() };
+                            neg1_theta * alpha2[i]
+                        })
+                        .collect();
+
+                    append_to_store(&mut s20_tmp, &s20);
+
+                    let mut stored_chunk = Vec::with_capacity(2 * items);
+                    for i in 0..items {
+                        stored_chunk.push(s20[i]);
+                        stored_chunk.push(s12[i]);
+                    }
+                    append_to_store(&mut dabits_store, &stored_chunk);
+
+                    offset += items;
+                }
+
+                // Round 2: stream s20 from temp file and send to P0.
+                let file = std::fs::File::open(&s20_tmp_path)?;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut sent = 0usize;
+                while sent < num_dabits {
+                    let items = (num_dabits - sent).min(max_items_per_super);
+                    let s20_chunk = read_file_backed_range::<F>(&file, sent, sent + items)?;
+                    send_field_superchunk(s20_chunk, PartyID::ID0, io, max_msg_elems)?;
+                    sent += items;
+                }
+
+                let _ = std::fs::remove_file(&s20_tmp_path);
+            }
+
+            let [a0, a1, a2, a3, a4] = eda_stores;
+            let mk = |i: usize| snaps[i];
+            let (s1, p1, s2, p2) = mk(0);
+            let e0 = LazyEdaBits::<u8, F>::new_with_store(s1, p1, s2, p2, counts[0], a0, party_id);
+            let (s1, p1, s2, p2) = mk(1);
+            let e1 = LazyEdaBits::<u16, F>::new_with_store(s1, p1, s2, p2, counts[1], a1, party_id);
+            let (s1, p1, s2, p2) = mk(2);
+            let e2 = LazyEdaBits::<u32, F>::new_with_store(s1, p1, s2, p2, counts[2], a2, party_id);
+            let (s1, p1, s2, p2) = mk(3);
+            let e3 = LazyEdaBits::<u64, F>::new_with_store(s1, p1, s2, p2, counts[3], a3, party_id);
+            let (s1, p1, s2, p2) = mk(4);
+            let e4 = LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
+            let (ds1, dp1, ds2, dp2) = snaps[5];
+            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+
+            let pool = PreprocessingPool::new(e0, e1, e2, e3, e4, d);
+            pool.save(dir)?;
+            Ok(pool)
+        }
+    }
+}
+
 /// Extend an existing preprocessing pool with additional items.
 ///
 /// For each edaBit type and daBits where `deficit > 0`, generates additional
@@ -977,31 +1544,32 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     let fb = usize::try_from(F::MODULUS_BIT_SIZE)
         .expect("u32 fits into usize")
         .div_ceil(8);
+    let max_msg_elems = preproc_max_elems_per_msg::<F>();
+    let forks_cap = io.max_forks().max(1);
 
-    // Helper: compute edaBit alpha2 for P0 by seeking past old_total items.
-    fn edabit_alpha2_ext<T: IntRing2k, Fp: PrimeField>(
+    fn edabit_alpha2_ext_chunk<T: IntRing2k, Fp: PrimeField>(
         seed1: [u8; crate::SEED_SIZE],
         pos1: u128,
         seed2: [u8; crate::SEED_SIZE],
         pos2: u128,
-        old_total: usize,
-        deficit: usize,
+        start_item: usize,
+        n: usize,
         fb: usize,
     ) -> Vec<Fp>
     where
         Standard: Distribution<T>,
     {
-        if deficit == 0 {
+        if n == 0 {
             return Vec::new();
         }
         let t_bytes = std::mem::size_of::<T>();
         let k = T::K;
         let stride = t_bytes + k * fb;
 
-        let all1 = dabits::seek_and_generate(seed1, pos1, old_total * stride, deficit * stride);
-        let g2 = dabits::seek_and_generate(seed2, pos2, old_total * t_bytes, deficit * t_bytes);
+        let all1 = dabits::seek_and_generate(seed1, pos1, start_item * stride, n * stride);
+        let g2 = dabits::seek_and_generate(seed2, pos2, start_item * t_bytes, n * t_bytes);
 
-        let mut out = vec![Fp::zero(); deficit * k];
+        let mut out = vec![Fp::zero(); n * k];
         out.par_chunks_mut(k)
             .enumerate()
             .with_min_len(256)
@@ -1022,260 +1590,216 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
 
     match party_id {
         PartyID::ID0 => {
-            // Compute edaBit alpha2 extensions by seeking past old items.
-            let (s1, p1, s2, p2) = pool.edabits_u8.extension_seeds();
-            let ea0 = edabit_alpha2_ext::<u8, F>(
-                s1,
-                p1,
-                s2,
-                p2,
-                pool.edabits_u8.total(),
-                deficit_counts[0],
-                fb,
-            );
-            let (s1, p1, s2, p2) = pool.edabits_u16.extension_seeds();
-            let ea1 = edabit_alpha2_ext::<u16, F>(
-                s1,
-                p1,
-                s2,
-                p2,
-                pool.edabits_u16.total(),
-                deficit_counts[1],
-                fb,
-            );
-            let (s1, p1, s2, p2) = pool.edabits_u32.extension_seeds();
-            let ea2 = edabit_alpha2_ext::<u32, F>(
-                s1,
-                p1,
-                s2,
-                p2,
-                pool.edabits_u32.total(),
-                deficit_counts[2],
-                fb,
-            );
-            let (s1, p1, s2, p2) = pool.edabits_u64.extension_seeds();
-            let ea3 = edabit_alpha2_ext::<u64, F>(
-                s1,
-                p1,
-                s2,
-                p2,
-                pool.edabits_u64.total(),
-                deficit_counts[3],
-                fb,
-            );
-            let (s1, p1, s2, p2) = pool.edabits_u128.extension_seeds();
-            let ea4 = edabit_alpha2_ext::<u128, F>(
-                s1,
-                p1,
-                s2,
-                p2,
-                pool.edabits_u128.total(),
-                deficit_counts[4],
-                fb,
-            );
-
-            // daBit alpha2 extension
-            let da_alpha2 = if deficit_dabits > 0 {
-                let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
-                let old_total = pool.dabits.total();
-                let da_stride = 1 + 2 * fb;
-                let s1_buf = dabits::seek_and_generate(
-                    ds1,
-                    dp1,
-                    old_total * da_stride,
-                    deficit_dabits * da_stride,
-                );
-                let g2_buf = dabits::seek_and_generate(ds2, dp2, old_total, deficit_dabits);
-                (0..deficit_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let base = i * da_stride;
-                        let gbit = ((s1_buf[base] ^ g2_buf[i]) & 1) != 0;
-                        let alpha1: F = dabits::parse_field(&s1_buf, base + 1);
-                        F::from(gbit as u64) - alpha1
-                    })
-                    .collect::<Vec<F>>()
-            } else {
-                Vec::new()
+            // Round 1: send edaBit α₂ extensions per type (chunked), then daBit α₂.
+            let send_edabit = |k: usize,
+                               deficit: usize,
+                               old_total: usize,
+                               seeds: ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128),
+                               ty: usize,
+                               io: &mut IoContextPool<N>|
+             -> eyre::Result<()> {
+                if deficit == 0 {
+                    return Ok(());
+                }
+                let (seed1, pos1, seed2, pos2) = seeds;
+                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let mut done = 0usize;
+                while done < deficit {
+                    let items = (deficit - done).min(max_items_per_super);
+                    let start = old_total + done;
+                    let alpha2 = match ty {
+                        0 => edabit_alpha2_ext_chunk::<u8, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                        1 => edabit_alpha2_ext_chunk::<u16, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                        2 => edabit_alpha2_ext_chunk::<u32, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                        3 => edabit_alpha2_ext_chunk::<u64, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                        4 => edabit_alpha2_ext_chunk::<u128, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                        _ => unreachable!(),
+                    };
+                    send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
+                    done += items;
+                }
+                Ok(())
             };
 
-            // Round 1: P0 → P2 — send combined alpha2
-            let mut combined: Vec<F> = Vec::with_capacity(
-                ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len(),
-            );
-            combined.extend_from_slice(&ea0);
-            combined.extend_from_slice(&ea1);
-            combined.extend_from_slice(&ea2);
-            combined.extend_from_slice(&ea3);
-            combined.extend_from_slice(&ea4);
-            combined.extend_from_slice(&da_alpha2);
-            if !combined.is_empty() {
-                io.par_chunks(
-                    combined.into_par_iter(),
-                    None,
-                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                        ctx.network.send_many(PartyID::ID2, &chunk)?;
-                        Ok(vec![])
-                    },
-                )?;
-            }
+            send_edabit(u8::K, deficit_counts[0], pool.edabits_u8.total(), pool.edabits_u8.extension_seeds(), 0, io)?;
+            send_edabit(u16::K, deficit_counts[1], pool.edabits_u16.total(), pool.edabits_u16.extension_seeds(), 1, io)?;
+            send_edabit(u32::K, deficit_counts[2], pool.edabits_u32.total(), pool.edabits_u32.extension_seeds(), 2, io)?;
+            send_edabit(u64::K, deficit_counts[3], pool.edabits_u64.total(), pool.edabits_u64.extension_seeds(), 3, io)?;
+            send_edabit(u128::K, deficit_counts[4], pool.edabits_u128.total(), pool.edabits_u128.extension_seeds(), 4, io)?;
 
-            // Round 2: P0 ← P2 receives daBit s₂₀
-            let s20: Vec<F> = if deficit_dabits > 0 {
-                io.par_chunks(
-                    0..deficit_dabits,
-                    None,
-                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                        Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
-                    },
-                )?
-            } else {
-                Vec::new()
-            };
-
-            // Apply extensions (P0 stores s₂₀ for daBits, nothing for edaBits)
-            pool.edabits_u8
-                .apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16
-                .apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32
-                .apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64
-                .apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128
-                .apply_extension(deficit_counts[4], Vec::new());
-            pool.dabits.apply_extension(deficit_dabits, s20);
-        }
-        PartyID::ID1 => {
-            // P1 only sends daBit s₁₂ to P2 (edaBits are local-only).
+            // daBit α₂ extension (chunked).
             if deficit_dabits > 0 {
                 let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
                 let old_total = pool.dabits.total();
                 let da_stride = 1 + 2 * fb;
-
-                // rng2 (P1↔P0 interleaved stream): seek past old items
-                let s2_buf = dabits::seek_and_generate(
-                    ds2,
-                    dp2,
-                    old_total * da_stride,
-                    deficit_dabits * da_stride,
-                );
-                // rng1 (P1↔P2 stream): theta
-                let theta_buf = dabits::seek_and_generate(ds1, dp1, old_total, deficit_dabits);
-
-                let s12: Vec<F> = (0..deficit_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let base = i * da_stride;
-                        let theta = (theta_buf[i] & 1) != 0;
-                        let neg1_theta = if theta { -F::one() } else { F::one() };
-                        let alpha1: F = dabits::parse_field(&s2_buf, base + 1);
-                        let r1: F = dabits::parse_field(&s2_buf, base + 1 + fb);
-                        neg1_theta * alpha1 - r1
-                    })
-                    .collect();
-                io.network().send_many(PartyID::ID2, &s12)?;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut done = 0usize;
+                while done < deficit_dabits {
+                    let items = (deficit_dabits - done).min(max_items_per_super);
+                    let start = old_total + done;
+                    let s1_buf =
+                        dabits::seek_and_generate(ds1, dp1, start * da_stride, items * da_stride);
+                    let g2_buf = dabits::seek_and_generate(ds2, dp2, start, items);
+                    let da_alpha2 = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let base = i * da_stride;
+                            let gbit = ((s1_buf[base] ^ g2_buf[i]) & 1) != 0;
+                            let alpha1: F = dabits::parse_field(&s1_buf, base + 1);
+                            F::from(gbit as u64) - alpha1
+                        })
+                        .collect::<Vec<F>>();
+                    send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
+                    done += items;
+                }
             }
 
-            // Apply extensions (P1 stores nothing)
-            pool.edabits_u8
-                .apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16
-                .apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32
-                .apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64
-                .apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128
-                .apply_extension(deficit_counts[4], Vec::new());
-            pool.dabits.apply_extension(deficit_dabits, Vec::new());
+            // Round 2: receive daBit s₂₀ in chunks and extend dabits store.
+            if deficit_dabits > 0 {
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut remaining = deficit_dabits;
+                while remaining > 0 {
+                    let items = remaining.min(max_items_per_super);
+                    let s20 = recv_field_superchunk::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
+                    pool.dabits.apply_extension(items, s20);
+                    remaining -= items;
+                }
+            }
+
+            // Apply edaBits total extensions (P0 stores no α₂).
+            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
+        }
+        PartyID::ID1 => {
+            // P1: send daBit s₁₂ extension in chunks.
+            if deficit_dabits > 0 {
+                let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
+                let old_total = pool.dabits.total();
+                let da_stride = 1 + 2 * fb;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut done = 0usize;
+                while done < deficit_dabits {
+                    let items = (deficit_dabits - done).min(max_items_per_super);
+                    let start = old_total + done;
+                    let s2_buf =
+                        dabits::seek_and_generate(ds2, dp2, start * da_stride, items * da_stride);
+                    let theta_buf = dabits::seek_and_generate(ds1, dp1, start, items);
+                    let s12: Vec<F> = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let base = i * da_stride;
+                            let theta = (theta_buf[i] & 1) != 0;
+                            let neg1_theta = if theta { -F::one() } else { F::one() };
+                            let alpha1: F = dabits::parse_field(&s2_buf, base + 1);
+                            let r1: F = dabits::parse_field(&s2_buf, base + 1 + fb);
+                            neg1_theta * alpha1 - r1
+                        })
+                        .collect();
+                    send_field_superchunk(s12, PartyID::ID2, io, max_msg_elems)?;
+                    done += items;
+                }
+                pool.dabits.apply_extension(deficit_dabits, Vec::new());
+            }
+
+            // Apply edaBits total extensions (P1 stores no α₂).
+            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
         }
         PartyID::ID2 => {
-            // Round 1: receive combined alpha2 from P0 + s₁₂ from P1
-            let total_eda = deficit_counts
-                .iter()
-                .enumerate()
-                .map(|(i, &c)| c * [u8::K, u16::K, u32::K, u64::K, u128::K][i])
-                .sum::<usize>();
-            let total_recv = total_eda + deficit_dabits;
-
-            let combined: Vec<F> = if total_recv > 0 {
-                io.par_chunks(
-                    0..total_recv,
-                    None,
-                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                        Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
-                    },
-                )?
-            } else {
-                Vec::new()
-            };
-
-            let s12_recv: Vec<F> = if deficit_dabits > 0 {
-                io.network().recv_many(PartyID::ID1)?
-            } else {
-                Vec::new()
-            };
-
-            // Split combined into edaBit alpha2 slices + daBit alpha2
-            let mut offset = 0;
-            let mut eda_alphas: [Vec<F>; 5] = Default::default();
-            for (idx, &c) in deficit_counts.iter().enumerate() {
-                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
-                let len = c * k;
-                eda_alphas[idx] = combined[offset..offset + len].to_vec();
-                offset += len;
+            // Receive edaBit α₂ extensions per type in chunks and append immediately.
+            for (k, deficit) in [
+                (u8::K, deficit_counts[0]),
+                (u16::K, deficit_counts[1]),
+                (u32::K, deficit_counts[2]),
+                (u64::K, deficit_counts[3]),
+                (u128::K, deficit_counts[4]),
+            ] {
+                if deficit == 0 {
+                    continue;
+                }
+                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let mut done = 0usize;
+                while done < deficit {
+                    let items = (deficit - done).min(max_items_per_super);
+                    let recv =
+                        recv_field_superchunk::<F, _>(PartyID::ID0, items * k, io, max_msg_elems)?;
+                    match k {
+                        8 => pool.edabits_u8.apply_extension(items, recv),
+                        16 => pool.edabits_u16.apply_extension(items, recv),
+                        32 => pool.edabits_u32.apply_extension(items, recv),
+                        64 => pool.edabits_u64.apply_extension(items, recv),
+                        128 => pool.edabits_u128.apply_extension(items, recv),
+                        _ => unreachable!(),
+                    }
+                    done += items;
+                }
             }
-            let dabit_alpha2 = &combined[offset..offset + deficit_dabits];
 
-            // Compute daBit s₂₀ and send to P0
-            let dabit_stored = if deficit_dabits > 0 {
-                let (_, _, ds2, dp2) = pool.dabits.extension_seeds();
+            // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
+            // append interleaved stored_ext, and stage s20 for round-2 send via temp file.
+            if deficit_dabits > 0 {
+                let (_ds1, _dp1, ds2, dp2) = pool.dabits.extension_seeds();
                 let old_total = pool.dabits.total();
-                let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total, deficit_dabits);
 
-                let s20: Vec<F> = (0..deficit_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let theta = (theta_buf[i] & 1) != 0;
-                        let neg1_theta = if theta { -F::one() } else { F::one() };
-                        neg1_theta * dabit_alpha2[i]
-                    })
-                    .collect();
+                let tmp_path = std::env::temp_dir().join(format!(
+                    "mpc-core-dabits-s20-ext-{}-{}.tmp",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ));
+                let mut s20_tmp = backing_store::BackingStore::create_file_backed(&tmp_path)?;
 
-                // Interleave s₂₀ + s₁₂ for LazyDaBits stored format
-                let mut stored = Vec::with_capacity(2 * deficit_dabits);
-                for i in 0..deficit_dabits {
-                    stored.push(s20[i]);
-                    stored.push(s12_recv[i]);
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut done = 0usize;
+                while done < deficit_dabits {
+                    let items = (deficit_dabits - done).min(max_items_per_super);
+                    let alpha2 = recv_field_superchunk::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
+                    let s12 = recv_field_superchunk::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+                    let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total + done, items);
+
+                    let s20: Vec<F> = (0..items)
+                        .into_par_iter()
+                        .with_min_len(256)
+                        .map(|i| {
+                            let theta = (theta_buf[i] & 1) != 0;
+                            let neg1_theta = if theta { -F::one() } else { F::one() };
+                            neg1_theta * alpha2[i]
+                        })
+                        .collect();
+                    append_to_store(&mut s20_tmp, &s20);
+
+                    let mut stored_chunk = Vec::with_capacity(2 * items);
+                    for i in 0..items {
+                        stored_chunk.push(s20[i]);
+                        stored_chunk.push(s12[i]);
+                    }
+                    pool.dabits.apply_extension(items, stored_chunk);
+                    done += items;
                 }
 
-                // Round 2: P2 → P0 sends s₂₀
-                io.par_chunks(
-                    s20.into_par_iter(),
-                    None,
-                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                        ctx.network.send_many(PartyID::ID0, &chunk)?;
-                        Ok(vec![])
-                    },
-                )?;
+                // Round 2: send s20 to P0 from temp file.
+                let file = std::fs::File::open(&tmp_path)?;
+                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let mut sent = 0usize;
+                while sent < deficit_dabits {
+                    let items = (deficit_dabits - sent).min(max_items_per_super);
+                    let s20_chunk = read_file_backed_range::<F>(&file, sent, sent + items)?;
+                    send_field_superchunk(s20_chunk, PartyID::ID0, io, max_msg_elems)?;
+                    sent += items;
+                }
 
-                stored
-            } else {
-                Vec::new()
-            };
-
-            // Apply extensions
-            let [a0, a1, a2, a3, a4] = eda_alphas;
-            pool.edabits_u8.apply_extension(deficit_counts[0], a0);
-            pool.edabits_u16.apply_extension(deficit_counts[1], a1);
-            pool.edabits_u32.apply_extension(deficit_counts[2], a2);
-            pool.edabits_u64.apply_extension(deficit_counts[3], a3);
-            pool.edabits_u128.apply_extension(deficit_counts[4], a4);
-            pool.dabits.apply_extension(deficit_dabits, dabit_stored);
+                let _ = std::fs::remove_file(&tmp_path);
+            }
         }
     }
 
@@ -2108,6 +2632,92 @@ mod tests {
     #[test]
     fn preprocess_pool_batched_roundtrip() {
         preprocess_roundtrip_impl(true);
+    }
+
+    #[test]
+    fn preprocess_pool_batched_into_dir_roundtrip() {
+        use crate::protocols::rep3_ring::dabits;
+
+        const NUM_U64: usize = 8;
+        const NUM_DABITS: usize = 16;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0xB002_0002);
+
+        // Random u64 values for B2A
+        let xs: Vec<u64> = (0..NUM_U64).map(|_| rng.next_u64()).collect();
+        let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] = {
+            let per = xs
+                .iter()
+                .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+
+        // Random bits for bit injection
+        let bits: Vec<bool> = (0..NUM_DABITS).map(|_| (rng.next_u32() & 1) == 1).collect();
+        let bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] = {
+            let per = bits
+                .iter()
+                .map(|&b| share_ring_element::<RingBit, _>(RingElement(RingBit::new(b)), &mut rng))
+                .collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+
+        let base_dir = std::env::temp_dir().join(format!("co_jolt2_preproc_{}", rng.next_u64()));
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        type Input = (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>);
+        let outputs: [(Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>); 3] =
+            run_rep3_local_test_with_coordinator(
+                1,
+                |i| (x_bin_shares[i].clone(), bit_shares[i].clone()),
+                || (),
+                move |(x_sh, bit_sh): Input, mut io_ctx| {
+                    let party_id = io_ctx.party_id();
+                    let pool_dir =
+                        base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                    std::fs::create_dir_all(&pool_dir)?;
+
+                    let mut pool = preprocess_pool_batched_into_dir::<Fr, _>(
+                        &pool_dir,
+                        [0, 0, 0, NUM_U64, 0],
+                        NUM_DABITS,
+                        &mut io_ctx,
+                    )?;
+
+                    // Load back from disk and consume from the loaded pool.
+                    let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                    // Ensure the returned pool and the loaded pool expose the same remaining counts.
+                    assert_eq!(pool.remaining_counts(), loaded.remaining_counts());
+
+                    let batch = loaded.take_edabits::<u64>(NUM_U64);
+                    let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
+
+                    let dbatch = loaded.take_dabits(NUM_DABITS);
+                    let inj =
+                        dabits::bit_inject_field_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
+
+                    Ok((b2a, inj))
+                },
+                |(): (), _net| Ok(()),
+            )
+            .0;
+
+        // Verify B2A
+        let b2a_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
+        let b2a_expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
+        assert_eq!(b2a_combined, b2a_expected, "preprocess_into_dir B2A mismatch");
+
+        // Verify bit injection
+        let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
+        let inj_expected: Vec<Fr> = bits.iter().map(|&b| Fr::from(b as u64)).collect();
+        assert_eq!(
+            inj_combined, inj_expected,
+            "preprocess_into_dir bit inject mismatch"
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
     }
 
     /// Test that extend_pool_batched produces correct results.

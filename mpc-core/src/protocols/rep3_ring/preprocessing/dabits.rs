@@ -93,6 +93,26 @@ impl<F: PrimeField> LazyDaBits<F> {
         stored: Vec<F>,
         party_id: PartyID,
     ) -> Self {
+        Self::new_with_store(
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            total,
+            backing_store::BackingStore::from_vec(stored),
+            party_id,
+        )
+    }
+
+    pub(crate) fn new_with_store(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        total: usize,
+        stored: backing_store::BackingStore<F>,
+        party_id: PartyID,
+    ) -> Self {
         Self {
             seed1,
             pos1,
@@ -104,7 +124,7 @@ impl<F: PrimeField> LazyDaBits<F> {
             party_id,
             total,
             cursor: 0,
-            stored: backing_store::BackingStore::from_vec(stored),
+            stored,
             meta_path: None,
         }
     }
