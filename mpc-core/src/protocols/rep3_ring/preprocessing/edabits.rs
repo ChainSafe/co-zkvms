@@ -988,8 +988,23 @@ fn preproc_max_msg_mb() -> usize {
     env_usize("PREPROC_MAX_MSG_MB", 8)
 }
 
+fn preproc_store_batch_mb() -> usize {
+    env_usize("PREPROC_STORE_BATCH_MB", 64)
+}
+
 fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
     let mb = preproc_max_msg_mb();
+    let bytes = mb.saturating_mul(1024 * 1024);
+    let elem = std::mem::size_of::<F>();
+    if elem == 0 {
+        1
+    } else {
+        bytes.div_ceil(elem).max(1)
+    }
+}
+
+fn preproc_store_batch_elems<F: PrimeField>() -> usize {
+    let mb = preproc_store_batch_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
     if elem == 0 {
@@ -1092,6 +1107,19 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
     }
     debug_assert_eq!(received, expected_len);
 
+    Ok(())
+}
+
+fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker>(
+    from: PartyID,
+    start_elem: usize,
+    expected_len: usize,
+    io: &mut IoContextPool<N>,
+    max_msg_elems: usize,
+    store: &mut backing_store::BackingStore<F>,
+) -> eyre::Result<()> {
+    let recv = recv_field_messages_collect::<F, _>(from, expected_len, io, max_msg_elems)?;
+    write_to_store(store, start_elem, &recv)?;
     Ok(())
 }
 
@@ -1233,7 +1261,85 @@ where
         out
     }
 
-    let forks_cap = io.max_forks().max(1);
+    fn dabit_alpha2_seed_chunk<Fp: PrimeField>(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        start_item: usize,
+        num: usize,
+        fb: usize,
+    ) -> Vec<Fp> {
+        if num == 0 {
+            return Vec::new();
+        }
+        let da_stride = 1 + 2 * fb;
+        let s1 = dabits::seek_and_generate(seed1, pos1, start_item * da_stride, num * da_stride);
+        let s2 = dabits::seek_and_generate(seed2, pos2, start_item, num);
+        (0..num)
+            .into_par_iter()
+            .with_min_len(256)
+            .map(|i| {
+                let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
+                let alpha1: Fp = dabits::parse_field(&s1, i * da_stride + 1);
+                Fp::from(gbit as u64) - alpha1
+            })
+            .collect()
+    }
+
+    fn dabit_s12_seed_chunk<Fp: PrimeField>(
+        theta_seed: [u8; crate::SEED_SIZE],
+        theta_pos: u128,
+        interleaved_seed: [u8; crate::SEED_SIZE],
+        interleaved_pos: u128,
+        start_item: usize,
+        num: usize,
+        fb: usize,
+    ) -> Vec<Fp> {
+        if num == 0 {
+            return Vec::new();
+        }
+        let da_stride = 1 + 2 * fb;
+        let theta_bytes = dabits::seek_and_generate(theta_seed, theta_pos, start_item, num);
+        let s2 = dabits::seek_and_generate(
+            interleaved_seed,
+            interleaved_pos,
+            start_item * da_stride,
+            num * da_stride,
+        );
+        (0..num)
+            .into_par_iter()
+            .with_min_len(256)
+            .map(|i| {
+                let theta = (theta_bytes[i] & 1) != 0;
+                let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
+                let alpha1: Fp = dabits::parse_field(&s2, i * da_stride + 1);
+                let r1_val: Fp = dabits::parse_field(&s2, i * da_stride + 1 + fb);
+                neg1_theta * alpha1 - r1_val
+            })
+            .collect()
+    }
+
+    fn dabit_s20_from_theta_seed<Fp: PrimeField>(
+        theta_seed: [u8; crate::SEED_SIZE],
+        theta_pos: u128,
+        start_item: usize,
+        alpha2: &[Fp],
+    ) -> Vec<Fp> {
+        if alpha2.is_empty() {
+            return Vec::new();
+        }
+        let theta_buf = dabits::seek_and_generate(theta_seed, theta_pos, start_item, alpha2.len());
+        alpha2
+            .par_iter()
+            .zip(theta_buf.par_iter())
+            .map(|(alpha2_i, theta_b)| {
+                let theta = (theta_b & 1) != 0;
+                let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
+                neg1_theta * *alpha2_i
+            })
+            .collect()
+    }
 
     match party_id {
         PartyID::ID0 => {
@@ -1279,42 +1385,8 @@ where
             send_edabit_type(2, counts[2])?;
             send_edabit_type(3, counts[3])?;
             send_edabit_type(4, counts[4])?;
+            io.sync_with_parties()?;
 
-            // daBit α₂ — stream in chunks.
-            if num_dabits > 0 {
-                let r = &mut rands[5];
-                let da_stride = 1 + 2 * fb;
-                let max_items_per_msg = max_msg_elems.max(1);
-                let mut remaining = num_dabits;
-                let _span =
-                    tracing::info_span!("dabits_stream_chunks", n = num_dabits, stride = da_stride)
-                        .entered();
-
-                while remaining > 0 {
-                    let items = remaining.min(max_items_per_msg);
-                    let slen1 = items * da_stride;
-                    let slen2 = items;
-                    let (s1, s2) = {
-                        let mut a = vec![0u8; slen1];
-                        let mut b = vec![0u8; slen2];
-                        rayon::join(|| r.rng1.fill_bytes(&mut a), || r.rng2.fill_bytes(&mut b));
-                        (a, b)
-                    };
-                    let da_alpha2 = (0..items)
-                        .into_par_iter()
-                        .with_min_len(256)
-                        .map(|i| {
-                            let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
-                            let alpha1: F = dabits::parse_field(&s1, i * da_stride + 1);
-                            F::from(gbit as u64) - alpha1
-                        })
-                        .collect::<Vec<F>>();
-                    send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
-                    remaining -= items;
-                }
-            }
-
-            // Round 2: P0 ← P2 receive daBit s₂₀ and persist it file-backed.
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let dabits_store_path = dir.join("dabits.stored");
             let mut dabits_store = backing_store::BackingStore::create_file_backed_sized(
@@ -1322,23 +1394,25 @@ where
                 num_dabits,
             )?;
             if num_dabits > 0 {
-                let _span = tracing::info_span!("dabits_resv", n = num_dabits).entered();
-
                 let max_items_per_msg = max_msg_elems.max(1);
-                let mut write_pair_offset = 0usize;
-                let mut remaining = num_dabits;
-                while remaining > 0 {
-                    let items = remaining.min(max_items_per_msg);
-                    recv_field_messages_into_store::<F, _>(
+                let _span = tracing::info_span!("dabits_stream_chunks", n = num_dabits).entered();
+
+                let mut offset = 0usize;
+                while offset < num_dabits {
+                    let items = (num_dabits - offset).min(max_items_per_msg);
+                    let da_alpha2 =
+                        dabit_alpha2_seed_chunk::<F>(ds1, dp1, ds2, dp2, offset, items, fb);
+                    send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
+
+                    receive_field_store_batch::<F, _>(
                         PartyID::ID2,
-                        write_pair_offset,
+                        offset,
                         items,
                         io,
                         max_msg_elems,
                         &mut dabits_store,
                     )?;
-                    write_pair_offset += items;
-                    remaining -= items;
+                    offset += items;
                 }
             }
 
@@ -1362,36 +1436,25 @@ where
         }
         PartyID::ID1 => {
             // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
+            io.sync_with_parties()?;
             if num_dabits > 0 {
                 let _span = tracing::info_span!("dabits_send_thetas", n = num_dabits).entered();
-                let r = &mut rands[5];
-                let da_stride = 1 + 2 * fb;
+                let (theta_seed, theta_pos, interleaved_seed, interleaved_pos) = snaps[5];
                 let max_items_per_msg = max_msg_elems.max(1);
-                let mut remaining = num_dabits;
-                while remaining > 0 {
-                    let items = remaining.min(max_items_per_msg);
-                    let slen2 = items * da_stride;
-                    let slen1 = items;
-                    let (s2, theta_bytes) = {
-                        let mut a = vec![0u8; slen2];
-                        let mut b = vec![0u8; slen1];
-                        rayon::join(|| r.rng2.fill_bytes(&mut a), || r.rng1.fill_bytes(&mut b));
-                        (a, b)
-                    };
-
-                    let s12: Vec<F> = (0..items)
-                        .into_par_iter()
-                        .with_min_len(256)
-                        .map(|i| {
-                            let theta = (theta_bytes[i] & 1) != 0;
-                            let neg1_theta = if theta { -F::one() } else { F::one() };
-                            let alpha1: F = dabits::parse_field(&s2, i * da_stride + 1);
-                            let r1_val: F = dabits::parse_field(&s2, i * da_stride + 1 + fb);
-                            neg1_theta * alpha1 - r1_val
-                        })
-                        .collect();
+                let mut offset = 0usize;
+                while offset < num_dabits {
+                    let items = (num_dabits - offset).min(max_items_per_msg);
+                    let s12 = dabit_s12_seed_chunk::<F>(
+                        theta_seed,
+                        theta_pos,
+                        interleaved_seed,
+                        interleaved_pos,
+                        offset,
+                        items,
+                        fb,
+                    );
                     send_field_superchunk(s12, PartyID::ID2, io, max_msg_elems)?;
-                    remaining -= items;
+                    offset += items;
                 }
             }
 
@@ -1413,21 +1476,6 @@ where
             Ok(pool)
         }
         PartyID::ID2 => {
-            // P2 advances daBit RNGs (to stay in sync) but doesn't use them.
-            if num_dabits > 0 {
-                let _span = tracing::info_span!("dabits_rng_advance", n = num_dabits).entered();
-                let r = &mut rands[5];
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
-                let mut remaining = num_dabits;
-                while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
-                    let mut s2 = vec![0u8; items];
-                    let mut s1 = vec![0u8; items];
-                    rayon::join(|| r.rng2.fill_bytes(&mut s2), || r.rng1.fill_bytes(&mut s1));
-                    remaining -= items;
-                }
-            }
-
             // Round 1: receive edaBit α₂ streams from P0 and append to file-backed stores.
             let mut eda_stores_vec: Vec<backing_store::BackingStore<F>> = Vec::with_capacity(5);
             for idx in 0..5 {
@@ -1467,12 +1515,14 @@ where
                 }
 
                 let max_items_per_msg = (max_msg_elems / k).max(1);
+                let store_batch_items =
+                    (preproc_store_batch_elems::<F>() / k).max(max_items_per_msg);
                 let mut write_elem_offset = 0usize;
                 let mut remaining = c;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_msg);
+                    let items = remaining.min(store_batch_items);
                     let expected = items * k;
-                    recv_field_messages_into_store::<F, _>(
+                    receive_field_store_batch::<F, _>(
                         PartyID::ID0,
                         write_elem_offset,
                         expected,
@@ -1484,6 +1534,7 @@ where
                     remaining -= items;
                 }
             }
+            io.sync_with_parties()?;
 
             // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
             // append local stored data, and forward s20 to P0 immediately.
@@ -1520,16 +1571,8 @@ where
                         bytes = items * std::mem::size_of::<F>()
                     )
                     .entered();
-                    let theta_buf = dabits::seek_and_generate(ds2_seed, ds2_pos, offset, items);
-                    let s20: Vec<F> = (0..items)
-                        .into_par_iter()
-                        .with_min_len(256)
-                        .map(|i| {
-                            let theta = (theta_buf[i] & 1) != 0;
-                            let neg1_theta = if theta { -F::one() } else { F::one() };
-                            neg1_theta * alpha2[i]
-                        })
-                        .collect();
+                    let s20 =
+                        dabit_s20_from_theta_seed::<F>(ds2_seed, ds2_pos, offset, &alpha2);
 
                     dabits_store.write_interleaved_at(offset, &s20, &s12)?;
                     send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;
