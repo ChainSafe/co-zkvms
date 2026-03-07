@@ -1058,6 +1058,14 @@ fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
     if data.is_empty() {
         return Ok(());
     }
+    let _span = tracing::trace_span!(
+        "send_field_superchunk",
+        party_id = ?io.party_id(),
+        target = ?target,
+        elems = data.len(),
+        bytes = data.len() * std::mem::size_of::<F>(),
+    )
+    .entered();
 
     let forks_cap = io.max_forks();
     let ForkChunkPlan {
@@ -1081,7 +1089,7 @@ fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
     Ok(())
 }
 
-fn recv_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
+fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
     from: PartyID,
     expected_len: usize,
     io: &mut IoContextPool<N>,
@@ -1097,16 +1105,25 @@ fn recv_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
         num_msgs,
     } = plan_fork_chunks(expected_len, forks_cap, max_msg_elems);
 
-    if num_msgs <= 1 {
-        let v: Vec<F> = io.network().recv_many(from)?;
-        return Ok(v);
-    }
+    let _span = tracing::trace_span!(
+        "recv_field_messages_collect",
+        party_id = ?io.party_id(),
+        from = ?from,
+        elems = expected_len,
+        bytes = expected_len * std::mem::size_of::<F>(),
+        num_msgs
+    )
+    .entered();
 
-    let chunks: Vec<Vec<F>> = io.par_iter(
-        0..num_msgs,
-        Some(num_msgs),
-        |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
-    )?;
+    let chunks: Vec<Vec<F>> = if num_msgs <= 1 {
+        vec![io.network().recv_many(from)?]
+    } else {
+        io.par_iter(
+            0..num_msgs,
+            Some(num_msgs),
+            |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
+        )?
+    };
 
     let mut out = Vec::with_capacity(expected_len);
     for c in chunks {
@@ -1116,7 +1133,53 @@ fn recv_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
     Ok(out)
 }
 
+fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
+    from: PartyID,
+    expected_len: usize,
+    io: &mut IoContextPool<N>,
+    max_msg_elems: usize,
+    store: &mut backing_store::BackingStore<F>,
+) -> eyre::Result<()> {
+    if expected_len == 0 {
+        return Ok(());
+    }
+
+    let forks_cap = io.max_forks();
+    let ForkChunkPlan {
+        chunk_elems: _,
+        num_msgs,
+    } = plan_fork_chunks(expected_len, forks_cap, max_msg_elems);
+    let _span = tracing::trace_span!(
+        "recv_field_messages_into_store",
+        party_id = ?io.party_id(),
+        from = ?from,
+        elems = expected_len,
+        bytes = expected_len * std::mem::size_of::<F>(),
+        num_msgs
+    )
+    .entered();
+
+    if num_msgs <= 1 {
+        let recv: Vec<F> = io.network().recv_many(from)?;
+        append_to_store(store, &recv);
+        return Ok(());
+    }
+
+    for _ in 0..num_msgs {
+        let recv: Vec<F> = io.network().recv_many(from)?;
+        append_to_store(store, &recv);
+    }
+
+    Ok(())
+}
+
 fn append_to_store<F: PrimeField + Copy>(store: &mut backing_store::BackingStore<F>, data: &[F]) {
+    let _span = tracing::trace_span!(
+        "append_to_store",
+        elems = data.len(),
+        bytes = data.len() * std::mem::size_of::<F>()
+    )
+    .entered();
     store.extend(data);
 }
 
@@ -1193,10 +1256,14 @@ where
     let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
     let snaps: [_; 6] = std::array::from_fn(|i| rands[i].snapshot());
 
-    // Helper: compute edaBit α₂ chunk for P0 given a forked Rep3Rand.
-    fn edabit_alpha2_p0_chunk<T: IntRing2k, Fp: PrimeField>(
+    // Helper: compute edaBit α2 for a contiguous item range from seed snapshots.
+    fn edabit_alpha2_seed_chunk<T: IntRing2k, Fp: PrimeField>(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        start_item: usize,
         num: usize,
-        eda_rand: &mut Rep3Rand,
         fb: usize,
     ) -> Vec<Fp>
     where
@@ -1208,16 +1275,17 @@ where
         let t_bytes = std::mem::size_of::<T>();
         let k = T::K;
         let stride = t_bytes + k * fb;
-        let gamma_total = num * t_bytes;
-        let (all1, g2) = {
-            let mut a = vec![0u8; num * stride];
-            let mut b = vec![0u8; gamma_total];
-            rayon::join(
-                || eda_rand.rng1.fill_bytes(&mut a),
-                || eda_rand.rng2.fill_bytes(&mut b),
-            );
-            (a, b)
-        };
+        let _span = tracing::trace_span!(
+            "edabit_alpha2_p0_chunk",
+            ring_bits = T::K,
+            items = num,
+            start_item,
+            elems = num * k,
+            bytes = num * k * std::mem::size_of::<Fp>()
+        )
+        .entered();
+        let all1 = dabits::seek_and_generate(seed1, pos1, start_item * stride, num * stride);
+        let g2 = dabits::seek_and_generate(seed2, pos2, start_item * t_bytes, num * t_bytes);
         let mut out = vec![Fp::zero(); num * k];
         out.par_chunks_mut(k)
             .enumerate()
@@ -1242,44 +1310,55 @@ where
     match party_id {
         PartyID::ID0 => {
             // Round 1: P0 → P2 sends edaBit α₂ streams per type, then daBit α₂.
-            let mut send_edabit_type = |idx: usize, num: usize, rand: &mut Rep3Rand| {
+            let mut send_edabit_type = |idx: usize, num: usize| {
                 if num == 0 {
                     return Ok(());
                 }
                 let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
-                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
-                let mut remaining = num;
-                while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
+                let seeds = snaps[idx];
+                let max_items_per_msg = (max_msg_elems / k).max(1);
+                let mut done = 0usize;
+                while done < num {
+                    let items = (num - done).min(max_items_per_msg);
                     let alpha2 = match idx {
-                        0 => edabit_alpha2_p0_chunk::<u8, F>(items, rand, fb),
-                        1 => edabit_alpha2_p0_chunk::<u16, F>(items, rand, fb),
-                        2 => edabit_alpha2_p0_chunk::<u32, F>(items, rand, fb),
-                        3 => edabit_alpha2_p0_chunk::<u64, F>(items, rand, fb),
-                        4 => edabit_alpha2_p0_chunk::<u128, F>(items, rand, fb),
+                        0 => edabit_alpha2_seed_chunk::<u8, F>(
+                            seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                        ),
+                        1 => edabit_alpha2_seed_chunk::<u16, F>(
+                            seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                        ),
+                        2 => edabit_alpha2_seed_chunk::<u32, F>(
+                            seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                        ),
+                        3 => edabit_alpha2_seed_chunk::<u64, F>(
+                            seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                        ),
+                        4 => edabit_alpha2_seed_chunk::<u128, F>(
+                            seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                        ),
                         _ => unreachable!(),
                     };
                     debug_assert_eq!(alpha2.len(), items * k);
                     send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
-                    remaining -= items;
+                    done += items;
                 }
                 Ok(())
             };
 
-            send_edabit_type(0, counts[0], &mut rands[0])?;
-            send_edabit_type(1, counts[1], &mut rands[1])?;
-            send_edabit_type(2, counts[2], &mut rands[2])?;
-            send_edabit_type(3, counts[3], &mut rands[3])?;
-            send_edabit_type(4, counts[4], &mut rands[4])?;
+            send_edabit_type(0, counts[0])?;
+            send_edabit_type(1, counts[1])?;
+            send_edabit_type(2, counts[2])?;
+            send_edabit_type(3, counts[3])?;
+            send_edabit_type(4, counts[4])?;
 
             // daBit α₂ — stream in chunks.
             if num_dabits > 0 {
                 let r = &mut rands[5];
                 let da_stride = 1 + 2 * fb;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut remaining = num_dabits;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
+                    let items = remaining.min(max_items_per_msg);
                     let slen1 = items * da_stride;
                     let slen2 = items;
                     let (s1, s2) = {
@@ -1305,14 +1384,20 @@ where
             // Round 2: P0 ← P2 receive daBit s₂₀ and persist it file-backed.
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let dabits_store_path = dir.join("dabits.stored");
-            let mut dabits_store = backing_store::BackingStore::create_file_backed(&dabits_store_path)?;
+            let mut dabits_store =
+                backing_store::BackingStore::create_file_backed_sized(&dabits_store_path, num_dabits)?;
             if num_dabits > 0 {
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut remaining = num_dabits;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
-                    let recv = recv_field_superchunk::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
-                    append_to_store(&mut dabits_store, &recv);
+                    let items = remaining.min(max_items_per_msg);
+                    recv_field_messages_into_store::<F, _>(
+                        PartyID::ID2,
+                        items,
+                        io,
+                        max_msg_elems,
+                        &mut dabits_store,
+                    )?;
                     remaining -= items;
                 }
             }
@@ -1340,10 +1425,10 @@ where
             if num_dabits > 0 {
                 let r = &mut rands[5];
                 let da_stride = 1 + 2 * fb;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut remaining = num_dabits;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
+                    let items = remaining.min(max_items_per_msg);
                     let slen2 = items * da_stride;
                     let slen1 = items;
                     let (s2, theta_bytes) = {
@@ -1407,7 +1492,11 @@ where
             for idx in 0..5 {
                 let suffix = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
                 let path = dir.join(format!("edabits_{suffix}.alpha2"));
-                eda_stores_vec.push(backing_store::BackingStore::create_file_backed(&path)?);
+                let total = counts[idx] * suffix;
+                eda_stores_vec.push(backing_store::BackingStore::create_file_backed_sized(
+                    &path,
+                    total,
+                )?);
             }
             let mut eda_stores_iter = eda_stores_vec.into_iter();
             let mut eda_stores: [backing_store::BackingStore<F>; 5] = [
@@ -1436,34 +1525,49 @@ where
                     continue;
                 }
 
-                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let max_items_per_msg = (max_msg_elems / k).max(1);
                 let mut remaining = c;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
+                    let items = remaining.min(max_items_per_msg);
                     let expected = items * k;
-                    let recv = recv_field_superchunk::<F, _>(PartyID::ID0, expected, io, max_msg_elems)?;
-                    append_to_store(&mut eda_stores[idx], &recv);
+                    recv_field_messages_into_store::<F, _>(
+                        PartyID::ID0,
+                        expected,
+                        io,
+                        max_msg_elems,
+                        &mut eda_stores[idx],
+                    )?;
                     remaining -= items;
                 }
             }
 
             // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
-            // persist interleaved stored, and also persist s20 to a temp file for round-2 send.
+            // append local stored data, and forward s20 to P0 immediately.
             let dabits_store_path = dir.join("dabits.stored");
-            let mut dabits_store = backing_store::BackingStore::create_file_backed(&dabits_store_path)?;
-            let s20_tmp_path = dir.join("dabits.s20.tmp");
-            let mut s20_tmp = backing_store::BackingStore::create_file_backed(&s20_tmp_path)?;
+            let mut dabits_store = backing_store::BackingStore::create_file_backed_sized(
+                &dabits_store_path,
+                num_dabits.saturating_mul(2),
+            )?;
 
             if num_dabits > 0 {
                 let (_, _, ds2_seed, ds2_pos) = snaps[5];
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut offset = 0usize;
                 while offset < num_dabits {
-                    let items = (num_dabits - offset).min(max_items_per_super);
+                    let items = (num_dabits - offset).min(max_items_per_msg);
 
-                    let alpha2 = recv_field_superchunk::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
-                    let s12 = recv_field_superchunk::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+                    let alpha2 =
+                        recv_field_messages_collect::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
+                    let s12 =
+                        recv_field_messages_collect::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
 
+                    let _span = tracing::trace_span!(
+                        "dabit_s20_forward_chunk",
+                        party_id = ?party_id,
+                        items,
+                        bytes = items * std::mem::size_of::<F>()
+                    )
+                    .entered();
                     let theta_buf = dabits::seek_and_generate(ds2_seed, ds2_pos, offset, items);
                     let s20: Vec<F> = (0..items)
                         .into_par_iter()
@@ -1475,30 +1579,16 @@ where
                         })
                         .collect();
 
-                    append_to_store(&mut s20_tmp, &s20);
-
                     let mut stored_chunk = Vec::with_capacity(2 * items);
                     for i in 0..items {
                         stored_chunk.push(s20[i]);
                         stored_chunk.push(s12[i]);
                     }
                     append_to_store(&mut dabits_store, &stored_chunk);
+                    send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;
 
                     offset += items;
                 }
-
-                // Round 2: stream s20 from temp file and send to P0.
-                let file = std::fs::File::open(&s20_tmp_path)?;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
-                let mut sent = 0usize;
-                while sent < num_dabits {
-                    let items = (num_dabits - sent).min(max_items_per_super);
-                    let s20_chunk = read_file_backed_range::<F>(&file, sent, sent + items)?;
-                    send_field_superchunk(s20_chunk, PartyID::ID0, io, max_msg_elems)?;
-                    sent += items;
-                }
-
-                let _ = std::fs::remove_file(&s20_tmp_path);
             }
 
             let [a0, a1, a2, a3, a4] = eda_stores;
@@ -1602,10 +1692,10 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                     return Ok(());
                 }
                 let (seed1, pos1, seed2, pos2) = seeds;
-                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let max_items_per_msg = (max_msg_elems / k).max(1);
                 let mut done = 0usize;
                 while done < deficit {
-                    let items = (deficit - done).min(max_items_per_super);
+                    let items = (deficit - done).min(max_items_per_msg);
                     let start = old_total + done;
                     let alpha2 = match ty {
                         0 => edabit_alpha2_ext_chunk::<u8, F>(seed1, pos1, seed2, pos2, start, items, fb),
@@ -1632,10 +1722,10 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
                 let old_total = pool.dabits.total();
                 let da_stride = 1 + 2 * fb;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut done = 0usize;
                 while done < deficit_dabits {
-                    let items = (deficit_dabits - done).min(max_items_per_super);
+                    let items = (deficit_dabits - done).min(max_items_per_msg);
                     let start = old_total + done;
                     let s1_buf =
                         dabits::seek_and_generate(ds1, dp1, start * da_stride, items * da_stride);
@@ -1657,11 +1747,12 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
 
             // Round 2: receive daBit s₂₀ in chunks and extend dabits store.
             if deficit_dabits > 0 {
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut remaining = deficit_dabits;
                 while remaining > 0 {
-                    let items = remaining.min(max_items_per_super);
-                    let s20 = recv_field_superchunk::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
+                    let items = remaining.min(max_items_per_msg);
+                    let s20 =
+                        recv_field_messages_collect::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
                     pool.dabits.apply_extension(items, s20);
                     remaining -= items;
                 }
@@ -1680,10 +1771,10 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 let (ds1, dp1, ds2, dp2) = pool.dabits.extension_seeds();
                 let old_total = pool.dabits.total();
                 let da_stride = 1 + 2 * fb;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut done = 0usize;
                 while done < deficit_dabits {
-                    let items = (deficit_dabits - done).min(max_items_per_super);
+                    let items = (deficit_dabits - done).min(max_items_per_msg);
                     let start = old_total + done;
                     let s2_buf =
                         dabits::seek_and_generate(ds2, dp2, start * da_stride, items * da_stride);
@@ -1725,12 +1816,16 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 if deficit == 0 {
                     continue;
                 }
-                let max_items_per_super = (max_msg_elems * forks_cap / k).max(1);
+                let max_items_per_msg = (max_msg_elems / k).max(1);
                 let mut done = 0usize;
                 while done < deficit {
-                    let items = (deficit - done).min(max_items_per_super);
-                    let recv =
-                        recv_field_superchunk::<F, _>(PartyID::ID0, items * k, io, max_msg_elems)?;
+                    let items = (deficit - done).min(max_items_per_msg);
+                    let recv = recv_field_messages_collect::<F, _>(
+                        PartyID::ID0,
+                        items * k,
+                        io,
+                        max_msg_elems,
+                    )?;
                     match k {
                         8 => pool.edabits_u8.apply_extension(items, recv),
                         16 => pool.edabits_u16.apply_extension(items, recv),
@@ -1744,29 +1839,28 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             }
 
             // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
-            // append interleaved stored_ext, and stage s20 for round-2 send via temp file.
+            // append interleaved stored_ext, and forward s20 to P0 immediately.
             if deficit_dabits > 0 {
                 let (_ds1, _dp1, ds2, dp2) = pool.dabits.extension_seeds();
                 let old_total = pool.dabits.total();
 
-                let tmp_path = std::env::temp_dir().join(format!(
-                    "mpc-core-dabits-s20-ext-{}-{}.tmp",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos()
-                ));
-                let mut s20_tmp = backing_store::BackingStore::create_file_backed(&tmp_path)?;
-
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
+                let max_items_per_msg = max_msg_elems.max(1);
                 let mut done = 0usize;
                 while done < deficit_dabits {
-                    let items = (deficit_dabits - done).min(max_items_per_super);
-                    let alpha2 = recv_field_superchunk::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
-                    let s12 = recv_field_superchunk::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
+                    let items = (deficit_dabits - done).min(max_items_per_msg);
+                    let alpha2 =
+                        recv_field_messages_collect::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
+                    let s12 =
+                        recv_field_messages_collect::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
                     let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total + done, items);
 
+                    let _span = tracing::trace_span!(
+                        "dabit_s20_forward_chunk",
+                        party_id = ?party_id,
+                        items,
+                        bytes = items * std::mem::size_of::<F>()
+                    )
+                    .entered();
                     let s20: Vec<F> = (0..items)
                         .into_par_iter()
                         .with_min_len(256)
@@ -1776,7 +1870,6 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                             neg1_theta * alpha2[i]
                         })
                         .collect();
-                    append_to_store(&mut s20_tmp, &s20);
 
                     let mut stored_chunk = Vec::with_capacity(2 * items);
                     for i in 0..items {
@@ -1784,21 +1877,9 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                         stored_chunk.push(s12[i]);
                     }
                     pool.dabits.apply_extension(items, stored_chunk);
+                    send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;
                     done += items;
                 }
-
-                // Round 2: send s20 to P0 from temp file.
-                let file = std::fs::File::open(&tmp_path)?;
-                let max_items_per_super = (max_msg_elems * forks_cap).max(1);
-                let mut sent = 0usize;
-                while sent < deficit_dabits {
-                    let items = (deficit_dabits - sent).min(max_items_per_super);
-                    let s20_chunk = read_file_backed_range::<F>(&file, sent, sent + items)?;
-                    send_field_superchunk(s20_chunk, PartyID::ID0, io, max_msg_elems)?;
-                    sent += items;
-                }
-
-                let _ = std::fs::remove_file(&tmp_path);
             }
         }
     }
@@ -2160,6 +2241,28 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
 
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[test]
     fn b2a_ring_to_field_masked_recovers_x() {
@@ -2718,6 +2821,13 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_batched_into_dir_small_chunks() {
+        let _msg_guard = EnvVarGuard::set("PREPROC_MAX_MSG_MB", "1");
+        let _fork_guard = EnvVarGuard::set("PREPROC_MIN_FORK_ELEMS", "1");
+        preprocess_pool_batched_into_dir_roundtrip();
     }
 
     /// Test that extend_pool_batched produces correct results.

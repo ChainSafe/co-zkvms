@@ -16,7 +16,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     runtime::Handle,
-    sync::{mpsc, oneshot, Semaphore},
+    sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
@@ -151,6 +151,7 @@ where
 struct WriteJob<MSend> {
     data: MSend,
     ret: oneshot::Sender<Result<(), io::Error>>,
+    write_permit: Option<OwnedSemaphorePermit>,
 }
 
 struct ReadJob<MRecv> {
@@ -162,6 +163,8 @@ struct ReadJob<MRecv> {
 pub struct ChannelHandle<MSend, MRecv> {
     write_job_queue: mpsc::Sender<WriteJob<MSend>>,
     read_job_queue: mpsc::Sender<ReadJob<MRecv>>,
+    write_byte_budget: Option<Arc<Semaphore>>,
+    write_len_fn: Option<fn(&MSend) -> usize>,
 }
 
 impl<MSend, MRecv> ChannelHandle<MSend, MRecv>
@@ -243,13 +246,81 @@ where
         ChannelHandle {
             write_job_queue: write_send,
             read_job_queue: read_send,
+            write_byte_budget: None,
+            write_len_fn: None,
+        }
+    }
+
+    fn write_len(&self, data: &MSend) -> Option<usize> {
+        self.write_len_fn.map(|f| f(data))
+    }
+
+    async fn acquire_write_permit_async(
+        &self,
+        data: &MSend,
+    ) -> io::Result<Option<OwnedSemaphorePermit>> {
+        let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
+            return Ok(None);
+        };
+        let permits = u32::try_from(len).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("message too large for write permit accounting: {len} bytes"),
+            )
+        })?;
+        semaphore
+            .clone()
+            .acquire_many_owned(permits)
+            .await
+            .map(Some)
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write byte budget closed"))
+    }
+
+    fn acquire_write_permit_blocking(
+        &self,
+        data: &MSend,
+    ) -> io::Result<Option<OwnedSemaphorePermit>> {
+        let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
+            return Ok(None);
+        };
+        let permits = u32::try_from(len).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("message too large for write permit accounting: {len} bytes"),
+            )
+        })?;
+
+        loop {
+            match semaphore.clone().try_acquire_many_owned(permits) {
+                Ok(permit) => return Ok(Some(permit)),
+                Err(tokio::sync::TryAcquireError::NoPermits) => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(tokio::sync::TryAcquireError::Closed) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "write byte budget closed",
+                    ));
+                }
+            }
         }
     }
 
     /// Instructs the channel to send a message. Returns a [oneshot::Receiver] that will return the result of the send operation.
     pub async fn send(&self, data: MSend) -> oneshot::Receiver<Result<(), io::Error>> {
         let (ret, recv) = oneshot::channel();
-        let job = WriteJob { data, ret };
+        let write_permit = match self.acquire_write_permit_async(&data).await {
+            Ok(permit) => permit,
+            Err(err) => {
+                let _ = ret.send(Err(err));
+                return recv;
+            }
+        };
+        let job = WriteJob {
+            data,
+            ret,
+            write_permit,
+        };
         match self.write_job_queue.send(job).await {
             Ok(_) => {}
             Err(job) => job
@@ -285,7 +356,18 @@ where
     /// A blocking version of [ChannelHandle::send]. This will block until the send operation is complete.
     pub fn blocking_send(&self, data: MSend) -> oneshot::Receiver<Result<(), io::Error>> {
         let (ret, recv) = oneshot::channel();
-        let job = WriteJob { data, ret };
+        let write_permit = match self.acquire_write_permit_blocking(&data) {
+            Ok(permit) => permit,
+            Err(err) => {
+                let _ = ret.send(Err(err));
+                return recv;
+            }
+        };
+        let job = WriteJob {
+            data,
+            ret,
+            write_permit,
+        };
         match self.write_job_queue.blocking_send(job) {
             Ok(_) => {}
             Err(job) => job
@@ -353,7 +435,8 @@ impl ChannelHandle<Bytes, BytesMut> {
         }
 
         // job queues remain bounded; outer pipeline enforces per-actor sequencing
-        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(8192);
+        const WRITE_CHAN_CAP: usize = 16;
+        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(WRITE_CHAN_CAP);
         let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(8192);
 
         // Prefetch buffer: keep reading frames to free QUIC conn window.
@@ -361,7 +444,9 @@ impl ChannelHandle<Bytes, BytesMut> {
         const READ_BUF_BYTES: usize = 8 * 1024 * 1024; // 8 MiB per stream
         const READ_CHAN_CAP: usize = 16; // small item queue; bytes are bounded by semaphore
         let read_byte_budget = Arc::new(Semaphore::new(READ_BUF_BYTES));
-        let (frames_tx, mut frames_rx) = mpsc::channel::<BytesMut>(READ_CHAN_CAP);
+        let (frames_tx, mut frames_rx) =
+            mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
+        let write_byte_budget = Arc::new(Semaphore::new(worker_write_buf_bytes()));
 
         // Extract raw streams and spawn lightweight tasks around them
         let Channel {
@@ -388,13 +473,15 @@ impl ChannelHandle<Bytes, BytesMut> {
                     };
 
                     // Acquire byte budget before buffering the frame
-                    if len <= READ_BUF_BYTES {
+                    let read_permit = if len <= READ_BUF_BYTES {
                         // Normal path: bound by semaphore
-                        if let Err(_) = read_byte_budget.acquire_many(len as u32).await {
-                            break; // semaphore closed; shutdown
+                        match read_byte_budget.clone().acquire_many_owned(len as u32).await {
+                            Ok(permit) => Some(permit),
+                            Err(_) => break,
                         }
-                    }
-                    // else: oversize frame; skip budget to avoid deadlock
+                    } else {
+                        None
+                    };
 
                     // Read body
                     let mut buf = BytesMut::with_capacity(len);
@@ -414,14 +501,11 @@ impl ChannelHandle<Bytes, BytesMut> {
                     }
                     if buf.len() != len {
                         // on error, release any taken budget and stop
-                        if len <= READ_BUF_BYTES {
-                            read_byte_budget.add_permits(len);
-                        }
                         break;
                     }
 
                     // Send to buffer; if receiver dropped, stop
-                    if frames_tx.send(buf).await.is_err() {
+                    if frames_tx.send((buf, read_permit)).await.is_err() {
                         break;
                     }
                 }
@@ -434,12 +518,11 @@ impl ChannelHandle<Bytes, BytesMut> {
             tokio::spawn(async move {
                 while let Some(job) = read_recv.recv().await {
                     match frames_rx.recv().await {
-                        Some(buf) => {
+                        Some((buf, read_permit)) => {
                             let len = buf.len();
                             let _ = job.ret.send(Ok(buf));
-                            if len <= READ_BUF_BYTES {
-                                read_byte_budget.add_permits(len);
-                            }
+                            drop(read_permit);
+                            let _ = len;
                         }
                         None => {
                             let _ = job.ret.send(Err(io::Error::new(
@@ -476,10 +559,12 @@ impl ChannelHandle<Bytes, BytesMut> {
 
                 match res {
                     Ok(()) => {
+                        drop(write_job.write_permit);
                         // Notify caller; ignore if dropped
                         let _ = write_job.ret.send(Ok(()));
                     }
                     Err(err) => {
+                        drop(write_job.write_permit);
                         let _ = write_job.ret.send(Err(err));
                         break;
                     }
@@ -490,8 +575,20 @@ impl ChannelHandle<Bytes, BytesMut> {
         ChannelHandle {
             write_job_queue: write_send,
             read_job_queue: read_send,
+            write_byte_budget: Some(write_byte_budget),
+            write_len_fn: Some(Bytes::len),
         }
     }
+}
+
+fn worker_write_buf_bytes() -> usize {
+    const DEFAULT_MB: usize = 64;
+    let mb = std::env::var("MPC_WORKER_WRITE_BUF_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_MB);
+    mb.saturating_mul(1024 * 1024)
 }
 
 #[inline]

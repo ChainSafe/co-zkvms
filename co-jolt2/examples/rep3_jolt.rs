@@ -107,7 +107,8 @@ enum CoordToWorkerMsg {
 #[derive(Serialize, Deserialize)]
 struct PreprocPayload {
     trace_len: usize,
-    budget: PreprocessingBudget,
+    edabit_counts: [usize; 5],
+    dabits: usize,
 }
 
 fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize) {
@@ -291,7 +292,8 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
         let msg = CoordToWorkerMsg::PreprocOnly(PreprocPayload {
             trace_len: raw_trace_len,
-            budget,
+            edabit_counts: [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+            dabits: budget.dabits,
         });
         let msg_bytes = bincode::serialize(&msg).context("serializing preproc-only payload")?;
         network
@@ -420,14 +422,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
 
         let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
-        let counts = [
-            pp.budget.u8,
-            pp.budget.u16,
-            pp.budget.u32,
-            pp.budget.u64,
-            pp.budget.u128,
-        ];
-        let num_dabits = pp.budget.dabits;
+        let counts = pp.edabit_counts;
+        let num_dabits = pp.dabits;
         log_preproc_size_estimates(counts, num_dabits);
 
         if let Some(ref base_dir) = args.preproc_dir {

@@ -49,6 +49,8 @@ pub(crate) enum BackingStore<F> {
         path: PathBuf,
         /// Number of `F` elements in the file.
         len: usize,
+        /// Next byte offset used for append writes.
+        append_offset: u64,
         _phantom: PhantomData<F>,
     },
     /// No data (P0/P1 where no stored elements exist).
@@ -249,16 +251,24 @@ impl<F> BackingStore<F> {
     ///
     /// The file is created (or truncated if it exists) and opened read+write.
     pub(crate) fn create_file_backed(path: &Path) -> io::Result<Self> {
+        Self::create_file_backed_sized(path, 0)
+    }
+
+    /// Create a file-backed store at `path` with space reserved for `capacity_elems`.
+    pub(crate) fn create_file_backed_sized(path: &Path, capacity_elems: usize) -> io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .read(true)
             .write(true)
             .open(path)?;
+        let reserved_bytes = capacity_elems.saturating_mul(Self::elem_size_bytes()) as u64;
+        file.set_len(reserved_bytes)?;
         Ok(BackingStore::FileBacked {
             file,
             path: path.to_path_buf(),
             len: 0,
+            append_offset: 0,
             _phantom: PhantomData,
         })
     }
@@ -324,6 +334,7 @@ impl<F> BackingStore<F> {
             file,
             path: path.to_path_buf(),
             len,
+            append_offset: file_len as u64,
             _phantom: PhantomData,
         })
     }
@@ -340,7 +351,12 @@ impl<F> BackingStore<F> {
         }
         match self {
             BackingStore::InMemory(v) => v.extend_from_slice(additional),
-            BackingStore::FileBacked { file, len, .. } => {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
                 let bytes: &[u8] = unsafe {
                     std::slice::from_raw_parts(
                         additional.as_ptr() as *const u8,
@@ -349,11 +365,10 @@ impl<F> BackingStore<F> {
                 };
                 // Best-effort append; panic is fine here because preprocessing pools
                 // can't recover from persistence failure anyway.
-                file.seek(SeekFrom::End(0))
-                    .and_then(|_| file.write_all(bytes))
-                    .unwrap_or_else(|e| {
-                        panic!("BackingStore::extend file append failed: {e}");
-                    });
+                Self::file_write_all_at(file, *append_offset, bytes).unwrap_or_else(|e| {
+                    panic!("BackingStore::extend file append failed: {e}");
+                });
+                *append_offset += bytes.len() as u64;
                 *len += additional.len();
             }
             BackingStore::Empty => {

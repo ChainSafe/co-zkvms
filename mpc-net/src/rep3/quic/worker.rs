@@ -114,8 +114,8 @@ impl Rep3QuicMpcNetWorker {
             if !channels.is_empty() {
                 bail!("unexpected channels found")
             }
-            let chan_next = ChannelHandle::manage(chan_next);
-            let chan_prev = ChannelHandle::manage(chan_prev);
+            let chan_next = ChannelHandle::manage_bytes_quic(chan_next);
+            let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
 
             eyre::Ok((net_handler, chan_next, chan_prev, chan_coordinator))
         })?;
