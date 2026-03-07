@@ -1,8 +1,7 @@
 //! A channel abstraction for sending and receiving messages.
-use crate::rep3::{quic::codec_cfg, PartyWorkerID};
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
-use quinn::{Connection, ConnectionError, RecvStream, SendStream};
+use quinn::{RecvStream, SendStream};
 use std::{
     io,
     marker::{PhantomData, Unpin},
@@ -441,12 +440,12 @@ impl ChannelHandle<Bytes, BytesMut> {
 
         // Prefetch buffer: keep reading frames to free QUIC conn window.
         // Bound memory with a byte-budget semaphore + small item queue.
-        const READ_BUF_BYTES: usize = 8 * 1024 * 1024; // 8 MiB per stream
+        let read_buf_bytes = quic_read_buf_bytes();
         const READ_CHAN_CAP: usize = 16; // small item queue; bytes are bounded by semaphore
-        let read_byte_budget = Arc::new(Semaphore::new(READ_BUF_BYTES));
+        let read_byte_budget = Arc::new(Semaphore::new(read_buf_bytes));
         let (frames_tx, mut frames_rx) =
             mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
-        let write_byte_budget = Arc::new(Semaphore::new(worker_write_buf_bytes()));
+        let write_byte_budget = Arc::new(Semaphore::new(quic_write_buf_bytes()));
 
         // Extract raw streams and spawn lightweight tasks around them
         let Channel {
@@ -473,7 +472,7 @@ impl ChannelHandle<Bytes, BytesMut> {
                     };
 
                     // Acquire byte budget before buffering the frame
-                    let read_permit = if len <= READ_BUF_BYTES {
+                    let read_permit = if len <= read_buf_bytes {
                         // Normal path: bound by semaphore
                         match read_byte_budget.clone().acquire_many_owned(len as u32).await {
                             Ok(permit) => Some(permit),
@@ -581,14 +580,24 @@ impl ChannelHandle<Bytes, BytesMut> {
     }
 }
 
-fn worker_write_buf_bytes() -> usize {
-    const DEFAULT_MB: usize = 64;
-    let mb = std::env::var("MPC_WORKER_WRITE_BUF_MB")
+fn parse_quic_buf_mb(var: &str) -> Option<usize> {
+    std::env::var(var)
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v > 0)
-        .unwrap_or(DEFAULT_MB);
-    mb.saturating_mul(1024 * 1024)
+        .map(|v| v.saturating_mul(1024 * 1024))
+}
+
+fn quic_write_buf_bytes() -> usize {
+    const DEFAULT_MB: usize = 64;
+    parse_quic_buf_mb("MPC_QUIC_WRITE_BUF_MB")
+        .or_else(|| parse_quic_buf_mb("MPC_WORKER_WRITE_BUF_MB"))
+        .unwrap_or(DEFAULT_MB * 1024 * 1024)
+}
+
+fn quic_read_buf_bytes() -> usize {
+    const DEFAULT_MB: usize = 8;
+    parse_quic_buf_mb("MPC_QUIC_READ_BUF_MB").unwrap_or(DEFAULT_MB * 1024 * 1024)
 }
 
 #[inline]

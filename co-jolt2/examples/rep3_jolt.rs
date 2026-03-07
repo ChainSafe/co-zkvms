@@ -74,6 +74,10 @@ struct Args {
     #[clap(long, default_value = "4")]
     rayon_threads: usize,
 
+    /// Number of preinitialized logical network forks to use.
+    #[clap(long, default_value = "2")]
+    network_forks: u32,
+
     /// Repeat the full proof pipeline N times in the same process.
     ///
     /// Requires `--features reuse-preproc` (or the pool will be consumed).
@@ -417,7 +421,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     if let CoordToWorkerMsg::PreprocOnly(pp) = first_msg {
         // Wrap network in IoContextPool (required for preprocessing network rounds).
-        let num_forks = rayon::current_num_threads() as u32;
+        let num_forks = args.network_forks;
         let mut io_ctx = IoContextPool::init(network, num_forks)?;
         let party_id = io_ctx.party_id();
 
@@ -485,7 +489,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
 
     // Wrap network in IoContextPool
-    let num_forks = rayon::current_num_threads() as u32;
+    let num_forks = args.network_forks;
 
     let mut io_ctx = IoContextPool::init(network, num_forks)?;
 

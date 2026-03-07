@@ -1,14 +1,14 @@
 use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::types::MaybeShared;
+use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ec::pairing::MillerLoopOutput;
 use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ff::{CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
-use dory::{DoryProofBuilder, ProofBuilder};
 use dory::Polynomial;
+use dory::{DoryProofBuilder, ProofBuilder};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;

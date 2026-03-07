@@ -72,8 +72,24 @@ PROOF_ARGS=()
 if [ -n "$RAYON_THREADS" ]; then
   PROOF_ARGS+=(--rayon-threads "$RAYON_THREADS")
 fi
+if [ -n "${NETWORK_FORKS:-}" ]; then
+  PROOF_ARGS+=(--network-forks "$NETWORK_FORKS")
+fi
 if [ "$REPEAT_PROOFS" -gt 1 ]; then
   PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
+fi
+
+TIME_CMD=()
+TIME_RSS_PATTERN="Maximum resident set size"
+if /usr/bin/time -v true >/dev/null 2>&1; then
+  TIME_CMD=(/usr/bin/time -v --)
+elif /usr/bin/time -l true >/dev/null 2>&1; then
+  TIME_CMD=(/usr/bin/time -l)
+  TIME_RSS_PATTERN="maximum resident set size"
+elif command -v gtime >/dev/null 2>&1 && gtime -v true >/dev/null 2>&1; then
+  TIME_CMD=(gtime -v --)
+else
+  echo "warning: no verbose time command found; Max RSS will not be reported" >&2
 fi
 
 # Build the example binary (release mode)
@@ -114,7 +130,9 @@ fi
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
   ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} &
+coordinator_pid=$!
 
+capture_pids=()
 if [ "$TRACY_CAPTURE" = "1" ]; then
   # Prefer brew-installed tracy-capture (0.13.1, protocol 76) over any system one.
   TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
@@ -123,40 +141,85 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/tracy/worker${p}_$NUM_ITERS.tracy" \
+        -o "$TRACE_DIR/worker${p}_$NUM_ITERS.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/tracy/worker${p}_$NUM_ITERS.tracy" \
+        -o "$TRACE_DIR/worker${p}_$NUM_ITERS.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi
+    capture_pids+=($!)
   done
 fi
 
 # Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.
 # Each runs in a subshell so we can capture /usr/bin/time -v stderr and extract Max RSS.
+worker_pids=()
 for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
-    TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-      /usr/bin/time -v -- ../target/release/examples/rep3_jolt \
+    if [ ${#TIME_CMD[@]} -gt 0 ]; then
+      TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+        "${TIME_CMD[@]}" ../target/release/examples/rep3_jolt \
+          -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
+          -t "$TRACE_DIR" -n "$NUM_ITERS" \
+          ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
+          ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
+      maxrss_line=$(grep -i "$TIME_RSS_PATTERN" "$tmpfile" | tail -n 1 || true)
+      case "$maxrss_line" in
+        Maximum*)
+          maxrss=$(printf '%s\n' "$maxrss_line" | awk '{print $NF}')
+          ;;
+        *)
+          maxrss=$(printf '%s\n' "$maxrss_line" | awk '{print $1}')
+          ;;
+      esac
+      if [ -n "$maxrss" ]; then
+        echo "worker${p}: Max RSS = ${maxrss} kB"
+      fi
+    else
+      TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+        ../target/release/examples/rep3_jolt \
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
         ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
-    maxrss=$(grep "Maximum resident set size" "$tmpfile" | awk '{print $NF}')
-    echo "worker${p}: Max RSS = ${maxrss} kB"
+    fi
     if [ "$JEMALLOC_PRESET" != "default" ]; then
       echo "worker${p}: JEMALLOC_PRESET=$JEMALLOC_PRESET"
     fi
     rm -f "$tmpfile"
   ) &
+  worker_pids+=($!)
 done
 
-wait
+cleanup_children() {
+  kill "$coordinator_pid" "${worker_pids[@]}" "${capture_pids[@]}" 2>/dev/null || true
+  wait "$coordinator_pid" "${worker_pids[@]}" "${capture_pids[@]}" 2>/dev/null || true
+}
+
+trap cleanup_children EXIT
+
+for pid in "${worker_pids[@]}"; do
+  if ! wait "$pid"; then
+    cleanup_children
+    exit 1
+  fi
+done
+
+if ! wait "$coordinator_pid"; then
+  cleanup_children
+  exit 1
+fi
+
+for pid in "${capture_pids[@]}"; do
+  wait "$pid"
+done
+
+trap - EXIT
 echo "Traces written to $TRACE_DIR"
 if [ -n "$PREPROC_DIR" ]; then
   echo "Preprocessing data in $PREPROC_DIR/{party_0,party_1,party_2}/"

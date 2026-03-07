@@ -51,7 +51,7 @@ impl Rep3QuicNetCoordinator {
                 .await
                 .context("getting byte channels")?
                 .into_iter()
-                .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
+                .map(|(id, channel)| (id, ChannelHandle::manage_bytes_quic(channel)))
                 .collect();
 
             Ok::<_, Report>((net_handler, channels))
@@ -167,9 +167,10 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         data.serialize_uncompressed(&mut ser_data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while serializing data")?;
+        let ser_data = Bytes::from(ser_data);
 
         self.channels_par().for_each(|(_, channel)| {
-            std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
+            std::mem::drop(channel.blocking_send(ser_data.clone()));
         });
 
         Ok(())
@@ -239,7 +240,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         data.serialize_uncompressed(&mut ser_data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while serializing data")?;
-        std::mem::drop(channel.blocking_send(Bytes::from(ser_data.clone())));
+        std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
         Ok(())
     }
 
@@ -377,7 +378,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 .await
                 .context("getting byte channels")?
                 .into_iter()
-                .map(|(id, channel)| (id, ChannelHandle::manage(channel)))
+                .map(|(id, channel)| (id, ChannelHandle::manage_bytes_quic(channel)))
                 .collect();
 
             Ok::<_, Report>(channels)
