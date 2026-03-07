@@ -17,7 +17,7 @@ use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
-use tracing::{info, info_span, warn};
+use tracing::{info, info_span, trace_span, warn};
 
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
@@ -434,13 +434,15 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
             use mpc_core::protocols::rep3_ring::edabits;
             info!("preprocess-only: creating preprocessing pool into {:?}", pool_dir);
-            let _pool = edabits::preprocess_pool_batched_into_dir::<F, _>(
+            let pool = edabits::preprocess_pool_batched_into_dir::<F, _>(
                 &pool_dir,
                 counts,
                 num_dabits,
                 &mut io_ctx,
             )?;
             io_ctx.sync_with_parties()?;
+            let _drop_span = trace_span!("drop_preprocessing_pool").entered();
+            drop(pool);
             return Ok(());
         }
 
@@ -562,6 +564,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     if args.preprocess_only.unwrap_or(false) {
         io_ctx.sync_with_parties()?;
+        let _drop_span = trace_span!("drop_preprocessing_pool").entered();
+        drop(preproc);
         return Ok(());
     }
 

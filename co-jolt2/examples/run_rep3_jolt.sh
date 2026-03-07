@@ -34,6 +34,10 @@ JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 RAYON_THREADS=${RAYON_THREADS:-}
 # Optional: run multiple proofs in the same worker process (requires `reuse-preproc`).
 REPEAT_PROOFS=${REPEAT_PROOFS:-1}
+PREPROC_LANES_EFFECTIVE=${PREPROC_LANES:-2}
+NETWORK_FORKS_EFFECTIVE=${NETWORK_FORKS:-2}
+MPC_QUIC_CONN_LANES_EFFECTIVE=${MPC_QUIC_CONN_LANES:-$NETWORK_FORKS_EFFECTIVE}
+TRACE_SUFFIX="${NUM_ITERS}_${PREPROC_LANES_EFFECTIVE}x${MPC_QUIC_CONN_LANES_EFFECTIVE}L"
 
 mkdir -p "$ARTIFACT_DIR"
 mkdir -p "$TRACE_DIR"
@@ -81,11 +85,13 @@ fi
 
 TIME_CMD=()
 TIME_RSS_PATTERN="Maximum resident set size"
+TIME_RSS_UNIT="kB"
 if /usr/bin/time -v true >/dev/null 2>&1; then
   TIME_CMD=(/usr/bin/time -v --)
 elif /usr/bin/time -l true >/dev/null 2>&1; then
   TIME_CMD=(/usr/bin/time -l)
   TIME_RSS_PATTERN="maximum resident set size"
+  TIME_RSS_UNIT="bytes"
 elif command -v gtime >/dev/null 2>&1 && gtime -v true >/dev/null 2>&1; then
   TIME_CMD=(gtime -v --)
 else
@@ -141,13 +147,13 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}_$NUM_ITERS.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}_$NUM_ITERS.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi
@@ -169,16 +175,9 @@ for p in 0 1 2; do
           ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
           ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
       maxrss_line=$(grep -i "$TIME_RSS_PATTERN" "$tmpfile" | tail -n 1 || true)
-      case "$maxrss_line" in
-        Maximum*)
-          maxrss=$(printf '%s\n' "$maxrss_line" | awk '{print $NF}')
-          ;;
-        *)
-          maxrss=$(printf '%s\n' "$maxrss_line" | awk '{print $1}')
-          ;;
-      esac
+      maxrss=$(printf '%s\n' "$maxrss_line" | grep -Eo '[0-9]+' | head -n 1 || true)
       if [ -n "$maxrss" ]; then
-        echo "worker${p}: Max RSS = ${maxrss} kB"
+        echo "worker${p}: Max RSS = ${maxrss} ${TIME_RSS_UNIT}"
       fi
     else
       TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \

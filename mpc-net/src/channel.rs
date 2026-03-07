@@ -596,7 +596,7 @@ fn quic_write_buf_bytes() -> usize {
 }
 
 fn quic_read_buf_bytes() -> usize {
-    const DEFAULT_MB: usize = 8;
+    const DEFAULT_MB: usize = 64;
     parse_quic_buf_mb("MPC_QUIC_READ_BUF_MB").unwrap_or(DEFAULT_MB * 1024 * 1024)
 }
 

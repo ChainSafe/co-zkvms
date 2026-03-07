@@ -24,6 +24,8 @@ use crate::{
     MpcNetworkHandlerWrapperMut, Result,
 };
 
+use super::worker::quic_transport_config;
+
 #[derive(Clone)]
 pub struct Rep3QuicNetCoordinator {
     pub(crate) channels: BTreeMap<usize, ChannelHandle<Bytes, BytesMut>>,
@@ -426,15 +428,9 @@ impl MpcNetworkCoordinatorHandler {
 
         let our_cert = config.coordinator.as_ref().unwrap().cert.clone();
 
-        let mut transport_config = TransportConfig::default();
-        transport_config.max_idle_timeout(Some(
-            IdleTimeout::try_from(Duration::from_secs(5 * 60)).unwrap(),
-        ));
-        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-
         let mut server_config = quinn::ServerConfig::with_single_cert(vec![our_cert], config.key)
             .context("creating our server config")?;
-        server_config.transport_config(Arc::new(transport_config));
+        server_config.transport_config(quic_transport_config());
         let our_socket_addr = config.bind_addr;
 
         let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;

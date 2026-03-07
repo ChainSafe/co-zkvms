@@ -25,6 +25,7 @@ use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::sync::OnceLock;
 use tracing::info_span;
 
 /// An edaBits *mask-only* value linking the same random `r` across:
@@ -985,7 +986,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn preproc_max_msg_mb() -> usize {
-    env_usize("PREPROC_MAX_MSG_MB", 8)
+    env_usize("PREPROC_MAX_MSG_MB", 32)
 }
 
 fn preproc_store_batch_mb() -> usize {
@@ -998,6 +999,20 @@ fn preproc_lanes() -> usize {
 
 fn preproc_segment_mb() -> usize {
     env_usize("PREPROC_SEGMENT_MB", 256)
+}
+
+fn configured_transport_lanes() -> usize {
+    std::env::var("MPC_QUIC_CONN_LANES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .or_else(|| {
+            std::env::var("NETWORK_FORKS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|&v| v > 0)
+        })
+        .unwrap_or(2)
 }
 
 fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
@@ -1052,6 +1067,51 @@ fn build_segment_plans(total_items: usize, segment_items: usize) -> Vec<SegmentP
         start_item += items;
     }
     out
+}
+
+fn par_segment_plans<N, MapFn>(
+    forks: &mut [IoContext<N>],
+    plans: Vec<SegmentPlan>,
+    map: MapFn,
+) -> eyre::Result<()>
+where
+    N: Rep3NetworkWorker,
+    MapFn: Fn(SegmentPlan, &mut IoContext<N>) -> eyre::Result<()> + Sync + Send,
+{
+    let plans_len = plans.len();
+    if plans_len == 0 {
+        return Ok(());
+    }
+
+    let fork_count = forks.len().min(plans_len);
+    if fork_count == 0 {
+        return Ok(());
+    }
+    if fork_count == 1 {
+        for plan in plans {
+            map(plan, &mut forks[0])?;
+        }
+        return Ok(());
+    }
+
+    let results: Vec<OnceLock<eyre::Result<()>>> =
+        (0..plans_len).map(|_| OnceLock::new()).collect();
+    (0..fork_count)
+        .into_par_iter()
+        .zip(forks[..fork_count].par_iter_mut())
+        .for_each(|(fork_idx, mut ctx)| {
+            for plan_idx in (fork_idx..plans_len).step_by(fork_count) {
+                let result = map(plans[plan_idx], &mut ctx);
+                let _ = results[plan_idx].set(result);
+            }
+        });
+
+    for result in results {
+        result
+            .into_inner()
+            .expect("missing segment result in par_segment_plans")?;
+    }
+    Ok(())
 }
 
 fn send_field_superchunk_ctx<F: PrimeField, N: Rep3Network>(
@@ -1287,12 +1347,11 @@ where
     let max_msg_elems = preproc_max_elems_per_msg::<F>();
     let store_batch_elems = preproc_store_batch_elems::<F>();
     let segment_elems = preproc_segment_elems::<F>();
-    let lane_count = preproc_lanes().max(1).min(io.max_forks().max(1));
-    let mut lane_io = if lane_count > 1 {
-        Some(io.fork_pool(lane_count)?)
-    } else {
-        None
-    };
+    let active_edabit_lanes = preproc_lanes()
+        .max(1)
+        .min(io.max_forks().max(1))
+        .min(configured_transport_lanes().max(1));
+    let active_dabit_lanes = active_edabit_lanes.min(2);
 
     // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
     let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
@@ -1307,6 +1366,7 @@ where
         start_item: usize,
         num: usize,
         fb: usize,
+        parallel: bool,
     ) -> Vec<Fp>
     where
         Standard: Distribution<T>,
@@ -1329,21 +1389,26 @@ where
         let all1 = dabits::seek_and_generate(seed1, pos1, start_item * stride, num * stride);
         let g2 = dabits::seek_and_generate(seed2, pos2, start_item * t_bytes, num * t_bytes);
         let mut out = vec![Fp::zero(); num * k];
-        out.par_chunks_mut(k)
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(i, chunk)| {
-                let base = i * stride;
-                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
-                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
-                let gamma = g1v ^ g2v;
-                for j in 0..k {
-                    let s = base + t_bytes + j * fb;
-                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
-                    let gbit = ((gamma >> j) & T::one()) == T::one();
-                    chunk[j] = Fp::from(gbit as u64) - alpha1;
-                }
-            });
+        let fill_chunk = |(i, chunk): (usize, &mut [Fp])| {
+            let base = i * stride;
+            let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+            let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
+            let gamma = g1v ^ g2v;
+            for j in 0..k {
+                let s = base + t_bytes + j * fb;
+                let alpha1 = dabits::parse_field::<Fp>(&all1, s);
+                let gbit = ((gamma >> j) & T::one()) == T::one();
+                chunk[j] = Fp::from(gbit as u64) - alpha1;
+            }
+        };
+        if parallel {
+            out.par_chunks_mut(k)
+                .enumerate()
+                .with_min_len(256)
+                .for_each(fill_chunk);
+        } else {
+            out.chunks_mut(k).enumerate().for_each(fill_chunk);
+        }
         out
     }
 
@@ -1355,6 +1420,7 @@ where
         start_item: usize,
         num: usize,
         fb: usize,
+        parallel: bool,
     ) -> Vec<Fp> {
         if num == 0 {
             return Vec::new();
@@ -1362,15 +1428,20 @@ where
         let da_stride = 1 + 2 * fb;
         let s1 = dabits::seek_and_generate(seed1, pos1, start_item * da_stride, num * da_stride);
         let s2 = dabits::seek_and_generate(seed2, pos2, start_item, num);
-        (0..num)
-            .into_par_iter()
-            .with_min_len(256)
-            .map(|i| {
-                let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
-                let alpha1: Fp = dabits::parse_field(&s1, i * da_stride + 1);
-                Fp::from(gbit as u64) - alpha1
-            })
-            .collect()
+        let compute = |i: usize| {
+            let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
+            let alpha1: Fp = dabits::parse_field(&s1, i * da_stride + 1);
+            Fp::from(gbit as u64) - alpha1
+        };
+        if parallel {
+            (0..num)
+                .into_par_iter()
+                .with_min_len(256)
+                .map(compute)
+                .collect()
+        } else {
+            (0..num).map(compute).collect()
+        }
     }
 
     fn dabit_s12_seed_chunk<Fp: PrimeField>(
@@ -1381,6 +1452,7 @@ where
         start_item: usize,
         num: usize,
         fb: usize,
+        parallel: bool,
     ) -> Vec<Fp> {
         if num == 0 {
             return Vec::new();
@@ -1393,17 +1465,22 @@ where
             start_item * da_stride,
             num * da_stride,
         );
-        (0..num)
-            .into_par_iter()
-            .with_min_len(256)
-            .map(|i| {
-                let theta = (theta_bytes[i] & 1) != 0;
-                let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
-                let alpha1: Fp = dabits::parse_field(&s2, i * da_stride + 1);
-                let r1_val: Fp = dabits::parse_field(&s2, i * da_stride + 1 + fb);
-                neg1_theta * alpha1 - r1_val
-            })
-            .collect()
+        let compute = |i: usize| {
+            let theta = (theta_bytes[i] & 1) != 0;
+            let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
+            let alpha1: Fp = dabits::parse_field(&s2, i * da_stride + 1);
+            let r1_val: Fp = dabits::parse_field(&s2, i * da_stride + 1 + fb);
+            neg1_theta * alpha1 - r1_val
+        };
+        if parallel {
+            (0..num)
+                .into_par_iter()
+                .with_min_len(256)
+                .map(compute)
+                .collect()
+        } else {
+            (0..num).map(compute).collect()
+        }
     }
 
     fn dabit_s20_from_theta_seed<Fp: PrimeField>(
@@ -1411,20 +1488,26 @@ where
         theta_pos: u128,
         start_item: usize,
         alpha2: &[Fp],
+        parallel: bool,
     ) -> Vec<Fp> {
         if alpha2.is_empty() {
             return Vec::new();
         }
         let theta_buf = dabits::seek_and_generate(theta_seed, theta_pos, start_item, alpha2.len());
-        alpha2
-            .par_iter()
-            .zip(theta_buf.par_iter())
-            .map(|(alpha2_i, theta_b)| {
-                let theta = (theta_b & 1) != 0;
-                let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
-                neg1_theta * *alpha2_i
-            })
-            .collect()
+        let compute = |(alpha2_i, theta_b): (&Fp, &u8)| {
+            let theta = (theta_b & 1) != 0;
+            let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
+            neg1_theta * *alpha2_i
+        };
+        if parallel {
+            alpha2
+                .par_iter()
+                .zip(theta_buf.par_iter())
+                .map(compute)
+                .collect()
+        } else {
+            alpha2.iter().zip(theta_buf.iter()).map(compute).collect()
+        }
     }
 
     match party_id {
@@ -1440,27 +1523,63 @@ where
                 let max_items_per_msg = (max_msg_elems / k).max(1);
                 let segment_items = (segment_elems / k).max(max_items_per_msg);
                 let plans = build_segment_plans(num, segment_items);
-                if let Some(lane_pool) = lane_io.as_mut().filter(|_| plans.len() > 1) {
-                    lane_pool.par_iter_cyclic(plans, |plan, ctx| {
+                let chunk_parallel = active_edabit_lanes == 1;
+                if active_edabit_lanes > 1 && plans.len() > 1 {
+                    par_segment_plans(io.forks(active_edabit_lanes), plans, |plan, ctx| {
                         let mut done = 0usize;
                         while done < plan.items {
                             let items = (plan.items - done).min(max_items_per_msg);
                             let start_item = plan.start_item + done;
                             let alpha2 = match idx {
                                 0 => edabit_alpha2_seed_chunk::<u8, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, start_item, items, fb,
+                                    seeds.0,
+                                    seeds.1,
+                                    seeds.2,
+                                    seeds.3,
+                                    start_item,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
                                 ),
                                 1 => edabit_alpha2_seed_chunk::<u16, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, start_item, items, fb,
+                                    seeds.0,
+                                    seeds.1,
+                                    seeds.2,
+                                    seeds.3,
+                                    start_item,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
                                 ),
                                 2 => edabit_alpha2_seed_chunk::<u32, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, start_item, items, fb,
+                                    seeds.0,
+                                    seeds.1,
+                                    seeds.2,
+                                    seeds.3,
+                                    start_item,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
                                 ),
                                 3 => edabit_alpha2_seed_chunk::<u64, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, start_item, items, fb,
+                                    seeds.0,
+                                    seeds.1,
+                                    seeds.2,
+                                    seeds.3,
+                                    start_item,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
                                 ),
                                 4 => edabit_alpha2_seed_chunk::<u128, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, start_item, items, fb,
+                                    seeds.0,
+                                    seeds.1,
+                                    seeds.2,
+                                    seeds.3,
+                                    start_item,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
                                 ),
                                 _ => unreachable!(),
                             };
@@ -1476,19 +1595,19 @@ where
                         let items = (num - done).min(max_items_per_msg);
                         let alpha2 = match idx {
                             0 => edabit_alpha2_seed_chunk::<u8, F>(
-                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, chunk_parallel,
                             ),
                             1 => edabit_alpha2_seed_chunk::<u16, F>(
-                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, chunk_parallel,
                             ),
                             2 => edabit_alpha2_seed_chunk::<u32, F>(
-                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, chunk_parallel,
                             ),
                             3 => edabit_alpha2_seed_chunk::<u64, F>(
-                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, chunk_parallel,
                             ),
                             4 => edabit_alpha2_seed_chunk::<u128, F>(
-                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb,
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, chunk_parallel,
                             ),
                             _ => unreachable!(),
                         };
@@ -1519,8 +1638,9 @@ where
                 let _span = tracing::info_span!("dabits_stream_chunks", n = num_dabits).entered();
                 if let Some(writer) = dabits_store.writer()? {
                     let plans = build_segment_plans(num_dabits, segment_items);
-                    if let Some(lane_pool) = lane_io.as_mut().filter(|_| plans.len() > 1) {
-                        lane_pool.par_iter_cyclic(plans, |plan, ctx| {
+                    let chunk_parallel = active_dabit_lanes == 1;
+                    if active_dabit_lanes > 1 && plans.len() > 1 {
+                        par_segment_plans(io.forks(active_dabit_lanes), plans, |plan, ctx| {
                             let mut pending = Vec::with_capacity(plan.items.min(store_batch_elems));
                             let mut pending_start = plan.start_item;
                             let mut offset = 0usize;
@@ -1528,7 +1648,7 @@ where
                                 let items = (plan.items - offset).min(max_items_per_msg);
                                 let start_item = plan.start_item + offset;
                                 let da_alpha2 = dabit_alpha2_seed_chunk::<F>(
-                                    ds1, dp1, ds2, dp2, start_item, items, fb,
+                                    ds1, dp1, ds2, dp2, start_item, items, fb, chunk_parallel,
                                 );
                                 send_field_superchunk_ctx(da_alpha2, PartyID::ID2, ctx, max_msg_elems)?;
                                 let s20 = recv_field_messages_collect_ctx::<F, _>(
@@ -1571,7 +1691,16 @@ where
                         while offset < num_dabits {
                             let items = (num_dabits - offset).min(max_items_per_msg);
                             let da_alpha2 =
-                                dabit_alpha2_seed_chunk::<F>(ds1, dp1, ds2, dp2, offset, items, fb);
+                                dabit_alpha2_seed_chunk::<F>(
+                                    ds1,
+                                    dp1,
+                                    ds2,
+                                    dp2,
+                                    offset,
+                                    items,
+                                    fb,
+                                    chunk_parallel,
+                                );
                             send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
 
                             receive_field_store_batch::<F, _>(
@@ -1615,8 +1744,9 @@ where
                 let max_items_per_msg = max_msg_elems.max(1);
                 let segment_items = segment_elems.max(max_items_per_msg);
                 let plans = build_segment_plans(num_dabits, segment_items);
-                if let Some(lane_pool) = lane_io.as_mut().filter(|_| plans.len() > 1) {
-                    lane_pool.par_iter_cyclic(plans, |plan, ctx| {
+                let chunk_parallel = active_dabit_lanes == 1;
+                if active_dabit_lanes > 1 && plans.len() > 1 {
+                    par_segment_plans(io.forks(active_dabit_lanes), plans, |plan, ctx| {
                         let mut offset = 0usize;
                         while offset < plan.items {
                             let items = (plan.items - offset).min(max_items_per_msg);
@@ -1629,6 +1759,7 @@ where
                                 start_item,
                                 items,
                                 fb,
+                                chunk_parallel,
                             );
                             send_field_superchunk_ctx(s12, PartyID::ID2, ctx, max_msg_elems)?;
                             offset += items;
@@ -1647,6 +1778,7 @@ where
                             offset,
                             items,
                             fb,
+                            chunk_parallel,
                         );
                         send_field_superchunk(s12, PartyID::ID2, io, max_msg_elems)?;
                         offset += items;
@@ -1715,8 +1847,8 @@ where
                 let segment_items = (segment_elems / k).max(max_items_per_msg);
                 let plans = build_segment_plans(c, segment_items);
                 if let Some(writer) = eda_stores[idx].writer()? {
-                    if let Some(lane_pool) = lane_io.as_mut().filter(|_| plans.len() > 1) {
-                        lane_pool.par_iter_cyclic(plans, |plan, ctx| {
+                    if active_edabit_lanes > 1 && plans.len() > 1 {
+                        par_segment_plans(io.forks(active_edabit_lanes), plans, |plan, ctx| {
                             let mut remaining = plan.items;
                             let mut local_item_offset = 0usize;
                             while remaining > 0 {
@@ -1772,8 +1904,9 @@ where
                 let segment_items = segment_elems.max(max_items_per_msg);
                 let plans = build_segment_plans(num_dabits, segment_items);
                 if let Some(writer) = dabits_store.writer()? {
-                    if let Some(lane_pool) = lane_io.as_mut().filter(|_| plans.len() > 1) {
-                        lane_pool.par_iter_cyclic(plans, |plan, ctx| {
+                    let chunk_parallel = active_dabit_lanes == 1;
+                    if active_dabit_lanes > 1 && plans.len() > 1 {
+                        par_segment_plans(io.forks(active_dabit_lanes), plans, |plan, ctx| {
                             let mut buffered_s20 = Vec::with_capacity(plan.items.min(store_batch_elems));
                             let mut buffered_s12 = Vec::with_capacity(plan.items.min(store_batch_elems));
                             let mut pending_pair_start = plan.start_item;
@@ -1800,7 +1933,13 @@ where
                                 )
                                 .entered();
                                 let s20 =
-                                    dabit_s20_from_theta_seed::<F>(ds2_seed, ds2_pos, start_item, &alpha2);
+                                    dabit_s20_from_theta_seed::<F>(
+                                        ds2_seed,
+                                        ds2_pos,
+                                        start_item,
+                                        &alpha2,
+                                        chunk_parallel,
+                                    );
                                 if buffered_s20.is_empty() {
                                     pending_pair_start = start_item;
                                 }
@@ -1866,7 +2005,13 @@ where
                             )
                             .entered();
                             let s20 =
-                                dabit_s20_from_theta_seed::<F>(ds2_seed, ds2_pos, offset, &alpha2);
+                                dabit_s20_from_theta_seed::<F>(
+                                    ds2_seed,
+                                    ds2_pos,
+                                    offset,
+                                    &alpha2,
+                                    chunk_parallel,
+                                );
 
                             dabits_store.write_interleaved_at(offset, &s20, &s12)?;
                             send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;

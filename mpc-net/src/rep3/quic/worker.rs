@@ -86,6 +86,45 @@ fn configured_transport_lanes() -> usize {
         .unwrap_or(2)
 }
 
+fn parse_quic_limit_mb(var: &str, default_mb: usize) -> u32 {
+    let bytes = std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(default_mb)
+        .saturating_mul(1024 * 1024)
+        .min(u32::MAX as usize);
+    u32::try_from(bytes).expect("bounded to u32::MAX")
+}
+
+pub(crate) fn quic_conn_rx_window_bytes() -> u32 {
+    parse_quic_limit_mb("MPC_QUIC_CONN_RX_WINDOW_MB", 256)
+}
+
+pub(crate) fn quic_stream_rx_window_bytes() -> u32 {
+    parse_quic_limit_mb("MPC_QUIC_STREAM_RX_WINDOW_MB", 64)
+}
+
+pub(crate) fn quic_max_bidi_streams() -> u32 {
+    std::env::var("MPC_QUIC_MAX_BIDI_STREAMS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(256)
+}
+
+pub(crate) fn quic_transport_config() -> Arc<TransportConfig> {
+    let mut transport_config = TransportConfig::default();
+    transport_config.receive_window(VarInt::from(quic_conn_rx_window_bytes()));
+    transport_config.stream_receive_window(VarInt::from(quic_stream_rx_window_bytes()));
+    transport_config.max_concurrent_bidi_streams(VarInt::from(quic_max_bidi_streams()));
+    transport_config.max_idle_timeout(Some(
+        IdleTimeout::try_from(Duration::from_secs(180)).unwrap(),
+    ));
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    Arc::new(transport_config)
+}
+
 pub static RUNTIME: Lazy<Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(8)
@@ -469,27 +508,6 @@ pub struct MpcNetworkHandlerWorker {
 }
 
 impl MpcNetworkHandlerWorker {
-    fn transport_with_streams(bdp_bytes: u32, max_bidi: u32) -> Arc<TransportConfig> {
-        let mut t = TransportConfig::default();
-
-        // flow control windows (rule of thumb: a few×BDP)
-        t.receive_window(VarInt::from(
-            (bdp_bytes as u64 * 4).min(u32::MAX as u64) as u32
-        ));
-        t.stream_receive_window(VarInt::from((bdp_bytes / 2).max(128 * 1024))); // per stream
-
-        // allow many concurrent bidi streams per connection
-        t.max_concurrent_bidi_streams(VarInt::from(max_bidi)); // e.g. 256–2048
-
-        // connection liveness
-        t.max_idle_timeout(Some(
-            IdleTimeout::try_from(Duration::from_secs(180)).unwrap(),
-        ));
-        t.keep_alive_interval(Some(Duration::from_secs(1)));
-
-        Arc::new(t)
-    }
-
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
     pub async fn establish(config: NetworkConfig) -> Result<Self, Report> {
         config.check_config()?;
@@ -515,22 +533,18 @@ impl MpcNetworkHandlerWorker {
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
+        let transport_config = quic_transport_config();
         let client_config = {
-            let link_rtt = Duration::from_micros(50_000); // example
-            let link_bw = 12_500_000u32; // bytes/sec (100 Mb/s)
-            let bdp_bytes = (link_bw as u64 * link_rtt.as_micros() as u64 / 1_000_000) as u32;
-
-            let transport_config = Self::transport_with_streams(bdp_bytes, 1024);
-
             let mut client_config =
                 ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
-            client_config.transport_config(transport_config);
+            client_config.transport_config(Arc::clone(&transport_config));
             client_config
         };
 
-        let server_config =
+        let mut server_config =
             quinn::ServerConfig::with_single_cert(vec![certs[&config.my_id].clone()], config.key)
                 .context("creating our server config")?;
+        server_config.transport_config(transport_config);
         let our_socket_addr = config.bind_addr;
 
         let mut endpoints = Vec::new();
