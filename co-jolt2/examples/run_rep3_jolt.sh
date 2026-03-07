@@ -116,18 +116,20 @@ fi
   ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} &
 
 if [ "$TRACY_CAPTURE" = "1" ]; then
+  # Prefer brew-installed tracy-capture (0.13.1, protocol 76) over any system one.
+  TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
   for p in 0 1 2; do
-    capture_log="$TRACE_DIR/tracy-capture-worker${p}.log"
+    capture_log="$TRACE_DIR/tracy/tracy-capture-worker${p}.log"
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
-      tracy-capture \
+      "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}.tracy" \
+        -o "$TRACE_DIR/tracy/worker${p}_$NUM_ITERS.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
-      tracy-capture \
+      "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}.tracy" \
+        -o "$TRACE_DIR/tracy/worker${p}_$NUM_ITERS.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi
@@ -140,7 +142,7 @@ for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
     TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-      gtime -v -- ../target/release/examples/rep3_jolt \
+      /usr/bin/time -v -- ../target/release/examples/rep3_jolt \
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \

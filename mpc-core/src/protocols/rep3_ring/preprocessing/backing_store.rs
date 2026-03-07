@@ -57,6 +57,22 @@ pub(crate) enum BackingStore<F> {
     Empty,
 }
 
+pub(crate) struct FileBackedWriter<F> {
+    file: File,
+    len: usize,
+    _phantom: PhantomData<F>,
+}
+
+impl<F> Clone for FileBackedWriter<F> {
+    fn clone(&self) -> Self {
+        Self {
+            file: self.file.try_clone().expect("cloning file-backed writer"),
+            len: self.len,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<F> BackingStore<F> {
     pub(crate) fn as_slice(&self) -> &[F] {
         match self {
@@ -271,6 +287,17 @@ impl<F> BackingStore<F> {
             append_offset: 0,
             _phantom: PhantomData,
         })
+    }
+
+    pub(crate) fn writer(&self) -> io::Result<Option<FileBackedWriter<F>>> {
+        match self {
+            BackingStore::FileBacked { file, len, .. } => Ok(Some(FileBackedWriter {
+                file: file.try_clone()?,
+                len: *len,
+                _phantom: PhantomData,
+            })),
+            _ => Ok(None),
+        }
     }
 
     /// Write raw bytes to a file.  No-op for `Empty`.
@@ -604,6 +631,59 @@ impl<F> BackingStore<F> {
                 );
             }
         }
+    }
+}
+
+impl<F> FileBackedWriter<F> {
+    pub(crate) fn write_at(&self, start_elem: usize, data: &[F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let end_elem = start_elem.saturating_add(data.len());
+        if end_elem > self.len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("FileBackedWriter::write_at range end({end_elem}) exceeds len({})", self.len),
+            ));
+        }
+        let (byte_offset, _) = BackingStore::<F>::byte_range(start_elem, end_elem);
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+        };
+        BackingStore::<F>::file_write_all_at(&self.file, byte_offset, bytes)
+    }
+
+    pub(crate) fn write_interleaved_at(
+        &self,
+        start_pair: usize,
+        left: &[F],
+        right: &[F],
+    ) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if left.len() != right.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "FileBackedWriter::write_interleaved_at length mismatch: left={} right={}",
+                    left.len(),
+                    right.len()
+                ),
+            ));
+        }
+        if left.is_empty() {
+            return Ok(());
+        }
+        let mut interleaved = Vec::with_capacity(left.len() * 2);
+        for i in 0..left.len() {
+            interleaved.push(left[i]);
+            interleaved.push(right[i]);
+        }
+        self.write_at(start_pair.saturating_mul(2), &interleaved)
     }
 }
 
