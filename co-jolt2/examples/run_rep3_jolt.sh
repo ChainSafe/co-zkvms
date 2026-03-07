@@ -196,8 +196,15 @@ for p in 0 1 2; do
 done
 
 cleanup_children() {
-  kill "$coordinator_pid" "${worker_pids[@]}" "${capture_pids[@]}" 2>/dev/null || true
-  wait "$coordinator_pid" "${worker_pids[@]}" "${capture_pids[@]}" 2>/dev/null || true
+  local pids=("$coordinator_pid")
+  if [ ${#worker_pids[@]} -gt 0 ]; then
+    pids+=("${worker_pids[@]}")
+  fi
+  if [ ${#capture_pids[@]} -gt 0 ]; then
+    pids+=("${capture_pids[@]}")
+  fi
+  kill "${pids[@]}" 2>/dev/null || true
+  wait "${pids[@]}" 2>/dev/null || true
 }
 
 trap cleanup_children EXIT
@@ -214,9 +221,11 @@ if ! wait "$coordinator_pid"; then
   exit 1
 fi
 
-for pid in "${capture_pids[@]}"; do
-  wait "$pid"
-done
+if [ ${#capture_pids[@]} -gt 0 ]; then
+  for pid in "${capture_pids[@]}"; do
+    wait "$pid"
+  done
+fi
 
 trap - EXIT
 echo "Traces written to $TRACE_DIR"

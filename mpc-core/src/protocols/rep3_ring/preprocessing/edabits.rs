@@ -25,7 +25,6 @@ use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::path::Path;
-use std::sync::OnceLock;
 use tracing::info_span;
 
 /// An edaBits *mask-only* value linking the same random `r` across:
@@ -986,7 +985,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn preproc_max_msg_mb() -> usize {
-    env_usize("PREPROC_MAX_MSG_MB", 32)
+    env_usize("PREPROC_MAX_MSG_MB", 8)
 }
 
 fn preproc_store_batch_mb() -> usize {
@@ -1094,23 +1093,19 @@ where
         return Ok(());
     }
 
-    let results: Vec<OnceLock<eyre::Result<()>>> =
-        (0..plans_len).map(|_| OnceLock::new()).collect();
+    let chunk_size = plans_len.div_ceil(fork_count);
     (0..fork_count)
         .into_par_iter()
         .zip(forks[..fork_count].par_iter_mut())
-        .for_each(|(fork_idx, mut ctx)| {
-            for plan_idx in (fork_idx..plans_len).step_by(fork_count) {
-                let result = map(plans[plan_idx], &mut ctx);
-                let _ = results[plan_idx].set(result);
+        .map(|(fork_idx, mut ctx)| {
+            let start = fork_idx * chunk_size;
+            let end = ((fork_idx + 1) * chunk_size).min(plans_len);
+            for plan in &plans[start..end] {
+                map(*plan, &mut ctx)?;
             }
-        });
-
-    for result in results {
-        result
-            .into_inner()
-            .expect("missing segment result in par_segment_plans")?;
-    }
+            std::result::Result::<(), eyre::Report>::Ok(())
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
     Ok(())
 }
 
