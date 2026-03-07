@@ -1165,8 +1165,13 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
         return Ok(());
     }
 
-    for _ in 0..num_msgs {
-        let recv: Vec<F> = io.network().recv_many(from)?;
+    let chunks: Vec<Vec<F>> = io.par_iter(
+        0..num_msgs,
+        Some(num_msgs),
+        |_i: usize, ctx| -> eyre::Result<Vec<F>> { Ok(ctx.network.recv_many::<F>(from)?) },
+    )?;
+
+    for recv in chunks {
         append_to_store(store, &recv);
     }
 
