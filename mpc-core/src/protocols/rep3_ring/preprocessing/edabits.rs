@@ -7,7 +7,7 @@
 
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
-use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker, Rep3RawFieldTransport};
 use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare, arithmetic as rep3_arith,
     network::{IoContext, Rep3Network},
@@ -1093,13 +1093,12 @@ where
         return Ok(());
     }
 
-    let chunk_size = plans_len.div_ceil(fork_count);
     (0..fork_count)
         .into_par_iter()
         .zip(forks[..fork_count].par_iter_mut())
         .map(|(fork_idx, mut ctx)| {
-            let start = fork_idx * chunk_size;
-            let end = ((fork_idx + 1) * chunk_size).min(plans_len);
+            let start = (fork_idx * plans_len) / fork_count;
+            let end = ((fork_idx + 1) * plans_len) / fork_count;
             for plan in &plans[start..end] {
                 map(*plan, &mut ctx)?;
             }
@@ -1109,8 +1108,53 @@ where
     Ok(())
 }
 
-fn send_field_superchunk_ctx<F: PrimeField, N: Rep3Network>(
-    data: Vec<F>,
+enum RawFieldChunk<F> {
+    Borrowed {
+        bytes: Vec<u8>,
+        elems: usize,
+    },
+    Owned(Vec<F>),
+}
+
+impl<F: PrimeField> RawFieldChunk<F> {
+    fn as_slice(&self) -> &[F] {
+        match self {
+            Self::Borrowed { bytes, elems } => {
+                const { backing_store::assert_field_layout::<F>() };
+                let ptr = bytes.as_ptr();
+                let align = std::mem::align_of::<F>();
+                debug_assert_eq!(bytes.len(), elems * std::mem::size_of::<F>());
+                debug_assert_eq!((ptr as usize) % align.max(1), 0);
+                unsafe { std::slice::from_raw_parts(ptr.cast::<F>(), *elems) }
+            }
+            Self::Owned(vec) => vec.as_slice(),
+        }
+    }
+}
+
+fn recv_field_chunk_ctx<F: PrimeField, N: Rep3Network + Rep3RawFieldTransport>(
+    from: PartyID,
+    elems: usize,
+    io: &mut IoContext<N>,
+) -> eyre::Result<RawFieldChunk<F>> {
+    let bytes = io.network.recv_field_bytes_raw::<F>(from, elems)?;
+    let align = std::mem::align_of::<F>();
+    if (bytes.as_ptr() as usize) % align.max(1) == 0 {
+        return Ok(RawFieldChunk::Borrowed { bytes, elems });
+    }
+    Ok(RawFieldChunk::Owned(field_vec_from_raw_bytes::<F>(&bytes)?))
+}
+
+fn recv_field_chunk<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
+    from: PartyID,
+    elems: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<RawFieldChunk<F>> {
+    recv_field_chunk_ctx(from, elems, io.main())
+}
+
+fn send_field_superchunk_ctx<F: PrimeField, N: Rep3Network + Rep3RawFieldTransport>(
+    mut data: Vec<F>,
     target: PartyID,
     io: &mut IoContext<N>,
     max_msg_elems: usize,
@@ -1127,17 +1171,20 @@ fn send_field_superchunk_ctx<F: PrimeField, N: Rep3Network>(
     )
     .entered();
     if data.len() <= max_msg_elems {
-        io.network.send_many(target, &data)?;
+        io.network.send_field_vec_raw(target, data)?;
         return Ok(());
     }
 
-    for chunk in data.chunks(max_msg_elems) {
-        io.network.send_many(target, chunk)?;
+    while data.len() > max_msg_elems {
+        let tail = data.split_off(max_msg_elems);
+        io.network.send_field_vec_raw(target, data)?;
+        data = tail;
     }
+    io.network.send_field_vec_raw(target, data)?;
     Ok(())
 }
 
-fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
+fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     data: Vec<F>,
     target: PartyID,
     io: &mut IoContextPool<N>,
@@ -1146,18 +1193,17 @@ fn send_field_superchunk<F: PrimeField, N: Rep3NetworkWorker>(
     send_field_superchunk_ctx(data, target, io.main(), max_msg_elems)
 }
 
-fn recv_field_messages_collect_ctx<F: PrimeField, N: Rep3Network>(
+fn recv_field_bytes_collect_ctx<F: PrimeField, N: Rep3Network + Rep3RawFieldTransport>(
     from: PartyID,
     expected_len: usize,
     io: &mut IoContext<N>,
     max_msg_elems: usize,
-) -> eyre::Result<Vec<F>> {
+) -> eyre::Result<Vec<u8>> {
     if expected_len == 0 {
         return Ok(Vec::new());
     }
 
     let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
-
     let _span = tracing::trace_span!(
         "recv_field_messages_collect",
         party_id = ?io.id,
@@ -1168,16 +1214,37 @@ fn recv_field_messages_collect_ctx<F: PrimeField, N: Rep3Network>(
     )
     .entered();
 
-    let mut out = Vec::with_capacity(expected_len);
-    while out.len() < expected_len {
-        let recv: Vec<F> = io.network.recv_many(from)?;
+    let mut out = Vec::with_capacity(expected_len * std::mem::size_of::<F>());
+    let mut received = 0usize;
+    while received < expected_len {
+        let chunk_elems = (expected_len - received).min(max_msg_elems.max(1));
+        let recv = io.network.recv_field_bytes_raw::<F>(from, chunk_elems)?;
         out.extend_from_slice(&recv);
+        received += chunk_elems;
     }
-    debug_assert_eq!(out.len(), expected_len);
+    debug_assert_eq!(received, expected_len);
     Ok(out)
 }
 
-fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
+fn recv_field_messages_collect_ctx<F: PrimeField, N: Rep3Network + Rep3RawFieldTransport>(
+    from: PartyID,
+    expected_len: usize,
+    io: &mut IoContext<N>,
+    max_msg_elems: usize,
+) -> eyre::Result<Vec<F>> {
+    if expected_len == 0 {
+        return Ok(Vec::new());
+    }
+
+    if expected_len <= max_msg_elems.max(1) {
+        return Ok(io.network.recv_field_vec_raw_owned::<F>(from, expected_len)?);
+    }
+
+    let bytes = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io, max_msg_elems)?;
+    field_vec_from_raw_bytes::<F>(&bytes)
+}
+
+fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     from: PartyID,
     expected_len: usize,
     io: &mut IoContextPool<N>,
@@ -1186,7 +1253,7 @@ fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker>(
     recv_field_messages_collect_ctx(from, expected_len, io.main(), max_msg_elems)
 }
 
-fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
+fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
     expected_len: usize,
@@ -1213,17 +1280,18 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker>(
     let mut write_elem_offset = start_elem;
     let mut received = 0usize;
     while received < expected_len {
-        let recv: Vec<F> = io.network().recv_many(from)?;
-        write_to_store(store, write_elem_offset, &recv)?;
-        write_elem_offset += recv.len();
-        received += recv.len();
+        let chunk_elems = (expected_len - received).min(max_msg_elems.max(1));
+        let recv = io.network().recv_field_bytes_raw::<F>(from, chunk_elems)?;
+        write_bytes_to_store(store, write_elem_offset, &recv)?;
+        write_elem_offset += chunk_elems;
+        received += chunk_elems;
     }
     debug_assert_eq!(received, expected_len);
 
     Ok(())
 }
 
-fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker>(
+fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
     expected_len: usize,
@@ -1231,12 +1299,12 @@ fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker>(
     max_msg_elems: usize,
     store: &mut backing_store::BackingStore<F>,
 ) -> eyre::Result<()> {
-    let recv = recv_field_messages_collect::<F, _>(from, expected_len, io, max_msg_elems)?;
-    write_to_store(store, start_elem, &recv)?;
+    let recv = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io.main(), max_msg_elems)?;
+    write_bytes_to_store(store, start_elem, &recv)?;
     Ok(())
 }
 
-fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network>(
+fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
     expected_len: usize,
@@ -1244,15 +1312,59 @@ fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network>(
     max_msg_elems: usize,
     writer: &backing_store::FileBackedWriter<F>,
 ) -> eyre::Result<()> {
-    let recv = recv_field_messages_collect_ctx::<F, _>(from, expected_len, io, max_msg_elems)?;
+    let recv = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io, max_msg_elems)?;
     let _span = tracing::trace_span!(
         "append_to_store",
         start_elem,
-        elems = recv.len(),
-        bytes = recv.len() * std::mem::size_of::<F>()
+        elems = expected_len,
+        bytes = recv.len()
     )
     .entered();
-    writer.write_at(start_elem, &recv)?;
+    writer.write_bytes_at(start_elem, &recv)?;
+    Ok(())
+}
+
+fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
+    from: PartyID,
+    start_elem: usize,
+    expected_len: usize,
+    io: &mut IoContext<N>,
+    max_msg_elems: usize,
+    writer: &backing_store::FileBackedWriter<F>,
+) -> eyre::Result<()> {
+    if expected_len == 0 {
+        return Ok(());
+    }
+
+    let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
+    let _span = tracing::trace_span!(
+        "recv_field_messages_into_store",
+        party_id = ?io.id,
+        from = ?from,
+        start_elem,
+        elems = expected_len,
+        bytes = expected_len * std::mem::size_of::<F>(),
+        num_msgs
+    )
+    .entered();
+
+    let mut write_elem_offset = start_elem;
+    let mut received = 0usize;
+    while received < expected_len {
+        let chunk_elems = (expected_len - received).min(max_msg_elems.max(1));
+        let recv = io.network.recv_field_bytes_raw::<F>(from, chunk_elems)?;
+        let _span = tracing::trace_span!(
+            "append_to_store",
+            start_elem = write_elem_offset,
+            elems = chunk_elems,
+            bytes = recv.len()
+        )
+        .entered();
+        writer.write_bytes_at(write_elem_offset, &recv)?;
+        write_elem_offset += chunk_elems;
+        received += chunk_elems;
+    }
+    debug_assert_eq!(received, expected_len);
     Ok(())
 }
 
@@ -1270,6 +1382,49 @@ fn write_to_store<F: PrimeField + Copy>(
     .entered();
     store.write_at(start_elem, data)?;
     Ok(())
+}
+
+fn write_bytes_to_store<F: PrimeField + Copy>(
+    store: &mut backing_store::BackingStore<F>,
+    start_elem: usize,
+    bytes: &[u8],
+) -> eyre::Result<()> {
+    let elem_size = std::mem::size_of::<F>();
+    debug_assert_eq!(bytes.len() % elem_size, 0);
+    let _span = tracing::trace_span!(
+        "append_to_store",
+        start_elem,
+        elems = bytes.len() / elem_size,
+        bytes = bytes.len()
+    )
+    .entered();
+    store.write_bytes_at(start_elem, bytes)?;
+    Ok(())
+}
+
+fn field_vec_from_raw_bytes<F: PrimeField>(bytes: &[u8]) -> eyre::Result<Vec<F>> {
+    const { backing_store::assert_field_layout::<F>() };
+    let elem_size = std::mem::size_of::<F>();
+    if bytes.len() % elem_size != 0 {
+        eyre::bail!(
+            "raw field payload length {} is not divisible by element size {} for {}",
+            bytes.len(),
+            elem_size,
+            std::any::type_name::<F>()
+        );
+    }
+    let elems = bytes.len() / elem_size;
+    if elems == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(elems);
+    unsafe { out.set_len(elems) };
+    let out_bytes =
+        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+    out_bytes.copy_from_slice(bytes);
+    let out: Vec<F> = unsafe { std::mem::transmute(out) };
+    Ok(out)
 }
 
 fn read_file_backed_range<F: PrimeField + Copy>(
@@ -1328,7 +1483,7 @@ pub fn preprocess_pool_batched_into_dir<F, N>(
 ) -> eyre::Result<PreprocessingPool<F>>
 where
     F: PrimeField + Copy,
-    N: Rep3NetworkWorker,
+    N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
     use super::dabits;
     use crate::protocols::rep3::rngs::Rep3Rand;
@@ -1619,6 +1774,7 @@ where
             send_edabit_type(2, counts[2])?;
             send_edabit_type(3, counts[3])?;
             send_edabit_type(4, counts[4])?;
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
 
             let (ds1, dp1, ds2, dp2) = snaps[5];
@@ -1636,8 +1792,6 @@ where
                     let chunk_parallel = active_dabit_lanes == 1;
                     if active_dabit_lanes > 1 && plans.len() > 1 {
                         par_segment_plans(io.forks(active_dabit_lanes), plans, |plan, ctx| {
-                            let mut pending = Vec::with_capacity(plan.items.min(store_batch_elems));
-                            let mut pending_start = plan.start_item;
                             let mut offset = 0usize;
                             while offset < plan.items {
                                 let items = (plan.items - offset).min(max_items_per_msg);
@@ -1646,38 +1800,15 @@ where
                                     ds1, dp1, ds2, dp2, start_item, items, fb, chunk_parallel,
                                 );
                                 send_field_superchunk_ctx(da_alpha2, PartyID::ID2, ctx, max_msg_elems)?;
-                                let s20 = recv_field_messages_collect_ctx::<F, _>(
+                                recv_field_messages_into_writer_ctx::<F, _>(
                                     PartyID::ID2,
+                                    start_item,
                                     items,
                                     ctx,
                                     max_msg_elems,
+                                    &writer,
                                 )?;
-                                if pending.is_empty() {
-                                    pending_start = start_item;
-                                }
-                                pending.extend_from_slice(&s20);
-                                if pending.len() >= store_batch_elems {
-                                    let _span = tracing::trace_span!(
-                                        "append_to_store",
-                                        start_elem = pending_start,
-                                        elems = pending.len(),
-                                        bytes = pending.len() * std::mem::size_of::<F>()
-                                    )
-                                    .entered();
-                                    writer.write_at(pending_start, &pending)?;
-                                    pending.clear();
-                                }
                                 offset += items;
-                            }
-                            if !pending.is_empty() {
-                                let _span = tracing::trace_span!(
-                                    "append_to_store",
-                                    start_elem = pending_start,
-                                    elems = pending.len(),
-                                    bytes = pending.len() * std::mem::size_of::<F>()
-                                )
-                                .entered();
-                                writer.write_at(pending_start, &pending)?;
                             }
                             Ok(())
                         })?;
@@ -1698,7 +1829,7 @@ where
                                 );
                             send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
 
-                            receive_field_store_batch::<F, _>(
+                            recv_field_messages_into_store::<F, _>(
                                 PartyID::ID2,
                                 offset,
                                 items,
@@ -1732,6 +1863,7 @@ where
         }
         PartyID::ID1 => {
             // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
             if num_dabits > 0 {
                 let _span = tracing::info_span!("dabits_send_thetas", n = num_dabits).entered();
@@ -1844,12 +1976,11 @@ where
                 if let Some(writer) = eda_stores[idx].writer()? {
                     if active_edabit_lanes > 1 && plans.len() > 1 {
                         par_segment_plans(io.forks(active_edabit_lanes), plans, |plan, ctx| {
-                            let mut remaining = plan.items;
-                            let mut local_item_offset = 0usize;
-                            while remaining > 0 {
-                                let items = remaining.min(store_batch_items);
-                                let start_item = plan.start_item + local_item_offset;
-                                receive_field_writer_batch_ctx::<F, _>(
+                            let mut offset = 0usize;
+                            while offset < plan.items {
+                                let items = (plan.items - offset).min(store_batch_items);
+                                let start_item = plan.start_item + offset;
+                                recv_field_messages_into_writer_ctx::<F, _>(
                                     PartyID::ID0,
                                     start_item * k,
                                     items * k,
@@ -1857,8 +1988,7 @@ where
                                     max_msg_elems,
                                     &writer,
                                 )?;
-                                local_item_offset += items;
-                                remaining -= items;
+                                offset += items;
                             }
                             Ok(())
                         })?;
@@ -1868,7 +1998,7 @@ where
                         while remaining > 0 {
                             let items = remaining.min(store_batch_items);
                             let expected = items * k;
-                            receive_field_store_batch::<F, _>(
+                            recv_field_messages_into_store::<F, _>(
                                 PartyID::ID0,
                                 write_elem_offset,
                                 expected,
@@ -1882,6 +2012,7 @@ where
                     }
                 }
             }
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
 
             // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
@@ -1909,18 +2040,8 @@ where
                             while offset < plan.items {
                                 let items = (plan.items - offset).min(max_items_per_msg);
                                 let start_item = plan.start_item + offset;
-                                let alpha2 = recv_field_messages_collect_ctx::<F, _>(
-                                    PartyID::ID0,
-                                    items,
-                                    ctx,
-                                    max_msg_elems,
-                                )?;
-                                let s12 = recv_field_messages_collect_ctx::<F, _>(
-                                    PartyID::ID1,
-                                    items,
-                                    ctx,
-                                    max_msg_elems,
-                                )?;
+                                let alpha2 = recv_field_chunk_ctx::<F, _>(PartyID::ID0, items, ctx)?;
+                                let s12 = recv_field_chunk_ctx::<F, _>(PartyID::ID1, items, ctx)?;
                                 let _span_chunk = tracing::trace_span!(
                                     "dabit_s20_forward_chunk",
                                     items,
@@ -1932,14 +2053,14 @@ where
                                         ds2_seed,
                                         ds2_pos,
                                         start_item,
-                                        &alpha2,
+                                        alpha2.as_slice(),
                                         chunk_parallel,
                                     );
                                 if buffered_s20.is_empty() {
                                     pending_pair_start = start_item;
                                 }
                                 buffered_s20.extend_from_slice(&s20);
-                                buffered_s12.extend_from_slice(&s12);
+                                buffered_s12.extend_from_slice(s12.as_slice());
                                 if buffered_s20.len() >= store_batch_elems {
                                     let _span = tracing::trace_span!(
                                         "append_to_store",
@@ -1980,18 +2101,8 @@ where
                         while offset < num_dabits {
                             let items = (num_dabits - offset).min(max_items_per_msg);
 
-                            let alpha2 = recv_field_messages_collect::<F, _>(
-                                PartyID::ID0,
-                                items,
-                                io,
-                                max_msg_elems,
-                            )?;
-                            let s12 = recv_field_messages_collect::<F, _>(
-                                PartyID::ID1,
-                                items,
-                                io,
-                                max_msg_elems,
-                            )?;
+                            let alpha2 = recv_field_chunk::<F, _>(PartyID::ID0, items, io)?;
+                            let s12 = recv_field_chunk::<F, _>(PartyID::ID1, items, io)?;
 
                             let _span_chunk = tracing::trace_span!(
                                 "dabit_s20_forward_chunk",
@@ -2004,11 +2115,11 @@ where
                                     ds2_seed,
                                     ds2_pos,
                                     offset,
-                                    &alpha2,
+                                    alpha2.as_slice(),
                                     chunk_parallel,
                                 );
 
-                            dabits_store.write_interleaved_at(offset, &s20, &s12)?;
+                            dabits_store.write_interleaved_at(offset, &s20, s12.as_slice())?;
                             send_field_superchunk(s20, PartyID::ID0, io, max_msg_elems)?;
 
                             offset += items;
@@ -2050,7 +2161,7 @@ where
 /// **Communication:** P0→P2 (combined alpha2 for deficit items), P1→P2 (daBit s₁₂),
 /// P2→P0 (daBit s₂₀).
 #[tracing::instrument(skip_all, name = "extend_pool_batched")]
-pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
+pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,

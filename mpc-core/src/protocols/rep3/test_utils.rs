@@ -10,12 +10,14 @@ use std::thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result, eyre};
+use mpc_types::field::PrimeField;
 
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{
     IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
+    Rep3RawFieldTransport,
 };
 
 fn to_io_err(msg: impl Into<String>) -> std::io::Error {
@@ -220,6 +222,46 @@ impl MpcStarNetWorker for LocalRep3TestWorkerNet {
 }
 
 impl Rep3NetworkWorker for LocalRep3TestWorkerNet {}
+
+impl Rep3RawFieldTransport for LocalRep3TestWorkerNet {
+    fn send_field_slice_raw<F: PrimeField>(
+        &mut self,
+        target: PartyID,
+        data: &[F],
+    ) -> std::io::Result<()> {
+        use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
+        const { assert_field_layout::<F>() };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+        };
+        self.ring_send_bytes(target, bytes.to_vec())
+    }
+
+    fn recv_field_bytes_raw<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> std::io::Result<Vec<u8>> {
+        use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
+        const { assert_field_layout::<F>() };
+        let bytes = self.ring_recv_bytes(from)?;
+        let expected = elems.saturating_mul(std::mem::size_of::<F>());
+        if bytes.len() != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "raw field payload size mismatch from {:?}: expected {} bytes ({} elems of {}), got {}",
+                    from,
+                    expected,
+                    elems,
+                    std::any::type_name::<F>(),
+                    bytes.len()
+                ),
+            ));
+        }
+        Ok(bytes)
+    }
+}
 
 #[derive(Clone)]
 pub struct LocalRep3TestCoordinatorNet {

@@ -4,18 +4,22 @@
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use eyre::Context;
 use mpc_types::field::PrimeField;
 use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use mpc_types::protocols::rep3_ring::ring::bit::Bit;
 use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use std::io;
 use std::iter;
+use std::mem::MaybeUninit;
+use std::slice;
 use std::sync::{Arc, OnceLock};
 
 use crate::protocols::rep3_ring::dabits::DaBitBatch;
 use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
+use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -469,7 +473,171 @@ pub trait Rep3NetworkCoordinator: MpcStarNetCoordinator + 'static {
     fn sync_with_parties(&mut self) -> eyre::Result<()>;
 }
 
+pub trait Rep3RawFieldTransport {
+    fn send_field_slice_raw<F: PrimeField>(
+        &mut self,
+        target: PartyID,
+        data: &[F],
+    ) -> io::Result<()>;
+
+    fn send_field_vec_raw<F: PrimeField>(
+        &mut self,
+        target: PartyID,
+        data: Vec<F>,
+    ) -> io::Result<()> {
+        self.send_field_slice_raw(target, &data)
+    }
+
+    fn recv_field_bytes_raw<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> io::Result<Vec<u8>>;
+
+    fn recv_field_vec_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<F>> {
+        let bytes = self.recv_field_bytes_raw::<F>(from, elems)?;
+        field_vec_from_bytes::<F>(&bytes)
+    }
+
+    fn recv_field_vec_raw_owned<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> io::Result<Vec<F>> {
+        self.recv_field_vec_raw(from, elems)
+    }
+}
+
+fn field_vec_from_bytes<F: PrimeField>(bytes: &[u8]) -> io::Result<Vec<F>> {
+    const { assert_field_layout::<F>() };
+    let elem_size = std::mem::size_of::<F>();
+    if bytes.len() % elem_size != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "raw field payload length {} is not divisible by element size {} for {}",
+                bytes.len(),
+                elem_size,
+                std::any::type_name::<F>()
+            ),
+        ));
+    }
+    let elems = bytes.len() / elem_size;
+    if elems == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
+    // SAFETY: every element is fully initialized by the byte copy below.
+    unsafe { out.set_len(elems) };
+    let out_bytes =
+        unsafe { slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+    out_bytes.copy_from_slice(bytes);
+    let out: Vec<F> = unsafe { std::mem::transmute(out) };
+    Ok(out)
+}
+
+fn field_vec_from_owned_bytes<F: PrimeField>(bytes: Vec<u8>) -> io::Result<Vec<F>> {
+    const { assert_field_layout::<F>() };
+    let elem_size = std::mem::size_of::<F>();
+    if bytes.len() % elem_size != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "raw field payload length {} is not divisible by element size {} for {}",
+                bytes.len(),
+                elem_size,
+                std::any::type_name::<F>()
+            ),
+        ));
+    }
+    let elems = bytes.len() / elem_size;
+    if elems == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
+    unsafe { out.set_len(elems) };
+    let out_bytes =
+        unsafe { slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+    out_bytes.copy_from_slice(&bytes);
+    let out: Vec<F> = unsafe { std::mem::transmute(out) };
+    Ok(out)
+}
+
+fn field_slice_to_bytes<F: PrimeField>(data: &[F]) -> &[u8] {
+    const { assert_field_layout::<F>() };
+    unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) }
+}
+
+fn field_vec_into_bytes<F: PrimeField>(data: Vec<F>) -> Vec<u8> {
+    const { assert_field_layout::<F>() };
+    let mut data = std::mem::ManuallyDrop::new(data);
+    let len = data.len().saturating_mul(std::mem::size_of::<F>());
+    let cap = data.capacity().saturating_mul(std::mem::size_of::<F>());
+    unsafe { Vec::from_raw_parts(data.as_mut_ptr() as *mut u8, len, cap) }
+}
+
 impl Rep3NetworkWorker for Rep3QuicMpcNetWorker {}
+
+impl Rep3RawFieldTransport for Rep3QuicMpcNetWorker {
+    fn send_field_slice_raw<F: PrimeField>(
+        &mut self,
+        target: PartyID,
+        data: &[F],
+    ) -> io::Result<()> {
+        self.send_bytes_bulk(target, Bytes::copy_from_slice(field_slice_to_bytes(data)))
+    }
+
+    fn send_field_vec_raw<F: PrimeField>(
+        &mut self,
+        target: PartyID,
+        data: Vec<F>,
+    ) -> io::Result<()> {
+        self.send_bytes_bulk(target, Bytes::from(field_vec_into_bytes(data)))
+    }
+
+    fn recv_field_bytes_raw<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> io::Result<Vec<u8>> {
+        let bytes = self.recv_bytes_bulk(from)?;
+        let expected = elems.saturating_mul(std::mem::size_of::<F>());
+        if bytes.len() != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "raw field payload size mismatch from {:?}: expected {} bytes ({} elems of {}), got {}",
+                    from,
+                    expected,
+                    elems,
+                    std::any::type_name::<F>(),
+                    bytes.len()
+                ),
+            ));
+        }
+        Ok(bytes)
+    }
+
+    fn recv_field_vec_raw_owned<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> io::Result<Vec<F>> {
+        const { assert_field_layout::<F>() };
+        let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
+        unsafe { out.set_len(elems) };
+        let out_bytes = unsafe {
+            slice::from_raw_parts_mut(
+                out.as_mut_ptr() as *mut u8,
+                elems.saturating_mul(std::mem::size_of::<F>()),
+            )
+        };
+        self.recv_bytes_bulk_into(from, out_bytes)?;
+        Ok(unsafe { std::mem::transmute(out) })
+    }
+}
 
 impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
     #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]

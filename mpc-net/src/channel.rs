@@ -15,7 +15,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     runtime::Handle,
-    sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore},
+    sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::Instrument;
@@ -151,6 +151,7 @@ struct WriteJob<MSend> {
     data: MSend,
     ret: oneshot::Sender<Result<(), io::Error>>,
     write_permit: Option<OwnedSemaphorePermit>,
+    write_chunk: Option<usize>,
 }
 
 struct ReadJob<MRecv> {
@@ -164,6 +165,13 @@ pub struct ChannelHandle<MSend, MRecv> {
     read_job_queue: mpsc::Sender<ReadJob<MRecv>>,
     write_byte_budget: Option<Arc<Semaphore>>,
     write_len_fn: Option<fn(&MSend) -> usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BulkBytesChannelHandle {
+    read: Arc<Mutex<RecvStream>>,
+    write: Arc<Mutex<SendStream>>,
+    write_byte_budget: Arc<Semaphore>,
 }
 
 impl<MSend, MRecv> ChannelHandle<MSend, MRecv>
@@ -319,6 +327,7 @@ where
             data,
             ret,
             write_permit,
+            write_chunk: None,
         };
         match self.write_job_queue.send(job).await {
             Ok(_) => {}
@@ -366,6 +375,7 @@ where
             data,
             ret,
             write_permit,
+            write_chunk: None,
         };
         match self.write_job_queue.blocking_send(job) {
             Ok(_) => {}
@@ -402,16 +412,13 @@ where
 
 // TODO: remove?
 impl ChannelHandle<Bytes, BytesMut> {
-    /// Optimized manager for Bytes over QUIC: chunked length-prefixed I/O without LengthDelimitedCodec buffering.
-    /// This keeps message semantics the same for callers while reducing large-frame burstiness.
-    pub fn manage_bytes_quic(
+    fn manage_bytes_quic_impl(
         chan: Channel<RecvStream, SendStream, LengthDelimitedCodec>,
+        default_write_chunk: usize,
+        prefetch_reads: bool,
     ) -> ChannelHandle<Bytes, BytesMut> {
-        // Chunking and framing params
-        const LEN_BYTES: usize = 5; // match existing LengthDelimitedCodec config
-        const WRITE_CHUNK: usize = 16 * 1024; // 16 KiB fairness chunks
+        const LEN_BYTES: usize = 5;
 
-        // Small helpers for 5-byte big-endian length prefix
         #[inline]
         async fn write_len_prefix(w: &mut SendStream, len: usize) -> io::Result<()> {
             let v = len as u64;
@@ -433,21 +440,11 @@ impl ChannelHandle<Bytes, BytesMut> {
             Ok(v as usize)
         }
 
-        // job queues remain bounded; outer pipeline enforces per-actor sequencing
         const WRITE_CHAN_CAP: usize = 16;
         let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(WRITE_CHAN_CAP);
         let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(8192);
-
-        // Prefetch buffer: keep reading frames to free QUIC conn window.
-        // Bound memory with a byte-budget semaphore + small item queue.
-        let read_buf_bytes = quic_read_buf_bytes();
-        const READ_CHAN_CAP: usize = 16; // small item queue; bytes are bounded by semaphore
-        let read_byte_budget = Arc::new(Semaphore::new(read_buf_bytes));
-        let (frames_tx, mut frames_rx) =
-            mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
         let write_byte_budget = Arc::new(Semaphore::new(quic_write_buf_bytes()));
 
-        // Extract raw streams and spawn lightweight tasks around them
         let Channel {
             read_conn,
             write_conn,
@@ -455,73 +452,58 @@ impl ChannelHandle<Bytes, BytesMut> {
         let mut read = read_conn.into_inner();
         let mut write = write_conn.into_inner();
 
-        // Reader task: prefetch frames into bounded queue.
-        {
-            let read_byte_budget = read_byte_budget.clone();
-            let mut read = read;
-            let frames_tx = frames_tx.clone();
-            tokio::spawn(async move {
-                loop {
-                    let len = match read_len_prefix(&mut read).await {
-                        Ok(l) => l,
-                        Err(e) => {
-                            // Signal end to responder by closing channel
-                            // tracing::debug!("reader len err: {e}");
+        if prefetch_reads {
+            let read_buf_bytes = quic_read_buf_bytes();
+            const READ_CHAN_CAP: usize = 16;
+            let read_byte_budget = Arc::new(Semaphore::new(read_buf_bytes));
+            let (frames_tx, mut frames_rx) =
+                mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
+
+            {
+                let read_byte_budget = read_byte_budget.clone();
+                let mut read = read;
+                let frames_tx = frames_tx.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let len = match read_len_prefix(&mut read).await {
+                            Ok(l) => l,
+                            Err(_) => break,
+                        };
+
+                        let read_permit = if len <= read_buf_bytes {
+                            match read_byte_budget.clone().acquire_many_owned(len as u32).await {
+                                Ok(permit) => Some(permit),
+                                Err(_) => break,
+                            }
+                        } else {
+                            None
+                        };
+
+                        let mut buf = BytesMut::with_capacity(len);
+                        while buf.len() < len {
+                            buf.reserve(len - buf.len());
+                            match read.read_buf(&mut buf).await {
+                                Ok(0) => break,
+                                Ok(_) => {}
+                                Err(_) => break,
+                            }
+                        }
+                        if buf.len() != len {
                             break;
                         }
-                    };
-
-                    // Acquire byte budget before buffering the frame
-                    let read_permit = if len <= read_buf_bytes {
-                        // Normal path: bound by semaphore
-                        match read_byte_budget.clone().acquire_many_owned(len as u32).await {
-                            Ok(permit) => Some(permit),
-                            Err(_) => break,
-                        }
-                    } else {
-                        None
-                    };
-
-                    // Read body
-                    let mut buf = BytesMut::with_capacity(len);
-                    while buf.len() < len {
-                        buf.reserve(len - buf.len());
-                        match read.read_buf(&mut buf).await {
-                            Ok(0) => {
-                                tracing::warn!("eof while reading frame body");
-                                break;
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                tracing::warn!("read body error: {e}");
-                                break;
-                            }
+                        if frames_tx.send((buf, read_permit)).await.is_err() {
+                            break;
                         }
                     }
-                    if buf.len() != len {
-                        // on error, release any taken budget and stop
-                        break;
-                    }
+                });
+            }
 
-                    // Send to buffer; if receiver dropped, stop
-                    if frames_tx.send((buf, read_permit)).await.is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-
-        // Responder task: match recv jobs to buffered frames, releasing byte permits after delivery
-        {
-            let read_byte_budget = read_byte_budget.clone();
             tokio::spawn(async move {
                 while let Some(job) = read_recv.recv().await {
                     match frames_rx.recv().await {
                         Some((buf, read_permit)) => {
-                            let len = buf.len();
                             let _ = job.ret.send(Ok(buf));
                             drop(read_permit);
-                            let _ = len;
                         }
                         None => {
                             let _ = job.ret.send(Err(io::Error::new(
@@ -533,24 +515,59 @@ impl ChannelHandle<Bytes, BytesMut> {
                     }
                 }
             });
+        } else {
+            tokio::spawn(async move {
+                while let Some(job) = read_recv.recv().await {
+                    let res = async {
+                        let len = read_len_prefix(&mut read).await?;
+                        let mut buf = BytesMut::with_capacity(len);
+                        while buf.len() < len {
+                            buf.reserve(len - buf.len());
+                            match read.read_buf(&mut buf).await {
+                                Ok(0) => {
+                                    return Err(io::Error::new(
+                                        io::ErrorKind::UnexpectedEof,
+                                        "channel closed",
+                                    ))
+                                }
+                                Ok(_) => {}
+                                Err(e) => return Err(io_err(e)),
+                            }
+                        }
+                        Ok::<BytesMut, io::Error>(buf)
+                    }
+                    .await;
+                    let _ = job.ret.send(res);
+                }
+            });
         }
 
-        // Writer: write length prefix then body in small chunks to promote interleaving
         tokio::spawn(async move {
             while let Some(write_job) = write_recv.recv().await {
                 let res = async {
                     let data = write_job.data;
                     write_len_prefix(&mut write, data.len()).await?;
+                    let write_chunk = write_job.write_chunk.unwrap_or(default_write_chunk).max(1);
+                    let bulk_mode = write_job.write_chunk.is_some();
+                    let yield_every = if bulk_mode {
+                        write_chunk.saturating_mul(4)
+                    } else {
+                        write_chunk
+                    }
+                    .max(write_chunk);
                     let mut off = 0;
+                    let mut last_yield = 0usize;
                     while off < data.len() {
-                        let end = (off + WRITE_CHUNK).min(data.len());
+                        let end = (off + write_chunk).min(data.len());
                         write
                             .write_all(&data.slice(off..end))
                             .await
                             .map_err(io_err)?;
                         off = end;
-                        // Cooperate to allow other tasks/streams to progress
-                        tokio::task::yield_now().await;
+                        if off.saturating_sub(last_yield) >= yield_every && off < data.len() {
+                            tokio::task::yield_now().await;
+                            last_yield = off;
+                        }
                     }
                     Ok::<(), io::Error>(())
                 }
@@ -559,7 +576,6 @@ impl ChannelHandle<Bytes, BytesMut> {
                 match res {
                     Ok(()) => {
                         drop(write_job.write_permit);
-                        // Notify caller; ignore if dropped
                         let _ = write_job.ret.send(Ok(()));
                     }
                     Err(err) => {
@@ -577,6 +593,211 @@ impl ChannelHandle<Bytes, BytesMut> {
             write_byte_budget: Some(write_byte_budget),
             write_len_fn: Some(Bytes::len),
         }
+    }
+
+    async fn send_with_chunk(
+        &self,
+        data: Bytes,
+        write_chunk: Option<usize>,
+    ) -> oneshot::Receiver<Result<(), io::Error>> {
+        let (ret, recv) = oneshot::channel();
+        let write_permit = match self.acquire_write_permit_async(&data).await {
+            Ok(permit) => permit,
+            Err(err) => {
+                let _ = ret.send(Err(err));
+                return recv;
+            }
+        };
+        let job = WriteJob {
+            data,
+            ret,
+            write_permit,
+            write_chunk,
+        };
+        match self.write_job_queue.send(job).await {
+            Ok(_) => {}
+            Err(job) => job
+                .0
+                .ret
+                .send(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "ChannelHandle: send Channel is gone",
+                )))
+                .unwrap(),
+        }
+        recv
+    }
+
+    fn blocking_send_with_chunk(
+        &self,
+        data: Bytes,
+        write_chunk: Option<usize>,
+    ) -> oneshot::Receiver<Result<(), io::Error>> {
+        let (ret, recv) = oneshot::channel();
+        let write_permit = match self.acquire_write_permit_blocking(&data) {
+            Ok(permit) => permit,
+            Err(err) => {
+                let _ = ret.send(Err(err));
+                return recv;
+            }
+        };
+        let job = WriteJob {
+            data,
+            ret,
+            write_permit,
+            write_chunk,
+        };
+        match self.write_job_queue.blocking_send(job) {
+            Ok(_) => {}
+            Err(job) => job
+                .0
+                .ret
+                .send(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "ChannelHandle: send Channel is gone",
+                )))
+                .unwrap(),
+        }
+        recv
+    }
+
+    pub async fn send_bulk(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        self.send_with_chunk(data, Some(quic_bulk_write_chunk_bytes()))
+            .await
+    }
+
+    pub fn blocking_send_bulk(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
+        self.blocking_send_with_chunk(data, Some(quic_bulk_write_chunk_bytes()))
+    }
+
+    /// Optimized manager for Bytes over QUIC: chunked length-prefixed I/O without LengthDelimitedCodec buffering.
+    /// This keeps message semantics the same for callers while reducing large-frame burstiness.
+    pub fn manage_bytes_quic(
+        chan: Channel<RecvStream, SendStream, LengthDelimitedCodec>,
+    ) -> ChannelHandle<Bytes, BytesMut> {
+        Self::manage_bytes_quic_impl(chan, quic_default_write_chunk_bytes(), true)
+    }
+
+    pub fn manage_bytes_quic_bulk(
+        chan: Channel<RecvStream, SendStream, LengthDelimitedCodec>,
+    ) -> ChannelHandle<Bytes, BytesMut> {
+        Self::manage_bytes_quic_impl(chan, quic_bulk_write_chunk_bytes(), false)
+    }
+}
+
+impl BulkBytesChannelHandle {
+    pub fn manage_quic(chan: Channel<RecvStream, SendStream, LengthDelimitedCodec>) -> Self {
+        let Channel {
+            read_conn,
+            write_conn,
+        } = chan;
+        Self {
+            read: Arc::new(Mutex::new(read_conn.into_inner())),
+            write: Arc::new(Mutex::new(write_conn.into_inner())),
+            write_byte_budget: Arc::new(Semaphore::new(quic_write_buf_bytes())),
+        }
+    }
+
+    async fn send_inner(&self, data: Bytes) -> io::Result<()> {
+        const LEN_BYTES: usize = 5;
+
+        #[inline]
+        fn write_len_prefix_buf(len: usize) -> [u8; LEN_BYTES] {
+            let v = len as u64;
+            let mut buf = [0u8; LEN_BYTES];
+            for i in (0..LEN_BYTES).rev() {
+                buf[i] = (v >> (8 * (LEN_BYTES - 1 - i)) & 0xFF) as u8;
+            }
+            buf
+        }
+
+        let write_permit = if data.len() <= quic_write_buf_bytes() {
+            Some(
+                self.write_byte_budget
+                    .clone()
+                    .acquire_many_owned(data.len() as u32)
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "bulk write budget closed"))?,
+            )
+        } else {
+            None
+        };
+
+        let mut write = self.write.lock().await;
+        write
+            .write_all(&write_len_prefix_buf(data.len()))
+            .await
+            .map_err(io_err)?;
+        let write_chunk = quic_bulk_write_chunk_bytes().max(1);
+        let mut off = 0usize;
+        let mut last_yield = 0usize;
+        let yield_every = write_chunk.saturating_mul(4).max(write_chunk);
+        while off < data.len() {
+            let end = (off + write_chunk).min(data.len());
+            write.write_all(&data.slice(off..end)).await.map_err(io_err)?;
+            off = end;
+            if off.saturating_sub(last_yield) >= yield_every && off < data.len() {
+                tokio::task::yield_now().await;
+                last_yield = off;
+            }
+        }
+        drop(write);
+        drop(write_permit);
+        Ok(())
+    }
+
+    async fn recv_into_inner(&self, dst: &mut [u8]) -> io::Result<()> {
+        const LEN_BYTES: usize = 5;
+
+        #[inline]
+        async fn read_len_prefix(r: &mut RecvStream) -> io::Result<usize> {
+            let mut buf = [0u8; LEN_BYTES];
+            r.read_exact(&mut buf).await.map_err(io_err)?;
+            let mut v: u64 = 0;
+            for b in buf {
+                v = (v << 8) | b as u64;
+            }
+            Ok(v as usize)
+        }
+
+        let mut read = self.read.lock().await;
+        let len = read_len_prefix(&mut read).await?;
+        if len != dst.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("bulk frame size mismatch: expected {} bytes, got {}", dst.len(), len),
+            ));
+        }
+        read.read_exact(dst).await.map_err(io_err)
+    }
+
+    pub async fn send(&self, data: Bytes) -> io::Result<()> {
+        self.send_inner(data).await
+    }
+
+    pub async fn recv_bytes(&self) -> io::Result<Vec<u8>> {
+        const LEN_BYTES: usize = 5;
+
+        #[inline]
+        async fn read_len_prefix(r: &mut RecvStream) -> io::Result<usize> {
+            let mut buf = [0u8; LEN_BYTES];
+            r.read_exact(&mut buf).await.map_err(io_err)?;
+            let mut v: u64 = 0;
+            for b in buf {
+                v = (v << 8) | b as u64;
+            }
+            Ok(v as usize)
+        }
+
+        let mut read = self.read.lock().await;
+        let len = read_len_prefix(&mut read).await?;
+        let mut buf = vec![0u8; len];
+        read.read_exact(&mut buf).await.map_err(io_err)?;
+        Ok(buf)
+    }
+
+    pub async fn recv_into(&self, dst: &mut [u8]) -> io::Result<()> {
+        self.recv_into_inner(dst).await
     }
 }
 
@@ -598,6 +819,23 @@ fn quic_write_buf_bytes() -> usize {
 fn quic_read_buf_bytes() -> usize {
     const DEFAULT_MB: usize = 64;
     parse_quic_buf_mb("MPC_QUIC_READ_BUF_MB").unwrap_or(DEFAULT_MB * 1024 * 1024)
+}
+
+fn parse_quic_chunk_kb(var: &str, default_kb: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(default_kb)
+        .saturating_mul(1024)
+}
+
+fn quic_default_write_chunk_bytes() -> usize {
+    parse_quic_chunk_kb("MPC_QUIC_WRITE_CHUNK_KB", 16)
+}
+
+fn quic_bulk_write_chunk_bytes() -> usize {
+    parse_quic_chunk_kb("MPC_QUIC_BULK_WRITE_CHUNK_KB", 1024)
 }
 
 #[inline]

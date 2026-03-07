@@ -1,5 +1,5 @@
 use crate::{
-    channel::{BytesChannel, Channel},
+    channel::{BulkBytesChannelHandle, BytesChannel, Channel},
     codecs::BincodeCodec,
     rep3::{PartyID, PartyWorkerID},
     MpcNetworkHandlerShutdown, DEFAULT_CONNECT_TIMEOUT,
@@ -138,6 +138,8 @@ pub struct Rep3QuicMpcNetWorker {
     pub id: PartyWorkerID,
     pub chan_next: ChannelHandle<Bytes, BytesMut>,
     pub chan_prev: ChannelHandle<Bytes, BytesMut>,
+    pub chan_next_bulk: BulkBytesChannelHandle,
+    pub chan_prev_bulk: BulkBytesChannelHandle,
     pub chan_coordinator: Option<ChannelHandle<Bytes, BytesMut>>,
     pub log_num_workers_per_party: usize,
     pub current_log_num_workers: usize,
@@ -162,7 +164,7 @@ impl Rep3QuicMpcNetWorker {
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
-        let (net_handler, chan_next, chan_prev, chan_coordinator, transport_lanes) =
+        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, chan_coordinator, transport_lanes) =
             RUNTIME.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
@@ -171,23 +173,37 @@ impl Rep3QuicMpcNetWorker {
                 .map(ChannelHandle::manage_bytes_quic);
 
             let mut channels = net_handler.get_byte_channels_for_lane(0).await?;
+            let mut bulk_channels = net_handler.get_byte_channels_for_lane(0).await?;
             let chan_next = channels
                 .remove(&id.party_id().next_id().into())
                 .ok_or(eyre::eyre!("no next channel found"))?;
             let chan_prev = channels
                 .remove(&id.party_id().prev_id().into())
                 .ok_or(eyre::eyre!("no prev channel found"))?;
+            let chan_next_bulk = bulk_channels
+                .remove(&id.party_id().next_id().into())
+                .ok_or(eyre::eyre!("no next bulk channel found"))?;
+            let chan_prev_bulk = bulk_channels
+                .remove(&id.party_id().prev_id().into())
+                .ok_or(eyre::eyre!("no prev bulk channel found"))?;
             if !channels.is_empty() {
                 bail!("unexpected channels found")
             }
+            if !bulk_channels.is_empty() {
+                bail!("unexpected bulk channels found")
+            }
             let chan_next = ChannelHandle::manage_bytes_quic(chan_next);
             let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
+            let chan_next_bulk = BulkBytesChannelHandle::manage_quic(chan_next_bulk);
+            let chan_prev_bulk = BulkBytesChannelHandle::manage_quic(chan_prev_bulk);
 
             let transport_lanes = net_handler.transport_lanes;
             eyre::Ok((
                 net_handler,
                 chan_next,
                 chan_prev,
+                chan_next_bulk,
+                chan_prev_bulk,
                 chan_coordinator,
                 transport_lanes,
             ))
@@ -200,6 +216,8 @@ impl Rep3QuicMpcNetWorker {
             )),
             chan_next,
             chan_prev,
+            chan_next_bulk,
+            chan_prev_bulk,
             chan_coordinator,
             log_num_workers_per_party,
             current_log_num_workers: log_num_workers_per_party,
@@ -224,6 +242,19 @@ impl Rep3QuicMpcNetWorker {
                 std::io::ErrorKind::InvalidInput,
                 "Cannot send to self",
             ));
+        }
+    }
+
+    pub fn send_bytes_bulk(&mut self, target: PartyID, data: Bytes) -> std::io::Result<()> {
+        if target == self.id.party_id().next_id() {
+            self.net_handler.runtime.block_on(self.chan_next_bulk.send(data))
+        } else if target == self.id.party_id().prev_id() {
+            self.net_handler.runtime.block_on(self.chan_prev_bulk.send(data))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot send to self",
+            ))
         }
     }
 
@@ -258,6 +289,36 @@ impl Rep3QuicMpcNetWorker {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
         })??;
         Ok(data)
+    }
+
+    pub fn recv_bytes_bulk(&mut self, from: PartyID) -> std::io::Result<Vec<u8>> {
+        if from == self.id.party_id().prev_id() {
+            self.net_handler.runtime.block_on(self.chan_prev_bulk.recv_bytes())
+        } else if from == self.id.party_id().next_id() {
+            self.net_handler.runtime.block_on(self.chan_next_bulk.recv_bytes())
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot recv from self",
+            ));
+        }
+    }
+
+    pub fn recv_bytes_bulk_into(
+        &mut self,
+        from: PartyID,
+        dst: &mut [u8],
+    ) -> std::io::Result<()> {
+        if from == self.id.party_id().prev_id() {
+            self.net_handler.runtime.block_on(self.chan_prev_bulk.recv_into(dst))
+        } else if from == self.id.party_id().next_id() {
+            self.net_handler.runtime.block_on(self.chan_next_bulk.recv_into(dst))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot recv from self",
+            ))
+        }
     }
 
     pub async fn recv_bytes_async(&mut self, from: PartyID) -> std::io::Result<BytesMut> {
@@ -393,9 +454,14 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         let id = self.id.clone();
         let lane_idx = (fork_id as usize) % self.transport_lanes.max(1);
 
-        let (chan_next, chan_prev) = RUNTIME
+        let (chan_next, chan_prev, chan_next_bulk, chan_prev_bulk) = RUNTIME
             .block_on(async {
                 let mut channels = self
+                    .net_handler
+                    .inner
+                    .get_byte_channels_for_lane(lane_idx)
+                    .await?;
+                let mut bulk_channels = self
                     .net_handler
                     .inner
                     .get_byte_channels_for_lane(lane_idx)
@@ -406,13 +472,24 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                 let chan_prev = channels
                     .remove(&id.party_id().prev_id().into())
                     .ok_or(eyre::eyre!("no prev channel found"))?;
+                let chan_next_bulk = bulk_channels
+                    .remove(&id.party_id().next_id().into())
+                    .ok_or(eyre::eyre!("no next bulk channel found"))?;
+                let chan_prev_bulk = bulk_channels
+                    .remove(&id.party_id().prev_id().into())
+                    .ok_or(eyre::eyre!("no prev bulk channel found"))?;
                 if !channels.is_empty() {
                     bail!("unexpected channels found")
                 }
+                if !bulk_channels.is_empty() {
+                    bail!("unexpected bulk channels found")
+                }
                 let chan_next = ChannelHandle::manage_bytes_quic(chan_next);
                 let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
+                let chan_next_bulk = BulkBytesChannelHandle::manage_quic(chan_next_bulk);
+                let chan_prev_bulk = BulkBytesChannelHandle::manage_quic(chan_prev_bulk);
 
-                eyre::Ok((chan_next, chan_prev))
+                eyre::Ok((chan_next, chan_prev, chan_next_bulk, chan_prev_bulk))
             })
             .unwrap();
 
@@ -421,6 +498,8 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             net_handler: Arc::clone(&self.net_handler),
             chan_next,
             chan_prev,
+            chan_next_bulk,
+            chan_prev_bulk,
             chan_coordinator: None,
             log_num_workers_per_party: self.log_num_workers_per_party,
             current_log_num_workers: self.current_log_num_workers,
@@ -450,6 +529,8 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             net_handler: net_handler,
             chan_next: self.chan_next.clone(),
             chan_prev: self.chan_prev.clone(),
+            chan_next_bulk: self.chan_next_bulk.clone(),
+            chan_prev_bulk: self.chan_prev_bulk.clone(),
             chan_coordinator,
             log_num_workers_per_party: self.log_num_workers_per_party,
             current_log_num_workers: self.current_log_num_workers,
