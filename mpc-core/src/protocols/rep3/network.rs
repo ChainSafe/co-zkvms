@@ -499,6 +499,28 @@ pub trait Rep3RawFieldTransport {
         field_vec_from_bytes::<F>(&bytes)
     }
 
+    fn recv_field_bytes_bulk_into<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        dst: &mut [u8],
+    ) -> io::Result<()> {
+        let elem_size = std::mem::size_of::<F>();
+        if dst.len() % elem_size != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "recv_field_bytes_bulk_into: buffer length {} not divisible by element size {}",
+                    dst.len(),
+                    elem_size,
+                ),
+            ));
+        }
+        let elems = dst.len() / elem_size;
+        let bytes = self.recv_field_bytes_raw::<F>(from, elems)?;
+        dst.copy_from_slice(&bytes);
+        Ok(())
+    }
+
     fn recv_field_vec_raw_owned<F: PrimeField>(
         &mut self,
         from: PartyID,
@@ -618,6 +640,14 @@ impl Rep3RawFieldTransport for Rep3QuicMpcNetWorker {
             ));
         }
         Ok(bytes)
+    }
+
+    fn recv_field_bytes_bulk_into<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        dst: &mut [u8],
+    ) -> io::Result<()> {
+        self.recv_bytes_bulk_into(from, dst)
     }
 
     fn recv_field_vec_raw_owned<F: PrimeField>(

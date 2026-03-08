@@ -1265,6 +1265,7 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker + R
         return Ok(());
     }
 
+    let elem_size = std::mem::size_of::<F>();
     let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
     let _span = tracing::trace_span!(
         "recv_field_messages_into_store",
@@ -1272,17 +1273,20 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker + R
         from = ?from,
         start_elem,
         elems = expected_len,
-        bytes = expected_len * std::mem::size_of::<F>(),
+        bytes = expected_len * elem_size,
         num_msgs
     )
     .entered();
 
+    let buf_elems = max_msg_elems.max(1).min(expected_len);
+    let mut buf = vec![0u8; buf_elems * elem_size];
     let mut write_elem_offset = start_elem;
     let mut received = 0usize;
     while received < expected_len {
-        let chunk_elems = (expected_len - received).min(max_msg_elems.max(1));
-        let recv = io.network().recv_field_bytes_raw::<F>(from, chunk_elems)?;
-        write_bytes_to_store(store, write_elem_offset, &recv)?;
+        let chunk_elems = (expected_len - received).min(buf_elems);
+        let chunk_bytes = chunk_elems * elem_size;
+        io.network().recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
+        write_bytes_to_store(store, write_elem_offset, &buf[..chunk_bytes])?;
         write_elem_offset += chunk_elems;
         received += chunk_elems;
     }
@@ -1299,9 +1303,7 @@ fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker + Rep3Ra
     max_msg_elems: usize,
     store: &mut backing_store::BackingStore<F>,
 ) -> eyre::Result<()> {
-    let recv = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io.main(), max_msg_elems)?;
-    write_bytes_to_store(store, start_elem, &recv)?;
-    Ok(())
+    recv_field_messages_into_store(from, start_elem, expected_len, io, max_msg_elems, store)
 }
 
 fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
@@ -1312,16 +1314,7 @@ fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3Raw
     max_msg_elems: usize,
     writer: &backing_store::FileBackedWriter<F>,
 ) -> eyre::Result<()> {
-    let recv = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io, max_msg_elems)?;
-    let _span = tracing::trace_span!(
-        "append_to_store",
-        start_elem,
-        elems = expected_len,
-        bytes = recv.len()
-    )
-    .entered();
-    writer.write_bytes_at(start_elem, &recv)?;
-    Ok(())
+    recv_field_messages_into_writer_ctx(from, start_elem, expected_len, io, max_msg_elems, writer)
 }
 
 fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
@@ -1336,6 +1329,7 @@ fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Re
         return Ok(());
     }
 
+    let elem_size = std::mem::size_of::<F>();
     let num_msgs = expected_len.div_ceil(max_msg_elems.max(1));
     let _span = tracing::trace_span!(
         "recv_field_messages_into_store",
@@ -1343,24 +1337,27 @@ fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Re
         from = ?from,
         start_elem,
         elems = expected_len,
-        bytes = expected_len * std::mem::size_of::<F>(),
+        bytes = expected_len * elem_size,
         num_msgs
     )
     .entered();
 
+    let buf_elems = max_msg_elems.max(1).min(expected_len);
+    let mut buf = vec![0u8; buf_elems * elem_size];
     let mut write_elem_offset = start_elem;
     let mut received = 0usize;
     while received < expected_len {
-        let chunk_elems = (expected_len - received).min(max_msg_elems.max(1));
-        let recv = io.network.recv_field_bytes_raw::<F>(from, chunk_elems)?;
+        let chunk_elems = (expected_len - received).min(buf_elems);
+        let chunk_bytes = chunk_elems * elem_size;
+        io.network.recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
         let _span = tracing::trace_span!(
             "append_to_store",
             start_elem = write_elem_offset,
             elems = chunk_elems,
-            bytes = recv.len()
+            bytes = chunk_bytes
         )
         .entered();
-        writer.write_bytes_at(write_elem_offset, &recv)?;
+        writer.write_bytes_at(write_elem_offset, &buf[..chunk_bytes])?;
         write_elem_offset += chunk_elems;
         received += chunk_elems;
     }
@@ -1769,11 +1766,60 @@ where
                 Ok(())
             };
 
-            send_edabit_type(0, counts[0])?;
-            send_edabit_type(1, counts[1])?;
-            send_edabit_type(2, counts[2])?;
-            send_edabit_type(3, counts[3])?;
-            send_edabit_type(4, counts[4])?;
+            // Collect active (non-zero) edaBit types.
+            let active_types: Vec<(usize, usize)> = counts
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_i, c)| *c > 0)
+                .collect();
+
+            if active_types.len() > 1 && active_edabit_lanes >= active_types.len() {
+                // Pipeline: each edaBit type runs on its own fork in parallel.
+                let forks = io.forks(active_types.len());
+                active_types
+                    .into_par_iter()
+                    .zip(forks.par_iter_mut())
+                    .try_for_each(|((idx, num), ctx)| {
+                        let _span =
+                            tracing::info_span!("edabits_send_alphas", k = idx, n = num).entered();
+                        let k: usize = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                        let seeds = snaps[idx];
+                        let max_items_per_msg: usize = (max_msg_elems / k).max(1);
+                        let mut done = 0usize;
+                        while done < num {
+                            let items = (num - done).min(max_items_per_msg);
+                            let alpha2 = match idx {
+                                0 => edabit_alpha2_seed_chunk::<u8, F>(
+                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                                ),
+                                1 => edabit_alpha2_seed_chunk::<u16, F>(
+                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                                ),
+                                2 => edabit_alpha2_seed_chunk::<u32, F>(
+                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                                ),
+                                3 => edabit_alpha2_seed_chunk::<u64, F>(
+                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                                ),
+                                4 => edabit_alpha2_seed_chunk::<u128, F>(
+                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                                ),
+                                _ => unreachable!(),
+                            };
+                            debug_assert_eq!(alpha2.len(), items * k);
+                            send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
+                            done += items;
+                        }
+                        eyre::Result::<()>::Ok(())
+                    })?;
+            } else {
+                send_edabit_type(0, counts[0])?;
+                send_edabit_type(1, counts[1])?;
+                send_edabit_type(2, counts[2])?;
+                send_edabit_type(3, counts[3])?;
+                send_edabit_type(4, counts[4])?;
+            }
             let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
 
@@ -1961,53 +2007,103 @@ where
             ];
             debug_assert!(eda_stores_iter.next().is_none());
 
-            for (idx, &c) in counts.iter().enumerate() {
-                let _span = tracing::info_span!("edabits_resv_store", k = idx, n = c).entered();
-                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
-                let total_elems = c * k;
-                if total_elems == 0 {
-                    continue;
-                }
+            // Collect active (non-zero) edaBit types with their writers.
+            let active_types: Vec<(usize, usize)> = counts
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_i, c)| *c > 0)
+                .collect();
 
-                let max_items_per_msg = (max_msg_elems / k).max(1);
-                let store_batch_items = (store_batch_elems / k).max(max_items_per_msg);
-                let segment_items = (segment_elems / k).max(max_items_per_msg);
-                let plans = build_segment_plans(c, segment_items);
-                if let Some(writer) = eda_stores[idx].writer()? {
-                    if active_edabit_lanes > 1 && plans.len() > 1 {
-                        par_segment_plans(io.forks(active_edabit_lanes), plans, |plan, ctx| {
-                            let mut offset = 0usize;
-                            while offset < plan.items {
-                                let items = (plan.items - offset).min(store_batch_items);
-                                let start_item = plan.start_item + offset;
+            if active_types.len() > 1 && active_edabit_lanes >= active_types.len() {
+                // Pipeline: each edaBit type receives on its own fork in parallel.
+                let writers: Vec<_> = active_types
+                    .iter()
+                    .map(|(idx, _)| eda_stores[*idx].writer())
+                    .collect::<std::io::Result<Vec<_>>>()?;
+                let forks = io.forks(active_types.len());
+                active_types
+                    .into_par_iter()
+                    .zip(writers.into_par_iter())
+                    .zip(forks.par_iter_mut())
+                    .try_for_each(|(((idx, c), writer), ctx)| {
+                        let _span =
+                            tracing::info_span!("edabits_resv_store", k = idx, n = c).entered();
+                        let k: usize = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                        let max_items_per_msg: usize = (max_msg_elems / k).max(1);
+                        let store_batch_items: usize = (store_batch_elems / k).max(max_items_per_msg);
+                        if let Some(writer) = writer {
+                            let mut done = 0usize;
+                            while done < c {
+                                let items = (c - done).min(store_batch_items);
                                 recv_field_messages_into_writer_ctx::<F, _>(
                                     PartyID::ID0,
-                                    start_item * k,
+                                    done * k,
                                     items * k,
                                     ctx,
                                     max_msg_elems,
                                     &writer,
                                 )?;
-                                offset += items;
+                                done += items;
                             }
-                            Ok(())
-                        })?;
-                    } else {
-                        let mut write_elem_offset = 0usize;
-                        let mut remaining = c;
-                        while remaining > 0 {
-                            let items = remaining.min(store_batch_items);
-                            let expected = items * k;
-                            recv_field_messages_into_store::<F, _>(
-                                PartyID::ID0,
-                                write_elem_offset,
-                                expected,
-                                io,
-                                max_msg_elems,
-                                &mut eda_stores[idx],
+                        }
+                        eyre::Result::<()>::Ok(())
+                    })?;
+            } else {
+                for (idx, &c) in counts.iter().enumerate() {
+                    let _span =
+                        tracing::info_span!("edabits_resv_store", k = idx, n = c).entered();
+                    let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                    let total_elems = c * k;
+                    if total_elems == 0 {
+                        continue;
+                    }
+
+                    let max_items_per_msg = (max_msg_elems / k).max(1);
+                    let store_batch_items = (store_batch_elems / k).max(max_items_per_msg);
+                    let segment_items = (segment_elems / k).max(max_items_per_msg);
+                    let plans = build_segment_plans(c, segment_items);
+                    if let Some(writer) = eda_stores[idx].writer()? {
+                        if active_edabit_lanes > 1 && plans.len() > 1 {
+                            par_segment_plans(
+                                io.forks(active_edabit_lanes),
+                                plans,
+                                |plan, ctx| {
+                                    let mut offset = 0usize;
+                                    while offset < plan.items {
+                                        let items =
+                                            (plan.items - offset).min(store_batch_items);
+                                        let start_item = plan.start_item + offset;
+                                        recv_field_messages_into_writer_ctx::<F, _>(
+                                            PartyID::ID0,
+                                            start_item * k,
+                                            items * k,
+                                            ctx,
+                                            max_msg_elems,
+                                            &writer,
+                                        )?;
+                                        offset += items;
+                                    }
+                                    Ok(())
+                                },
                             )?;
-                            write_elem_offset += expected;
-                            remaining -= items;
+                        } else {
+                            let mut write_elem_offset = 0usize;
+                            let mut remaining = c;
+                            while remaining > 0 {
+                                let items = remaining.min(store_batch_items);
+                                let expected = items * k;
+                                recv_field_messages_into_store::<F, _>(
+                                    PartyID::ID0,
+                                    write_elem_offset,
+                                    expected,
+                                    io,
+                                    max_msg_elems,
+                                    &mut eda_stores[idx],
+                                )?;
+                                write_elem_offset += expected;
+                                remaining -= items;
+                            }
                         }
                     }
                 }

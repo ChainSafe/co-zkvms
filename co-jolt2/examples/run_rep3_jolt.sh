@@ -147,13 +147,13 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
+        -o "$TRACE_DIR/tracy/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
+        -o "$TRACE_DIR/tracy/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi
