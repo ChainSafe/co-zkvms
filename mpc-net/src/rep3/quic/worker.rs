@@ -629,7 +629,28 @@ impl MpcNetworkHandlerWorker {
         let our_socket_addr = config.bind_addr;
 
         let mut endpoints = Vec::new();
-        let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;
+        let server_endpoint = {
+            // Retry binding if the port is still lingering from a previous run.
+            let mut last_err = None;
+            let mut ep = None;
+            for attempt in 0..10 {
+                match quinn::Endpoint::server(server_config.clone(), our_socket_addr) {
+                    Ok(e) => { ep = Some(e); break; }
+                    Err(e) => {
+                        if attempt < 9 {
+                            tracing::warn!(
+                                attempt,
+                                addr = %our_socket_addr,
+                                "server bind failed, retrying: {e}"
+                            );
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        }
+                        last_err = Some(e);
+                    }
+                }
+            }
+            ep.ok_or_else(|| last_err.unwrap())?
+        };
 
         let coordinator_connection = if let Some(coordinator) = config.coordinator {
             tracing::trace!("my id: {:?}, connecting to coordinator", config.my_id);
@@ -991,34 +1012,61 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
     async fn shutdown(&self) -> std::io::Result<()> {
         for (id, conns) in self.parties_connections.iter() {
             for conn in conns {
-                if self.my_id < *id {
-                    let mut send = conn.open_uni().await?;
-                    send.write_all(b"done").await?;
-                } else {
-                    let mut recv = conn.accept_uni().await?;
-                    let mut buffer = vec![0u8; b"done".len()];
-                    recv.read_exact(&mut buffer).await.map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "failed to recv done msg",
-                        )
-                    })?;
+                let res = async {
+                    if self.my_id < *id {
+                        let mut send = conn.open_uni().await?;
+                        send.write_all(b"done").await?;
+                    } else {
+                        let mut recv = conn.accept_uni().await?;
+                        let mut buffer = vec![0u8; b"done".len()];
+                        recv.read_exact(&mut buffer).await.map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::BrokenPipe,
+                                "failed to recv done msg",
+                            )
+                        })?;
 
-                    conn.close(
-                        0u32.into(),
-                        format!("close from party {}", self.my_id).as_bytes(),
-                    );
+                        conn.close(
+                            0u32.into(),
+                            format!("close from party {}", self.my_id).as_bytes(),
+                        );
+                    }
+                    Ok::<_, std::io::Error>(())
+                }
+                .await;
+                if let Err(e) = res {
+                    tracing::trace!(party = id, "shutdown handshake failed (peer may have exited): {e}");
                 }
             }
         }
 
         if let Some(conn) = self.coordinator_connection.as_ref() {
-            let mut send = conn.open_uni().await?;
-            send.write_all(b"done").await?;
+            let res = async {
+                let mut send = conn.open_uni().await?;
+                send.write_all(b"done").await
+            }
+            .await;
+            if let Err(e) = res {
+                tracing::trace!("coordinator shutdown handshake failed (coordinator may have exited): {e}");
+            }
+        }
+
+        // Close all known connections so wait_idle can complete.
+        for (_, conns) in self.parties_connections.iter() {
+            for conn in conns {
+                conn.close(0u32.into(), b"shutdown");
+            }
+        }
+        if let Some(conn) = self.coordinator_connection.as_ref() {
+            conn.close(0u32.into(), b"shutdown");
         }
 
         for endpoint in self.endpoints.iter() {
-            endpoint.wait_idle().await;
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                endpoint.wait_idle(),
+            )
+            .await;
             endpoint.close(VarInt::from_u32(0), &[]);
         }
         Ok(())

@@ -303,6 +303,15 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         network
             .send_requests_blocking(vec![msg_bytes; 3])
             .context("sending preproc-only payloads")?;
+        // Wait for all workers to finish preprocessing before exiting.
+        // Without this, the coordinator drops QUIC connections and workers
+        // may never receive the payload (data still in flight).
+        network
+            .send_requests_blocking(vec![true; 3])
+            .context("sending preproc-only sync")?;
+        let _acks: Vec<bool> = network
+            .receive_responses()
+            .context("receiving preproc-only acks")?;
         return Ok(());
     }
 
@@ -433,14 +442,47 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
             use mpc_core::protocols::rep3_ring::edabits;
-            info!("preprocess-only: creating preprocessing pool into {:?}", pool_dir);
-            let pool = edabits::preprocess_pool_batched_into_dir::<F, _>(
-                &pool_dir,
-                counts,
-                num_dabits,
-                &mut io_ctx,
-            )?;
+
+            let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
+                Ok(mut pool) => {
+                    let (rem_eda, rem_da) = pool.remaining_counts();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
+
+                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                        info!(
+                            "preprocess-only: extending pool: deficit edabits={:?}, dabits={}",
+                            deficit_counts, deficit_dabits
+                        );
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        match pool.save(&pool_dir) {
+                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
+                            Err(e) => tracing::warn!("failed to save extended pool: {e}"),
+                        }
+                    } else {
+                        info!("preprocess-only: reusing preprocessing from {:?}", pool_dir);
+                    }
+                    pool
+                }
+                Err(e) => {
+                    info!("preprocess-only: no cached preprocessing ({e}); creating pool into {:?}", pool_dir);
+                    edabits::preprocess_pool_batched_into_dir::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        &mut io_ctx,
+                    )?
+                }
+            };
+
             io_ctx.sync_with_parties()?;
+            io_ctx.sync_with_coordinator()?;
             let _drop_span = trace_span!("drop_preprocessing_pool").entered();
             drop(pool);
             return Ok(());

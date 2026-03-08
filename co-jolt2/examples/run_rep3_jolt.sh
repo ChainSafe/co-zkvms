@@ -107,14 +107,16 @@ cd ../mpc-net
 cargo build --bin gen_configs --release
 cd ../co-jolt2
 
-# Generate network configs (1 worker per party)
+# Generate network configs (1 worker per party) — only if they don't exist yet.
 # Configs, certs, and keys all go into ARTIFACT_DIR.
 # The -c flag sets both where DER files are written AND the paths embedded in TOMLs.
-../target/release/gen_configs \
-  -n 1 \
-  -o "$ARTIFACT_DIR" \
-  -c "$ARTIFACT_DIR" \
-  -k "$ARTIFACT_DIR"
+if [ ! -f "$ARTIFACT_DIR/config_coordinator.toml" ]; then
+  ../target/release/gen_configs \
+    -n 1 \
+    -o "$ARTIFACT_DIR" \
+    -c "$ARTIFACT_DIR" \
+    -k "$ARTIFACT_DIR"
+fi
 
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
@@ -147,13 +149,13 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/tracy/worker${p}_${TRACE_SUFFIX}.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
       "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/tracy/worker${p}_${TRACE_SUFFIX}.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi

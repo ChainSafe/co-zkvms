@@ -433,7 +433,27 @@ impl MpcNetworkCoordinatorHandler {
         server_config.transport_config(quic_transport_config());
         let our_socket_addr = config.bind_addr;
 
-        let server_endpoint = quinn::Endpoint::server(server_config.clone(), our_socket_addr)?;
+        let server_endpoint = {
+            let mut last_err = None;
+            let mut ep = None;
+            for attempt in 0..10 {
+                match quinn::Endpoint::server(server_config.clone(), our_socket_addr) {
+                    Ok(e) => { ep = Some(e); break; }
+                    Err(e) => {
+                        if attempt < 9 {
+                            tracing::warn!(
+                                attempt,
+                                addr = %our_socket_addr,
+                                "coordinator bind failed, retrying: {e}"
+                            );
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        }
+                        last_err = Some(e);
+                    }
+                }
+            }
+            ep.ok_or_else(|| last_err.unwrap())?
+        };
 
         let mut connections = BTreeMap::new();
 
@@ -680,17 +700,25 @@ impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
         );
 
         for (id, conn) in self.connections.iter() {
-            let mut recv = conn.accept_uni().await?;
-            let mut buffer = vec![0u8; b"done".len()];
-            recv.read_exact(&mut buffer).await.map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
-            })?;
-
-            tracing::debug!("coordinator closing conn = {id}");
-
-            conn.close(0u32.into(), format!("close from coordinator").as_bytes());
+            let res = async {
+                let mut recv = conn.accept_uni().await?;
+                let mut buffer = vec![0u8; b"done".len()];
+                recv.read_exact(&mut buffer).await.map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
+                })?;
+                Ok::<_, std::io::Error>(())
+            }
+            .await;
+            if let Err(e) = &res {
+                tracing::trace!(conn = id, "coordinator shutdown handshake skipped: {e}");
+            }
+            conn.close(0u32.into(), b"close from coordinator");
         }
-        self.server_endpoint.wait_idle().await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.server_endpoint.wait_idle(),
+        )
+        .await;
         self.server_endpoint.close(VarInt::from_u32(0), &[]);
 
         Ok(())

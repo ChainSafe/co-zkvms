@@ -164,6 +164,7 @@ pub struct ChannelHandle<MSend, MRecv> {
     write_job_queue: mpsc::Sender<WriteJob<MSend>>,
     read_job_queue: mpsc::Sender<ReadJob<MRecv>>,
     write_byte_budget: Option<Arc<Semaphore>>,
+    write_byte_budget_max: usize,
     write_len_fn: Option<fn(&MSend) -> usize>,
 }
 
@@ -254,6 +255,7 @@ where
             write_job_queue: write_send,
             read_job_queue: read_send,
             write_byte_budget: None,
+            write_byte_budget_max: 0,
             write_len_fn: None,
         }
     }
@@ -269,6 +271,11 @@ where
         let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
             return Ok(None);
         };
+        // Skip semaphore for messages larger than the budget capacity —
+        // the semaphore can never grant that many permits.
+        if len > self.write_byte_budget_max {
+            return Ok(None);
+        }
         let permits = u32::try_from(len).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -290,6 +297,11 @@ where
         let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
             return Ok(None);
         };
+        // Skip semaphore for messages larger than the budget capacity —
+        // the semaphore can never grant that many permits.
+        if len > self.write_byte_budget_max {
+            return Ok(None);
+        }
         let permits = u32::try_from(len).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -591,6 +603,7 @@ impl ChannelHandle<Bytes, BytesMut> {
             write_job_queue: write_send,
             read_job_queue: read_send,
             write_byte_budget: Some(write_byte_budget),
+            write_byte_budget_max: quic_write_buf_bytes(),
             write_len_fn: Some(Bytes::len),
         }
     }
