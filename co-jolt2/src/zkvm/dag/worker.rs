@@ -109,6 +109,10 @@ impl Rep3JoltDagWorker {
         drop(_stage2);
         maybe_purge_jemalloc();
 
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE2").is_ok() {
+            return Ok(());
+        }
+
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
@@ -123,6 +127,10 @@ impl Rep3JoltDagWorker {
         )?;
         drop(_stage3);
         maybe_purge_jemalloc();
+
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE3").is_ok() {
+            return Ok(());
+        }
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)

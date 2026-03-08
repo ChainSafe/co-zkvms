@@ -1362,8 +1362,7 @@ where
 
 /// Compute the sign-extension suffix value from a public right-operand bitmask.
 ///
-/// Mirrors vanilla `SignExtensionSuffix::suffix_mle` logic:
-/// sign extension padding length = trailing_zeros of the right operand's low bits.
+/// Mirrors vanilla `SignExtensionSuffix::suffix_mle` on the uninterleaved `y` bits.
 fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
     let y_len = suffix_len / 2;
     let y_low = if y_len >= 64 {
@@ -1371,9 +1370,12 @@ fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
     } else {
         mask_u64 & ((1u64 << y_len) - 1)
     };
-    let padding_len = y_low.trailing_zeros() as u64;
-    // The sign-extension MLE value: 2^padding_len
-    1u64 << padding_len.min(63)
+    let padding_len = std::cmp::min(y_low.trailing_zeros() as usize, y_len);
+    if padding_len == 0 {
+        0
+    } else {
+        ((1u128 << XLEN) - (1u128 << (XLEN - padding_len))) as u64
+    }
 }
 
 /// Truncate a share to u32 (used by W-variant instructions).

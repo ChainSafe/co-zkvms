@@ -26,19 +26,18 @@ where
         RingElement(share.b.0.as_()),
     )
 }
-/// Truncate an arithmetic-domain u64 share to XLEN bits, then zero-extend back to u64.
-/// For rv64 this is a no-op. For rv32 this computes `result mod 2^32`.
-/// Safe for arithmetic shares: `(a mod 2^32) + (b mod 2^32) ≡ (a+b) mod 2^32`.
-#[inline]
-pub fn truncate_arithmetic_to_xlen(share: Rep3RingShare<u64>) -> Rep3RingShare<u64> {
+pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
+    shares: &[Rep3RingShare<u64>],
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
     #[cfg(feature = "rv32")]
     {
-        let truncated: Rep3RingShare<XlenInt> = downcast(share);
-        binary_to_output(truncated)
+        let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
+        Ok(rep3_ring::casts::ring_to_field_many_selector(&truncated, io_ctx)?)
     }
     #[cfg(not(feature = "rv32"))]
     {
-        share
+        Ok(rep3_ring::casts::ring_to_field_many_selector(shares, io_ctx)?)
     }
 }
 

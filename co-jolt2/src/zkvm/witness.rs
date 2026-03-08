@@ -146,7 +146,7 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
             } => v,
             _ => return None,
         };
-        Some((l_val as LookupIndexInt).wrapping_add(r_val as LookupIndexInt))
+        Some((l_val as XlenInt as LookupIndexInt) + (r_val as XlenInt as LookupIndexInt))
     };
 
     match cycle {
@@ -193,7 +193,7 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
             Rep3Operand::Public(v)
             | Rep3Operand::Shared {
                 public: Some(v), ..
-            } => Some(v as u64),
+            } => Some(v as XlenInt as u64),
             _ => None,
         }
     };

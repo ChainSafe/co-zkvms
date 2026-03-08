@@ -32,12 +32,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMULI> {
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?
+        let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
+        cast_wrapped_lookup_output_many(&products, io_ctx)?
             .into_iter()
             .zip(out)
-            .for_each(|(product, out)| {
-                *out = FutureRep3Ring::cast_to_field(truncate_arithmetic_to_xlen(product));
-            });
+            .for_each(|(share, out)| *out = FutureRep3Ring::Ready(share));
         Ok(())
     }
 }
