@@ -985,19 +985,19 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn preproc_max_msg_mb() -> usize {
-    env_usize("PREPROC_MAX_MSG_MB", 8)
+    env_usize("PREPROC_MAX_MSG_MB", 2)
 }
 
 fn preproc_store_batch_mb() -> usize {
-    env_usize("PREPROC_STORE_BATCH_MB", 64)
+    env_usize("PREPROC_STORE_BATCH_MB", 16)
 }
 
 fn preproc_lanes() -> usize {
-    env_usize("PREPROC_LANES", 2)
+    env_usize("PREPROC_LANES", 8)
 }
 
 fn preproc_segment_mb() -> usize {
-    env_usize("PREPROC_SEGMENT_MB", 256)
+    env_usize("PREPROC_SEGMENT_MB", 64)
 }
 
 fn configured_transport_lanes() -> usize {
@@ -1011,7 +1011,7 @@ fn configured_transport_lanes() -> usize {
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|&v| v > 0)
         })
-        .unwrap_or(2)
+        .unwrap_or(8)
 }
 
 fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
@@ -1498,7 +1498,7 @@ where
         .max(1)
         .min(io.max_forks().max(1))
         .min(configured_transport_lanes().max(1));
-    let active_dabit_lanes = active_edabit_lanes.min(2);
+    let active_dabit_lanes = 1; // daBits benefit more from intra-chunk rayon parallelism than from lane splitting
 
     // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
     let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());

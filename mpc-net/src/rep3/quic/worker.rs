@@ -83,7 +83,7 @@ fn configured_transport_lanes() -> usize {
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|&v| v > 0)
         })
-        .unwrap_or(2)
+        .unwrap_or(8)
 }
 
 fn parse_quic_limit_mb(var: &str, default_mb: usize) -> u32 {
