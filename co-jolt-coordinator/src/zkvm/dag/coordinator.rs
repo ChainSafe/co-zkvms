@@ -1,12 +1,8 @@
 use std::collections::HashMap;
 
-use crate::field::JoltField;
-use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
-use crate::utils::types::MaybeShared;
-use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::spartan::Rep3SpartanDag;
+use co_jolt2::field::JoltField;
+use co_jolt2::poly::commitment::Rep3CommitmentScheme;
+use co_jolt2::utils::types::MaybeShared;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::ReducedOpeningProof;
@@ -16,6 +12,12 @@ use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+
+use crate::poly::commitment::Rep3CoordinatorCommitmentScheme;
+use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
+use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::spartan::Rep3SpartanDag;
 
 /// Coordinator side of the MPC DAG prover.
 ///
@@ -33,7 +35,9 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F>
+            + Rep3CommitmentScheme<F, ProofTranscript>
+            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // --- Receive trace_length from workers ---
@@ -186,11 +190,12 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F>
+            + Rep3CommitmentScheme<F, ProofTranscript>
+            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // Receive commitment shares from all 3 parties
-        // Each party sends Vec<MaybeShared<Commitment>> aligned with AllCommittedPolynomials
         let all_commitment_shares: Vec<Vec<MaybeShared<PCS::Commitment>>> =
             network.receive_responses()?;
 
@@ -208,9 +213,7 @@ impl Rep3JoltDag {
                     .iter()
                     .map(|party_shares| &party_shares[i])
                     .collect();
-                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
-                    &shares,
-                )
+                <PCS as Rep3CoordinatorCommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares)
             })
             .collect();
 
@@ -223,10 +226,6 @@ impl Rep3JoltDag {
         Ok(())
     }
 
-    /// Receive the untrusted advice commitment from all 3 workers.
-    ///
-    /// All workers compute the same public commitment, so we verify consistency
-    /// and store the first non-None value.
     fn receive_untrusted_advice_commitment<F, PCS, ProofTranscript, N>(
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
@@ -234,7 +233,9 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F>
+            + Rep3CommitmentScheme<F, ProofTranscript>
+            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         let commitments: Vec<Option<PCS::Commitment>> = network.receive_responses()?;
@@ -244,7 +245,6 @@ impl Rep3JoltDag {
             commitments.len()
         );
 
-        // All workers should produce identical results (public computation)
         eyre::ensure!(
             commitments[0] == commitments[1] && commitments[1] == commitments[2],
             "untrusted advice commitment mismatch across parties"

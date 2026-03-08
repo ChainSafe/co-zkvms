@@ -14,8 +14,8 @@ use ark_std::test_rng;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
-use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
-use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
+use mpc_net::rep3::quic::Rep3QuicMpcNetWorker;
+use mpc_net::topology::MpcStarNetWorker;
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span};
 
@@ -26,15 +26,11 @@ use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::memory::start_jemalloc_monitor;
 use co_jolt2::utils::tracing::init_tracing_bench;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
-use co_jolt2::zkvm::{Rep3Jolt, Rep3JoltWorker};
+use co_jolt2::zkvm::Rep3JoltWorker;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
-use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-};
+use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC};
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
 use tracer::JoltDevice;
@@ -178,11 +174,11 @@ fn main() -> eyre::Result<()> {
             .context("parsing config file")?;
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
-    if config.is_coordinator {
-        run_coordinator(args, config)
-    } else {
-        run_worker(args, config)
-    }
+    eyre::ensure!(
+        !config.is_coordinator,
+        "worker example requires worker config; use co-jolt-coordinator example for coordinator"
+    );
+    run_worker(args, config)
 }
 
 fn build_program() -> Program {
@@ -199,123 +195,6 @@ fn build_inputs(num_iters: u32) -> Vec<u8> {
     let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
     inputs.append(&mut postcard::to_stdvec(&num_iters).unwrap());
     inputs
-}
-
-fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
-    let file = format!(
-        "trace_coordinator_sha2-chain-{}_{}CPU.json",
-        args.num_iters,
-        num_cpus::get(),
-    );
-    let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
-
-    // Create coordinator network FIRST — workers connect to coordinator
-    // during their Rep3QuicMpcNetWorker::new(), so we must be listening.
-    info!("creating coordinator network");
-    let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
-
-    // Build guest program and prepare inputs
-    let mut program = build_program();
-    let inputs = build_inputs(args.num_iters);
-    let (bytecode, memory_init, _) = program.decode();
-
-    // Trace to get vanilla trace and IO device
-    info!("tracing guest program");
-    let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
-
-    // Pad trace
-    let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
-    info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
-    vanilla_trace.resize(padded_len, Cycle::NoOp);
-
-    // Build shared preprocessing for ram_K computation
-    let shared = JoltSharedPreprocessing {
-        memory_layout: io_device.memory_layout.clone(),
-        bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
-        ram: RAMPreprocessing::preprocess(memory_init.clone()),
-    };
-    let ram_k = compute_ram_k(&vanilla_trace, &shared);
-    info!(ram_k, "computed ram_K");
-
-    // Generate shares
-    info!("generating trace shares");
-    let mut rng = test_rng();
-    let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-    // Pad shared traces
-    // for (trace, _, _) in shares.iter_mut() {
-    //     trace.resize(padded_len, Rep3Cycle::NoOp);
-    // }
-
-    // Build preprocessing (needed for verifier preprocessing)
-    let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
-            bytecode.clone(),
-            io_device.memory_layout.clone(),
-            memory_init.clone(),
-            padded_len,
-        );
-    let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-
-    // Send shares to workers
-    let worker_payloads: Vec<Vec<u8>> = shares
-        .into_iter()
-        .map(|(trace, memory, program_io_share)| {
-            let payload = WorkerPayload {
-                trace,
-                memory,
-                program_io_share,
-                io_device: io_device.clone(),
-                bytecode: bytecode.clone(),
-                memory_init: memory_init.clone(),
-                padded_len,
-                ram_k,
-            };
-            bincode::serialize(&payload)
-        })
-        .collect::<bincode::Result<Vec<_>>>()
-        .context("serializing worker payloads")?;
-
-    if args.preprocess_only.unwrap_or(false) {
-        info!("preprocess-only: sending worker payload once and exiting");
-        network
-            .send_requests_blocking(worker_payloads)
-            .context("sending worker payloads")?;
-        return Ok(());
-    }
-
-    for iter in 0..args.repeat_proofs {
-        info!(
-            iter,
-            total = args.repeat_proofs,
-            "sending shares to workers"
-        );
-        network
-            .send_requests_blocking(worker_payloads.clone())
-            .context("sending worker payloads")?;
-
-        // Run coordinator prove
-        info!(iter, "starting coordinator prove");
-        let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
-            &verifier_preprocessing,
-            &preprocessing.generators,
-            io_device.clone(),
-            &mut network,
-            ram_k,
-            padded_len,
-        )?;
-
-        info!(
-            iter,
-            commitments = proof.commitments.len(),
-            "coordinator done"
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    network.log_connection_stats(None);
-
-    Ok(())
 }
 
 fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {

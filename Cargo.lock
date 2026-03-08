@@ -765,6 +765,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "co-jolt-coordinator"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-poly-commit",
+ "ark-serialize",
+ "ark-std",
+ "bincode",
+ "clap",
+ "co-jolt2",
+ "color-eyre",
+ "common",
+ "dory",
+ "eyre",
+ "itertools 0.12.1",
+ "jolt-core",
+ "libc",
+ "mpc-core",
+ "mpc-net",
+ "num-traits",
+ "num_cpus",
+ "postcard",
+ "rand 0.8.5",
+ "rayon",
+ "rcgen",
+ "rustls",
+ "serde",
+ "snarks-core",
+ "strum",
+ "tikv-jemallocator",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracer",
+ "tracing",
+ "tracing-chrome",
+ "tracing-forest",
+ "tracing-subscriber 0.3.22",
+ "tracing-tracy",
+ "tracy-client",
+]
+
+[[package]]
 name = "co-jolt2"
 version = "0.1.0"
 dependencies = [
@@ -778,6 +822,7 @@ dependencies = [
  "ark-std",
  "bincode",
  "clap",
+ "co-jolt-coordinator",
  "co-jolt2",
  "color-eyre",
  "common",

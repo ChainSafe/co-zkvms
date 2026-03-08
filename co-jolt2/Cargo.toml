@@ -71,6 +71,7 @@ tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_support
 
 [dev-dependencies]
 co-jolt2 = { path = ".", features = ["test-utils"] }
+co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 rcgen = "0.13"
 
 [build-dependencies]

@@ -76,9 +76,10 @@ if [ "$REPEAT_PROOFS" -gt 1 ]; then
   PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
 fi
 
-# Build the example binary (release mode)
+# Build the example binaries (release mode)
 # Note: Guest ELF is auto-compiled by Program::build() on first run
 cargo build --example rep3_jolt --release --features "$FEATURES"
+cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release
 
 # Build gen_configs
 cd ../mpc-net
@@ -109,7 +110,7 @@ if [ "$PREPROC_ONLY" = "1" ]; then
 fi
 
 # Launch coordinator
-../target/release/examples/rep3_jolt \
+../target/release/examples/rep3_jolt_coordinator \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \

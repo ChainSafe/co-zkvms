@@ -9,7 +9,7 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use crate::field::JoltField;
+use co_jolt2::field::JoltField;
 use crate::subprotocols::sumcheck::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::spartan::inner::Rep3InnerSumcheck;
@@ -78,7 +78,6 @@ impl Rep3SpartanDag {
         let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
 
         // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
-        // Vanilla uses append_scalars (with vector framing) for the outer sumcheck claims.
         state
             .transcript
             .append_scalars(&[claim_az, claim_bz, claim_cz]);

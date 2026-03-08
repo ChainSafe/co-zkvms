@@ -12,19 +12,15 @@ pub mod witness;
 use crate::field::JoltField;
 use crate::host::memory::Rep3Memory;
 use crate::poly::commitment::Rep3CommitmentScheme;
-use crate::zkvm::dag::coordinator::Rep3JoltDag;
-use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
+use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::worker::Rep3JoltDagWorker;
 use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
-use jolt_core::zkvm::dag::proof_serialization::JoltProof;
-use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreprocessing};
-use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
-};
+use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracer::JoltDevice;
 
@@ -56,25 +52,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Coordinator trait
-// ---------------------------------------------------------------------------
-
-pub trait Rep3Jolt<F: JoltField, PCS, ProofTranscript: Transcript>
-where
-    PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
-{
-    fn prove<N: Rep3NetworkCoordinator>(
-        preprocessing: &JoltVerifierPreprocessing<F, PCS>,
-        pcs_setup: &PCS::ProverSetup,
-        program_io: JoltDevice,
-        network: &mut N,
-        ram_K: usize,
-        trace_length: usize,
-    ) -> eyre::Result<JoltProof<F, PCS, ProofTranscript>>;
-}
-
-// ---------------------------------------------------------------------------
-// Implementations for JoltRV64IMAC
+// Implementation for JoltRV64IMAC
 // ---------------------------------------------------------------------------
 
 impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
@@ -119,36 +97,6 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
     }
 }
 
-impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
-    fn prove<N: Rep3NetworkCoordinator>(
-        preprocessing: &JoltVerifierPreprocessing<Fr, DoryCommitmentScheme>,
-        pcs_setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-        program_io: JoltDevice,
-        network: &mut N,
-        ram_K: usize,
-        trace_length: usize,
-    ) -> eyre::Result<JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>> {
-        // Compute twist_sumcheck_switch_index the same way as the worker
-        let T = trace_length;
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = if num_chunks > 0 { T / num_chunks } else { T };
-        let twist_sumcheck_switch_index = if chunk_size > 0 {
-            chunk_size.trailing_zeros() as usize
-        } else {
-            0
-        };
-
-        let state = StateManager::new(
-            preprocessing,
-            program_io,
-            ram_K,
-            twist_sumcheck_switch_index,
-        )
-        .with_pcs_setup(pcs_setup);
-        Rep3JoltDag::prove(state, network)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -156,6 +104,7 @@ mod tests {
 
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use co_jolt_coordinator::zkvm::Rep3Jolt;
     use tracing::{info, info_span};
 
     use crate::host::program::Rep3Program;
@@ -163,7 +112,7 @@ mod tests {
     use crate::utils::test_utils::run_rep3_test_with_coordinator;
     use crate::utils::tracing::init_tracing;
     use crate::zkvm::instruction::{populate_operands_casts, Rep3Cycle};
-    use crate::zkvm::{Rep3Jolt, Rep3JoltWorker};
+    use crate::zkvm::Rep3JoltWorker;
     use jolt_core::host::Program;
     use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
     use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
