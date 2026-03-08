@@ -84,11 +84,6 @@ required-features = ["test-utils"]
 name = "fwht"
 harness = false
 
-[[bench]]
-name = "dory_commit"
-harness = false
-required-features = ["test-utils"]
-
 [features]
 default = ["std", "debug"]
 std = [
@@ -102,4 +97,5 @@ debug = []
 test-utils = ["rcgen", "mpc-core/test-utils"]
 reuse-preproc = ["mpc-core/reuse-preproc"]
 tracy-mem = []
+rv32 = ["jolt-core/rv32", "jolt2-common/rv32", "tracer/rv32"]
 jemalloc-stats = ["dep:tikv-jemalloc-ctl"]

@@ -5,6 +5,7 @@ pub use types::rep3_operand::{promote_operand_to_share, Rep3Operand, PUBLIC_ZERO
 pub use types::rep3_ram::{Rep3RAMAccess, Rep3RAMRead, Rep3RAMWrite, REP3_RAM_NOOP};
 
 use jolt2_common::constants::XLEN;
+pub use jolt2_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt};
 use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
@@ -12,6 +13,35 @@ use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
+
+/// Zero-extend a binary-domain share to u64 (the lookup output ring).
+/// Unlike `downcast`, this handles both T=u64 (no-op) and T=u32→u64 (zero-extend).
+/// Safe for binary (XOR-domain) shares because `as` extension preserves XOR secret sharing.
+pub fn binary_to_output<T>(share: Rep3RingShare<T>) -> Rep3RingShare<u64>
+where
+    T: mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k + num_traits::AsPrimitive<u64>,
+{
+    Rep3RingShare::new_ring(
+        RingElement(share.a.0.as_()),
+        RingElement(share.b.0.as_()),
+    )
+}
+/// Truncate an arithmetic-domain u64 share to XLEN bits, then zero-extend back to u64.
+/// For rv64 this is a no-op. For rv32 this computes `result mod 2^32`.
+/// Safe for arithmetic shares: `(a mod 2^32) + (b mod 2^32) ≡ (a+b) mod 2^32`.
+#[inline]
+pub fn truncate_arithmetic_to_xlen(share: Rep3RingShare<u64>) -> Rep3RingShare<u64> {
+    #[cfg(feature = "rv32")]
+    {
+        let truncated: Rep3RingShare<XlenInt> = downcast(share);
+        binary_to_output(truncated)
+    }
+    #[cfg(not(feature = "rv32"))]
+    {
+        share
+    }
+}
+
 pub use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 pub use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 pub use mpc_core::protocols::rep3_ring::{self as rep3_ring, Rep3RingShare};
@@ -24,7 +54,7 @@ use crate::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
 pub use crate::utils::instruction_utils::bit_to_ring64;
-use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_u128};
+use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_wide};
 use rayon::prelude::*;
 
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
@@ -145,10 +175,13 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
     /// - Mul-index: Pending(RingMulA2B(a, b)) — needs batch mul + A2B.
     ///
     /// Default: computes interleave from binary operands (Ready, no comms).
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = self.to_instruction_inputs();
-        let left = operand_to_binary_u128(&left, party_id);
-        let right = operand_to_binary_u128(&right, party_id);
+        let left = operand_to_binary_wide(&left, party_id);
+        let right = operand_to_binary_wide(&right, party_id);
         FutureRep3Ring::Ready(interleave_bits_shared(left, right))
     }
 
@@ -184,6 +217,7 @@ use tracer::instruction::jal::JAL;
 use tracer::instruction::jalr::JALR;
 use tracer::instruction::lb::LB;
 use tracer::instruction::lbu::LBU;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::ld::LD;
 use tracer::instruction::lh::LH;
 use tracer::instruction::lhu::LHU;
@@ -198,6 +232,7 @@ use tracer::instruction::ori::ORI;
 use tracer::instruction::rem::REM;
 use tracer::instruction::remu::REMU;
 use tracer::instruction::sb::SB;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::sd::SD;
 use tracer::instruction::sh::SH;
 use tracer::instruction::sll::SLL;
@@ -221,20 +256,26 @@ use tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use tracer::instruction::virtual_change_divisor::VirtualChangeDivisor;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW;
 use tracer::instruction::virtual_lw::VirtualLW;
 use tracer::instruction::virtual_move::VirtualMove;
 use tracer::instruction::virtual_movsign::VirtualMovsign;
 use tracer::instruction::virtual_muli::VirtualMULI;
 use tracer::instruction::virtual_pow2::VirtualPow2;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_pow2_w::VirtualPow2W;
 use tracer::instruction::virtual_pow2i::VirtualPow2I;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_pow2i_w::VirtualPow2IW;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_rev8w::VirtualRev8W;
 use tracer::instruction::virtual_rotri::VirtualROTRI;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_rotriw::VirtualROTRIW;
 use tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord;
 use tracer::instruction::virtual_sra::VirtualSRA;
 use tracer::instruction::virtual_srai::VirtualSRAI;
@@ -244,9 +285,11 @@ use tracer::instruction::virtual_sw::VirtualSW;
 use tracer::instruction::virtual_xor_rot::{
     VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
 };
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
 };
+#[cfg(not(feature = "rv32"))]
 use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
 use tracer::instruction::xori::XORI;
@@ -422,6 +465,8 @@ macro_rules! define_rep3_cycle {
 }
 
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+
+#[cfg(not(feature = "rv32"))]
 define_rep3_cycle! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
@@ -439,6 +484,26 @@ define_rep3_cycle! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+    ]
+}
+
+#[cfg(feature = "rv32")]
+define_rep3_cycle! {
+    instructions: [
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
+        ECALL, FENCE, JAL, JALR, LB, LBU, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        MULHU, OR, ORI, REM, REMU, SB, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
+        SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
+        // Virtual
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment,
+        VirtualAssertLTE, VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualAssertMulUNoOverflow, VirtualChangeDivisor,
+        VirtualLW, VirtualSW,
+        VirtualMove, VirtualMovsign, VirtualMULI,
+        VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
     ]
 }
 
@@ -474,7 +539,7 @@ macro_rules! impl_rep3_lookup_query {
             fn to_lookup_index(
                 &self,
                 party_id: PartyID,
-            ) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+            ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
                 match self {
                     Rep3Cycle::NoOp => FutureRep3Ring::Ready(Rep3RingShare::default()),
                     $(
@@ -510,6 +575,7 @@ macro_rules! impl_rep3_lookup_query {
     };
 }
 
+#[cfg(not(feature = "rv32"))]
 impl_rep3_lookup_query! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
@@ -519,12 +585,32 @@ impl_rep3_lookup_query! {
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
+        VirtualLW, VirtualSW,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
         VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
+    ]
+}
+
+#[cfg(feature = "rv32")]
+impl_rep3_lookup_query! {
+    instructions: [
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ECALL, FENCE, JAL, JALR, LUI, MUL, MULHU, OR, ORI,
+        SLT, SLTI, SLTIU, SLTU, SUB, XOR, XORI,
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualChangeDivisor, VirtualAssertMulUNoOverflow,
+        VirtualLW, VirtualSW,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
+        VirtualPow2I, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualROTRI,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63
     ]
 }
 
@@ -552,7 +638,7 @@ pub fn populate_operands_casts<N: Rep3Network>(
     trace: &mut [Rep3Cycle],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<()> {
-    let (binary, operands): (Vec<Rep3RingShare<u64>>, Vec<&mut Rep3Operand>) = trace
+    let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {
@@ -608,6 +694,7 @@ mod ecall;
 mod fence;
 mod jal;
 mod jalr;
+#[cfg(not(feature = "rv32"))]
 mod ld;
 mod lui;
 mod mul;
@@ -615,6 +702,7 @@ mod mulhu;
 mod or;
 mod ori;
 mod rem;
+#[cfg(not(feature = "rv32"))]
 mod sd;
 mod slt;
 mod slti;
@@ -631,21 +719,27 @@ mod virtual_assert_valid_div0;
 mod virtual_assert_valid_unsigned_remainder;
 mod virtual_assert_word_alignment;
 mod virtual_change_divisor;
+mod virtual_lw;
 mod virtual_move;
 mod virtual_movsign;
 mod virtual_muli;
 mod virtual_pow2;
+#[cfg(not(feature = "rv32"))]
 mod virtual_pow2_w;
+#[cfg(not(feature = "rv32"))]
 mod virtual_rev8w;
 mod virtual_rotri;
 mod virtual_shift_right_bitmask;
+#[cfg(not(feature = "rv32"))]
 mod virtual_sign_extend_word;
 mod virtual_sra;
 mod virtual_srai;
 mod virtual_srl;
 mod virtual_srli;
 mod virtual_xor_rot;
+#[cfg(not(feature = "rv32"))]
 mod virtual_xor_rotw;
+#[cfg(not(feature = "rv32"))]
 mod virtual_zero_extend_word;
 mod xor;
 mod xori;

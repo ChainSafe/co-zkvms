@@ -246,12 +246,54 @@ fn dag_correct() {
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
-    let bytecode_d = shared.bytecode.d;
 
-    // Initialize DoryGlobals early so worker threads can access num_columns for daPoint preprocessing.
-    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
-    let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
-    let dory_num_columns = DoryGlobals::get_num_columns();
+    // --- DIAGNOSTIC: compare per-step R1CS inputs ---
+    {
+        use jolt_core::zkvm::r1cs::inputs::{R1CSCycleInputs, JoltR1CSInputs, ALL_R1CS_INPUTS};
+        use jolt_core::field::JoltField;
+
+        // Build vanilla R1CS inputs for each step
+        let vanilla_inputs: Vec<R1CSCycleInputs> = (0..vanilla_trace.len())
+            .map(|t| {
+                R1CSCycleInputs::from_trace::<F>(&shared, &vanilla_trace, t)
+            })
+            .collect();
+
+        // Build co-jolt2 R1CS inputs (reconstruct from all 3 parties' shares)
+        // Use party 0's data and reconstruct with party 0 + party 1 shares
+        use mpc_core::protocols::rep3::PartyID;
+        let party_id = PartyID::ID0;
+
+        // For the first few non-NOOP steps, compare all R1CS inputs
+        let mut diffs = 0;
+        for t in 0..vanilla_trace.len() {
+            let vanilla_row = &vanilla_inputs[t];
+            for &input in ALL_R1CS_INPUTS.iter() {
+                let vanilla_val: F = vanilla_row.to_field(input);
+
+                // Skip flags (they're public and should match)
+                if matches!(input, JoltR1CSInputs::OpFlags(_)) {
+                    continue;
+                }
+
+                // For co-jolt2, compute the expected field value from the shares
+                // We can't easily reconstruct here, so just print vanilla values for non-noop steps
+                if !matches!(vanilla_trace[t], Cycle::NoOp) && !vanilla_val.is_zero() {
+                    if diffs < 5 {
+                        eprintln!("  [vanilla step {t}] {:?} = {:?}", input, vanilla_val);
+                    }
+                }
+            }
+            if !matches!(vanilla_trace[t], Cycle::NoOp) && diffs < 1 {
+                diffs += 1;
+                eprintln!("--- step {t} vanilla R1CS inputs ---");
+                for &input in ALL_R1CS_INPUTS.iter() {
+                    let val: F = vanilla_row.to_field(input);
+                    eprintln!("  {:?} = {:?}", input, val);
+                }
+            }
+        }
+    }
 
     // 4) Vanilla proof up to Stage3.
     let (vanilla_proof, tau) = vanilla_up_to_stage5(
@@ -316,23 +358,11 @@ fn dag_correct() {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
-                let mut pool = edabits::preprocess_pool::<F, _>(
+                edabits::preprocess_pool::<F, _>(
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
                     &mut io_ctx,
-                )?;
-
-                // daPoints for Dory U64Scalars wrap correction (offline)
-                if budget.dapoints > 0 {
-                    let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
-                        &preprocessing.generators,
-                        budget.dapoints / 2,
-                        dory_num_columns,
-                    );
-                    let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
-                    pool.set_dapoints(lazy_dp);
-                }
-                pool
+                )?
             };
 
             let state = StateManagerWorker::new(
@@ -374,6 +404,12 @@ fn dag_correct() {
     );
 
     // 6) Compare commitments.
+    for (i, (r, v)) in rep3_proof.commitments.iter().zip(vanilla_proof.commitments.iter()).enumerate() {
+        if r != v {
+            eprintln!("Commitment mismatch at index {i}");
+        }
+    }
+    assert_eq!(rep3_proof.commitments.len(), vanilla_proof.commitments.len(), "commitment count mismatch");
     assert_eq!(rep3_proof.commitments, vanilla_proof.commitments);
 
     // 7) Compare Stage1 sumcheck proof bytes.

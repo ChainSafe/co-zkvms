@@ -14,7 +14,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        use crate::utils::instruction_utils::operand_to_binary_u128;
+        use crate::utils::instruction_utils::operand_to_binary_wide;
 
         // Same algorithm as VirtualSRLI: the bitmask (rs2) is public because
         // VirtualShiftRightBitmask produces a trivial share from a public shift amount.
@@ -29,7 +29,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
             let bitmask = r.as_public();
-            let x_bits = operand_to_binary_u128(&l, io_ctx.id);
+            let x_bits = operand_to_binary_wide(&l, io_ctx.id);
 
             let num_ones = (bitmask as u64).count_ones();
             let mut ones_seen = 0u32;
@@ -39,7 +39,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
                 let y_i = ((bitmask >> (XLEN - 1 - i)) & 1) != 0;
                 if y_i {
                     let weight = RingElement(1u64 << (num_ones - 1 - ones_seen));
-                    let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1u128);
+                    let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1 as LookupIndexInt);
                     let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
                     result = result + &x_i_u64 * weight;
                     ones_seen += 1;

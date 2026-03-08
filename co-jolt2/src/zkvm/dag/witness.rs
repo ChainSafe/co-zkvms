@@ -1,4 +1,4 @@
-use jolt2_common::constants::XLEN;
+use jolt2_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
@@ -46,7 +46,7 @@ struct Stage1Witness<F: JoltField> {
 
 #[derive(Clone, Debug, Default)]
 pub struct ReadRafWitness {
-    pub lookup_indices: Vec<Either<u128, Rep3RingShare<u128>>>,
+    pub lookup_indices: Vec<Either<LookupIndexInt, Rep3RingShare<LookupIndexInt>>>,
     pub lookup_tables: Vec<Option<LookupTables<XLEN>>>,
     pub is_interleaved_operands: Vec<bool>,
     pub right_operand_public_mask: Vec<Option<u64>>,
@@ -76,7 +76,7 @@ pub struct Stage3Update<F: JoltField> {
     pub pc_sumcheck: Option<(Vec<u64>, Vec<u32>)>,
     pub read_raf_tables_and_masks:
         Option<(Vec<Option<LookupTables<XLEN>>>, Vec<bool>, Vec<Option<u64>>)>,
-    pub read_raf_lookup_indices: Option<Vec<Either<u128, Rep3RingShare<u128>>>>,
+    pub read_raf_lookup_indices: Option<Vec<Either<LookupIndexInt, Rep3RingShare<LookupIndexInt>>>>,
     pub product_inputs: Option<ProductInputs<F>>,
 }
 
@@ -417,7 +417,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
 
     pub fn to_right_public_input(&self) -> F {
         if self.flag(CircuitFlags::RightOperandIsImm) {
-            F::from_i128(self.imm())
+            F::from_i128(self.imm() as XlenInt as i128)
         } else {
             F::zero()
         }
@@ -434,7 +434,9 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         let right = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
             Rep3Value::Shared(self.rs2_value())
         } else if self.flag(CircuitFlags::RightOperandIsImm) {
-            Rep3Value::Public(F::from_i128(self.imm()))
+            // Truncate to XLEN bits (unsigned), matching vanilla Jolt's
+            // `imm as u32 as i128` for rv32 / `imm as u64 as i128` for rv64.
+            Rep3Value::Public(F::from_i128(self.imm() as XlenInt as i128))
         } else {
             Rep3Value::Public(F::zero())
         };
@@ -457,7 +459,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         let right_u64 = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
             Rep3Value::Shared(self.rs2_value())
         } else if self.flag(CircuitFlags::RightOperandIsImm) {
-            Rep3Value::Public(F::from_u64(self.imm() as u64))
+            Rep3Value::Public(F::from_u64(self.imm() as XlenInt as u64))
         } else {
             Rep3Value::Public(F::zero())
         };
@@ -467,12 +469,12 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         if self.flag(CircuitFlags::AddOperands) {
             (zero, left_u64.add(&right_u64, party_id))
         } else if self.flag(CircuitFlags::SubtractOperands) {
-            let two_pow_64 = F::from_u128(1u128 << 64);
+            let two_pow_xlen = F::from_u128(1u128 << XLEN);
             (
                 zero,
                 left_u64
                     .sub(&right_u64, party_id)
-                    .add_public(two_pow_64, party_id),
+                    .add_public(two_pow_xlen, party_id),
             )
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
@@ -497,7 +499,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         let right = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
             self.rs2_value()
         } else if self.flag(CircuitFlags::RightOperandIsImm) {
-            promote_to_trivial_share(party_id, F::from_i128(self.imm()))
+            promote_to_trivial_share(party_id, F::from_i128(self.imm() as XlenInt as i128))
         } else {
             Rep3PrimeFieldShare::zero_share()
         };
@@ -520,7 +522,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         let right_u64 = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
             self.rs2_value()
         } else if self.flag(CircuitFlags::RightOperandIsImm) {
-            promote_to_trivial_share(party_id, F::from_u64(self.imm() as u64))
+            promote_to_trivial_share(party_id, F::from_u64(self.imm() as XlenInt as u64))
         } else {
             Rep3PrimeFieldShare::zero_share()
         };
@@ -530,8 +532,8 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         if self.flag(CircuitFlags::AddOperands) {
             (zero, left_u64 + right_u64)
         } else if self.flag(CircuitFlags::SubtractOperands) {
-            let two_pow_64 = promote_to_trivial_share(party_id, F::from_u128(1u128 << 64));
-            (zero, left_u64 - right_u64 + two_pow_64)
+            let two_pow_xlen = promote_to_trivial_share(party_id, F::from_u128(1u128 << XLEN));
+            (zero, left_u64 - right_u64 + two_pow_xlen)
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {

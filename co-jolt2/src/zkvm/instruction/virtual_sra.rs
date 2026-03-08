@@ -14,7 +14,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
         io_ctx: &mut IoContext<N>,
         out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        use crate::utils::instruction_utils::operand_to_binary_u128;
+        use crate::utils::instruction_utils::operand_to_binary_wide;
 
         // Arithmetic right shift = logical right shift + sign extension.
         //
@@ -29,7 +29,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
             let bitmask = r.as_public();
-            let x_bits = operand_to_binary_u128(&l, io_ctx.id);
+            let x_bits = operand_to_binary_wide(&l, io_ctx.id);
 
             let mut y_bits = Vec::with_capacity(XLEN);
             for i in 0..XLEN {
@@ -42,7 +42,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
 
             let mut srl_result = Rep3RingShare::default();
             for i in 0..XLEN {
-                let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1u128);
+                let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1 as LookupIndexInt);
                 let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
 
                 if y_bits[i] {
@@ -62,7 +62,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
             }
 
             // sign_bit is the MSB of x (shared binary bit)
-            let sign_bit = (x_bits >> (XLEN - 1)) & RingElement(1u128);
+            let sign_bit = (x_bits >> (XLEN - 1)) & RingElement(1 as LookupIndexInt);
             let sign_bit_u64: Rep3RingShare<u64> = downcast(sign_bit);
 
             // result = srl_result + sign_bit * sign_extension

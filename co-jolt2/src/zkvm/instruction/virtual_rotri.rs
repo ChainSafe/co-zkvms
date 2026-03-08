@@ -23,12 +23,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
                 RingElement(x.a.0.rotate_right(n)),
                 RingElement(x.b.0.rotate_right(n)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
+            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
     }
 }
 
+#[cfg(not(feature = "rv32"))]
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
         (

@@ -30,7 +30,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ANDI> {
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
+                *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(z));
             });
         Ok(())
     }

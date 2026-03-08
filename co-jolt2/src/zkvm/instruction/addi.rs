@@ -9,10 +9,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ADDI> {
         )
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
-        let l = left.as_arithmetic_or_trivial_u128(party_id);
-        let r = right.as_arithmetic_or_trivial_u128(party_id);
+        let l = left.as_arithmetic_or_trivial_wide(party_id);
+        let r = right.as_arithmetic_or_trivial_wide(party_id);
         FutureRep3Ring::a2b(l + r)
     }
 
@@ -24,10 +24,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ADDI> {
     ) -> eyre::Result<()> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-            *out = FutureRep3Ring::cast_to_field(
+            *out = FutureRep3Ring::cast_to_field(truncate_arithmetic_to_xlen(
                 l.as_arithmetic_or_trivial::<u64>(io_ctx.id)
                     + r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-            );
+            ));
         });
         Ok(())
     }
