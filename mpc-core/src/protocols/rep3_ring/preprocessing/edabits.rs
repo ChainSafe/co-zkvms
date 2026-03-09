@@ -1805,7 +1805,13 @@ where
     };
 
     Ok(LazyEdaBitsRing::new(
-        seed1, pos1, seed2, pos2, num, alpha2_flat, party_id,
+        seed1,
+        pos1,
+        seed2,
+        pos2,
+        num,
+        alpha2_flat,
+        party_id,
     ))
 }
 
@@ -2765,7 +2771,7 @@ mod tests {
             },
             || (),
             move |party_bins: Vec<Rep3RingShare<U66>>,
-             mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+                  mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let mut lazy = random_edabits_ring_lazy::<U66, _>(n, &mut io_ctx)?;
                 let batch = lazy.take_batch(n);
                 let io = io_ctx.main();

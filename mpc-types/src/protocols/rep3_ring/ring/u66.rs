@@ -7,9 +7,7 @@ use num_bigint::BigUint;
 use num_traits::{One, WrappingAdd, WrappingMul, WrappingNeg, WrappingSub, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::ops::{
-    BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr,
-};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr};
 
 use super::int_ring::IntRing2k;
 use crate::protocols::rep3::IoResult;

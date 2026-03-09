@@ -461,7 +461,8 @@ where
         }
         MixedBatch::Public(pubs) => {
             for (i, &p) in pubs.iter().enumerate() {
-                let val = suffix.suffix_mle::<XLEN>(LookupBits::new((p & mask) as u128, suffix_len));
+                let val =
+                    suffix.suffix_mle::<XLEN>(LookupBits::new((p & mask) as u128, suffix_len));
                 out.extend_ready(
                     std::iter::once(base + i),
                     std::iter::once(Rep3Value::Public(F::from_u64(val))),
@@ -475,7 +476,8 @@ where
             for (i, entry) in mixed.iter().enumerate() {
                 match entry {
                     Either::Public(p) => {
-                        let val = suffix.suffix_mle::<XLEN>(LookupBits::new((*p & mask) as u128, suffix_len));
+                        let val = suffix
+                            .suffix_mle::<XLEN>(LookupBits::new((*p & mask) as u128, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
                             std::iter::once(Rep3Value::Public(F::from_u64(val))),

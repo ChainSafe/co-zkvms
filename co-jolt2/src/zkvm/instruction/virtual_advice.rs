@@ -6,7 +6,20 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         (Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_public_lookup_output(&self) -> Option<u64> {
+        Some(match XLEN {
+            #[cfg(test)]
+            8 => self.instruction.advice as u8 as u64,
+            32 => self.instruction.advice as u32 as u64,
+            64 => self.instruction.advice,
+            _ => panic!("{XLEN}-bit word size is unsupported"),
+        })
+    }
+
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let advice = match XLEN {
             #[cfg(test)]
             8 => self.instruction.advice as u8 as LookupIndexInt,
@@ -20,6 +33,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         ))
     }
 
+    // TODO: can advice be public?
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
@@ -28,17 +42,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
     ) -> eyre::Result<()> {
         // RangeCheckTable is the identity function: output = input = advice value.
         itertools::izip!(steps, out).for_each(|(step, out)| {
-            // `VirtualAdvice::to_lookup_index` is `Ready(trivial_share(advice))`, so we can
-            // recover the public advice value locally without any MPC communication.
-            let idx_fut = Rep3LookupQuery::<XLEN>::to_lookup_index(*step, io_ctx.id);
-            let advice_val = match idx_fut {
-                FutureRep3Ring::Ready(s) => s.a.0,
-                _ => unreachable!("VirtualAdvice lookup index must be Ready(trivial_share)"),
-            };
+            let advice_val = step
+                .to_public_lookup_output()
+                .expect("VirtualAdvice lookup output must be public");
+            // Advice is public instruction metadata, so each party can promote it locally.
             *out = FutureRep3Ring::Ready(
                 mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share(
                     io_ctx.id,
-                    F::from_u64(advice_val as u64),
+                    F::from_u64(advice_val),
                 ),
             );
         });

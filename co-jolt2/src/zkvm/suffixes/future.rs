@@ -226,10 +226,8 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let _span =
                             tracing::info_span!("ring_to_field_b2a_many", n = chunk_len).entered();
 
-                        let chunk_vals: Vec<Rep3RingShare<$ring>> =
-                            self.$val[off..end].to_vec();
-                        let max_forks_cap =
-                            b2a_max_forks_cap.unwrap_or(io_ctx.max_forks()).max(1);
+                        let chunk_vals: Vec<Rep3RingShare<$ring>> = self.$val[off..end].to_vec();
+                        let max_forks_cap = b2a_max_forks_cap.unwrap_or(io_ctx.max_forks()).max(1);
                         let forks_by_size = chunk_len.div_ceil(b2a_min_inner_chunk);
                         let forks_effective = forks_by_size.clamp(1, max_forks_cap);
 

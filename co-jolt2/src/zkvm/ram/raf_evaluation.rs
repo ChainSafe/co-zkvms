@@ -126,8 +126,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let base: [F; DEGREE] = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals = self.ra.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let unmap_evals = self.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                let ra_evals = self
+                    .ra
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let unmap_evals = self
+                    .unmap
+                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
                 [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
             })
             .reduce(

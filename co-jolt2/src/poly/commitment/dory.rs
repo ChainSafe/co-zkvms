@@ -2,11 +2,11 @@ use crate::poly::{
     Rep3CompactPolynomial, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly,
 };
 use crate::utils::types::MaybeShared;
+use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ec::pairing::MillerLoopOutput;
 use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
 use dory::{DoryProofBuilder, ProofBuilder};
@@ -1328,8 +1328,8 @@ mod tests {
     use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as VanillaOneHotPolynomial;
     use jolt_core::transcripts::Blake2bTranscript;
     use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
-    use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
     use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
     use mpc_core::protocols::rep3_ring;
     use mpc_core::protocols::rep3_ring::conversion as ring_conv;
     use mpc_core::protocols::rep3_ring::ring::bit::Bit;
@@ -1426,13 +1426,18 @@ mod tests {
         let k = 256usize;
         let num_vars = t.log_2() + k.log_2();
 
-        let setup =
-            std::sync::Arc::new(<DoryCommitmentScheme as CommitmentScheme>::setup_prover(
-                (2 * sigma).max(num_vars),
-            ));
+        let setup = std::sync::Arc::new(<DoryCommitmentScheme as CommitmentScheme>::setup_prover(
+            (2 * sigma).max(num_vars),
+        ));
 
         let nonzero_indices_plain: Vec<Option<u8>> = (0..t)
-            .map(|i| if i % 5 == 0 { None } else { Some((i % k) as u8) })
+            .map(|i| {
+                if i % 5 == 0 {
+                    None
+                } else {
+                    Some((i % k) as u8)
+                }
+            })
             .collect();
         let vanilla_poly =
             VanillaOneHotPolynomial::<Fr>::from_indices(nonzero_indices_plain.clone(), k);
@@ -1474,24 +1479,18 @@ mod tests {
             Rep3MultilinearPolynomial::shared_one_hot(one_hot)
         });
 
-        let (comm_0, hint_0) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &rep3_polys[0],
-                &setup,
-                false,
-            );
-        let (comm_1, hint_1) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &rep3_polys[1],
-                &setup,
-                false,
-            );
-        let (comm_2, hint_2) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &rep3_polys[2],
-                &setup,
-                false,
-            );
+        let (comm_0, hint_0) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[0], &setup, false);
+        let (comm_1, hint_1) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[1], &setup, false);
+        let (comm_2, hint_2) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[2], &setup, false);
 
         let reconstructed_commitment = <DoryCommitmentScheme as Rep3CommitmentScheme<
             Fr,

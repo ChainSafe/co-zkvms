@@ -2,10 +2,10 @@ use crate::field::JoltField;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::types::MaybeShared;
 use jolt_core::transcripts::Transcript;
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::network::IoContextPool;
+use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use std::borrow::Borrow;
 
 pub use jolt_core::poly::commitment::commitment_scheme;
@@ -59,10 +59,12 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         commit_to_public: bool,
         _io_ctx: &mut IoContextPool<N>,
         _preproc: &mut PreprocessingPool<F>,
-    ) -> eyre::Result<Vec<(
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    )>>
+    ) -> eyre::Result<
+        Vec<(
+            MaybeShared<Self::Commitment>,
+            MaybeShared<Self::OpeningProofHint>,
+        )>,
+    >
     where
         U: Borrow<Rep3MultilinearPolynomial<F>> + Sync,
         N: Rep3NetworkWorker,

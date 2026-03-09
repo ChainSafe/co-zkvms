@@ -2258,8 +2258,10 @@ where
         for id_chunk in identity_idx.chunks(chunk_size) {
             let _c =
                 trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len()).entered();
-            let id_shares: Vec<Rep3RingShare<T>> =
-                id_chunk.iter().map(|b| downcast::<LookupIndexInt, T>(*b)).collect();
+            let id_shares: Vec<Rep3RingShare<T>> = id_chunk
+                .iter()
+                .map(|b| downcast::<LookupIndexInt, T>(*b))
+                .collect();
             let id_batch = pool.take_edabits::<T>(id_shares.len());
             let out =
                 edabits::ring_to_field_b2a_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;

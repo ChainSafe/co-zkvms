@@ -155,10 +155,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         let party_id = io_ctx.party_id();
         eyre::ensure!(self.is_bound(), "expected bound coefficients");
 
-        if std::env::var("CO_JOLT2_STAGE1_FORCE_FLAT_BEFORE_ROUND").is_ok() {
-            self.maybe_flatten_bound_shards_force(party_id);
-        }
-
         let (t0, t_inf) = match &self.bound_coeffs {
             BoundCoeffs::None => return Err(eyre::eyre!("expected bound coefficients")),
             BoundCoeffs::Sharded(shards) => {
@@ -193,32 +189,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
 
     pub fn final_evals_additive(&self, party_id: PartyID) -> [AdditiveShare<F>; 3] {
         debug_assert_eq!(self.dense_len, 1);
-        if std::env::var("CO_JOLT2_DEBUG_STAGE1_FINAL_INDICES").is_ok() {
-            match &self.bound_coeffs {
-                BoundCoeffs::None => {}
-                BoundCoeffs::Sharded(shards) => {
-                    for (shard_idx, shard) in shards.iter().enumerate() {
-                        for coeff in shard {
-                            assert!(
-                                coeff.index < 3,
-                                "final sharded coeff index out of range: shard={} index={}",
-                                shard_idx,
-                                coeff.index
-                            );
-                        }
-                    }
-                }
-                BoundCoeffs::Flat(coeffs) => {
-                    for coeff in coeffs {
-                        assert!(
-                            coeff.index < 3,
-                            "final flat coeff index out of range: index={}",
-                            coeff.index
-                        );
-                    }
-                }
-            }
-        }
         let mut out = [
             AdditiveShare::<F>::zero(),
             AdditiveShare::<F>::zero(),
@@ -249,7 +219,7 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         eq_poly: &GruenSplitEqPolynomial<F>,
         party_id: PartyID,
     ) {
-        if std::env::var("CO_JOLT2_STAGE1_FORCE_FLAT").is_err() && eq_poly.E_in_current_len() > 1 {
+        if eq_poly.E_in_current_len() > 1 {
             return;
         }
 
@@ -292,46 +262,6 @@ impl<F: JoltField> Rep3SpartanInterleavedPolynomial<F> {
         self.bound_coeffs = BoundCoeffs::Flat(flat);
         drop(_span);
     }
-
-    pub fn debug_project_b_after_prefixes(
-        key: &UniformSpartanKey<F>,
-        cycle_inputs: &[Rep3R1CSCycleInputs<F>],
-        party_id: PartyID,
-        challenges_low_to_high: &[F],
-    ) -> Vec<Vec<(usize, AdditiveShare<F>)>> {
-        if challenges_low_to_high.is_empty() {
-            return vec![];
-        }
-
-        let mut shards = round0_build_bound_shards_from_cycle_inputs(
-            cycle_inputs,
-            party_id,
-            challenges_low_to_high[0],
-            key.padded_row_constraint_per_step(),
-        );
-
-        let mut out = vec![project_b_sharded_additive(&shards, party_id)];
-        for &r in challenges_low_to_high.iter().skip(1) {
-            bind_shards_low_to_high_in_place(&mut shards, party_id, r);
-            out.push(project_b_sharded_additive(&shards, party_id));
-        }
-        out
-    }
-}
-
-fn project_b_sharded_additive<F: JoltField>(
-    shards: &[Vec<SparseCoefficient<Rep3Value<F>>>],
-    party_id: PartyID,
-) -> Vec<(usize, AdditiveShare<F>)> {
-    let mut out = Vec::new();
-    for shard in shards {
-        for coeff in shard {
-            if coeff.index % 3 == 1 {
-                out.push((coeff.index, coeff.value.into_additive(party_id)));
-            }
-        }
-    }
-    out
 }
 
 fn round0_quadratic_evals_from_cycle_inputs<F: JoltField>(
@@ -425,8 +355,7 @@ fn round0_quadratic_evals_from_cycle_inputs<F: JoltField>(
                     let az_inf = az1.sub(&az0, party_id);
                     let bz_inf = bz1.sub(&bz0, party_id);
 
-                    let abc0 =
-                        az0.mul(&bz0).into_additive(party_id) - cz0.into_additive(party_id);
+                    let abc0 = az0.mul(&bz0).into_additive(party_id) - cz0.into_additive(party_id);
                     let ab_inf = az_inf.mul(&bz_inf).into_additive(party_id);
 
                     t0 += abc0 * weight;
@@ -475,9 +404,8 @@ fn round0_build_bound_shards_from_cycle_inputs<F: JoltField>(
             let step_start = chunk_idx * chunk_size;
             let step_end = core::cmp::min((chunk_idx + 1) * chunk_size, num_steps);
 
-            let mut out: Vec<SparseCoefficient<Rep3Value<F>>> = Vec::with_capacity(
-                (step_end - step_start) * num_constraints.saturating_div(2) * 3,
-            );
+            let mut out: Vec<SparseCoefficient<Rep3Value<F>>> =
+                Vec::with_capacity((step_end - step_start) * num_constraints.saturating_div(2) * 3);
 
             for step_idx in step_start..step_end {
                 let inputs = &cycle_inputs[step_idx];
@@ -539,45 +467,39 @@ fn round0_build_bound_shards_from_cycle_inputs<F: JoltField>(
                     let base = 3 * block;
 
                     if a0_present || a1_present {
-                        let low = eval_lc_rep3_shared(
-                            UNIFORM_R1CS[c0_idx].cons.a,
-                            inputs,
-                            party_id,
-                        );
+                        let low =
+                            eval_lc_rep3_shared(UNIFORM_R1CS[c0_idx].cons.a, inputs, party_id);
                         let high = if c1_idx < num_constraints {
                             eval_lc_rep3_shared(UNIFORM_R1CS[c1_idx].cons.a, inputs, party_id)
                         } else {
                             mpc_core::protocols::rep3::Rep3PrimeFieldShare::zero_share()
                         };
-                        let v = low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
+                        let v =
+                            low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
                         out.push((base, Rep3Value::Shared(v)).into());
                     }
                     if b0_present || b1_present {
-                        let low = eval_lc_rep3_shared(
-                            UNIFORM_R1CS[c0_idx].cons.b,
-                            inputs,
-                            party_id,
-                        );
+                        let low =
+                            eval_lc_rep3_shared(UNIFORM_R1CS[c0_idx].cons.b, inputs, party_id);
                         let high = if c1_idx < num_constraints {
                             eval_lc_rep3_shared(UNIFORM_R1CS[c1_idx].cons.b, inputs, party_id)
                         } else {
                             mpc_core::protocols::rep3::Rep3PrimeFieldShare::zero_share()
                         };
-                        let v = low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
+                        let v =
+                            low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
                         out.push((base + 1, Rep3Value::Shared(v)).into());
                     }
                     if c0_present || c1_present {
-                        let low = eval_lc_rep3_shared(
-                            UNIFORM_R1CS[c0_idx].cons.c,
-                            inputs,
-                            party_id,
-                        );
+                        let low =
+                            eval_lc_rep3_shared(UNIFORM_R1CS[c0_idx].cons.c, inputs, party_id);
                         let high = if c1_idx < num_constraints {
                             eval_lc_rep3_shared(UNIFORM_R1CS[c1_idx].cons.c, inputs, party_id)
                         } else {
                             mpc_core::protocols::rep3::Rep3PrimeFieldShare::zero_share()
                         };
-                        let v = low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
+                        let v =
+                            low + mpc_core::protocols::rep3::arithmetic::mul_public(high - low, r);
                         out.push((base + 2, Rep3Value::Shared(v)).into());
                     }
                 }
@@ -683,38 +605,11 @@ fn bind_shards_low_to_high_in_place<F: JoltField>(
     drop(_span);
 }
 
-fn binding_output_length<F: JoltField>(coeffs: &[SparseCoefficient<Rep3Value<F>>]) -> usize {
-    let mut out = 0usize;
-    let mut i = 0;
-    while i < coeffs.len() {
-        let block = coeffs[i].index / 6;
-        let mut has_a = false;
-        let mut has_b = false;
-        let mut has_c = false;
-        while i < coeffs.len() && coeffs[i].index / 6 == block {
-            match coeffs[i].index % 6 {
-                0 | 3 => has_a = true,
-                1 | 4 => has_b = true,
-                2 | 5 => has_c = true,
-                _ => unreachable!(),
-            }
-            i += 1;
-        }
-    out += has_a as usize + has_b as usize + has_c as usize;
-    }
-    out
-}
-
 fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
     coeffs: &mut Vec<SparseCoefficient<Rep3Value<F>>>,
     party_id: PartyID,
     r: F,
 ) {
-    if std::env::var("CO_JOLT2_STAGE1_SAFE_BIND").is_ok() {
-        *coeffs = bind_sparse_coeffs_low_to_high_safe(coeffs, party_id, r);
-        return;
-    }
-
     let _span = tracing::trace_span!(
         "bind_sparse_coeffs_low_to_high_in_place",
         in_len = coeffs.len(),
@@ -789,62 +684,6 @@ fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
 
     coeffs.truncate(write);
     drop(_span);
-}
-
-fn bind_sparse_coeffs_low_to_high_safe<F: JoltField>(
-    coeffs: &[SparseCoefficient<Rep3Value<F>>],
-    party_id: PartyID,
-    r: F,
-) -> Vec<SparseCoefficient<Rep3Value<F>>> {
-    let mut out = Vec::with_capacity(binding_output_length(coeffs));
-    let mut i = 0usize;
-    while i < coeffs.len() {
-        let block = coeffs[i].index / 6;
-
-        let mut a0 = None;
-        let mut b0 = None;
-        let mut c0 = None;
-        let mut a1 = None;
-        let mut b1 = None;
-        let mut c1 = None;
-
-        while i < coeffs.len() && coeffs[i].index / 6 == block {
-            match coeffs[i].index % 6 {
-                0 => a0 = Some(coeffs[i].value),
-                1 => b0 = Some(coeffs[i].value),
-                2 => c0 = Some(coeffs[i].value),
-                3 => a1 = Some(coeffs[i].value),
-                4 => b1 = Some(coeffs[i].value),
-                5 => c1 = Some(coeffs[i].value),
-                _ => unreachable!(),
-            }
-            i += 1;
-        }
-
-        let base = 3 * block;
-
-        if a0.is_some() || a1.is_some() {
-            let low = a0.unwrap_or_else(Rep3Value::zero_public);
-            let high = a1.unwrap_or_else(Rep3Value::zero_public);
-            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base, v).into());
-        }
-
-        if b0.is_some() || b1.is_some() {
-            let low = b0.unwrap_or_else(Rep3Value::zero_public);
-            let high = b1.unwrap_or_else(Rep3Value::zero_public);
-            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base + 1, v).into());
-        }
-
-        if c0.is_some() || c1.is_some() {
-            let low = c0.unwrap_or_else(Rep3Value::zero_public);
-            let high = c1.unwrap_or_else(Rep3Value::zero_public);
-            let v = low.add(&high.sub(&low, party_id).mul_public(r), party_id);
-            out.push((base + 2, v).into());
-        }
-    }
-    out
 }
 
 fn eval_lc_rep3<F: JoltField>(

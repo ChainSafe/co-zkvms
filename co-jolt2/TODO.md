@@ -1,5 +1,8 @@
 # co-jolt2 Deferred Optimizations
 
+## Critical
+VirtualAdvice - public `advice`!
+
 ring_to_field_b2a_many
 would it be better to pass batch: EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
 

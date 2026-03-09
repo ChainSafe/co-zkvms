@@ -21,10 +21,7 @@ pub fn binary_to_output<T>(share: Rep3RingShare<T>) -> Rep3RingShare<u64>
 where
     T: mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k + num_traits::AsPrimitive<u64>,
 {
-    Rep3RingShare::new_ring(
-        RingElement(share.a.0.as_()),
-        RingElement(share.b.0.as_()),
-    )
+    Rep3RingShare::new_ring(RingElement(share.a.0.as_()), RingElement(share.b.0.as_()))
 }
 pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
     shares: &[Rep3RingShare<u64>],
@@ -33,11 +30,15 @@ pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
     #[cfg(not(feature = "rv64"))]
     {
         let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
-        Ok(rep3_ring::casts::ring_to_field_many_selector(&truncated, io_ctx)?)
+        Ok(rep3_ring::casts::ring_to_field_many_selector(
+            &truncated, io_ctx,
+        )?)
     }
     #[cfg(feature = "rv64")]
     {
-        Ok(rep3_ring::casts::ring_to_field_many_selector(shares, io_ctx)?)
+        Ok(rep3_ring::casts::ring_to_field_many_selector(
+            shares, io_ctx,
+        )?)
     }
 }
 
@@ -167,6 +168,10 @@ pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
 /// Returns shared operands instead of plaintext values.
 pub trait Rep3LookupQuery<const XLEN: usize> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
+
+    fn to_public_lookup_output(&self) -> Option<u64> {
+        None
+    }
 
     /// Returns a FutureRep3Ring representing the lookup index.
     /// - Interleave instructions: Ready(interleaved) — no network needed.
@@ -543,6 +548,21 @@ macro_rules! impl_rep3_lookup_query {
                     Rep3Cycle::NoOp => FutureRep3Ring::Ready(Rep3RingShare::default()),
                     $(
                         Rep3Cycle::$instr(cycle) => Rep3LookupQuery::<XLEN>::to_lookup_index(cycle, party_id),
+                    )*
+                    _ => panic!(
+                        "Unexpected instruction for Rep3LookupQuery: {:?}",
+                        self.instruction()
+                    ),
+                }
+            }
+
+            fn to_public_lookup_output(&self) -> Option<u64> {
+                match self {
+                    Rep3Cycle::NoOp => None,
+                    $(
+                        Rep3Cycle::$instr(cycle) => {
+                            Rep3LookupQuery::<XLEN>::to_public_lookup_output(cycle)
+                        },
                     )*
                     _ => panic!(
                         "Unexpected instruction for Rep3LookupQuery: {:?}",

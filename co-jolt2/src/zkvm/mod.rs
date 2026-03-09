@@ -309,16 +309,18 @@ mod tests {
                     }
                     // Wrap masks for DaBit-based wrap-m extraction (offline)
                     if budget.wrap_masks > 0 {
-                        let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
-                            budget.wrap_masks,
-                            io_ctx.main(),
-                        )?;
+                        let wm =
+                            mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
+                                budget.wrap_masks,
+                                io_ctx.main(),
+                            )?;
                         pool.set_wrap_masks(wm);
                     }
                     // Ring edaBits (U66) for ring-domain B2A (offline)
                     if budget.ring_edabits_u66 > 0 {
                         let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
-                            mpc_core::protocols::rep3_ring::ring::u66::U66, _,
+                            mpc_core::protocols::rep3_ring::ring::u66::U66,
+                            _,
                         >(budget.ring_edabits_u66, &mut io_ctx)?;
                         pool.set_ring_edabits_u66(eb);
                     }

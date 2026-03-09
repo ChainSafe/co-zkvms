@@ -105,7 +105,7 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
         // rs1 holds the shift/exponent amount — keep it public
         Cycle::VirtualPow2(_) | Cycle::VirtualShiftRightBitmask(_) => &[0], // rs1
         #[cfg(feature = "rv64")]
-        Cycle::VirtualPow2W(_) => &[0], // rs1
+        Cycle::VirtualPow2W(_) => &[0],     // rs1
         // rs2 holds the bitmask (from VirtualShiftRightBitmask) — keep it public
         Cycle::VirtualSRL(_) | Cycle::VirtualSRA(_) => &[1], // rs2
         _ => &[],
@@ -134,7 +134,10 @@ fn share_cycle(
                 let op = Rep3Operand::Public(v);
                 [op, op, op]
             } else {
-                let s = rep3_ring::binary::generate_shares_rep3(v as jolt2_common::constants::XlenInt, rng);
+                let s = rep3_ring::binary::generate_shares_rep3(
+                    v as jolt2_common::constants::XlenInt,
+                    rng,
+                );
                 [
                     Rep3Operand::from_binary(s[0]),
                     Rep3Operand::from_binary(s[1]),

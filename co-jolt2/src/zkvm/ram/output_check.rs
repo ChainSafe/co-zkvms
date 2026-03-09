@@ -446,12 +446,12 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let base: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals = self
-                    .inc
-                    .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
-                let wa_evals: Vec<F> = self
-                    .wa
-                    .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
+                let inc_evals =
+                    self.inc
+                        .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
+                let wa_evals: Vec<F> =
+                    self.wa
+                        .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
 
                 let mut result = vec![AdditiveShare::<F>::zero(); DEGREE_VAL_FINAL];
                 for d in 0..DEGREE_VAL_FINAL {
