@@ -7,7 +7,7 @@ use crate::utils::fwht::{
 };
 use crate::utils::types::{Either, Rep3Value};
 use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use jolt2_common::constants::XLEN;
+use jolt2_common::constants::{LookupIndexInt, XLEN};
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 use jolt_core::poly::multilinear_polynomial::{
@@ -255,7 +255,7 @@ struct EvalSegment {
 /// Returns `(segments, all_field)` where each segment maps `(table_idx, suffix_idx)`
 /// to a `[base..base+n)` slice of `all_field`.
 fn table_suffixes_mle<T, F, N>(
-    lookup_indices: &[Either<u128, Rep3RingShare<u128>>],
+    lookup_indices: &[Either<LookupIndexInt, Rep3RingShare<LookupIndexInt>>],
     lookup_indices_by_table: &[Vec<usize>],
     right_operand_public_mask: &[Option<u64>],
     suffix_len: usize,
@@ -279,10 +279,10 @@ where
 
     type H<T> = <T as Uninterleavable>::Half;
 
-    let suffix_mask: u128 = if suffix_len >= 128 {
-        u128::MAX
+    let suffix_mask: LookupIndexInt = if suffix_len >= LookupIndexInt::BITS as usize {
+        LookupIndexInt::MAX
     } else {
-        (1u128 << suffix_len) - 1
+        ((1 as LookupIndexInt) << suffix_len) - 1
     };
     let half_bits = suffix_len / 2;
 
@@ -301,7 +301,7 @@ where
 
         // Build SuffixBitsBatch for this table
         let data: SuffixBitsBatch<T> = if uses_interleaved {
-            let entries: Vec<Either<u128, Rep3RingShare<T>>> = table_cycles
+            let entries: Vec<Either<LookupIndexInt, Rep3RingShare<T>>> = table_cycles
                 .iter()
                 .map(|&j| match &lookup_indices[j] {
                     Either::Public(p) => Either::Public(*p & suffix_mask),
@@ -604,9 +604,9 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
 /// - `s_right[i]`: `Some(share)` if right is shared, `None` if right is public (mixed)
 /// - `s_identity`: field share for each identity cycle
 fn q_polys_b2a<T, F, N>(
-    interleaved_u128: Vec<Rep3RingShare<u128>>,
+    interleaved_idx: Vec<Rep3RingShare<LookupIndexInt>>,
     shared_right_idx: &[usize],
-    identity_u128: Vec<Rep3RingShare<u128>>,
+    identity_idx: Vec<Rep3RingShare<LookupIndexInt>>,
     io_ctx: &mut IoContextPool<N>,
     pool: &mut PreprocessingPool<F>,
 ) -> eyre::Result<(
@@ -617,15 +617,15 @@ fn q_polys_b2a<T, F, N>(
 where
     T: crate::zkvm::suffixes::Uninterleavable,
     T::Half: AsPrimitive<T>,
-    u128: AsPrimitive<T>,
+    LookupIndexInt: AsPrimitive<T>,
     Standard: Distribution<T> + Distribution<T::Half>,
     F: JoltField,
     N: Rep3NetworkWorker,
 {
     use mpc_core::protocols::rep3_ring::edabits;
 
-    let n_il = interleaved_u128.len();
-    let n_id = identity_u128.len();
+    let n_il = interleaved_idx.len();
+    let n_id = identity_idx.len();
     let chunk_size = std::env::var("READRAF_Q_B2A_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -634,9 +634,9 @@ where
 
     let _span = trace_span!("q_polys_b2a", n_il, n_id, chunk = chunk_size, k = T::K).entered();
 
-    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) = interleaved_u128
+    let (xs, ys): (Vec<Rep3RingShare<T::Half>>, Vec<Rep3RingShare<T::Half>>) = interleaved_idx
         .par_iter()
-        .map(|b| downcast::<u128, T>(*b))
+        .map(|b| downcast::<LookupIndexInt, T>(*b))
         .map(|b| T::uninterleave(b))
         .unzip();
 
@@ -676,11 +676,11 @@ where
     let s_identity = if n_id > 0 {
         let _id = trace_span!("q_polys_b2a_id", n = n_id).entered();
         let mut out_all: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n_id);
-        for id_chunk in identity_u128.chunks(chunk_size) {
+        for id_chunk in identity_idx.chunks(chunk_size) {
             let _c =
                 trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len()).entered();
             let id_shares: Vec<Rep3RingShare<T>> =
-                id_chunk.iter().map(|b| downcast::<u128, T>(*b)).collect();
+                id_chunk.iter().map(|b| downcast::<LookupIndexInt, T>(*b)).collect();
             let id_batch = pool.take_edabits::<T>(id_shares.len());
             let out =
                 edabits::ring_to_field_b2a_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;

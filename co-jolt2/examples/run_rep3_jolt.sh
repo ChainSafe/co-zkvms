@@ -84,12 +84,15 @@ if [ -n "${MALLOC_CONF_EFFECTIVE}" ]; then
 fi
 
 PROOF_ARGS=()
+COORD_PROOF_ARGS=()
 if [ -n "$RAYON_THREADS" ]; then
   PROOF_ARGS+=(--rayon-threads "$RAYON_THREADS")
+  COORD_PROOF_ARGS+=(--rayon-threads "$RAYON_THREADS")
 fi
 PROOF_ARGS+=(--network-forks "$NETWORK_FORKS_EFFECTIVE")
 if [ "$REPEAT_PROOFS" -gt 1 ]; then
   PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
+  COORD_PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
 fi
 
 TIME_CMD=()
@@ -110,7 +113,11 @@ fi
 # Build the example binary (release mode)
 # Note: Guest ELF is auto-compiled by Program::build() on first run
 cargo build --example rep3_jolt --release --features "$FEATURES"
-cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release
+if [ "$RV64" = "1" ]; then
+  cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release --features rv64
+else
+  cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release
+fi
 
 # Build gen_configs
 cd ../mpc-net
@@ -147,7 +154,7 @@ fi
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
-  ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} &
+  ${COORD_PROOF_ARGS[@]+"${COORD_PROOF_ARGS[@]}"} &
 coordinator_pid=$!
 
 capture_pids=()

@@ -43,15 +43,15 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Implementation for JoltRV64IMAC
+// Implementation for JoltArch
 // ---------------------------------------------------------------------------
 
+use co_jolt2::zkvm::JoltArch;
 use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
-use jolt_core::zkvm::JoltRV64IMAC;
 
-impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
+impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
     fn prove<N: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<Fr, DoryCommitmentScheme>,
         pcs_setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,

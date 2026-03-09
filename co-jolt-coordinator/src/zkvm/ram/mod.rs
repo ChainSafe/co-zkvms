@@ -1,5 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt2_common::constants::RAM_START_ADDRESS;
+use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
@@ -40,6 +40,7 @@ pub fn build_initial_memory_state(
     K: usize,
 ) -> Vec<u64> {
     let memory_layout = &program_io.memory_layout;
+    let ws = RAM_WORD_SIZE as usize;
     let mut initial_memory_state: Vec<u64> = vec![0; K];
 
     // Copy bytecode
@@ -52,34 +53,22 @@ pub fn build_initial_memory_state(
 
     // Copy trusted advice
     index = remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
-    for chunk in program_io.trusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        initial_memory_state[index] = u64::from_le_bytes(word);
+    for chunk in program_io.trusted_advice.chunks(ws) {
+        initial_memory_state[index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
         index += 1;
     }
 
     // Copy untrusted advice
     index = remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
-    for chunk in program_io.untrusted_advice.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        initial_memory_state[index] = u64::from_le_bytes(word);
+    for chunk in program_io.untrusted_advice.chunks(ws) {
+        initial_memory_state[index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
         index += 1;
     }
 
     // Copy inputs
     index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
-    for chunk in program_io.inputs.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        initial_memory_state[index] = u64::from_le_bytes(word);
+    for chunk in program_io.inputs.chunks(ws) {
+        initial_memory_state[index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
         index += 1;
     }
 
@@ -101,6 +90,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     io_ctx: &mut IoContextPool<N>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
     let memory_layout = &program_io.memory_layout;
+    let ws = RAM_WORD_SIZE as usize;
     let mut initial_memory_state: Vec<Rep3PrimeFieldShare<F>> =
         vec![Rep3PrimeFieldShare::zero_share(); K];
 
@@ -119,7 +109,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     if !advice.trusted_advice.is_empty() {
         let trusted_words: Vec<Rep3RingShare<u64>> = advice
             .trusted_advice
-            .chunks(8)
+            .chunks(ws)
             .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
             .collect();
         let trusted_field: Vec<Rep3PrimeFieldShare<F>> =
@@ -135,7 +125,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     if !advice.untrusted_advice.is_empty() {
         let untrusted_words: Vec<Rep3RingShare<u64>> = advice
             .untrusted_advice
-            .chunks(8)
+            .chunks(ws)
             .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
             .collect();
         let untrusted_field: Vec<Rep3PrimeFieldShare<F>> =
@@ -147,13 +137,11 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
 
     // Copy inputs (PUBLIC → trivial shares)
     index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
-    for chunk in program_io.inputs.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        initial_memory_state[index] =
-            rep3_arith::promote_to_trivial_share(party_id, F::from_u64(u64::from_le_bytes(word)));
+    for chunk in program_io.inputs.chunks(ws) {
+        initial_memory_state[index] = rep3_arith::promote_to_trivial_share(
+            party_id,
+            F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)),
+        );
         index += 1;
     }
 

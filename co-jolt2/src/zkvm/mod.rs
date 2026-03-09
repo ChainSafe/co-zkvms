@@ -19,7 +19,12 @@ use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
-use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC};
+use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV32IM, JoltRV64IMAC};
+
+#[cfg(not(feature = "rv64"))]
+pub type JoltArch = JoltRV32IM;
+#[cfg(feature = "rv64")]
+pub type JoltArch = JoltRV64IMAC;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracer::JoltDevice;
@@ -52,10 +57,10 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Implementation for JoltRV64IMAC
+// Implementation for JoltArch
 // ---------------------------------------------------------------------------
 
-impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {
+impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
     fn preprocess(
         bytecode: Vec<tracer::instruction::Instruction>,
         memory_layout: jolt2_common::jolt_device::MemoryLayout,
@@ -63,7 +68,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMA
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<Fr, DoryCommitmentScheme> {
         // Delegate to vanilla Jolt::prover_preprocess — preprocessing is public
-        <JoltRV64IMAC as Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript>>::prover_preprocess(
+        <JoltArch as Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript>>::prover_preprocess(
             bytecode,
             memory_layout,
             memory_init,
@@ -121,8 +126,9 @@ mod tests {
     use jolt_core::zkvm::witness::{
         compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
     };
+    use crate::zkvm::JoltArch;
     use jolt_core::zkvm::{
-        JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+        JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
     };
     use tracer::instruction::Cycle;
 
@@ -163,7 +169,7 @@ mod tests {
             ram: RAMPreprocessing::preprocess(memory_init.clone()),
         };
         let preprocessing: JoltProverPreprocessing<F, PCS> =
-            <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+            <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
                 bytecode,
                 io_device.memory_layout.clone(),
                 memory_init,
@@ -274,7 +280,7 @@ mod tests {
                     pool
                 };
 
-                <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+                <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
                     &preprocessing,
                     trace,
                     io_device,
@@ -290,7 +296,7 @@ mod tests {
                 let (verifier_preprocessing, prover_preprocessing, io_device, ram_K, trace_length) =
                     input;
                 let _span = info_span!("coordinator_prove").entered();
-                let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
+                let proof = <JoltArch as Rep3Jolt<F, PCS, _>>::prove(
                     &verifier_preprocessing,
                     &prover_preprocessing.generators,
                     io_device,

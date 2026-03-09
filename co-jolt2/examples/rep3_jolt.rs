@@ -31,7 +31,8 @@ use co_jolt2::zkvm::Rep3JoltWorker;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
-use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC};
+use co_jolt2::zkvm::JoltArch;
+use jolt_core::zkvm::JoltProverPreprocessing;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
 use tracer::JoltDevice;
@@ -368,7 +369,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Build prover preprocessing
     info!("building preprocessing");
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode,
             io_device.memory_layout.clone(),
             memory_init,
@@ -509,7 +510,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         }
 
         info!(iter, total = args.repeat_proofs, "starting worker prove");
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,
             io_device.clone(),

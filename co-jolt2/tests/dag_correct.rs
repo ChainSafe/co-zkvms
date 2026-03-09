@@ -18,7 +18,7 @@ use co_jolt2::utils::test_utils::run_rep3_test;
 use co_jolt2::utils::tracing::init_tracing;
 use co_jolt2::utils::types::Either;
 use co_jolt2::zkvm::dag::stage::SumcheckStagesWorker;
-use co_jolt2::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
+use co_jolt2::zkvm::dag::state_manager::StateManagerWorker;
 use co_jolt2::zkvm::instruction::LookupIndexInt;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, ALL_R1CS_INPUTS};
@@ -52,8 +52,9 @@ use jolt_core::zkvm::witness::VirtualPolynomial;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
+use co_jolt2::zkvm::JoltArch;
 use jolt_core::zkvm::{
-    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
@@ -816,7 +817,7 @@ fn dag_correct() {
         ram: jolt_core::zkvm::ram::RAMPreprocessing::preprocess(memory_init.clone()),
     };
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, FS>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, FS>>::preprocess(
             bytecode,
             io_device.memory_layout.clone(),
             memory_init,
@@ -2323,7 +2324,7 @@ fn dag_correct() {
         let elf_contents_owned = program.get_elf_contents();
         let elf_contents = elf_contents_owned.as_deref().expect("elf contents is None");
         let (fresh_proof, fresh_io, fresh_debug_info, _) =
-            <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
+            <JoltArch as Jolt<Fr, PCS, FS>>::prove(
                 &preprocessing_arc,
                 elf_contents,
                 &inputs,
@@ -2456,7 +2457,7 @@ fn dag_correct() {
         // --- Try verify fresh proof ---
         // Build fresh verifier preprocessing from the same preprocessing
         let fresh_verifier_preprocessing = JoltVerifierPreprocessing::from(&*preprocessing_arc);
-        let vanilla_verification = JoltRV64IMAC::verify(
+        let vanilla_verification = JoltArch::verify(
             &fresh_verifier_preprocessing,
             fresh_proof,
             fresh_io,
@@ -2888,7 +2889,7 @@ fn dag_correct() {
     let elf_contents_owned = program.get_elf_contents();
     let elf_contents = elf_contents_owned.as_deref().expect("elf contents is None");
     let (vanilla_verification_proof, vanilla_verification_io, vanilla_debug_info, _) =
-        <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
+        <JoltArch as Jolt<Fr, PCS, FS>>::prove(
             &preprocessing_arc,
             elf_contents,
             &inputs,
@@ -2896,7 +2897,7 @@ fn dag_correct() {
             &[],
             None,
         );
-    let vanilla_verification = JoltRV64IMAC::verify(
+    let vanilla_verification = JoltArch::verify(
         &verifier_preprocessing,
         vanilla_verification_proof,
         vanilla_verification_io,
@@ -2910,7 +2911,7 @@ fn dag_correct() {
     );
 
     let rep3_verification =
-        JoltRV64IMAC::verify(&verifier_preprocessing, rep3_proof, io_device, None, None);
+        JoltArch::verify(&verifier_preprocessing, rep3_proof, io_device, None, None);
     assert!(
         rep3_verification.is_ok(),
         "rep3 final proof verification failed: {:?}",

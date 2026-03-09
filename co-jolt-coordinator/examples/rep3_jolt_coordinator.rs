@@ -33,8 +33,9 @@ use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use co_jolt2::zkvm::JoltArch;
 use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use tracer::instruction::Cycle;
 use tracer::JoltDevice;
@@ -206,7 +207,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
 
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init.clone(),
@@ -244,7 +245,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         AllCommittedPolynomials::initialize(compute_d_parameter(ram_k), preprocessing.shared.bytecode.d),
     );
 
-    let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
+    let proof = <JoltArch as Rep3Jolt<F, PCS, _>>::prove(
         &verifier_preprocessing,
         &preprocessing.generators,
         io_device,
