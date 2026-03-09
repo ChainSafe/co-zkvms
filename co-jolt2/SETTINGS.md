@@ -23,6 +23,7 @@ All knobs that control preprocessing and network performance in Rep3 Jolt.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NETWORK_FORKS` | `8` | Number of preinitialized logical IoContext forks exposed to protocol code. |
+| `MPC_FORK_BULK_CHANNELS` | `0` | When `1`, forks allocate bulk QUIC channels (used only by preprocessing). When `0`, forks skip bulk channels to save 2 streams + tokio tasks per fork. |
 | `MPC_QUIC_TOPOLOGY` | `conn-pool` | QUIC transport topology. `conn-pool` (one connection per lane) or `stream-pool` (single connection, multiple streams). `conn-pool` avoids head-of-line blocking and is faster. |
 | `MPC_QUIC_CONN_LANES` | `8` (falls back to `NETWORK_FORKS`) | Number of physical QUIC transport lanes provisioned per peer. |
 | `MPC_QUIC_WRITE_BUF_MB` | `64` | Outbound byte-budget cap for QUIC byte channels (semaphore size). |

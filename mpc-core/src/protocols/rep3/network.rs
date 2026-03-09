@@ -3,7 +3,6 @@
 //! This module contains implementation of the rep3 mpc network
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use eyre::Context;
@@ -57,22 +56,10 @@ pub struct IoContext<N: Rep3Network> {
     rngs_src: Arc<RngForker<Rep3CorrelatedRng>>,
 }
 
-impl<N: Rep3Network> Clone for IoContext<N> {
-    fn clone(&self) -> Self {
-        let child_rngs = self.rngs_src.fork(); // lock once, derive new RNG
-        let child_rng = self.rng_src.fork(); // lock once, derive new RNG
-
-        IoContext {
-            id: self.id,
-            rngs: child_rngs,
-            rng: child_rng,
-            network: self.network.clone(),
-            a2b_type: self.a2b_type,
-            rng_src: Arc::clone(&self.rng_src),
-            rngs_src: Arc::clone(&self.rngs_src),
-        }
-    }
-}
+// NOTE: IoContext intentionally does NOT implement Clone.
+// Clone on Rep3Network shares streams (mpsc::Sender clone), which would cause
+// message interleaving if two clones are used concurrently.
+// Use IoContext::fork() to create an independent context with its own streams.
 
 impl<N: Rep3Network> IoContext<N> {
     fn setup_prf<R: Rng + CryptoRng>(network: &mut N, rng: &mut R) -> IoResult<Rep3Rand> {
@@ -176,7 +163,6 @@ impl<N: Rep3Network> IoContext<N> {
 }
 
 /// This trait defines the network interface for the REP3 protocol.
-#[async_trait]
 pub trait Rep3Network: Send + Clone {
     /// Returns the id of the party. The id is in the range 0 <= id < 3
     fn get_id(&self) -> PartyID;
@@ -200,30 +186,10 @@ pub trait Rep3Network: Send + Clone {
         }
     }
 
-    async fn reshare_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
-        &mut self,
-        data: F,
-    ) -> std::io::Result<F> {
-        let mut res = self.reshare_many_async(vec![data]).await?;
-        if res.len() != 1 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected 1 element, got more",
-            ))
-        } else {
-            Ok(res.pop().unwrap())
-        }
-    }
-
     /// Perform multiple reshares with one networking round
     fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         data: &[F],
-    ) -> std::io::Result<Vec<F>>;
-
-    async fn reshare_many_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
-        &mut self,
-        data: Vec<F>,
     ) -> std::io::Result<Vec<F>>;
 
     /// Broadcast data to the other two parties and receive data from them
@@ -256,15 +222,6 @@ pub trait Rep3Network: Send + Clone {
         self.send_many(target, &[data])
     }
 
-    /// Sends data to the target party. This function has a default implementation for calling [Rep3Network::send_many].
-    async fn send_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        target: PartyID,
-        data: F,
-    ) -> std::io::Result<()> {
-        self.send_many_async(target, vec![data]).await
-    }
-
     /// Sends a vector of data to the target party.
     fn send_many<F: CanonicalSerialize>(
         &mut self,
@@ -272,35 +229,14 @@ pub trait Rep3Network: Send + Clone {
         data: &[F],
     ) -> std::io::Result<()>;
 
-    /// Sends a vector of data to the target party.
-    async fn send_many_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        target: PartyID,
-        data: Vec<F>,
-    ) -> std::io::Result<()>;
-
     /// Sends data to the party with id = next_id (i.e., my_id + 1 mod 3). This function has a default implementation for calling [Rep3Network::send] with the next_id.
     fn send_next<F: CanonicalSerialize>(&mut self, data: F) -> std::io::Result<()> {
         self.send(self.get_id().next_id(), data)
     }
 
-    async fn send_next_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        data: F,
-    ) -> std::io::Result<()> {
-        self.send_async(self.get_id().next_id(), data).await
-    }
-
     /// Sends a vector data to the party with id = next_id (i.e., my_id + 1 mod 3). This function has a default implementation for calling [Rep3Network::send_many] with the next_id.
     fn send_next_many<F: CanonicalSerialize>(&mut self, data: &[F]) -> std::io::Result<()> {
         self.send_many(self.get_id().next_id(), data)
-    }
-
-    async fn send_next_many_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        data: Vec<F>,
-    ) -> std::io::Result<()> {
-        self.send_many_async(self.get_id().next_id(), data).await
     }
 
     /// Receives data from the party with the given id. This function has a default implementation for calling [Rep3Network::recv_many] and checking for the correct length of 1.
@@ -316,35 +252,12 @@ pub trait Rep3Network: Send + Clone {
         }
     }
 
-    /// Receives data from the party with the given id. This function has a default implementation for calling [Rep3Network::recv_many] and checking for the correct length of 1.
-    async fn recv_async<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<F> {
-        let mut res = self.recv_many_async(from).await?;
-        if res.len() != 1 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected 1 element, got more",
-            ))
-        } else {
-            Ok(res.pop().unwrap())
-        }
-    }
-
     /// Receives a vector of data from the party with the given id.
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>>;
-
-    /// Receives a vector of data from the party with the given id.
-    async fn recv_many_async<F: CanonicalDeserialize>(
-        &mut self,
-        from: PartyID,
-    ) -> std::io::Result<Vec<F>>;
 
     /// Receives data from the party with the id = prev_id (i.e., my_id + 2 mod 3). This function has a default implementation for calling [Rep3Network::recv] with the prev_id.
     fn recv_prev<F: CanonicalDeserialize>(&mut self) -> std::io::Result<F> {
         self.recv(self.get_id().prev_id())
-    }
-
-    async fn recv_prev_async<F: CanonicalDeserialize>(&mut self) -> std::io::Result<F> {
-        self.recv_async(self.get_id().prev_id()).await
     }
 
     /// Receives a vector of data from the party with the id = prev_id (i.e., my_id + 2 mod 3). This function has a default implementation for calling [Rep3Network::recv_many] with the prev_id.
@@ -352,11 +265,9 @@ pub trait Rep3Network: Send + Clone {
         self.recv_many(self.get_id().prev_id())
     }
 
-    async fn recv_prev_many_async<F: CanonicalDeserialize>(&mut self) -> std::io::Result<Vec<F>> {
-        self.recv_many_async(self.get_id().prev_id()).await
-    }
-
-    /// Fork the network into two separate instances with their own connections
+    /// Fork the network into a new independent instance.
+    /// Note: for QUIC transport, this opens new bidi streams on existing connections
+    /// and spawns tokio tasks — it is not free.
     fn fork(&self) -> Self
     where
         Self: Sized;
@@ -364,7 +275,6 @@ pub trait Rep3Network: Send + Clone {
 
 pub type Rep3MpcNet = mpc_net::rep3::quic::Rep3QuicMpcNetWorker;
 
-#[async_trait]
 impl Rep3Network for Rep3MpcNet {
     fn get_id(&self) -> PartyID {
         self.id.party_id()
@@ -376,14 +286,6 @@ impl Rep3Network for Rep3MpcNet {
     ) -> std::io::Result<Vec<F>> {
         self.send_many(self.get_id().next_id(), data)?;
         self.recv_many(self.get_id().prev_id())
-    }
-
-    async fn reshare_many_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
-        &mut self,
-        data: Vec<F>,
-    ) -> std::io::Result<Vec<F>> {
-        self.send_many_async(self.get_id().next_id(), data).await?;
-        self.recv_many_async(self.get_id().prev_id()).await
     }
 
     fn broadcast_many<F: CanonicalSerialize + CanonicalDeserialize>(
@@ -409,19 +311,6 @@ impl Rep3Network for Rep3MpcNet {
         self.send_bytes(target, Bytes::from(ser_data))
     }
 
-    async fn send_many_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        target: PartyID,
-        data: Vec<F>,
-    ) -> std::io::Result<()> {
-        let size = data.serialized_size(ark_serialize::Compress::No);
-        let mut ser_data = Vec::with_capacity(size);
-        data.serialize_uncompressed(&mut ser_data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-
-        self.send_bytes_async(target, Bytes::from(ser_data)).await
-    }
-
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>> {
         let data = self.recv_bytes(from)?;
         let len = data.len();
@@ -438,18 +327,6 @@ impl Rep3Network for Rep3MpcNet {
                 ),
             )
         })?;
-
-        Ok(res)
-    }
-
-    async fn recv_many_async<F: CanonicalDeserialize>(
-        &mut self,
-        from: PartyID,
-    ) -> std::io::Result<Vec<F>> {
-        let data = self.recv_bytes_async(from).await?;
-
-        let res = Vec::<F>::deserialize_uncompressed_unchecked(&data[..])
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         Ok(res)
     }
@@ -494,7 +371,11 @@ pub trait Rep3RawFieldTransport {
         elems: usize,
     ) -> io::Result<Vec<u8>>;
 
-    fn recv_field_vec_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<F>> {
+    fn recv_field_vec_raw<F: PrimeField>(
+        &mut self,
+        from: PartyID,
+        elems: usize,
+    ) -> io::Result<Vec<F>> {
         let bytes = self.recv_field_bytes_raw::<F>(from, elems)?;
         field_vec_from_bytes::<F>(&bytes)
     }
@@ -552,40 +433,12 @@ fn field_vec_from_bytes<F: PrimeField>(bytes: &[u8]) -> io::Result<Vec<F>> {
     let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
     // SAFETY: every element is fully initialized by the byte copy below.
     unsafe { out.set_len(elems) };
-    let out_bytes =
-        unsafe { slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+    let out_bytes = unsafe { slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
     out_bytes.copy_from_slice(bytes);
     let out: Vec<F> = unsafe { std::mem::transmute(out) };
     Ok(out)
 }
 
-fn field_vec_from_owned_bytes<F: PrimeField>(bytes: Vec<u8>) -> io::Result<Vec<F>> {
-    const { assert_field_layout::<F>() };
-    let elem_size = std::mem::size_of::<F>();
-    if bytes.len() % elem_size != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "raw field payload length {} is not divisible by element size {} for {}",
-                bytes.len(),
-                elem_size,
-                std::any::type_name::<F>()
-            ),
-        ));
-    }
-    let elems = bytes.len() / elem_size;
-    if elems == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
-    unsafe { out.set_len(elems) };
-    let out_bytes =
-        unsafe { slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
-    out_bytes.copy_from_slice(&bytes);
-    let out: Vec<F> = unsafe { std::mem::transmute(out) };
-    Ok(out)
-}
 
 fn field_slice_to_bytes<F: PrimeField>(data: &[F]) -> &[u8] {
     const { assert_field_layout::<F>() };
@@ -679,7 +532,7 @@ impl Rep3NetworkCoordinator for Rep3QuicNetCoordinator {
 }
 
 pub struct IoContextPool<Network: Rep3NetworkWorker> {
-    pub worker_id: usize,
+    worker_id: usize,
     main: IoContext<Network>,
     forks: Vec<IoContext<Network>>,
     num_workers: usize,
@@ -730,6 +583,17 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         })
     }
 
+    /// Drop all forks and re-create with `num_forks` children.
+    /// New forks inherit current env settings (e.g. `MPC_FORK_BULK_CHANNELS`).
+    pub fn reconfigure(&mut self, num_forks: u32) -> eyre::Result<()> {
+        self.forks.clear();
+        self.forks = iter::repeat_with(|| self.main.fork())
+            .take(num_forks as usize)
+            .collect::<Result<Vec<_>, _>>()
+            .context("while reconfiguring fork pool")?;
+        Ok(())
+    }
+
     pub fn log_num_workers(&self) -> usize {
         self.main.network.log_num_workers()
     }
@@ -754,8 +618,14 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         &mut self.forks[..num_forks]
     }
 
-    pub fn forks_owned(&mut self, num_forks: usize) -> Vec<IoContext<Network>> {
-        self.forks[..num_forks].to_vec()
+    /// Drain `n` forks from the pool, transferring ownership to the caller.
+    pub fn take_forks(&mut self, n: usize) -> Vec<IoContext<Network>> {
+        self.forks.drain(..n).collect()
+    }
+
+    /// Return previously taken forks back to the pool.
+    pub fn return_forks(&mut self, forks: Vec<IoContext<Network>>) {
+        self.forks.extend(forks);
     }
 
     pub fn worker_idx(&self) -> usize {
@@ -922,6 +792,9 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     /// Like `par_chunks` but also splits an `EdaBitsBatch` in lockstep with inputs.
     /// Each fork receives a sub-batch with matching gammas (1:1 with inputs) and
     /// alphas_flat (K:1 with inputs, where K = T::K bits per ring element).
+    // NOTE: Chunking boilerplate is intentionally duplicated from `par_chunks` because
+    // abstracting the batch co-splitting across EdaBitsBatch/DaBitBatch would add
+    // trait complexity for minimal gain.
     pub fn par_chunks_preproc<T, R, F, MapFn, Err>(
         &mut self,
         inputs: Vec<Rep3RingShare<T>>,
@@ -1033,57 +906,6 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    // /// Deterministic assignment based on input values:
-    // /// stable sort by `inputs[i]` (tie-break by index), then round-robin to forks.
-    // pub fn par_iter_range<R, E, MapFn>(
-    //     &mut self,
-    //     range: Vec<usize>,
-    //     map_fn: MapFn,
-    // ) -> Result<Vec<R>, E>
-    // where
-    //     R: Send + Sync,
-    //     E: Send + Sync,
-    //     MapFn: Fn(usize, &mut IoContext<Network>) -> Result<R, E> + Sync,
-    // {
-    //     let n = self.forks.len();
-    //     assert!(n > 0);
-    //     let m = range.len();
-
-    //     // stable order (by value, tie by index)
-    //     let order: Vec<usize> = (0..m).collect();
-
-    //     // deterministic RR split: fork f gets i=f, f+n, f+2n, …
-    //     let per_fork: Vec<Vec<usize>> = (0..n)
-    //         .map(|f| order.iter().skip(f).step_by(n).copied().collect())
-    //         .collect();
-
-    //     // take contexts
-    //     let ctxs = self.forks_owned(n); // Vec<IoContext<Network>>
-
-    //     // results without locks on hot path
-    //     let slots: Vec<OnceLock<Result<R, E>>> = (0..m).map(|_| OnceLock::new()).collect();
-    //     let map_ref = &map_fn;
-
-    //     per_fork
-    //         .into_par_iter() // N parallel tasks
-    //         .zip(ctxs.into_par_iter()) // pair each with its ctx
-    //         .for_each(|(idxs, mut ctx)| {
-    //             for i in idxs {
-    //                 let r = map_ref(range[i], &mut ctx);
-    //                 let _ = slots[i].set(r);
-    //             }
-    //         });
-
-    //     // gather in original order
-    //     let mut out = Vec::with_capacity(m);
-    //     for cell in slots {
-    //         match cell.into_inner().expect("missing result") {
-    //             Ok(v) => out.push(v),
-    //             Err(e) => return Err(e),
-    //         }
-    //     }
-    //     Ok(out)
-    // }
 
     #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
     pub fn sync_with_parties(&mut self) -> eyre::Result<()> {

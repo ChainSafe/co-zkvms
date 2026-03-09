@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use async_trait::async_trait;
 use color_eyre::eyre::{Context, Result, eyre};
 use mpc_types::field::PrimeField;
 
@@ -88,7 +87,6 @@ impl LocalRep3TestWorkerNet {
     }
 }
 
-#[async_trait]
 impl Rep3Network for LocalRep3TestWorkerNet {
     fn get_id(&self) -> PartyID {
         self.id
@@ -100,14 +98,6 @@ impl Rep3Network for LocalRep3TestWorkerNet {
     ) -> std::io::Result<Vec<F>> {
         self.send_many(self.get_id().next_id(), data)?;
         self.recv_many(self.get_id().prev_id())
-    }
-
-    async fn reshare_many_async<F: CanonicalSerialize + CanonicalDeserialize + Send>(
-        &mut self,
-        data: Vec<F>,
-    ) -> std::io::Result<Vec<F>> {
-        self.send_many_async(self.get_id().next_id(), data).await?;
-        self.recv_many_async(self.get_id().prev_id()).await
     }
 
     fn broadcast_many<F: CanonicalSerialize + CanonicalDeserialize>(
@@ -130,24 +120,9 @@ impl Rep3Network for LocalRep3TestWorkerNet {
         self.ring_send_bytes(target, bytes)
     }
 
-    async fn send_many_async<F: CanonicalSerialize + Send>(
-        &mut self,
-        target: PartyID,
-        data: Vec<F>,
-    ) -> std::io::Result<()> {
-        self.send_many(target, &data)
-    }
-
     fn recv_many<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<Vec<F>> {
         let bytes = self.ring_recv_bytes(from)?;
         deserialize_vec_uncompressed(&bytes)
-    }
-
-    async fn recv_many_async<F: CanonicalDeserialize>(
-        &mut self,
-        from: PartyID,
-    ) -> std::io::Result<Vec<F>> {
-        self.recv_many(from)
     }
 
     fn fork(&self) -> Self {

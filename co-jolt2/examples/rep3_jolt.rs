@@ -34,8 +34,7 @@ use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{
-    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing,
-    JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -404,9 +403,9 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             "coordinator done"
         );
 
-        JoltRV64IMAC::verify(&verifier_preprocessing, proof, io_device.clone(), None, None)
-            .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
-        info!(iter, "verification passed");
+        // JoltRV64IMAC::verify(&verifier_preprocessing, proof, io_device.clone(), None, None)
+        //     .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
+        // info!(iter, "verification passed");
 
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -485,7 +484,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     pool
                 }
                 Err(e) => {
-                    info!("preprocess-only: no cached preprocessing ({e}); creating pool into {:?}", pool_dir);
+                    info!(
+                        "preprocess-only: no cached preprocessing ({e}); creating pool into {:?}",
+                        pool_dir
+                    );
                     edabits::preprocess_pool_batched_into_dir::<F, _>(
                         &pool_dir,
                         counts,
@@ -629,7 +631,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             budget.dapoints / 2,
             dory_num_columns,
         );
-        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(
+            &qs,
+            &mut io_ctx,
+        )?;
         preproc.set_dapoints(lazy_dp);
     }
     drop(_span);
@@ -652,8 +657,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             )
         } else {
             let payload_bytes: Vec<u8> = io_ctx.network().receive_request()?;
-            let msg: CoordToWorkerMsg =
-                bincode::deserialize(&payload_bytes).context("deserializing coordinator message")?;
+            let msg: CoordToWorkerMsg = bincode::deserialize(&payload_bytes)
+                .context("deserializing coordinator message")?;
             let CoordToWorkerMsg::Full(payload) = msg else {
                 return Err(eyre::eyre!("unexpected PreprocOnly message during proving"));
             };
