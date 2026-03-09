@@ -38,6 +38,14 @@ impl Rep3SpartanDag {
             .challenge_vector_optimized::<F>(num_rounds_x);
         network.broadcast_request(tau.clone())?;
 
+        let transcript_before_sumcheck = if std::env::var("CO_JOLT2_DEBUG_STAGE1_SELF_CHECK")
+            .is_ok()
+        {
+            Some(state.transcript.clone())
+        } else {
+            None
+        };
+
         let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
 
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
@@ -76,6 +84,32 @@ impl Rep3SpartanDag {
 
         // Outer sumcheck is bound from the "top"; reverse challenges to match vanilla.
         let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
+
+        if let Some(mut transcript_check) = transcript_before_sumcheck {
+            let proof = match state.proofs.get(&ProofKeys::Stage1Sumcheck) {
+                Some(ProofData::SumcheckProof(proof)) => proof,
+                _ => unreachable!("stage1 proof just inserted"),
+            };
+            let (claim_outer_final, verify_r) = proof
+                .verify(F::zero(), num_rounds_x, 3, &mut transcript_check)
+                .expect("stage1 self-check verify failed");
+            let verify_r_reversed: Vec<F::Challenge> = verify_r.into_iter().rev().collect();
+            let tau_bound_rx = jolt_core::poly::eq_poly::EqPolynomial::<F>::mle(
+                &tau,
+                &verify_r_reversed,
+            );
+            let expected = tau_bound_rx * (claim_az * claim_bz - claim_cz);
+            eyre::ensure!(
+                claim_outer_final == expected,
+                "stage1 self-check outer claim mismatch: got {:?}, expected {:?}",
+                claim_outer_final,
+                expected
+            );
+            eyre::ensure!(
+                verify_r_reversed == outer_sumcheck_r,
+                "stage1 self-check challenge mismatch"
+            );
+        }
 
         // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
         // Vanilla uses append_scalars (with vector framing) for the outer sumcheck claims.

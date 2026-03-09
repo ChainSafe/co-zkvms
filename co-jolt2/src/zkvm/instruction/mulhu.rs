@@ -32,14 +32,16 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?
+        let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
+        let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
+        let upper_words: Vec<Rep3RingShare<XlenInt>> = binary_products
             .into_iter()
-            .zip(out)
-            .for_each(|(product, out)| {
-                // MULHU: upper XLEN bits of the wide product.
-                let upper: Rep3RingShare<u64> = downcast(product >> XLEN);
-                *out = FutureRep3Ring::cast_to_field(upper);
-            });
+            .map(|product| downcast(product >> XLEN))
+            .collect();
+        let outputs = rep3_ring::casts::binary_ring_to_field_many(&upper_words, io_ctx)?;
+        outputs.into_iter().zip(out).for_each(|(output, out)| {
+            *out = FutureRep3Ring::Ready(output);
+        });
         Ok(())
     }
 }
