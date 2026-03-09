@@ -434,8 +434,6 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         let right = if self.flag(CircuitFlags::RightOperandIsRs2Value) {
             Rep3Value::Shared(self.rs2_value())
         } else if self.flag(CircuitFlags::RightOperandIsImm) {
-            // Truncate to XLEN bits (unsigned), matching vanilla Jolt's
-            // `imm as u32 as i128` for rv32 / `imm as u64 as i128` for rv64.
             Rep3Value::Public(F::from_i128(self.imm() as XlenInt as i128))
         } else {
             Rep3Value::Public(F::zero())

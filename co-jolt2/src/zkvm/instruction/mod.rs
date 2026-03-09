@@ -30,12 +30,12 @@ pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
     shares: &[Rep3RingShare<u64>],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    #[cfg(feature = "rv32")]
+    #[cfg(not(feature = "rv64"))]
     {
         let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
         Ok(rep3_ring::casts::ring_to_field_many_selector(&truncated, io_ctx)?)
     }
-    #[cfg(not(feature = "rv32"))]
+    #[cfg(feature = "rv64")]
     {
         Ok(rep3_ring::casts::ring_to_field_many_selector(shares, io_ctx)?)
     }
@@ -216,7 +216,7 @@ use tracer::instruction::jal::JAL;
 use tracer::instruction::jalr::JALR;
 use tracer::instruction::lb::LB;
 use tracer::instruction::lbu::LBU;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::ld::LD;
 use tracer::instruction::lh::LH;
 use tracer::instruction::lhu::LHU;
@@ -231,7 +231,7 @@ use tracer::instruction::ori::ORI;
 use tracer::instruction::rem::REM;
 use tracer::instruction::remu::REMU;
 use tracer::instruction::sb::SB;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::sd::SD;
 use tracer::instruction::sh::SH;
 use tracer::instruction::sll::SLL;
@@ -255,26 +255,26 @@ use tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use tracer::instruction::virtual_change_divisor::VirtualChangeDivisor;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW;
 use tracer::instruction::virtual_lw::VirtualLW;
 use tracer::instruction::virtual_move::VirtualMove;
 use tracer::instruction::virtual_movsign::VirtualMovsign;
 use tracer::instruction::virtual_muli::VirtualMULI;
 use tracer::instruction::virtual_pow2::VirtualPow2;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_pow2_w::VirtualPow2W;
 use tracer::instruction::virtual_pow2i::VirtualPow2I;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_pow2i_w::VirtualPow2IW;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_rev8w::VirtualRev8W;
 use tracer::instruction::virtual_rotri::VirtualROTRI;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_rotriw::VirtualROTRIW;
 use tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord;
 use tracer::instruction::virtual_sra::VirtualSRA;
 use tracer::instruction::virtual_srai::VirtualSRAI;
@@ -284,11 +284,11 @@ use tracer::instruction::virtual_sw::VirtualSW;
 use tracer::instruction::virtual_xor_rot::{
     VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
 };
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
 };
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
 use tracer::instruction::xori::XORI;
@@ -465,7 +465,7 @@ macro_rules! define_rep3_cycle {
 
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 define_rep3_cycle! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
@@ -486,7 +486,7 @@ define_rep3_cycle! {
     ]
 }
 
-#[cfg(feature = "rv32")]
+#[cfg(not(feature = "rv64"))]
 define_rep3_cycle! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
@@ -574,7 +574,7 @@ macro_rules! impl_rep3_lookup_query {
     };
 }
 
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 impl_rep3_lookup_query! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
@@ -594,7 +594,7 @@ impl_rep3_lookup_query! {
     ]
 }
 
-#[cfg(feature = "rv32")]
+#[cfg(not(feature = "rv64"))]
 impl_rep3_lookup_query! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
@@ -693,7 +693,7 @@ mod ecall;
 mod fence;
 mod jal;
 mod jalr;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod ld;
 mod lui;
 mod mul;
@@ -701,7 +701,7 @@ mod mulhu;
 mod or;
 mod ori;
 mod rem;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod sd;
 mod slt;
 mod slti;
@@ -723,22 +723,22 @@ mod virtual_move;
 mod virtual_movsign;
 mod virtual_muli;
 mod virtual_pow2;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod virtual_pow2_w;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod virtual_rev8w;
 mod virtual_rotri;
 mod virtual_shift_right_bitmask;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod virtual_sign_extend_word;
 mod virtual_sra;
 mod virtual_srai;
 mod virtual_srl;
 mod virtual_srli;
 mod virtual_xor_rot;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod virtual_xor_rotw;
-#[cfg(not(feature = "rv32"))]
+#[cfg(feature = "rv64")]
 mod virtual_zero_extend_word;
 mod xor;
 mod xori;

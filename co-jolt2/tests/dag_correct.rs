@@ -41,6 +41,7 @@ use jolt_core::zkvm::dag::state_manager::{
     ProofData, ProofKeys, StateManager as VanillaStateManager,
 };
 use jolt_core::zkvm::instruction_lookups::LookupsDag;
+use jolt_core::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::ram::RamDag;
 use jolt_core::zkvm::registers::RegistersDag;
@@ -50,7 +51,8 @@ use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing,
+    JoltVerifierPreprocessing,
 };
 use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
@@ -708,7 +710,16 @@ fn dag_correct() {
 
     let mut rng = test_rng();
     let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-    let (mut vanilla_trace, vanilla_memory, io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
+
+    // Truncate trailing zeros on device outputs, matching what Jolt::prove does.
+    io_device.outputs.truncate(
+        io_device
+            .outputs
+            .iter()
+            .rposition(|&b| b != 0)
+            .map_or(0, |pos| pos + 1),
+    );
 
     tracing::info!("Trace len: {}", vanilla_trace.len());
     // Pad traces to next power of 2 (+1 termination cycle).
@@ -733,10 +744,74 @@ fn dag_correct() {
         );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
+    #[cfg(not(feature = "rv64"))]
+    {
+        let mut failures = Vec::new();
+        for (step_idx, cycle) in vanilla_trace.iter().enumerate() {
+            if matches!(cycle, Cycle::NoOp) {
+                continue;
+            }
+            let row = jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs::from_trace::<F>(
+                &shared,
+                &vanilla_trace,
+                step_idx,
+            );
+            for constraint in UNIFORM_R1CS.iter() {
+                let a = constraint.cons.a.evaluate_row_with::<F>(&row);
+                let b = constraint.cons.b.evaluate_row_with::<F>(&row);
+                let c = constraint.cons.c.evaluate_row_with::<F>(&row);
+                let residual = a * b - c;
+                if !residual.is_zero() {
+                    failures.push((
+                        step_idx,
+                        constraint.name,
+                        a,
+                        b,
+                        c,
+                        residual,
+                        row.unexpanded_pc,
+                        row.next_unexpanded_pc,
+                        row.imm.to_i128(),
+                        row.lookup_output,
+                        row.should_branch,
+                    ));
+                    if failures.len() >= 16 {
+                        break;
+                    }
+                }
+            }
+            if failures.len() >= 16 {
+                break;
+            }
+        }
+        if !failures.is_empty() {
+            for (
+                step_idx,
+                name,
+                a,
+                b,
+                c,
+                residual,
+                unexpanded_pc,
+                next_unexpanded_pc,
+                imm,
+                lookup_output,
+                should_branch,
+            ) in failures
+            {
+                eprintln!(
+                    "rv32 r1cs failure: step={} constraint={:?} a={:?} b={:?} c={:?} residual={:?} pc={} next_pc={} imm={} lookup_output={} should_branch={}",
+                    step_idx, name, a, b, c, residual, unexpanded_pc, next_unexpanded_pc, imm, lookup_output, should_branch
+                );
+            }
+            panic!("rv32 r1cs constraints are unsatisfied");
+        }
+    }
+
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
-    #[cfg(feature = "rv32")]
+    #[cfg(not(feature = "rv64"))]
     {
         use mpc_core::protocols::rep3::arithmetic;
         use mpc_core::protocols::rep3_ring::combine_ring_element_binary;
@@ -1794,8 +1869,8 @@ fn dag_correct() {
 
     // 5) Rep3 proof up to Stage3 (local MPC, no QUIC).
     let preprocessing_arc = Arc::new(preprocessing);
-    let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
-    let io_device_arc = Arc::new(io_device);
+    let verifier_preprocessing_arc = Arc::new(verifier_preprocessing.clone());
+    let io_device_arc = Arc::new(io_device.clone());
     let shares_arc = Arc::new(shares);
 
     let preprocessing_arc_for_workers = Arc::clone(&preprocessing_arc);
@@ -1921,6 +1996,137 @@ fn dag_correct() {
         vanilla_stage1.serialize_uncompressed(&mut v).unwrap();
         v
     };
+    if std::env::var("CO_JOLT2_FINAL_VERIFY_ONLY").is_ok() {
+        let elf_contents_owned = program.get_elf_contents();
+        let elf_contents = elf_contents_owned
+            .as_deref()
+            .expect("elf contents is None");
+        let (fresh_proof, fresh_io, fresh_debug_info, _) =
+            <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
+                &preprocessing_arc,
+                elf_contents,
+                &inputs,
+                &[],
+                &[],
+                None,
+            );
+
+        // --- Compare trace lengths ---
+        eprintln!(
+            "trace_length: manual={} fresh={}",
+            vanilla_proof.trace_length, fresh_proof.trace_length
+        );
+
+        // --- Compare commitments ---
+        {
+            let manual_comms = &vanilla_proof.commitments;
+            let fresh_comms = &fresh_proof.commitments;
+            eprintln!(
+                "commitment count: manual={} fresh={}",
+                manual_comms.len(),
+                fresh_comms.len()
+            );
+            let mut comm_diffs = 0;
+            for (i, (m, f)) in manual_comms.iter().zip(fresh_comms.iter()).enumerate() {
+                if m != f {
+                    eprintln!("  commitment[{i}] DIFFERS");
+                    comm_diffs += 1;
+                }
+            }
+            if comm_diffs == 0 {
+                eprintln!("  all commitments match");
+            }
+        }
+
+        // --- Compare Stage 1 proofs ---
+        {
+            let manual_s1 = vanilla_proof
+                .proofs
+                .get(&ProofKeys::Stage1Sumcheck)
+                .expect("manual stage1 missing");
+            let fresh_s1 = fresh_proof
+                .proofs
+                .get(&ProofKeys::Stage1Sumcheck)
+                .expect("fresh stage1 missing");
+            let mut m_bytes = Vec::new();
+            let mut f_bytes = Vec::new();
+            manual_s1.serialize_uncompressed(&mut m_bytes).unwrap();
+            fresh_s1.serialize_uncompressed(&mut f_bytes).unwrap();
+            if m_bytes == f_bytes {
+                eprintln!("stage1 proofs: MATCH");
+            } else {
+                eprintln!("stage1 proofs: DIFFER (manual={} bytes, fresh={} bytes)", m_bytes.len(), f_bytes.len());
+                // Find first differing round
+                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) = (manual_s1, fresh_s1) {
+                    for (i, (a, b)) in m_sc.compressed_polys.iter().zip(f_sc.compressed_polys.iter()).enumerate() {
+                        let mut ab = Vec::new();
+                        let mut bb = Vec::new();
+                        a.serialize_uncompressed(&mut ab).unwrap();
+                        b.serialize_uncompressed(&mut bb).unwrap();
+                        if ab != bb {
+                            eprintln!("  first differing stage1 round: {i}");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Compare Stage 2 proofs ---
+        {
+            let manual_s2 = vanilla_proof
+                .proofs
+                .get(&ProofKeys::Stage2Sumcheck)
+                .expect("manual stage2 missing");
+            let fresh_s2 = fresh_proof
+                .proofs
+                .get(&ProofKeys::Stage2Sumcheck)
+                .expect("fresh stage2 missing");
+            let mut m_bytes = Vec::new();
+            let mut f_bytes = Vec::new();
+            manual_s2.serialize_uncompressed(&mut m_bytes).unwrap();
+            fresh_s2.serialize_uncompressed(&mut f_bytes).unwrap();
+            if m_bytes == f_bytes {
+                eprintln!("stage2 proofs: MATCH");
+            } else {
+                eprintln!("stage2 proofs: DIFFER (manual={} bytes, fresh={} bytes)", m_bytes.len(), f_bytes.len());
+                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) = (manual_s2, fresh_s2) {
+                    eprintln!("  stage2 rounds: manual={} fresh={}", m_sc.compressed_polys.len(), f_sc.compressed_polys.len());
+                    for (i, (a, b)) in m_sc.compressed_polys.iter().zip(f_sc.compressed_polys.iter()).enumerate() {
+                        let mut ab = Vec::new();
+                        let mut bb = Vec::new();
+                        a.serialize_uncompressed(&mut ab).unwrap();
+                        b.serialize_uncompressed(&mut bb).unwrap();
+                        if ab != bb {
+                            eprintln!("  first differing stage2 round: {i}");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Try verify fresh proof ---
+        // Build fresh verifier preprocessing from the same preprocessing
+        let fresh_verifier_preprocessing = JoltVerifierPreprocessing::from(&*preprocessing_arc);
+        let vanilla_verification = JoltRV64IMAC::verify(
+            &fresh_verifier_preprocessing,
+            fresh_proof,
+            fresh_io,
+            None,
+            fresh_debug_info,
+        );
+        if vanilla_verification.is_ok() {
+            eprintln!("fresh vanilla proof VERIFIED OK");
+        } else {
+            eprintln!(
+                "fresh vanilla proof FAILED: {:?}",
+                vanilla_verification.err()
+            );
+        }
+
+        return;
+    }
     if rep3_bytes != vanilla_bytes {
         use jolt_core::zkvm::dag::state_manager::ProofData;
 
@@ -2330,5 +2536,39 @@ fn dag_correct() {
     assert_eq!(
         rep3_proof.twist_sumcheck_switch_index,
         vanilla_proof.twist_sumcheck_switch_index
+    );
+
+    let elf_contents_owned = program.get_elf_contents();
+    let elf_contents = elf_contents_owned
+        .as_deref()
+        .expect("elf contents is None");
+    let (vanilla_verification_proof, vanilla_verification_io, vanilla_debug_info, _) =
+        <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
+            &preprocessing_arc,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+        );
+    let vanilla_verification = JoltRV64IMAC::verify(
+        &verifier_preprocessing,
+        vanilla_verification_proof,
+        vanilla_verification_io,
+        None,
+        vanilla_debug_info,
+    );
+    assert!(
+        vanilla_verification.is_ok(),
+        "vanilla final proof verification failed: {:?}",
+        vanilla_verification.err()
+    );
+
+    let rep3_verification =
+        JoltRV64IMAC::verify(&verifier_preprocessing, rep3_proof, io_device, None, None);
+    assert!(
+        rep3_verification.is_ok(),
+        "rep3 final proof verification failed: {:?}",
+        rep3_verification.err()
     );
 }

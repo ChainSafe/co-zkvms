@@ -313,7 +313,7 @@ pub fn table_uses_interleaved_data(suffixes: &[Suffixes]) -> bool {
         ) {
             return true;
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         if matches!(s, Suffixes::Rev8W) {
             return true;
         }
@@ -360,7 +360,7 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
             }
         }
 
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Suffixes::Rev8W => {
             if t_half_k >= 32 {
                 Some(t_half_k)
@@ -959,7 +959,7 @@ where
                 suffix
             );
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Suffixes::Rev8W => {
             unreachable!(
                 "Interleaved suffix {:?} received Uninterleaved data",
@@ -1078,7 +1078,7 @@ where
                 out.extend_b2a_ring::<T>(indices, masked.into_iter());
             }
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Suffixes::Rev8W => {
             let mask_byte = RingElement(0xFFu32);
             let reversed_u32: Vec<Rep3RingShare<u32>> = shared_bits

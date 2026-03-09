@@ -42,7 +42,7 @@ pub fn interleave_bits_shared(
     even_bits: Rep3RingShare<LookupIndexInt>,
     odd_bits: Rep3RingShare<LookupIndexInt>,
 ) -> Rep3RingShare<LookupIndexInt> {
-    #[cfg(not(feature = "rv32"))]
+    #[cfg(feature = "rv64")]
     fn interleave_cleartext(even: u128, odd: u128) -> u128 {
         let mut x = even;
         x = (x | (x << 32)) & 0x0000_0000_FFFF_FFFF_0000_0000_FFFF_FFFFu128;
@@ -63,7 +63,7 @@ pub fn interleave_bits_shared(
         (x << 1) | y
     }
 
-    #[cfg(feature = "rv32")]
+    #[cfg(not(feature = "rv64"))]
     fn interleave_cleartext(even: u64, odd: u64) -> u64 {
         let mut x = even;
         x = (x | (x << 16)) & 0x0000_FFFF_0000_FFFFu64;

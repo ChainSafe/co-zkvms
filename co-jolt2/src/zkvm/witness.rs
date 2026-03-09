@@ -159,11 +159,11 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
         Rep3Cycle::VirtualPow2I(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualPow2W(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualPow2IW(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -214,7 +214,7 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
         Rep3Cycle::VirtualROTRI(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
-        #[cfg(not(feature = "rv32"))]
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualROTRIW(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -441,6 +441,13 @@ where
 
         let pc_index = cycle.get_pc(&preprocessing.shared.bytecode) as u64;
         unexpanded_pc.push(norm.address as u64);
+        #[cfg(not(feature = "rv64"))]
+        imm.push(if circuit_flags[CircuitFlags::Branch as usize] {
+            norm.operands.imm as i32 as i128
+        } else {
+            norm.operands.imm as XlenInt as i128
+        });
+        #[cfg(feature = "rv64")]
         imm.push(norm.operands.imm);
 
         let (rs1_i, rs1_v) = cycle.rs1_read();

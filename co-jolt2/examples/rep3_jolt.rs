@@ -33,7 +33,8 @@ use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing,
+    JoltVerifierPreprocessing,
 };
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -309,6 +310,10 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             commitments = proof.commitments.len(),
             "coordinator done"
         );
+
+        JoltRV64IMAC::verify(&verifier_preprocessing, proof, io_device.clone(), None, None)
+            .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
+        info!(iter, "verification passed");
 
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
