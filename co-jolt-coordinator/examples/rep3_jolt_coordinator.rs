@@ -73,6 +73,20 @@ struct WorkerPayload {
     ram_k: usize,
 }
 
+/// Must match the enum in the worker example (rep3_jolt.rs).
+#[derive(Serialize, Deserialize)]
+enum CoordToWorkerMsg {
+    Full(WorkerPayload),
+    PreprocOnly(PreprocPayload),
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreprocPayload {
+    trace_len: usize,
+    edabit_counts: [usize; 5],
+    dabits: usize,
+}
+
 fn start_rss_monitor(interval: std::time::Duration) {
     use tracy_client::{plot_name, Client, PlotConfiguration, PlotFormat, PlotLineStyle};
 
@@ -228,7 +242,8 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 padded_len,
                 ram_k,
             };
-            bincode::serialize(&payload)
+            let msg = CoordToWorkerMsg::Full(payload);
+            bincode::serialize(&msg)
         })
         .collect::<bincode::Result<Vec<_>>>()
         .context("serializing worker payloads")?;

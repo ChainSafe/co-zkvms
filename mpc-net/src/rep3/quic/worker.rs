@@ -156,7 +156,7 @@ fn fork_bulk_channels() -> bool {
     std::env::var("MPC_FORK_BULK_CHANNELS")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(0)
+        .unwrap_or(1)
         != 0
 }
 
