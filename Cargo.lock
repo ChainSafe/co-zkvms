@@ -1413,13 +1413,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
-name = "fibonacci-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-sdk",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2202,26 +2195,6 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "rand 0.8.5",
-]
-
-[[package]]
-name = "jolt-sdk"
-version = "0.1.0"
-dependencies = [
- "jolt-platform",
- "jolt-sdk-macros",
- "postcard",
- "serde",
-]
-
-[[package]]
-name = "jolt-sdk-macros"
-version = "0.1.0"
-dependencies = [
- "common",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -3606,14 +3579,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "sha2-chain-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-sdk",
- "sha2",
 ]
 
 [[package]]

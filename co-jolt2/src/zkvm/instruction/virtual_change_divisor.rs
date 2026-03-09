@@ -58,6 +58,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
     }
 }
 
+#[cfg(feature = "rv64")]
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDivisorW> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
         (

@@ -109,6 +109,10 @@ impl Rep3JoltDagWorker {
         drop(_stage2);
         maybe_purge_jemalloc();
 
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE2").is_ok() {
+            return Ok(());
+        }
+
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
@@ -123,6 +127,10 @@ impl Rep3JoltDagWorker {
         )?;
         drop(_stage3);
         maybe_purge_jemalloc();
+
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE3").is_ok() {
+            return Ok(());
+        }
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
@@ -214,11 +222,14 @@ impl Rep3JoltDagWorker {
             .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
-        let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
-            &ordered_polys,
-            generators,
-            commit_to_public,
-        );
+        let commit_results =
+            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3_preproc(
+                &ordered_polys,
+                generators,
+                commit_to_public,
+                io_ctx,
+                preproc,
+            )?;
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 

@@ -20,8 +20,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertEQ
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    downcast(l.as_arithmetic_or_trivial_u128(io_ctx.id)),
-                    downcast(r.as_arithmetic_or_trivial_u128(io_ctx.id)),
+                    downcast(l.as_arithmetic_or_trivial_wide(io_ctx.id)),
+                    downcast(r.as_arithmetic_or_trivial_wide(io_ctx.id)),
                 )
             })
             .unzip();

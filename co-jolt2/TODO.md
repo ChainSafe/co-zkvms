@@ -1,5 +1,8 @@
 # co-jolt2 Deferred Optimizations
 
+ring_to_field_b2a_many
+would it be better to pass batch: EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
+
 ## Missing networked par_chunks
 - `co-jolt2/src/zkvm/witness.rs` `for poly in polynomials` 
 - `co-jolt2/src/zkvm/suffixes/future.rs` `ring_to_field_b2a_many`, `bit_inject_field_many`

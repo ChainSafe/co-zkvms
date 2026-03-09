@@ -213,6 +213,14 @@ where
         instances.extend(registers_instances);
         instances.extend(ram_instances);
         instances.extend(lookups_instances);
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE2_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            instances.truncate(limit.min(instances.len()));
+        }
+
         Ok(instances)
     }
 
@@ -336,6 +344,13 @@ where
         stage3_instances.extend(registers_stage3);
         stage3_instances.extend(lookups_stage3);
         stage3_instances.extend(ram_stage3);
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE3_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            stage3_instances.truncate(limit.min(stage3_instances.len()));
+        }
 
         Ok(stage3_instances)
     }
@@ -471,6 +486,13 @@ where
         stage2_instances.extend(registers_instances);
         stage2_instances.extend(ram_instances);
         stage2_instances.extend(lookups_instances);
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE2_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            stage2_instances.truncate(limit.min(stage2_instances.len()));
+        }
 
         Ok(stage2_instances)
     }
@@ -625,7 +647,7 @@ where
         ))?;
         network.broadcast_request((read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim))?;
 
-        Ok(vec![
+        let mut instances = vec![
             BatchedSumcheckInstance::Public(Box::new(spartan_pc)),
             BatchedSumcheckInstance::Secret(Box::new(spartan_product)),
             BatchedSumcheckInstance::Secret(Box::new(registers_val)),
@@ -634,7 +656,16 @@ where
             BatchedSumcheckInstance::Secret(Box::new(ram_val_eval)),
             BatchedSumcheckInstance::Secret(Box::new(ram_val_final)),
             BatchedSumcheckInstance::Public(Box::new(ram_hamming_bool)),
-        ])
+        ];
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE3_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            instances.truncate(limit.min(instances.len()));
+        }
+
+        Ok(instances)
     }
 
     #[tracing::instrument(skip_all)]

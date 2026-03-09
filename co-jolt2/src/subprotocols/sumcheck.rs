@@ -316,11 +316,7 @@ impl Rep3BatchedSumcheck {
             full_evals.extend(round_evals.into_iter().skip(1));
 
             let mut round_poly = UniPoly::<F>::from_evals(&full_evals);
-            // Trim trailing zero coefficients so the polynomial degree matches
-            // vanilla's per-round adaptive degree (vanilla produces variable-degree
-            // polys because each instance contributes its own degree, while MPC
-            // always pads to max_degree).
-            while round_poly.coeffs.len() > 1 && round_poly.coeffs.last() == Some(&F::zero()) {
+            while matches!(round_poly.coeffs.last(), Some(c) if c.is_zero()) {
                 round_poly.coeffs.pop();
             }
             let compressed_poly = round_poly.compress();
@@ -589,11 +585,7 @@ impl HybridBatchedSumcheck {
             full_evals.extend(round_evals.into_iter().skip(1));
 
             let mut round_poly = UniPoly::<F>::from_evals(&full_evals);
-            // Trim trailing zero coefficients so the polynomial degree matches
-            // vanilla's per-round adaptive degree (vanilla produces variable-degree
-            // polys because each instance contributes its own degree, while MPC
-            // always pads to max_degree).
-            while round_poly.coeffs.len() > 1 && round_poly.coeffs.last() == Some(&F::zero()) {
+            while matches!(round_poly.coeffs.last(), Some(c) if c.is_zero()) {
                 round_poly.coeffs.pop();
             }
             let compressed_poly = round_poly.compress();

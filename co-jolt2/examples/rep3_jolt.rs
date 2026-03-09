@@ -34,7 +34,8 @@ use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing,
+    JoltVerifierPreprocessing,
 };
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -274,8 +275,17 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     // Trace to get vanilla trace and IO device
     info!("tracing guest program");
-    let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
     let raw_trace_len = vanilla_trace.len();
+
+    // Match vanilla Jolt::prove/verify, which normalizes trailing zero bytes in outputs.
+    io_device.outputs.truncate(
+        io_device
+            .outputs
+            .iter()
+            .rposition(|&b| b != 0)
+            .map_or(0, |pos| pos + 1),
+    );
 
     if args.preprocess_only.unwrap_or(false) {
         let budget = compute_edabit_budget(raw_trace_len);
@@ -393,6 +403,10 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             commitments = proof.commitments.len(),
             "coordinator done"
         );
+
+        JoltRV64IMAC::verify(&verifier_preprocessing, proof, io_device.clone(), None, None)
+            .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
+        info!(iter, "verification passed");
 
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -526,6 +540,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     // Init DoryGlobals (must stay alive during proving)
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+    let dory_num_columns = DoryGlobals::get_num_columns();
 
     // Init AllCommittedPolynomials
     let bytecode_d = preprocessing.shared.bytecode.d;
@@ -549,10 +564,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // `--features reuse-preproc` so consumed data is NOT zeroed on disk.
     let party_id = io_ctx.party_id();
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
+    let budget = {
+        use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
+        let b = compute_edabit_budget(trace_len);
+        tracing::info!("budget: {:?}", b);
+        b
+    };
     let mut preproc = {
         use mpc_core::protocols::rep3_ring::edabits;
-        let budget = compute_edabit_budget(trace_len);
-        tracing::info!("budget: {:?}", budget);
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
         let num_dabits = budget.dabits;
         log_preproc_size_estimates(counts, num_dabits);
@@ -602,6 +621,17 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?
         }
     };
+
+    // daPoints for Dory U64Scalars wrap correction (offline, not persisted)
+    if budget.dapoints > 0 {
+        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+            &preprocessing.generators,
+            budget.dapoints / 2,
+            dory_num_columns,
+        );
+        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+        preproc.set_dapoints(lazy_dp);
+    }
     drop(_span);
 
     if args.preprocess_only.unwrap_or(false) {

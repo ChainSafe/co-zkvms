@@ -232,6 +232,7 @@ mod tests {
         let _vanilla_span = info_span!("vanilla_commitments").entered();
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
         let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
+        let dory_num_columns = DoryGlobals::get_num_columns();
 
         let all_polys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
@@ -277,7 +278,7 @@ mod tests {
                     padded_len,
                 )
             },
-            |input, mut io_ctx| {
+            move |input, mut io_ctx| {
                 let (mut trace, memory, preprocessing, io_device, ram_K, advice) = input;
 
                 let party = io_ctx.party_id();
@@ -290,11 +291,38 @@ mod tests {
                     use crate::zkvm::dag::preproc_budget::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
                     let budget = compute_edabit_budget(trace.len());
-                    edabits::preprocess_pool::<F, _>(
+                    let mut pool = edabits::preprocess_pool::<F, _>(
                         [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                         budget.dabits,
                         &mut io_ctx,
-                    )?
+                    )?;
+
+                    // daPoints for Dory U64Scalars wrap correction (offline)
+                    if budget.dapoints > 0 {
+                        let qs = crate::poly::commitment::dory::precompute_dapoint_qs(
+                            &preprocessing.generators,
+                            budget.dapoints / 2,
+                            dory_num_columns,
+                        );
+                        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                        pool.set_dapoints(lazy_dp);
+                    }
+                    // Wrap masks for DaBit-based wrap-m extraction (offline)
+                    if budget.wrap_masks > 0 {
+                        let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
+                            budget.wrap_masks,
+                            io_ctx.main(),
+                        )?;
+                        pool.set_wrap_masks(wm);
+                    }
+                    // Ring edaBits (U66) for ring-domain B2A (offline)
+                    if budget.ring_edabits_u66 > 0 {
+                        let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
+                            mpc_core::protocols::rep3_ring::ring::u66::U66, _,
+                        >(budget.ring_edabits_u66, &mut io_ctx)?;
+                        pool.set_ring_edabits_u66(eb);
+                    }
+                    pool
                 };
 
                 <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(

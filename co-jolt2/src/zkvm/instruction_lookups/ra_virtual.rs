@@ -5,7 +5,7 @@ use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
-use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
+use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
 
 const LOG_K: usize = D * LOG_K_CHUNK;
 use jolt_core::zkvm::witness::CommittedPolynomial;
@@ -645,10 +645,10 @@ mod tests {
         });
 
         let mut e_field_party: [[Vec<Rep3PrimeFieldShare<Fr>>; 3]; D] =
-            std::array::from_fn(|_| std::array::from_fn(|_| Vec::with_capacity(256)));
+            std::array::from_fn(|_| std::array::from_fn(|_| Vec::with_capacity(K_CHUNK)));
 
         for i in 0..D {
-            for k in 0..256u16 {
+            for k in 0..K_CHUNK as u16 {
                 let bit = if k as u8 == r_masks[i] {
                     Fr::one()
                 } else {
@@ -672,7 +672,7 @@ mod tests {
         let one_hot_polys: [[Rep3OneHotPolynomial<Fr>; D]; 3] = std::array::from_fn(|pid| {
             std::array::from_fn(|i| {
                 Rep3OneHotPolynomial::from_parts(
-                    256,
+                    K_CHUNK,
                     masked_indices[i].clone(),
                     Arc::new(e_field_party[i][pid].clone()),
                 )
