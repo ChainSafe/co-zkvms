@@ -60,18 +60,8 @@ fn reduce_and_prove_correct() {
     // setup_prover(5) → n=8 bases matches 8 columns.
     let _dory_guard = DoryGlobals::initialize(2, 16);
 
-    eprintln!(
-        "DoryGlobals: T={}, num_columns={}, max_num_rows={}",
-        DoryGlobals::get_T(),
-        DoryGlobals::get_num_columns(),
-        DoryGlobals::get_max_num_rows(),
-    );
-    eprintln!("=== Starting dense-only test ===");
     test_dense_only();
-    eprintln!("=== Dense-only test PASSED ===");
-    eprintln!("=== Starting mixed test ===");
     test_mixed_dense_one_hot();
-    eprintln!("=== Mixed test PASSED ===");
 }
 
 fn test_dense_only() {
