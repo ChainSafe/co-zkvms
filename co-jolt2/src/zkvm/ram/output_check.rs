@@ -1,4 +1,4 @@
-use jolt2_common::constants::RAM_START_ADDRESS;
+use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -65,6 +65,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
         let party_id = sm.party_id;
         let K = val_final.len();
         let memory_layout = &sm.program_io.memory_layout;
+        let ws = RAM_WORD_SIZE as usize;
 
         // Build val_io (PUBLIC) from program_io — for correct execution this
         // matches val_final at I/O addresses and is 0 elsewhere.
@@ -75,23 +76,15 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
         let program_io = &sm.program_io;
         // Populate input words
         let mut input_index = io_start;
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            val_io_evals[input_index] = u64::from_le_bytes(word);
+        for chunk in program_io.inputs.chunks(ws) {
+            val_io_evals[input_index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
             input_index += 1;
         }
         // Populate output words
         let mut output_index =
             remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
-        for chunk in program_io.outputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            val_io_evals[output_index] = u64::from_le_bytes(word);
+        for chunk in program_io.outputs.chunks(ws) {
+            val_io_evals[output_index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
             output_index += 1;
         }
         // Panic bit

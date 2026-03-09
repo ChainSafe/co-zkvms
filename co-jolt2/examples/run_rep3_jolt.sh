@@ -15,6 +15,8 @@ PREPROC_DIR=${PREPROC_DIR:-./.preprocessing}
 # When set to 1, builds with the `reuse-preproc` feature so that mmap'd
 # backing files are NOT zeroed on read and can be loaded multiple times.
 REUSE_PREPROC=${REUSE_PREPROC:-0}
+RV64=${RV64:-0}
+EXTRA_FEATURES=${EXTRA_FEATURES:-}
 # When set to 1, only runs preprocessing and exits.
 PREPROC_ONLY=${PREPROC_ONLY:-0}
 # When set to 1, builds with Tracy allocation tracking and jemalloc plots.
@@ -39,11 +41,20 @@ mkdir -p "$ARTIFACT_DIR"
 mkdir -p "$TRACE_DIR"
 
 FEATURES="test-utils"
+if [ "$RV64" = "1" ]; then
+  FEATURES="$FEATURES,rv64"
+fi
 if [ "$REUSE_PREPROC" = "1" ]; then
   FEATURES="test-utils,reuse-preproc"
+  if [ "$RV64" = "1" ]; then
+    FEATURES="$FEATURES,rv64"
+  fi
 fi
 if [ "$TRACY_ALLOC" = "1" ]; then
   FEATURES="$FEATURES,tracy-mem,jemalloc-stats"
+fi
+if [ -n "$EXTRA_FEATURES" ]; then
+  FEATURES="$FEATURES,$EXTRA_FEATURES"
 fi
 
 MALLOC_CONF_EFFECTIVE=${MALLOC_CONF:-}

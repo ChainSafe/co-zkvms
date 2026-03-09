@@ -222,7 +222,16 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     // Trace to get vanilla trace and IO device
     info!("tracing guest program");
-    let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
+
+    // Match vanilla Jolt::prove/verify, which normalizes trailing zero bytes in outputs.
+    io_device.outputs.truncate(
+        io_device
+            .outputs
+            .iter()
+            .rposition(|&b| b != 0)
+            .map_or(0, |pos| pos + 1),
+    );
 
     // Pad trace
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();

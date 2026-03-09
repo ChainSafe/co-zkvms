@@ -758,16 +758,13 @@ where
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
     // SAFETY: Each thread writes to a unique index i across the D arrays.
-    // NoOp padding cycles are left as None (the default) so that
-    // masked_indices_c[j] = None downstream, excluding them from non_noop_cycles
-    // and avoiding redundant B2A / edaBit consumption on padding.
+    //
+    // Match vanilla witness generation exactly: padded NoOp cycles contribute
+    // lookup index 0, so all InstructionRa chunks are `Some(0)`.
     indices
         .par_iter()
         .enumerate()
         .for_each(|(i, lookup_index)| {
-            if matches!(trace[i], Rep3Cycle::NoOp) {
-                return;
-            }
             let batch_ref = unsafe { &mut *batch_cell.0.get() };
             for j in 0..instruction_lookups::D {
                 let k = (*lookup_index >> instruction_ra_shifts[j])
@@ -1251,6 +1248,9 @@ mod tests {
                         vanilla_poly,
                         &format!("{poly_key:?} (shared dense)"),
                     );
+                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                    unreachable!("U64Scalars variant should not appear in witness polynomials");
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                     unreachable!("RLC variant should not appear in witness polynomials");

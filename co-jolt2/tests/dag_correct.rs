@@ -11,17 +11,17 @@ use co_jolt2::poly::dense_mlpoly::combine_poly_shares_rep3;
 use co_jolt2::poly::multilinear_polynomial::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use co_jolt2::subprotocols::sumcheck::Rep3SumcheckInstanceWorker;
 use co_jolt2::utils::compute_ram_k;
-use co_jolt2::utils::test_utils::run_rep3_test;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
+use co_jolt2::utils::test_utils::run_rep3_test;
 use co_jolt2::utils::tracing::init_tracing;
 use co_jolt2::utils::types::Either;
 use co_jolt2::zkvm::dag::stage::SumcheckStagesWorker;
 use co_jolt2::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
-use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::instruction::LookupIndexInt;
+use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, ALL_R1CS_INPUTS};
-use co_jolt2::zkvm::Rep3JoltWorker;
 use co_jolt2::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
+use co_jolt2::zkvm::Rep3JoltWorker;
 use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDag, dag::worker::Rep3JoltDagWorker};
 
 use jolt_core::host::Program;
@@ -51,8 +51,7 @@ use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use jolt_core::zkvm::{
-    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing,
-    JoltVerifierPreprocessing,
+    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use tracer::emulator::memory::Memory;
 use tracer::instruction::Cycle;
@@ -171,7 +170,12 @@ fn vanilla_lookup_booleanity_round0(
     trace: Vec<Cycle>,
     program_io: tracer::JoltDevice,
     final_memory_state: Memory,
-) -> ([F; jolt_core::zkvm::instruction_lookups::D], Vec<Challenge>, Vec<Challenge>, Vec<F>) {
+) -> (
+    [F; jolt_core::zkvm::instruction_lookups::D],
+    Vec<Challenge>,
+    Vec<Challenge>,
+    Vec<F>,
+) {
     let mut sm = VanillaStateManager::<F, FS, PCS>::new_prover(
         preprocessing,
         trace,
@@ -223,9 +227,8 @@ fn vanilla_lookup_booleanity_round0(
         for i in 1..jolt_core::zkvm::instruction_lookups::D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address = tr.challenge_vector_optimized::<F>(
-            jolt_core::zkvm::instruction_lookups::LOG_K_CHUNK,
-        );
+        let r_address =
+            tr.challenge_vector_optimized::<F>(jolt_core::zkvm::instruction_lookups::LOG_K_CHUNK);
         (gamma_powers, r_address)
     };
 
@@ -238,7 +241,11 @@ fn vanilla_lookup_booleanity_round0(
         .clone();
 
     let mut lookups_instances = lookups_dag.stage2_prover_instances(&mut sm);
-    assert_eq!(lookups_instances.len(), 1, "expected one lookups stage2 instance");
+    assert_eq!(
+        lookups_instances.len(),
+        1,
+        "expected one lookups stage2 instance"
+    );
     let round0 = lookups_instances[0].compute_prover_message(0, F::zero());
     (gamma_powers, r_address, r_cycle, round0)
 }
@@ -374,11 +381,17 @@ fn vanilla_ram_round0(
         let (_, rv_claim) = sm
             .get_prover_accumulator()
             .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamReadValue,
+                SumcheckId::SpartanOuter,
+            );
         let (_, wv_claim) = sm
             .get_prover_accumulator()
             .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamWriteValue,
+                SumcheckId::SpartanOuter,
+            );
         rv_claim + ram_gamma * wv_claim
     };
 
@@ -432,6 +445,66 @@ fn vanilla_ram_round0(
         rwc_round0,
         output_round0,
     )
+}
+
+fn vanilla_ram_output_rounds(
+    preprocessing: &JoltProverPreprocessing<F, PCS>,
+    trace: Vec<Cycle>,
+    program_io: tracer::JoltDevice,
+    final_memory_state: Memory,
+    challenges: &[Challenge],
+) -> Vec<Vec<F>> {
+    let mut sm = VanillaStateManager::<F, FS, PCS>::new_prover(
+        preprocessing,
+        trace,
+        program_io,
+        None,
+        final_memory_state,
+    );
+    sm.fiat_shamir_preamble();
+
+    let (preprocessing, trace, _, _) = sm.get_prover_data();
+    let trace_length = trace.len();
+    let padded_trace_length = trace_length.next_power_of_two();
+    let ram_k = sm.ram_K;
+    let bytecode_d = preprocessing.shared.bytecode.d;
+
+    let _guard = (
+        DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
+        AllCommittedPolynomials::initialize(compute_d_parameter(ram_k), bytecode_d),
+    );
+
+    let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
+    let mut all_polys = CommittedPolynomial::generate_witness_batch(&polys, preprocessing, trace);
+    let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+        .filter_map(|poly| all_polys.remove(poly))
+        .collect();
+    let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
+    let (commitments, _opening_proof_hints): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
+    sm.set_commitments(commitments);
+    let transcript = sm.get_transcript();
+    for commitment in sm.get_commitments().borrow().iter() {
+        transcript.borrow_mut().append_serializable(commitment);
+    }
+
+    let mut spartan = SpartanDag::<F>::new::<FS>(padded_trace_length);
+    spartan.stage1_prove(&mut sm).unwrap();
+
+    let mut registers_dag = RegistersDag::default();
+    let _ = spartan.stage2_prover_instances(&mut sm);
+    let _ = registers_dag.stage2_prover_instances(&mut sm);
+
+    let mut ram_dag = RamDag::new_prover::<F, FS, PCS>(&sm);
+    let mut instances = ram_dag.stage2_prover_instances(&mut sm);
+    let mut output = instances.remove(2);
+
+    let mut rounds = Vec::with_capacity(challenges.len());
+    for (round, challenge) in challenges.iter().copied().enumerate() {
+        rounds.push(output.compute_prover_message(round, F::zero()));
+        output.bind(challenge, round);
+    }
+
+    rounds
 }
 
 fn vanilla_ram_valfinal_round0(
@@ -514,7 +587,12 @@ fn vanilla_ram_valfinal_round0(
         .borrow()
         .get_virtual_polynomial_opening(VirtualPolynomial::RamValFinal, SumcheckId::RamOutputCheck);
 
-    (opening_point.r.clone(), val_final_claim, input_claim, vec![y0, y2, y3])
+    (
+        opening_point.r.clone(),
+        val_final_claim,
+        input_claim,
+        vec![y0, y2, y3],
+    )
 }
 
 fn vanilla_up_to_stage5(
@@ -820,71 +898,175 @@ fn dag_correct() {
         let r_cycle: Vec<Challenge> = (0..padded_len.ilog2() as usize)
             .map(|_| Challenge::random(&mut rng))
             .collect();
-        let vanilla_evals =
-            jolt_core::zkvm::r1cs::inputs::compute_claimed_witness_evals(&shared, &vanilla_trace, &r_cycle);
+        let vanilla_evals = jolt_core::zkvm::r1cs::inputs::compute_claimed_witness_evals(
+            &shared,
+            &vanilla_trace,
+            &r_cycle,
+        );
 
         let preprocessing_arc = Arc::new(preprocessing.clone());
         let io_device_arc = Arc::new(io_device.clone());
         let shares_arc = Arc::new(shares.clone());
         let base_port: u16 = 15300;
-        let share_evals: [Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>>; 3] = run_rep3_test(
-            base_port,
-            1,
-            move |party_idx| {
-                let (trace, mem, advice_shares) = shares_arc[party_idx].clone();
-                (
-                    trace,
-                    mem,
-                    Arc::clone(&io_device_arc),
-                    Arc::clone(&preprocessing_arc),
-                    ram_K,
-                    advice_shares,
-                    r_cycle.clone(),
-                )
-            },
-            move |input: (
-                Vec<Rep3Cycle>,
-                co_jolt2::host::memory::Rep3Memory,
-                Arc<tracer::JoltDevice>,
-                Arc<JoltProverPreprocessing<F, PCS>>,
-                usize,
-                co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-                Vec<Challenge>,
-            ), mut io_ctx| {
-                let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) = input;
-                let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
-                let mut preproc =
-                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
-                        [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-                        budget.dabits,
+        let share_evals: [Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>>; 3] =
+            run_rep3_test(
+                base_port,
+                1,
+                move |party_idx| {
+                    let (trace, mem, advice_shares) = shares_arc[party_idx].clone();
+                    (
+                        trace,
+                        mem,
+                        Arc::clone(&io_device_arc),
+                        Arc::clone(&preprocessing_arc),
+                        ram_K,
+                        advice_shares,
+                        r_cycle.clone(),
+                    )
+                },
+                move |input: (
+                    Vec<Rep3Cycle>,
+                    co_jolt2::host::memory::Rep3Memory,
+                    Arc<tracer::JoltDevice>,
+                    Arc<JoltProverPreprocessing<F, PCS>>,
+                    usize,
+                    co_jolt2::host::jolt_device::Rep3ProgramIOInput,
+                    Vec<Challenge>,
+                ),
+                      mut io_ctx| {
+                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) =
+                        input;
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                    let mut preproc =
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
+                            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                            budget.dabits,
+                            &mut io_ctx,
+                        )?;
+                    let mut state = StateManagerWorker::new(
+                        &preprocessing,
+                        trace,
+                        (*io_device).clone(),
+                        mem,
+                        io_ctx.party_id(),
+                        ram_k,
+                        Some(advice_shares),
+                    );
+                    populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
+                    compute_claimed_witness_evals_rep3::<F, PCS, _>(
+                        &mut state,
                         &mut io_ctx,
-                    )?;
-                let mut state = StateManagerWorker::new(
-                    &preprocessing,
-                    trace,
-                    (*io_device).clone(),
-                    mem,
-                    io_ctx.party_id(),
-                    ram_k,
-                    Some(advice_shares),
-                );
-                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)
-            },
-        );
+                        &r_cycle,
+                    )
+                },
+            );
         let shares_lookup = shares.clone();
         let io_device_lookup = io_device.clone();
         let preprocessing_lookup = preprocessing.clone();
-        let lookup_shares: [Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>>; 3] = run_rep3_test(
-            base_port + 10,
+        let lookup_shares: [Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<F>>; 3] =
+            run_rep3_test(
+                base_port + 10,
+                1,
+                move |party_idx| {
+                    let (trace, mem, advice_shares) = shares_lookup[party_idx].clone();
+                    (
+                        trace,
+                        mem,
+                        io_device_lookup.clone(),
+                        preprocessing_lookup.clone(),
+                        ram_K,
+                        advice_shares,
+                    )
+                },
+                move |input: (
+                    Vec<Rep3Cycle>,
+                    co_jolt2::host::memory::Rep3Memory,
+                    tracer::JoltDevice,
+                    JoltProverPreprocessing<F, PCS>,
+                    usize,
+                    co_jolt2::host::jolt_device::Rep3ProgramIOInput,
+                ),
+                      mut io_ctx| {
+                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares) = input;
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                    let mut preproc =
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
+                            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                            budget.dabits,
+                            &mut io_ctx,
+                        )?;
+                    let mut state = StateManagerWorker::new(
+                        &preprocessing,
+                        trace,
+                        io_device,
+                        mem,
+                        io_ctx.party_id(),
+                        ram_k,
+                        Some(advice_shares),
+                    );
+                    populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
+                    Ok(state.get_cycle_witness().stage1_lookup_output().to_vec())
+                },
+            );
+        let opened_lookup = arithmetic::combine_field_elements_vec(vec![
+            lookup_shares[0].clone(),
+            lookup_shares[1].clone(),
+            lookup_shares[2].clone(),
+        ]);
+        let vanilla_lookup: Vec<F> = (0..vanilla_trace.len())
+            .map(|t| {
+                jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs::from_trace::<F>(
+                    &shared,
+                    &vanilla_trace,
+                    t,
+                )
+                .to_field(jolt_core::zkvm::r1cs::inputs::JoltR1CSInputs::LookupOutput)
+            })
+            .collect();
+        for (t, (rep3, vanilla)) in opened_lookup.iter().zip(vanilla_lookup.iter()).enumerate() {
+            assert_eq!(
+                rep3, vanilla,
+                "rv32 lookup_output mismatch at step {t}: cycle={:?}",
+                vanilla_trace[t]
+            );
+        }
+
+        let opened = arithmetic::combine_field_elements_vec(vec![
+            share_evals[0].clone(),
+            share_evals[1].clone(),
+            share_evals[2].clone(),
+        ]);
+        for (i, (rep3, vanilla)) in opened.iter().zip(vanilla_evals.iter()).enumerate() {
+            assert_eq!(
+                rep3, vanilla,
+                "rv32 claimed eval mismatch at input {i} ({:?})",
+                ALL_R1CS_INPUTS[i]
+            );
+        }
+
+        let shares_indices = shares.clone();
+        let io_device_indices = io_device.clone();
+        let preprocessing_indices = preprocessing.clone();
+        let lookup_index_shares: [Vec<
+            Either<LookupIndexInt, mpc_core::protocols::rep3_ring::Rep3RingShare<LookupIndexInt>>,
+        >; 3] = run_rep3_test(
+            base_port + 20,
             1,
             move |party_idx| {
-                let (trace, mem, advice_shares) = shares_lookup[party_idx].clone();
+                let (trace, mem, advice_shares) = shares_indices[party_idx].clone();
                 (
                     trace,
                     mem,
-                    io_device_lookup.clone(),
-                    preprocessing_lookup.clone(),
+                    io_device_indices.clone(),
+                    preprocessing_indices.clone(),
                     ram_K,
                     advice_shares,
                 )
@@ -896,9 +1078,11 @@ fn dag_correct() {
                 JoltProverPreprocessing<F, PCS>,
                 usize,
                 co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-            ), mut io_ctx| {
+            ),
+                  mut io_ctx| {
                 let (trace, mem, io_device, preprocessing, ram_k, advice_shares) = input;
-                let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                let budget =
+                    co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                 let mut preproc =
                     mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
                         [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
@@ -915,98 +1099,36 @@ fn dag_correct() {
                     Some(advice_shares),
                 );
                 populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                Ok(state.get_cycle_witness().stage1_lookup_output().to_vec())
+                generate_witness_batch_rep3::<F, PCS, _>(
+                    &[],
+                    &mut state,
+                    &mut io_ctx,
+                    &mut preproc,
+                )?;
+                Ok(state
+                    .prover_state
+                    .cycle_witness
+                    .take_read_raf()
+                    .lookup_indices)
             },
         );
-        let opened_lookup = arithmetic::combine_field_elements_vec(vec![
-            lookup_shares[0].clone(),
-            lookup_shares[1].clone(),
-            lookup_shares[2].clone(),
-        ]);
-        let vanilla_lookup: Vec<F> = (0..vanilla_trace.len())
-            .map(|t| jolt_core::zkvm::r1cs::inputs::R1CSCycleInputs::from_trace::<F>(&shared, &vanilla_trace, t).to_field(jolt_core::zkvm::r1cs::inputs::JoltR1CSInputs::LookupOutput))
-            .collect();
-        for (t, (rep3, vanilla)) in opened_lookup.iter().zip(vanilla_lookup.iter()).enumerate() {
-            assert_eq!(
-                rep3,
-                vanilla,
-                "rv32 lookup_output mismatch at step {t}: cycle={:?}",
-                vanilla_trace[t]
-            );
-        }
-
-        let opened = arithmetic::combine_field_elements_vec(vec![
-            share_evals[0].clone(),
-            share_evals[1].clone(),
-            share_evals[2].clone(),
-        ]);
-        for (i, (rep3, vanilla)) in opened.iter().zip(vanilla_evals.iter()).enumerate() {
-            assert_eq!(rep3, vanilla, "rv32 claimed eval mismatch at input {i} ({:?})", ALL_R1CS_INPUTS[i]);
-        }
-
-        let shares_indices = shares.clone();
-        let io_device_indices = io_device.clone();
-        let preprocessing_indices = preprocessing.clone();
-        let lookup_index_shares: [Vec<Either<LookupIndexInt, mpc_core::protocols::rep3_ring::Rep3RingShare<LookupIndexInt>>>; 3] =
-            run_rep3_test(
-                base_port + 20,
-                1,
-                move |party_idx| {
-                    let (trace, mem, advice_shares) = shares_indices[party_idx].clone();
-                    (
-                        trace,
-                        mem,
-                        io_device_indices.clone(),
-                        preprocessing_indices.clone(),
-                        ram_K,
-                        advice_shares,
-                    )
-                },
-                move |input: (
-                    Vec<Rep3Cycle>,
-                    co_jolt2::host::memory::Rep3Memory,
-                    tracer::JoltDevice,
-                    JoltProverPreprocessing<F, PCS>,
-                    usize,
-                    co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-                ), mut io_ctx| {
-                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares) = input;
-                    let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
-                    let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
-                            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-                            budget.dabits,
-                            &mut io_ctx,
-                        )?;
-                    let mut state = StateManagerWorker::new(
-                        &preprocessing,
-                        trace,
-                        io_device,
-                        mem,
-                        io_ctx.party_id(),
-                        ram_k,
-                        Some(advice_shares),
-                    );
-                    populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    generate_witness_batch_rep3::<F, PCS, _>(&[], &mut state, &mut io_ctx, &mut preproc)?;
-                    Ok(state.prover_state.cycle_witness.take_read_raf().lookup_indices)
-                },
-            );
         let opened_indices: Vec<LookupIndexInt> = (0..lookup_index_shares[0].len())
-            .map(|i| match (
-                &lookup_index_shares[0][i],
-                &lookup_index_shares[1][i],
-                &lookup_index_shares[2][i],
-            ) {
-                (Either::Public(a), Either::Public(b), Either::Public(c)) => {
-                    assert_eq!(a, b, "public lookup index shares mismatch at step {i}");
-                    assert_eq!(b, c, "public lookup index shares mismatch at step {i}");
-                    *a
+            .map(|i| {
+                match (
+                    &lookup_index_shares[0][i],
+                    &lookup_index_shares[1][i],
+                    &lookup_index_shares[2][i],
+                ) {
+                    (Either::Public(a), Either::Public(b), Either::Public(c)) => {
+                        assert_eq!(a, b, "public lookup index shares mismatch at step {i}");
+                        assert_eq!(b, c, "public lookup index shares mismatch at step {i}");
+                        *a
+                    }
+                    (Either::Shared(a), Either::Shared(b), Either::Shared(c)) => {
+                        combine_ring_element_binary(*a, *b, *c).0
+                    }
+                    _ => panic!("lookup index visibility mismatch at step {i}"),
                 }
-                (Either::Shared(a), Either::Shared(b), Either::Shared(c)) => {
-                    combine_ring_element_binary(*a, *b, *c).0
-                }
-                _ => panic!("lookup index visibility mismatch at step {i}"),
             })
             .collect();
         let vanilla_lookup_indices: Vec<LookupIndexInt> = vanilla_trace
@@ -1022,19 +1144,18 @@ fn dag_correct() {
             .enumerate()
         {
             assert_eq!(
-                rep3,
-                vanilla,
+                rep3, vanilla,
                 "rv32 lookup_index mismatch at step {t}: cycle={:?}",
                 vanilla_trace[t]
             );
         }
 
-        let stage2_polys = vec![
-            CommittedPolynomial::RdInc,
-            CommittedPolynomial::RamInc,
-        ];
-        let vanilla_stage2_witness =
-            CommittedPolynomial::generate_witness_batch(&stage2_polys, &preprocessing, &vanilla_trace);
+        let stage2_polys = vec![CommittedPolynomial::RdInc, CommittedPolynomial::RamInc];
+        let vanilla_stage2_witness = CommittedPolynomial::generate_witness_batch(
+            &stage2_polys,
+            &preprocessing,
+            &vanilla_trace,
+        );
         let stage2_polys_worker = stage2_polys.clone();
         let shares_stage2_witness = shares.clone();
         let io_device_stage2_witness = io_device.clone();
@@ -1061,11 +1182,16 @@ fn dag_correct() {
                     JoltProverPreprocessing<F, PCS>,
                     usize,
                     co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-                ), mut io_ctx| {
+                ),
+                      mut io_ctx| {
                     let (trace, mem, io_device, preprocessing, ram_k, advice_shares) = input;
-                    let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
                             [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                             budget.dabits,
                             &mut io_ctx,
@@ -1080,7 +1206,12 @@ fn dag_correct() {
                         Some(advice_shares),
                     );
                     populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    generate_witness_batch_rep3::<F, PCS, _>(&stage2_polys_worker, &mut state, &mut io_ctx, &mut preproc)
+                    generate_witness_batch_rep3::<F, PCS, _>(
+                        &stage2_polys_worker,
+                        &mut state,
+                        &mut io_ctx,
+                        &mut preproc,
+                    )
                 },
             );
 
@@ -1088,14 +1219,21 @@ fn dag_correct() {
             let rep3_poly = combine_poly_shares_rep3(
                 rep3_stage2_witness
                     .iter()
-                    .map(|party_map| match party_map.get(&poly).expect("missing stage2 witness poly") {
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => dense.clone(),
-                        other => panic!("expected dense shared poly for {poly:?}, got {other:?}"),
+                    .map(|party_map| {
+                        match party_map.get(&poly).expect("missing stage2 witness poly") {
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                                dense.clone()
+                            }
+                            other => {
+                                panic!("expected dense shared poly for {poly:?}, got {other:?}")
+                            }
+                        }
                     })
                     .collect(),
             );
-            let vanilla_poly =
-                vanilla_stage2_witness.get(&poly).expect("missing vanilla stage2 witness poly");
+            let vanilla_poly = vanilla_stage2_witness
+                .get(&poly)
+                .expect("missing vanilla stage2 witness poly");
             assert_eq!(
                 rep3_poly.len(),
                 vanilla_poly.len(),
@@ -1143,11 +1281,17 @@ fn dag_correct() {
                     usize,
                     co_jolt2::host::jolt_device::Rep3ProgramIOInput,
                     Vec<Challenge>,
-                ), mut io_ctx| {
-                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) = input;
-                    let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                ),
+                      mut io_ctx| {
+                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) =
+                        input;
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
                             [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                             budget.dabits,
                             &mut io_ctx,
@@ -1162,8 +1306,12 @@ fn dag_correct() {
                         Some(advice_shares),
                     );
                     populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    let _ =
-                        generate_witness_batch_rep3::<F, PCS, _>(&[CommittedPolynomial::RdInc], &mut state, &mut io_ctx, &mut preproc)?;
+                    let _ = generate_witness_batch_rep3::<F, PCS, _>(
+                        &[CommittedPolynomial::RdInc],
+                        &mut state,
+                        &mut io_ctx,
+                        &mut preproc,
+                    )?;
                     state.accumulator.append_virtual_public(
                         VirtualPolynomial::Rs1Value,
                         SumcheckId::SpartanOuter,
@@ -1194,8 +1342,7 @@ fn dag_correct() {
             reg_msg_shares[2].clone(),
         ]);
         assert_eq!(
-            rep3_reg_round0,
-            vanilla_reg_round0,
+            rep3_reg_round0, vanilla_reg_round0,
             "rv32 registers round-0 mismatch"
         );
 
@@ -1234,11 +1381,17 @@ fn dag_correct() {
                     usize,
                     co_jolt2::host::jolt_device::Rep3ProgramIOInput,
                     Vec<Challenge>,
-                ), mut io_ctx| {
-                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) = input;
-                    let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                ),
+                      mut io_ctx| {
+                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_cycle) =
+                        input;
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
                             [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                             budget.dabits,
                             &mut io_ctx,
@@ -1253,8 +1406,11 @@ fn dag_correct() {
                         Some(advice_shares),
                     );
                     populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    let claimed_witness_evals =
-                        compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)?;
+                    let claimed_witness_evals = compute_claimed_witness_evals_rep3::<F, PCS, _>(
+                        &mut state,
+                        &mut io_ctx,
+                        &r_cycle,
+                    )?;
                     let mut inner = co_jolt2::zkvm::spartan::Rep3InnerSumcheckWorker::new(
                         inner_gamma,
                         inner_claim,
@@ -1280,8 +1436,7 @@ fn dag_correct() {
             inner_msg_shares[2].clone(),
         ]);
         assert_eq!(
-            rep3_inner_round0,
-            vanilla_inner_round0,
+            rep3_inner_round0, vanilla_inner_round0,
             "rv32 spartan inner round-0 mismatch"
         );
 
@@ -1292,10 +1447,10 @@ fn dag_correct() {
                 io_device.clone(),
                 vanilla_memory.clone(),
             );
-        let instruction_ra_polys: Vec<CommittedPolynomial> =
-            (0..jolt_core::zkvm::instruction_lookups::D)
-                .map(CommittedPolynomial::InstructionRa)
-                .collect();
+        let instruction_ra_polys: Vec<CommittedPolynomial> = (0
+            ..jolt_core::zkvm::instruction_lookups::D)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
         let shares_booleanity = shares.clone();
         let io_device_booleanity = io_device.clone();
         let preprocessing_booleanity = preprocessing.clone();
@@ -1321,11 +1476,16 @@ fn dag_correct() {
                     JoltProverPreprocessing<F, PCS>,
                     usize,
                     co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-                ), mut io_ctx| {
+                ),
+                      mut io_ctx| {
                     let (trace, mem, io_device, preprocessing, ram_k, advice_shares) = input;
-                    let budget = co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                    let budget =
+                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
+                            F,
+                            _,
+                        >(
                             [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                             budget.dabits,
                             &mut io_ctx,
@@ -1340,14 +1500,20 @@ fn dag_correct() {
                         Some(advice_shares),
                     );
                     populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    let witness =
-                        generate_witness_batch_rep3::<F, PCS, _>(&instruction_ra_polys, &mut state, &mut io_ctx, &mut preproc)?;
+                    let witness = generate_witness_batch_rep3::<F, PCS, _>(
+                        &instruction_ra_polys,
+                        &mut state,
+                        &mut io_ctx,
+                        &mut preproc,
+                    )?;
                     let one_hot_polys = std::array::from_fn(|i| {
                         match witness
                             .get(&CommittedPolynomial::InstructionRa(i))
                             .expect("missing instruction ra poly")
                         {
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => poly.clone(),
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
+                                poly.clone()
+                            }
                             other => panic!("expected one-hot instruction ra poly, got {other:?}"),
                         }
                     });
@@ -1359,12 +1525,20 @@ fn dag_correct() {
                         io_ctx.party_id(),
                     );
                     let mut lookups =
-                        co_jolt2::zkvm::instruction_lookups::Rep3LookupsDagWorker::new(one_hot_polys);
+                        co_jolt2::zkvm::instruction_lookups::Rep3LookupsDagWorker::new(
+                            one_hot_polys,
+                        );
                     lookups.set_stage2_init(bool_gamma, bool_r_address.clone());
                     let mut instances = lookups.stage2_instances(&mut state, &mut io_ctx)?;
-                    assert_eq!(instances.len(), 1, "expected one rep3 lookups stage2 instance");
+                    assert_eq!(
+                        instances.len(),
+                        1,
+                        "expected one rep3 lookups stage2 instance"
+                    );
                     let instance = match instances.pop().expect("missing instance") {
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => instance,
+                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(
+                            instance,
+                        ) => instance,
                         co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
                             panic!("unexpected public lookups stage2 instance")
                         }
@@ -1387,8 +1561,7 @@ fn dag_correct() {
             bool_msg_shares[2].clone(),
         ]);
         assert_eq!(
-            rep3_bool_round0,
-            vanilla_bool_round0,
+            rep3_bool_round0, vanilla_bool_round0,
             "rv32 lookup booleanity round-0 mismatch"
         );
 
@@ -1411,128 +1584,143 @@ fn dag_correct() {
         let ram_output_r_address_round0 = ram_output_r_address.clone();
         let ram_address_r_round0 = ram_address_r.clone();
         let ram_read_r_round0 = ram_read_r.clone();
+        let ram_output_r_address_for_round0 = ram_output_r_address_round0.clone();
+        let ram_address_r_for_round0 = ram_address_r_round0.clone();
+        let ram_read_r_for_round0 = ram_read_r_round0.clone();
         let shares_ram = shares.clone();
         let io_device_ram = io_device.clone();
         let preprocessing_ram = preprocessing.clone();
-        let ram_msg_shares: [(Vec<mpc_core::protocols::additive::AdditiveShare<F>>, Vec<mpc_core::protocols::additive::AdditiveShare<F>>, Vec<mpc_core::protocols::additive::AdditiveShare<F>>); 3] =
-            run_rep3_test(
-                base_port + 45,
-                1,
-                move |party_idx| {
-                    let (trace, mem, advice_shares) = shares_ram[party_idx].clone();
-                    (
-                        trace,
-                        mem,
-                        io_device_ram.clone(),
-                        preprocessing_ram.clone(),
-                        ram_K,
-                        advice_shares,
-                        ram_address_r_round0.clone(),
-                        ram_read_r_round0.clone(),
-                    )
-                },
-                move |input: (
-                    Vec<Rep3Cycle>,
-                    co_jolt2::host::memory::Rep3Memory,
-                    tracer::JoltDevice,
-                    JoltProverPreprocessing<F, PCS>,
-                    usize,
-                    co_jolt2::host::jolt_device::Rep3ProgramIOInput,
-                    Vec<Challenge>,
-                    Vec<Challenge>,
-                ), mut io_ctx| {
-                    let (
-                        trace,
-                        mem,
-                        io_device,
-                        preprocessing,
-                        ram_k,
-                        advice_shares,
-                        ram_address_r,
-                        ram_read_r,
-                    ) = input;
-                    let budget =
-                        co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
-                    let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<
-                            F,
-                            _,
-                        >(
-                            [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-                            budget.dabits,
-                            &mut io_ctx,
-                        )?;
-                    let mut state = StateManagerWorker::new(
-                        &preprocessing,
-                        trace,
-                        io_device,
-                        mem,
-                        io_ctx.party_id(),
-                        ram_k,
-                        Some(advice_shares),
-                    );
-                    populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-                    let _ = generate_witness_batch_rep3::<F, PCS, _>(
-                        &[CommittedPolynomial::RamInc],
-                        &mut state,
+        let ram_msg_shares: [(
+            Vec<mpc_core::protocols::additive::AdditiveShare<F>>,
+            Vec<mpc_core::protocols::additive::AdditiveShare<F>>,
+            Vec<mpc_core::protocols::additive::AdditiveShare<F>>,
+        ); 3] = run_rep3_test(
+            base_port + 45,
+            1,
+            move |party_idx| {
+                let (trace, mem, advice_shares) = shares_ram[party_idx].clone();
+                (
+                    trace,
+                    mem,
+                    io_device_ram.clone(),
+                    preprocessing_ram.clone(),
+                    ram_K,
+                    advice_shares,
+                    ram_address_r_for_round0.clone(),
+                    ram_read_r_for_round0.clone(),
+                )
+            },
+            move |input: (
+                Vec<Rep3Cycle>,
+                co_jolt2::host::memory::Rep3Memory,
+                tracer::JoltDevice,
+                JoltProverPreprocessing<F, PCS>,
+                usize,
+                co_jolt2::host::jolt_device::Rep3ProgramIOInput,
+                Vec<Challenge>,
+                Vec<Challenge>,
+            ),
+                  mut io_ctx| {
+                let (
+                    trace,
+                    mem,
+                    io_device,
+                    preprocessing,
+                    ram_k,
+                    advice_shares,
+                    ram_address_r,
+                    ram_read_r,
+                ) = input;
+                let budget =
+                    co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                let mut preproc =
+                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                        budget.dabits,
                         &mut io_ctx,
-                        &mut preproc,
                     )?;
-                    state.accumulator.append_virtual_public(
-                        VirtualPolynomial::RamAddress,
-                        SumcheckId::SpartanOuter,
-                        jolt_core::poly::opening_proof::OpeningPoint::new(ram_address_r),
-                        ram_address_claim,
-                        io_ctx.party_id(),
-                    );
-                    state.accumulator.append_virtual_public(
-                        VirtualPolynomial::RamReadValue,
-                        SumcheckId::SpartanOuter,
-                        jolt_core::poly::opening_proof::OpeningPoint::new(ram_read_r),
-                        F::zero(),
-                        io_ctx.party_id(),
-                    );
-                    let mut ram =
-                        co_jolt2::zkvm::ram::Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
-                    ram.set_stage2_init(
-                        ram_gamma,
-                        ram_input_claim,
-                        ram_output_r_address_round0.clone(),
-                    );
-                    let mut instances = ram.stage2_instances(&mut state, &mut io_ctx)?;
-                    assert_eq!(instances.len(), 3, "expected three rep3 ram stage2 instances");
-                    let mut raf = match instances.remove(0) {
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => instance,
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
-                            panic!("unexpected public ram raf instance")
-                        }
-                    };
-                    let mut rwc = match instances.remove(0) {
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => instance,
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
-                            panic!("unexpected public ram rwc instance")
-                        }
-                    };
-                    let mut output = match instances.remove(0) {
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => instance,
-                        co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
-                            panic!("unexpected public ram output instance")
-                        }
-                    };
-                    let raf_claim_share = mpc_core::protocols::additive::AdditiveShare::zero();
-                    let rwc_claim_share = mpc_core::protocols::additive::promote_to_trivial_share(
-                        ram_input_claim,
-                        io_ctx.party_id(),
-                    );
-                    let output_claim_share =
-                        mpc_core::protocols::additive::promote_to_trivial_share(F::zero(), io_ctx.party_id());
-                    Ok((
-                        raf.compute_prover_message_share(0, raf_claim_share, 3, &mut io_ctx),
-                        rwc.compute_prover_message_share(0, rwc_claim_share, 3, &mut io_ctx),
-                        output.compute_prover_message_share(0, output_claim_share, 3, &mut io_ctx),
-                    ))
-                },
-            );
+                let mut state = StateManagerWorker::new(
+                    &preprocessing,
+                    trace,
+                    io_device,
+                    mem,
+                    io_ctx.party_id(),
+                    ram_k,
+                    Some(advice_shares),
+                );
+                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
+                let _ = generate_witness_batch_rep3::<F, PCS, _>(
+                    &[CommittedPolynomial::RamInc],
+                    &mut state,
+                    &mut io_ctx,
+                    &mut preproc,
+                )?;
+                state.accumulator.append_virtual_public(
+                    VirtualPolynomial::RamAddress,
+                    SumcheckId::SpartanOuter,
+                    jolt_core::poly::opening_proof::OpeningPoint::new(ram_address_r),
+                    ram_address_claim,
+                    io_ctx.party_id(),
+                );
+                state.accumulator.append_virtual_public(
+                    VirtualPolynomial::RamReadValue,
+                    SumcheckId::SpartanOuter,
+                    jolt_core::poly::opening_proof::OpeningPoint::new(ram_read_r),
+                    F::zero(),
+                    io_ctx.party_id(),
+                );
+                let mut ram = co_jolt2::zkvm::ram::Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
+                ram.set_stage2_init(
+                    ram_gamma,
+                    ram_input_claim,
+                    ram_output_r_address_for_round0.clone(),
+                );
+                let mut instances = ram.stage2_instances(&mut state, &mut io_ctx)?;
+                assert_eq!(
+                    instances.len(),
+                    3,
+                    "expected three rep3 ram stage2 instances"
+                );
+                let mut raf = match instances.remove(0) {
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => {
+                        instance
+                    }
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
+                        panic!("unexpected public ram raf instance")
+                    }
+                };
+                let mut rwc = match instances.remove(0) {
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => {
+                        instance
+                    }
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
+                        panic!("unexpected public ram rwc instance")
+                    }
+                };
+                let mut output = match instances.remove(0) {
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => {
+                        instance
+                    }
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
+                        panic!("unexpected public ram output instance")
+                    }
+                };
+                let raf_claim_share = mpc_core::protocols::additive::AdditiveShare::zero();
+                let rwc_claim_share = mpc_core::protocols::additive::promote_to_trivial_share(
+                    ram_input_claim,
+                    io_ctx.party_id(),
+                );
+                let output_claim_share = mpc_core::protocols::additive::promote_to_trivial_share(
+                    F::zero(),
+                    io_ctx.party_id(),
+                );
+                Ok((
+                    raf.compute_prover_message_share(0, raf_claim_share, 3, &mut io_ctx),
+                    rwc.compute_prover_message_share(0, rwc_claim_share, 3, &mut io_ctx),
+                    output.compute_prover_message_share(0, output_claim_share, 3, &mut io_ctx),
+                ))
+            },
+        );
         let rep3_raf_round0 = mpc_core::protocols::additive::combine_additive_vec(vec![
             ram_msg_shares[0].0.clone(),
             ram_msg_shares[1].0.clone(),
@@ -1549,20 +1737,144 @@ fn dag_correct() {
             ram_msg_shares[2].2.clone(),
         ]);
         let _ = (rep3_raf_round0, vanilla_raf_round0);
-        assert_eq!(rep3_rwc_round0, vanilla_rwc_round0, "rv32 ram rwc round-0 mismatch");
         assert_eq!(
-            rep3_output_round0,
-            vanilla_output_round0,
+            rep3_rwc_round0, vanilla_rwc_round0,
+            "rv32 ram rwc round-0 mismatch"
+        );
+        assert_eq!(
+            rep3_output_round0, vanilla_output_round0,
             "rv32 ram output round-0 mismatch"
         );
 
-        let (ram_valfinal_r_address, ram_valfinal_claim, ram_valfinal_input_claim, vanilla_ram_valfinal_round0) =
-            vanilla_ram_valfinal_round0(
-                &preprocessing,
-                vanilla_trace.clone(),
-                io_device.clone(),
-                vanilla_memory.clone(),
-            );
+        let vanilla_output_rounds = vanilla_ram_output_rounds(
+            &preprocessing,
+            vanilla_trace.clone(),
+            io_device.clone(),
+            vanilla_memory.clone(),
+            &ram_output_r_address_round0,
+        );
+        let shares_ram_output = shares.clone();
+        let io_device_ram_output = io_device.clone();
+        let preprocessing_ram_output = preprocessing.clone();
+        let rep3_output_round_shares: [Vec<Vec<mpc_core::protocols::additive::AdditiveShare<F>>>;
+            3] = run_rep3_test(
+            base_port + 46,
+            1,
+            move |party_idx| {
+                let (trace, mem, advice_shares) = shares_ram_output[party_idx].clone();
+                (
+                    trace,
+                    mem,
+                    io_device_ram_output.clone(),
+                    preprocessing_ram_output.clone(),
+                    ram_K,
+                    advice_shares,
+                    ram_output_r_address_round0.clone(),
+                )
+            },
+            move |input: (
+                Vec<Rep3Cycle>,
+                co_jolt2::host::memory::Rep3Memory,
+                tracer::JoltDevice,
+                JoltProverPreprocessing<F, PCS>,
+                usize,
+                co_jolt2::host::jolt_device::Rep3ProgramIOInput,
+                Vec<Challenge>,
+            ),
+                  mut io_ctx| {
+                let (trace, mem, io_device, preprocessing, ram_k, advice_shares, challenges) =
+                    input;
+                let budget =
+                    co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
+                let mut preproc =
+                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                        budget.dabits,
+                        &mut io_ctx,
+                    )?;
+                let mut state = StateManagerWorker::new(
+                    &preprocessing,
+                    trace,
+                    io_device,
+                    mem,
+                    io_ctx.party_id(),
+                    ram_k,
+                    Some(advice_shares),
+                );
+                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
+                let _ = generate_witness_batch_rep3::<F, PCS, _>(
+                    &[CommittedPolynomial::RamInc],
+                    &mut state,
+                    &mut io_ctx,
+                    &mut preproc,
+                )?;
+                state.accumulator.append_virtual_public(
+                    VirtualPolynomial::RamAddress,
+                    SumcheckId::SpartanOuter,
+                    jolt_core::poly::opening_proof::OpeningPoint::new(ram_address_r_round0.clone()),
+                    ram_address_claim,
+                    io_ctx.party_id(),
+                );
+                state.accumulator.append_virtual_public(
+                    VirtualPolynomial::RamReadValue,
+                    SumcheckId::SpartanOuter,
+                    jolt_core::poly::opening_proof::OpeningPoint::new(ram_read_r_round0.clone()),
+                    F::zero(),
+                    io_ctx.party_id(),
+                );
+                let mut ram = co_jolt2::zkvm::ram::Rep3RamDagWorker::new(&mut state, &mut io_ctx)?;
+                ram.set_stage2_init(ram_gamma, ram_input_claim, challenges.clone());
+                let mut instances = ram.stage2_instances(&mut state, &mut io_ctx)?;
+                let mut output = match instances.remove(2) {
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => {
+                        instance
+                    }
+                    co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
+                        panic!("unexpected public ram output instance")
+                    }
+                };
+                let zero_claim = mpc_core::protocols::additive::promote_to_trivial_share(
+                    F::zero(),
+                    io_ctx.party_id(),
+                );
+                let mut rounds = Vec::with_capacity(challenges.len());
+                for (round, challenge) in challenges.into_iter().enumerate() {
+                    rounds.push(output.compute_prover_message_share(
+                        round,
+                        zero_claim,
+                        3,
+                        &mut io_ctx,
+                    ));
+                    output.bind(challenge, round, &mut io_ctx, &mut preproc);
+                }
+                Ok(rounds)
+            },
+        );
+        let rep3_output_rounds: Vec<Vec<F>> = (0..vanilla_output_rounds.len())
+            .map(|round| {
+                mpc_core::protocols::additive::combine_additive_vec(vec![
+                    rep3_output_round_shares[0][round].clone(),
+                    rep3_output_round_shares[1][round].clone(),
+                    rep3_output_round_shares[2][round].clone(),
+                ])
+            })
+            .collect();
+        assert_eq!(
+            rep3_output_rounds, vanilla_output_rounds,
+            "rv32 ram output full-round mismatch"
+        );
+
+        let (
+            ram_valfinal_r_address,
+            ram_valfinal_claim,
+            ram_valfinal_input_claim,
+            vanilla_ram_valfinal_round0,
+        ) = vanilla_ram_valfinal_round0(
+            &preprocessing,
+            vanilla_trace.clone(),
+            io_device.clone(),
+            vanilla_memory.clone(),
+        );
         let shares_ram_valfinal = shares.clone();
         let io_device_ram_valfinal = io_device.clone();
         let preprocessing_ram_valfinal = preprocessing.clone();
@@ -1590,16 +1902,10 @@ fn dag_correct() {
                     usize,
                     co_jolt2::host::jolt_device::Rep3ProgramIOInput,
                     Vec<Challenge>,
-                ), mut io_ctx| {
-                    let (
-                        trace,
-                        mem,
-                        io_device,
-                        preprocessing,
-                        ram_k,
-                        advice_shares,
-                        r_address,
-                    ) = input;
+                ),
+                      mut io_ctx| {
+                    let (trace, mem, io_device, preprocessing, ram_k, advice_shares, r_address) =
+                        input;
                     let budget =
                         co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let mut preproc =
@@ -1650,15 +1956,13 @@ fn dag_correct() {
                     ))
                 },
             );
-        let rep3_ram_valfinal_round0 =
-            mpc_core::protocols::additive::combine_additive_vec(vec![
-                ram_valfinal_msg_shares[0].clone(),
-                ram_valfinal_msg_shares[1].clone(),
-                ram_valfinal_msg_shares[2].clone(),
-            ]);
+        let rep3_ram_valfinal_round0 = mpc_core::protocols::additive::combine_additive_vec(vec![
+            ram_valfinal_msg_shares[0].clone(),
+            ram_valfinal_msg_shares[1].clone(),
+            ram_valfinal_msg_shares[2].clone(),
+        ]);
         assert_eq!(
-            rep3_ram_valfinal_round0,
-            vanilla_ram_valfinal_round0,
+            rep3_ram_valfinal_round0, vanilla_ram_valfinal_round0,
             "rv32 ram val-final round-0 mismatch"
         );
 
@@ -1758,7 +2062,8 @@ fn dag_correct() {
                         usize,
                         co_jolt2::host::jolt_device::Rep3ProgramIOInput,
                         Vec<Challenge>,
-                    ), mut io_ctx| {
+                    ),
+                          mut io_ctx| {
                         let (
                             trace,
                             mem,
@@ -1798,7 +2103,9 @@ fn dag_correct() {
                         state.accumulator.append_virtual_public(
                             VirtualPolynomial::RamAddress,
                             SumcheckId::SpartanOuter,
-                            jolt_core::poly::opening_proof::OpeningPoint::new(ram_address_r.clone()),
+                            jolt_core::poly::opening_proof::OpeningPoint::new(
+                                ram_address_r.clone(),
+                            ),
                             ram_address_claim,
                             io_ctx.party_id(),
                         );
@@ -1818,24 +2125,31 @@ fn dag_correct() {
                         );
                         let mut instances = ram.stage2_instances(&mut state, &mut io_ctx)?;
                         let mut raf = match instances.remove(0) {
-                            co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(instance) => instance,
-                            co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(_) => {
+                            co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Secret(
+                                instance,
+                            ) => instance,
+                            co_jolt2::zkvm::dag::stage::BatchedSumcheckWorkerInstance::Public(
+                                _,
+                            ) => {
                                 panic!("unexpected public ram raf instance")
                             }
                         };
                         let mut previous_claim = raf.input_claim().into_additive(io_ctx.party_id());
                         let mut msgs = Vec::new();
                         for (round, r_j) in raf_challenges.iter().copied().enumerate() {
-                            let msg =
-                                raf.compute_prover_message_share(round, previous_claim, 3, &mut io_ctx);
+                            let msg = raf.compute_prover_message_share(
+                                round,
+                                previous_claim,
+                                3,
+                                &mut io_ctx,
+                            );
                             let y0 = msg[0].into_fe();
                             let y2 = msg[1].into_fe();
                             let y1 = (previous_claim - msg[0]).into_fe();
                             let poly = jolt_core::poly::unipoly::UniPoly::from_evals(&[y0, y1, y2]);
-                            previous_claim =
-                                mpc_core::protocols::additive::AdditiveShare::from_fe(
-                                    poly.evaluate(&r_j),
-                                );
+                            previous_claim = mpc_core::protocols::additive::AdditiveShare::from_fe(
+                                poly.evaluate(&r_j),
+                            );
                             raf.bind(r_j, round, &mut io_ctx, &mut preproc);
                             msgs.push(msg);
                         }
@@ -1850,13 +2164,11 @@ fn dag_correct() {
                     rep3_raf_msgs[2][round].clone(),
                 ]);
                 assert_eq!(
-                    rep3_round,
-                    vanilla_raf_msgs[round],
+                    rep3_round, vanilla_raf_msgs[round],
                     "rv32 raf round mismatch at round {round}"
                 );
             }
         }
-
     }
 
     // 4) Vanilla proof up to Stage3.
@@ -1968,12 +2280,21 @@ fn dag_correct() {
     );
 
     // 6) Compare commitments.
-    for (i, (r, v)) in rep3_proof.commitments.iter().zip(vanilla_proof.commitments.iter()).enumerate() {
+    for (i, (r, v)) in rep3_proof
+        .commitments
+        .iter()
+        .zip(vanilla_proof.commitments.iter())
+        .enumerate()
+    {
         if r != v {
             eprintln!("Commitment mismatch at index {i}");
         }
     }
-    assert_eq!(rep3_proof.commitments.len(), vanilla_proof.commitments.len(), "commitment count mismatch");
+    assert_eq!(
+        rep3_proof.commitments.len(),
+        vanilla_proof.commitments.len(),
+        "commitment count mismatch"
+    );
     assert_eq!(rep3_proof.commitments, vanilla_proof.commitments);
 
     // 7) Compare Stage1 sumcheck proof bytes.
@@ -1998,9 +2319,7 @@ fn dag_correct() {
     };
     if std::env::var("CO_JOLT2_FINAL_VERIFY_ONLY").is_ok() {
         let elf_contents_owned = program.get_elf_contents();
-        let elf_contents = elf_contents_owned
-            .as_deref()
-            .expect("elf contents is None");
+        let elf_contents = elf_contents_owned.as_deref().expect("elf contents is None");
         let (fresh_proof, fresh_io, fresh_debug_info, _) =
             <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
                 &preprocessing_arc,
@@ -2055,10 +2374,21 @@ fn dag_correct() {
             if m_bytes == f_bytes {
                 eprintln!("stage1 proofs: MATCH");
             } else {
-                eprintln!("stage1 proofs: DIFFER (manual={} bytes, fresh={} bytes)", m_bytes.len(), f_bytes.len());
+                eprintln!(
+                    "stage1 proofs: DIFFER (manual={} bytes, fresh={} bytes)",
+                    m_bytes.len(),
+                    f_bytes.len()
+                );
                 // Find first differing round
-                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) = (manual_s1, fresh_s1) {
-                    for (i, (a, b)) in m_sc.compressed_polys.iter().zip(f_sc.compressed_polys.iter()).enumerate() {
+                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) =
+                    (manual_s1, fresh_s1)
+                {
+                    for (i, (a, b)) in m_sc
+                        .compressed_polys
+                        .iter()
+                        .zip(f_sc.compressed_polys.iter())
+                        .enumerate()
+                    {
                         let mut ab = Vec::new();
                         let mut bb = Vec::new();
                         a.serialize_uncompressed(&mut ab).unwrap();
@@ -2089,10 +2419,25 @@ fn dag_correct() {
             if m_bytes == f_bytes {
                 eprintln!("stage2 proofs: MATCH");
             } else {
-                eprintln!("stage2 proofs: DIFFER (manual={} bytes, fresh={} bytes)", m_bytes.len(), f_bytes.len());
-                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) = (manual_s2, fresh_s2) {
-                    eprintln!("  stage2 rounds: manual={} fresh={}", m_sc.compressed_polys.len(), f_sc.compressed_polys.len());
-                    for (i, (a, b)) in m_sc.compressed_polys.iter().zip(f_sc.compressed_polys.iter()).enumerate() {
+                eprintln!(
+                    "stage2 proofs: DIFFER (manual={} bytes, fresh={} bytes)",
+                    m_bytes.len(),
+                    f_bytes.len()
+                );
+                if let (ProofData::SumcheckProof(m_sc), ProofData::SumcheckProof(f_sc)) =
+                    (manual_s2, fresh_s2)
+                {
+                    eprintln!(
+                        "  stage2 rounds: manual={} fresh={}",
+                        m_sc.compressed_polys.len(),
+                        f_sc.compressed_polys.len()
+                    );
+                    for (i, (a, b)) in m_sc
+                        .compressed_polys
+                        .iter()
+                        .zip(f_sc.compressed_polys.iter())
+                        .enumerate()
+                    {
                         let mut ab = Vec::new();
                         let mut bb = Vec::new();
                         a.serialize_uncompressed(&mut ab).unwrap();
@@ -2539,9 +2884,7 @@ fn dag_correct() {
     );
 
     let elf_contents_owned = program.get_elf_contents();
-    let elf_contents = elf_contents_owned
-        .as_deref()
-        .expect("elf contents is None");
+    let elf_contents = elf_contents_owned.as_deref().expect("elf contents is None");
     let (vanilla_verification_proof, vanilla_verification_io, vanilla_debug_info, _) =
         <JoltRV64IMAC as Jolt<Fr, PCS, FS>>::prove(
             &preprocessing_arc,
