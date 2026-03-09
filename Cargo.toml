@@ -6,6 +6,7 @@ members = [
     # because the jolt::provable macro emits host-only code gated on cfg(not(feature = "guest")).
     # "co-jolt2/examples/sha2-chain/guest",
     # "co-jolt2/examples/fibonacci/guest",
+    "co-jolt-coordinator",
     # "co-jolt",
     # "co-noir-spartan/co-spartan",
     # "co-noir-spartan/co-noir",

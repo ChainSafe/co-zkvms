@@ -6,6 +6,8 @@ use ark_ff::{Field, One, Zero};
 use ark_serialize::CanonicalSerialize;
 use ark_std::{test_rng, UniformRand};
 
+use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
+use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::poly::dense_mlpoly::combine_poly_shares_rep3;
 use co_jolt2::poly::multilinear_polynomial::{Rep3MultilinearPolynomial, Rep3SharedPoly};
@@ -22,7 +24,7 @@ use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::r1cs::inputs::{compute_claimed_witness_evals_rep3, ALL_R1CS_INPUTS};
 use co_jolt2::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use co_jolt2::zkvm::Rep3JoltWorker;
-use co_jolt2::zkvm::{dag::coordinator::Rep3JoltDag, dag::worker::Rep3JoltDagWorker};
+use co_jolt2::zkvm::dag::worker::Rep3JoltDagWorker;
 
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;

@@ -847,7 +847,7 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
         .collect()
 }
 
-pub(crate) fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
+pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
     polynomials: &[Rep3OneHotPolynomial<F>; D],
     eq_cycle: &[F],
 ) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
