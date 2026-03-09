@@ -5,7 +5,7 @@ use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
-use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
+use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
 
 const LOG_K: usize = D * LOG_K_CHUNK;
 use jolt_core::zkvm::witness::CommittedPolynomial;

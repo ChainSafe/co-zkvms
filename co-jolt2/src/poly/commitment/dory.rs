@@ -7,8 +7,7 @@ use ark_ec::pairing::MillerLoopOutput;
 use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::AdditiveGroup;
-use ark_ff::{CyclotomicMultSubgroup, Field, One};
+use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
 use dory::{DoryProofBuilder, ProofBuilder};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
@@ -1024,9 +1023,11 @@ mod tests {
     use ark_std::UniformRand;
     use itertools::Itertools;
     use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+    use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as VanillaOneHotPolynomial;
     use jolt_core::transcripts::Blake2bTranscript;
     use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
     use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
     use mpc_core::protocols::rep3_ring;
     use mpc_core::protocols::rep3_ring::conversion as ring_conv;
     use mpc_core::protocols::rep3_ring::ring::bit::Bit;
@@ -1104,6 +1105,99 @@ mod tests {
         ]);
 
         let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
+
+        assert_eq!(reconstructed_commitment, vanilla_commitment);
+        assert_eq!(reconstructed_hint, vanilla_hint);
+    }
+
+    #[test]
+    fn dory_one_hot_commit_hint_correct() {
+        let mut rng = test_rng();
+
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let t = DoryGlobals::get_T();
+        let k = 256usize;
+        let num_vars = t.log_2() + k.log_2();
+
+        let setup = std::sync::Arc::new(<DoryCommitmentScheme as CommitmentScheme>::setup_prover(
+            (2 * sigma).max(num_vars),
+        ));
+
+        let nonzero_indices_plain: Vec<Option<u8>> = (0..t)
+            .map(|i| {
+                if i % 5 == 0 {
+                    None
+                } else {
+                    Some((i % k) as u8)
+                }
+            })
+            .collect();
+        let vanilla_poly =
+            VanillaOneHotPolynomial::<Fr>::from_indices(nonzero_indices_plain.clone(), k);
+        let (vanilla_commitment, mut vanilla_hint) =
+            <DoryCommitmentScheme as CommitmentScheme>::commit(
+                &MultilinearPolynomial::OneHot(vanilla_poly),
+                &setup,
+            );
+        vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
+
+        let r_mask = 0x5au8;
+        let masked_indices_c = std::sync::Arc::new(
+            nonzero_indices_plain
+                .iter()
+                .map(|opt| opt.map(|idx| idx ^ r_mask))
+                .collect::<Vec<_>>(),
+        );
+
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<Fr>>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(k));
+        for i in 0..k {
+            let bit = if i as u8 == r_mask {
+                Fr::one()
+            } else {
+                Fr::zero()
+            };
+            let shares = generate_shares_rep3(bit, &mut rng);
+            for pid in 0..3 {
+                e_field_party[pid].push(shares[pid]);
+            }
+        }
+
+        let rep3_polys: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
+            let one_hot = crate::poly::one_hot_polynomial::Rep3OneHotPolynomial::from_parts(
+                k,
+                masked_indices_c.clone(),
+                std::sync::Arc::new(e_field_party[pid].clone()),
+            );
+            Rep3MultilinearPolynomial::shared_one_hot(one_hot)
+        });
+
+        let (comm_0, hint_0) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[0], &setup, false);
+        let (comm_1, hint_1) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[1], &setup, false);
+        let (comm_2, hint_2) = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::commit_rep3(&rep3_polys[2], &setup, false);
+
+        let reconstructed_commitment = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_commitment_shares(&[
+            &comm_0, &comm_1, &comm_2,
+        ]);
+
+        let reconstructed_hint = <DoryCommitmentScheme as Rep3CommitmentScheme<
             Fr,
             Blake2bTranscript,
         >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);

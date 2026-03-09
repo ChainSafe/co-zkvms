@@ -166,6 +166,14 @@ where
         instances.extend(registers_instances);
         instances.extend(ram_instances);
         instances.extend(lookups_instances);
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE2_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            instances.truncate(limit.min(instances.len()));
+        }
+
         Ok(instances)
     }
 
@@ -289,6 +297,13 @@ where
         stage3_instances.extend(registers_stage3);
         stage3_instances.extend(lookups_stage3);
         stage3_instances.extend(ram_stage3);
+
+        if let Some(limit) = std::env::var("CO_JOLT2_STAGE3_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            stage3_instances.truncate(limit.min(stage3_instances.len()));
+        }
 
         Ok(stage3_instances)
     }

@@ -101,6 +101,19 @@ impl Rep3JoltDag {
             .proofs
             .insert(ProofKeys::Stage2Sumcheck, ProofData::SumcheckProof(proof));
 
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE2").is_ok() {
+            return Ok(JoltProof {
+                opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
+                commitments: std::mem::take(&mut state.commitments),
+                proofs: std::mem::take(&mut state.proofs),
+                untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
+                trace_length,
+                ram_K: state.ram_K,
+                bytecode_d: state.preprocessing.shared.bytecode.d,
+                twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
+            });
+        }
+
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
@@ -117,6 +130,19 @@ impl Rep3JoltDag {
             ProofKeys::Stage3Sumcheck,
             ProofData::SumcheckProof(stage3_proof),
         );
+
+        if std::env::var("CO_JOLT2_STOP_AFTER_STAGE3").is_ok() {
+            return Ok(JoltProof {
+                opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
+                commitments: std::mem::take(&mut state.commitments),
+                proofs: std::mem::take(&mut state.proofs),
+                untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
+                trace_length,
+                ram_K: state.ram_K,
+                bytecode_d: state.preprocessing.shared.bytecode.d,
+                twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
+            });
+        }
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)

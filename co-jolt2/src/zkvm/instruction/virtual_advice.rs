@@ -6,12 +6,12 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         (Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let advice = match XLEN {
             #[cfg(test)]
-            8 => self.instruction.advice as u8 as u128,
-            32 => self.instruction.advice as u32 as u128,
-            64 => self.instruction.advice as u128,
+            8 => self.instruction.advice as u8 as LookupIndexInt,
+            32 => self.instruction.advice as u32 as LookupIndexInt,
+            64 => self.instruction.advice as LookupIndexInt,
             _ => panic!("{XLEN}-bit word size is unsupported"),
         };
         FutureRep3Ring::Ready(rep3_ring::arithmetic::promote_to_trivial_share(
@@ -31,14 +31,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
             // `VirtualAdvice::to_lookup_index` is `Ready(trivial_share(advice))`, so we can
             // recover the public advice value locally without any MPC communication.
             let idx_fut = Rep3LookupQuery::<XLEN>::to_lookup_index(*step, io_ctx.id);
-            let advice_u128 = match idx_fut {
+            let advice_val = match idx_fut {
                 FutureRep3Ring::Ready(s) => s.a.0,
                 _ => unreachable!("VirtualAdvice lookup index must be Ready(trivial_share)"),
             };
             *out = FutureRep3Ring::Ready(
                 mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share(
                     io_ctx.id,
-                    F::from_u64(advice_u128 as u64),
+                    F::from_u64(advice_val as u64),
                 ),
             );
         });

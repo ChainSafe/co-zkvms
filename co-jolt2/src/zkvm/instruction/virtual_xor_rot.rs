@@ -23,7 +23,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT32
                 RingElement(xored.a.0.rotate_right(n_rot)),
                 RingElement(xored.b.0.rotate_right(n_rot)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
+            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
     }
@@ -52,7 +52,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT24
                 RingElement(xored.a.0.rotate_right(n_rot)),
                 RingElement(xored.b.0.rotate_right(n_rot)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
+            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
     }
@@ -81,7 +81,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT16
                 RingElement(xored.a.0.rotate_right(n_rot)),
                 RingElement(xored.b.0.rotate_right(n_rot)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
+            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
     }
@@ -110,7 +110,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT63
                 RingElement(xored.a.0.rotate_right(n_rot)),
                 RingElement(xored.b.0.rotate_right(n_rot)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
+            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
     }

@@ -34,7 +34,7 @@ const DEGREE: usize = 2;
 /// trivial additive shares — no MPC communication.
 pub struct Rep3RafEvaluationWorker<F: JoltField> {
     party_id: PartyID,
-    input_claim: F,
+    input_claim: Rep3PrimeFieldShare<F>,
     log_K: usize,
     _start_address: u64,
     ra: MultilinearPolynomial<F>,
@@ -48,7 +48,7 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
         let K = sm.ram_K;
         let cycle_witness = &sm.prover_state.cycle_witness;
 
-        let (r_cycle_point, _raf_claim_share) = sm.accumulator.get_virtual_polynomial_opening(
+        let (r_cycle_point, raf_claim_share) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
@@ -86,22 +86,12 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
                 },
             );
 
-        // raf_claim is PUBLIC and can be recomputed locally:
-        //   raf_claim = Σ_k ra(k) * unmap(k)
-        // where unmap(k) = 8*k + (start_address - 8).
-        let base = F::from_u64(memory_layout.trusted_advice_start - 8);
-        let input_claim: F = ra_evals
-            .iter()
-            .enumerate()
-            .map(|(k, ra_k)| *ra_k * (F::from_u64((8 * k) as u64) + base))
-            .sum();
-
         let ra = MultilinearPolynomial::from(ra_evals);
         let unmap = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
 
         Self {
             party_id,
-            input_claim,
+            input_claim: raf_claim_share,
             log_K: K.log_2(),
             _start_address: memory_layout.trusted_advice_start,
             ra,
@@ -122,51 +112,51 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 
     fn input_claim(&self) -> Rep3Value<F> {
-        Rep3Value::Public(self.input_claim)
+        Rep3Value::Shared(self.input_claim)
     }
 
     fn compute_prover_message_share(
         &mut self,
         _round: usize,
-        _previous_claim: AdditiveShare<F>,
+        previous_claim: AdditiveShare<F>,
         max_degree: usize,
         _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // All PUBLIC — compute plain evaluations.
-        // Evaluate each linear factor at max_degree points so the degree-2
-        // product is correctly represented when batched with higher-degree instances.
-        let eval_degree = max_degree.max(DEGREE);
-
-        let evals: Vec<F> = (0..self.ra.len() / 2)
+        let base: [F; DEGREE] = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals: Vec<F> =
-                    self.ra
-                        .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
-                let unmap_evals: Vec<F> =
-                    self.unmap
-                        .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow);
-                let mut result = vec![F::zero(); max_degree];
-                for d in 0..max_degree {
-                    result[d] = ra_evals[d] * unmap_evals[d];
-                }
-                result
+                let ra_evals = self.ra.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let unmap_evals = self.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
             })
             .reduce(
-                || vec![F::zero(); max_degree],
-                |mut running, new| {
-                    for d in 0..max_degree {
-                        running[d] = running[d] + new[d];
-                    }
-                    running
-                },
+                || [F::zero(); DEGREE],
+                |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
-        // Promote to trivial additive shares so that sum across 3 parties = eval.
+        let y0 = additive::promote_to_trivial_share(base[0], self.party_id);
+        let y2 = additive::promote_to_trivial_share(base[1], self.party_id);
+        if max_degree == DEGREE {
+            return vec![y0, y2];
+        }
+
+        let y1 = previous_claim - y0;
+        let mut evals = Vec::with_capacity(max_degree);
+        evals.push(y0);
+        evals.push(y2);
+
+        // Interpolate from y(0), y(1), y(2) in additive-share space so the
+        // padded degree-3 batch points preserve the shared claim exactly.
+        for k in 3..=max_degree {
+            let x = F::from_u64(k as u64);
+            let l0 = (x - F::one()) * (x - F::from_u64(2)) * F::TWO_INV;
+            let l1 = -x * (x - F::from_u64(2));
+            let l2 = x * (x - F::one()) * F::TWO_INV;
+            evals.push(y0 * l0 + y1 * l1 + y2 * l2);
+        }
+
         evals
-            .into_iter()
-            .map(|e| additive::promote_to_trivial_share(e, self.party_id))
-            .collect()
     }
 
     fn bind(
