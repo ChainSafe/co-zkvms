@@ -1,0 +1,95 @@
+[package]
+name = "jolt-core"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["minimal"]
+host = [
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:indicatif",
+    "dep:dirs",
+    "dep:target-lexicon",
+    "prover",
+    "dep:jolt-inlines-sha2",
+    "dep:jolt-inlines-keccak256",
+]
+prover = [
+    "minimal",
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "dory/parallel",
+]
+minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
+allocative_feature = ["dep:inferno"]
+rv32 = []
+rv64 = [
+    "common/rv64",
+    "tracer/rv64",
+    "jolt-inlines-sha2?/rv64",
+    "jolt-inlines-keccak256?/rv64",
+]
+challenge-254-bit = []
+
+[dependencies]
+ark-bn254.workspace = true
+ark-grumpkin.workspace = true
+jolt-optimizations.workspace = true
+ark-ec.workspace = true
+ark-ff.workspace = true
+ark-serialize.workspace = true
+ark-serialize-derive.workspace = true
+ark-std.workspace = true
+clap.workspace = true
+fixedbitset.workspace = true
+itertools.workspace = true
+num-integer.workspace = true
+num-derive.workspace = true
+num.workspace = true
+num-traits.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+rand.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
+rayon = { workspace = true, optional = true }
+serde = { workspace = true, default-features = false }
+sha3.workspace = true
+blake2.workspace = true
+chrono.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-chrome.workspace = true
+tracing-subscriber.workspace = true
+target-lexicon = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+eyre.workspace = true
+indicatif = { workspace = true, optional = true }
+common.workspace = true
+tracer = { workspace = true, default-features = false, features = ["std"] }
+bincode.workspace = true
+tokio = { workspace = true, optional = true }
+once_cell.workspace = true
+rand_distr.workspace = true
+anyhow.workspace = true
+derive_more.workspace = true
+paste.workspace = true
+dory.workspace = true
+lazy_static.workspace = true
+allocative.workspace = true
+inferno = { workspace = true, optional = true }
+jolt-platform = { workspace = true, features = ["std"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
+jolt-inlines-keccak256 = { workspace = true, features = ["host"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memory-stats.workspace = true
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
+
+[lib]
+name = "jolt_core"
+path = "src/lib.rs"

@@ -1,7 +1,6 @@
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::sumcheck::SumcheckInstance;
-use jolt_core::transcripts::{KeccakTranscript, Transcript};
+use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::rep3::PartyID;
@@ -12,15 +11,15 @@ use crate::subprotocols::sumcheck::{PublicSumcheckInstance, PublicSumcheckInstan
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
-        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+        self.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+        self.num_rounds()
     }
 
     fn input_claim_public(&self) -> F {
-        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+        self.input_claim()
     }
 
     fn expected_output_claim(
@@ -45,10 +44,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        <HammingWeightSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
-            self,
-            opening_point,
-        )
+        self.normalize_opening_point(opening_point)
     }
 
     fn cache_openings(

@@ -2,8 +2,6 @@ use jolt2_common::constants::REGISTER_COUNT;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::sumcheck::SumcheckInstance;
-use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::rep3::PartyID;
@@ -14,15 +12,15 @@ use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
-        <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+        self.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+        self.num_rounds()
     }
 
     fn input_claim_public(&self) -> F {
-        <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+        self.input_claim()
     }
 
     fn compute_prover_message_public(
@@ -31,12 +29,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for ReadRafSumcheck<F> {
         previous_claim: F,
         max_degree: usize,
     ) -> Vec<F> {
-        let base =
-            <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
-                self,
-                round,
-                previous_claim,
-            );
+        let base = self.compute_prover_message(round, previous_claim);
 
         // ReadRafSumcheck has variable degree per round:
         // log_K phase returns 2 evals, log_T phase returns d+1 evals.
@@ -76,17 +69,14 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for ReadRafSumcheck<F> {
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(self, r_j, round)
+        self.bind(r_j, round)
     }
 
     fn normalize_opening_point(
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        <ReadRafSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
-            self,
-            opening_point,
-        )
+        self.normalize_opening_point(opening_point)
     }
 
     fn cache_openings_public(

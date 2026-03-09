@@ -1,8 +1,6 @@
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::sumcheck::SumcheckInstance;
-use jolt_core::transcripts::{KeccakTranscript, Transcript};
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::booleanity::BooleanitySumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
@@ -14,15 +12,15 @@ use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
-        <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+        self.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+        self.num_rounds()
     }
 
     fn input_claim_public(&self) -> F {
-        <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+        self.input_claim()
     }
 
     fn compute_prover_message_public(
@@ -31,13 +29,8 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
         previous_claim: F,
         max_degree: usize,
     ) -> Vec<F> {
-        let degree = <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self);
-        let base =
-            <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::compute_prover_message(
-                self,
-                round,
-                previous_claim,
-            );
+        let degree = self.degree();
+        let base = self.compute_prover_message(round, previous_claim);
 
         debug_assert!(degree >= 1);
         debug_assert!(base.len() >= degree);
@@ -67,17 +60,14 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for BooleanitySumcheck<F> {
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::bind(self, r_j, round)
+        self.bind(r_j, round)
     }
 
     fn normalize_opening_point(
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        <BooleanitySumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
-            self,
-            opening_point,
-        )
+        self.normalize_opening_point(opening_point)
     }
 
     fn cache_openings_public(

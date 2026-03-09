@@ -1,0 +1,552 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use num_traits::Zero;
+
+use crate::field::MulTrunc;
+use crate::poly::opening_proof::{
+    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+};
+use crate::zkvm::bytecode::BytecodePreprocessing;
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+
+use crate::{
+    field::JoltField,
+    poly::{
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+        },
+        ra_poly::RaPolynomial,
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::{
+        math::Math,
+        small_scalar::SmallScalar,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+    },
+};
+use allocative::Allocative;
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
+
+#[derive(Allocative)]
+struct BooleanityProverState<F: JoltField> {
+    B: MultilinearPolynomial<F>,
+    D: MultilinearPolynomial<F>,
+    G: Vec<Vec<F>>,
+    pc_by_cycle: Vec<Vec<Option<u8>>>,
+    H: Vec<RaPolynomial<u8, F>>,
+    F: Vec<F>,
+    eq_r_r: F,
+}
+
+#[derive(Allocative)]
+pub struct BooleanitySumcheck<F: JoltField> {
+    gamma: Vec<F>,
+    d: usize,
+    log_T: usize,
+    log_K_chunk: usize,
+    prover_state: Option<BooleanityProverState<F>>,
+    r_address: Vec<F::Challenge>,
+}
+
+impl<F: JoltField> BooleanitySumcheck<F> {
+    /// Construct a prover instance from pre-extracted parts.
+    ///
+    /// * `gamma_powers` — `[1, γ, γ², ..., γ^(d-1)]`
+    /// * `r_address` — random challenge vector (length `log_K_chunk`)
+    /// * `log_T` — `log2(T)`
+    /// * `log_K_chunk` — `ceil(log_K / d)`
+    /// * `eq_r_cycle` — eq polynomial evaluations at `r_cycle`
+    /// * `G` — d arrays of `eq(r_cycle, j) * [chunk_i == k]`
+    /// * `trace`, `preprocessing` — for computing `pc_by_cycle`
+    pub fn new_prover_from_parts(
+        gamma_powers: Vec<F>,
+        r_address: Vec<F::Challenge>,
+        log_T: usize,
+        log_K_chunk: usize,
+        eq_r_cycle: Vec<F>,
+        G: Vec<Vec<F>>,
+        trace: &[Cycle],
+        preprocessing: &BytecodePreprocessing,
+    ) -> Self {
+        let d = gamma_powers.len();
+        Self {
+            gamma: gamma_powers,
+            prover_state: Some(BooleanityProverState::new(
+                trace,
+                preprocessing,
+                eq_r_cycle,
+                G,
+                &r_address,
+                d,
+            )),
+            d,
+            log_T,
+            log_K_chunk,
+            r_address,
+        }
+    }
+
+    /// Like `new_prover_from_parts` but accepts pre-computed PC indices instead of `&[Cycle]`.
+    ///
+    /// `pc_indices[t]` is the bytecode table index for cycle `t`
+    /// (i.e., the value returned by `BytecodePreprocessing::get_pc`).
+    pub fn new_prover_from_pc_indices(
+        gamma_powers: Vec<F>,
+        r_address: Vec<F::Challenge>,
+        log_T: usize,
+        log_K_chunk: usize,
+        eq_r_cycle: Vec<F>,
+        G: Vec<Vec<F>>,
+        pc_indices: &[u64],
+    ) -> Self {
+        let d = gamma_powers.len();
+        Self {
+            gamma: gamma_powers,
+            prover_state: Some(BooleanityProverState::new_from_pc_indices(
+                pc_indices,
+                eq_r_cycle,
+                G,
+                &r_address,
+                d,
+                log_K_chunk,
+            )),
+            d,
+            log_T,
+            log_K_chunk,
+            r_address,
+        }
+    }
+
+    /// Construct a verifier-like instance from pre-extracted parts.
+    pub fn new_verifier_from_parts(
+        gamma_powers: Vec<F>,
+        r_address: Vec<F::Challenge>,
+        log_T: usize,
+        log_K_chunk: usize,
+    ) -> Self {
+        let d = gamma_powers.len();
+        Self {
+            gamma: gamma_powers,
+            prover_state: None,
+            log_T,
+            log_K_chunk,
+            r_address,
+            d,
+        }
+    }
+
+    pub fn d(&self) -> usize {
+        self.d
+    }
+
+    pub fn log_K_chunk(&self) -> usize {
+        self.log_K_chunk
+    }
+
+    pub fn gamma_powers(&self) -> &[F] {
+        &self.gamma
+    }
+
+    pub fn r_address(&self) -> &[F::Challenge] {
+        &self.r_address
+    }
+
+    /// Returns the final sumcheck claims for each `H` polynomial (prover only).
+    pub fn h_final_claims(&self) -> Vec<F> {
+        self.prover_state
+            .as_ref()
+            .expect("h_final_claims called on verifier instance")
+            .H
+            .iter()
+            .map(|h| h.final_sumcheck_claim())
+            .collect()
+    }
+
+    pub fn degree(&self) -> usize {
+        3
+    }
+
+    pub fn num_rounds(&self) -> usize {
+        self.log_K_chunk + self.log_T
+    }
+
+    pub fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::compute_prover_message")]
+    pub fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+        if round < self.log_K_chunk {
+            // Phase 1: First log(K_chunk) rounds
+            self.compute_phase1_message(round)
+        } else {
+            // Phase 2: Last log(T) rounds
+            self.compute_phase2_message(round)
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::bind")]
+    pub fn bind(&mut self, r_j: F::Challenge, round: usize) {
+        let ps = self.prover_state.as_mut().unwrap();
+
+        if round < self.log_K_chunk {
+            // Phase 1: Bind B and update F
+            ps.B.bind_parallel(r_j, BindingOrder::LowToHigh);
+
+            // Update F for this round (see Equation 55)
+            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
+            F_left
+                .par_iter_mut()
+                .zip(F_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r_j;
+                    *x -= *y;
+                });
+
+            // Store eq_r_r at the end of phase 1
+            if round == self.log_K_chunk - 1 {
+                ps.eq_r_r = ps.B.final_sumcheck_claim();
+                // Initialize H polynomials using RaPolynomial
+                let F = std::mem::take(&mut ps.F);
+                let pc_by_cycle = std::mem::take(&mut ps.pc_by_cycle);
+                ps.H = pc_by_cycle
+                    .into_iter()
+                    .map(|pc_indices| RaPolynomial::new(Arc::new(pc_indices), F.clone()))
+                    .collect();
+                // Drop G arrays as they're no longer needed
+                let g = std::mem::take(&mut ps.G);
+                drop_in_background_thread(g);
+            }
+        } else {
+            // Phase 2: Bind D and H
+            ps.D.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ps.H.par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        }
+    }
+
+    pub fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut opening_point = opening_point.to_vec();
+        opening_point[..self.log_K_chunk].reverse();
+        opening_point[self.log_K_chunk..].reverse();
+        opening_point.into()
+    }
+}
+
+impl<F: JoltField> BooleanityProverState<F> {
+    fn new(
+        trace: &[Cycle],
+        preprocessing: &BytecodePreprocessing,
+        eq_r_cycle: Vec<F>,
+        G: Vec<Vec<F>>,
+        r_address: &[F::Challenge],
+        d: usize,
+    ) -> Self {
+        let log_K = preprocessing.code_size.log_2();
+        let log_K_chunk = log_K.div_ceil(d);
+        let K_chunk = 1 << log_K_chunk;
+        let B = MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_address));
+
+        let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(log_K.pow2());
+        F_vec[0] = F::one();
+
+        let pc_by_cycle = (0..d)
+            .into_par_iter()
+            .map(|i| {
+                trace
+                    .par_iter()
+                    .map(|cycle| {
+                        let k = preprocessing.get_pc(cycle);
+                        Some(((k >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
+                    })
+                    .collect()
+            })
+            .collect();
+        let D = MultilinearPolynomial::from(eq_r_cycle);
+
+        BooleanityProverState {
+            B,
+            D,
+            H: vec![RaPolynomial::None; d],
+            G,
+            F: F_vec,
+            eq_r_r: F::zero(),
+            pc_by_cycle,
+        }
+    }
+
+    /// Like `new` but uses pre-computed PC indices instead of `&[Cycle]`.
+    fn new_from_pc_indices(
+        pc_indices: &[u64],
+        eq_r_cycle: Vec<F>,
+        G: Vec<Vec<F>>,
+        r_address: &[F::Challenge],
+        d: usize,
+        log_K_chunk: usize,
+    ) -> Self {
+        let K_chunk = 1 << log_K_chunk;
+        let log_K = d * log_K_chunk;
+        let B = MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_address));
+
+        let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(log_K.pow2());
+        F_vec[0] = F::one();
+
+        let pc_by_cycle = (0..d)
+            .into_par_iter()
+            .map(|i| {
+                pc_indices
+                    .par_iter()
+                    .map(|&k| {
+                        Some(((k as usize >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
+                    })
+                    .collect()
+            })
+            .collect();
+        let D = MultilinearPolynomial::from(eq_r_cycle);
+
+        BooleanityProverState {
+            B,
+            D,
+            H: vec![RaPolynomial::None; d],
+            G,
+            F: F_vec,
+            eq_r_r: F::zero(),
+            pc_by_cycle,
+        }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<F> {
+    fn degree(&self) -> usize {
+        self.degree()
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.num_rounds()
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim()
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F::Challenge],
+    ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let ra_claims = (0..self.d)
+            .map(|i| {
+                accumulator
+                    .borrow()
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::BytecodeRa(i),
+                        SumcheckId::BytecodeBooleanity,
+                    )
+                    .1
+            })
+            .collect::<Vec<F>>();
+        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+
+        EqPolynomial::<F>::mle(
+            r,
+            &self
+                .r_address
+                .iter()
+                .cloned()
+                .rev()
+                .chain(r_cycle.r.iter().cloned().rev())
+                .collect::<Vec<F::Challenge>>(),
+        ) * self
+            .gamma
+            .iter()
+            .zip(ra_claims)
+            .map(|(gamma, ra)| (ra.square() - ra) * gamma)
+            .sum::<F>()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        self.normalize_opening_point(opening_point)
+    }
+
+    fn cache_openings_verifier(
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        accumulator.borrow_mut().append_sparse(
+            transcript,
+            (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
+            SumcheckId::BytecodeBooleanity,
+            opening_point.r,
+        );
+    }
+}
+
+impl<F: JoltField> BooleanitySumcheck<F> {
+    fn compute_phase1_message(&self, round: usize) -> Vec<F> {
+        let p = self.prover_state.as_ref().unwrap();
+        let m = round + 1;
+        const DEGREE: usize = 3;
+
+        // EQ(k_m, c) for k_m \in {0, 1} and c \in {0, 2, 3}
+        const EQ_KM_C: [[i8; 3]; 2] = [
+            [
+                1,  // eq(0, 0) = 0 * 0 + (1 - 0) * (1 - 0)
+                -1, // eq(0, 2) = 0 * 2 + (1 - 0) * (1 - 2)
+                -2, // eq(0, 3) = 0 * 3 + (1 - 0) * (1 - 3)
+            ],
+            [
+                0, // eq(1, 0) = 1 * 0 + (1 - 1) * (1 - 0)
+                2, // eq(1, 2) = 1 * 2 + (1 - 1) * (1 - 2)
+                3, // eq(1, 3) = 1 * 3 + (1 - 1) * (1 - 3)
+            ],
+        ];
+
+        // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
+        const EQ_KM_C_SQUARED: [[u8; 3]; 2] = [[1, 1, 4], [0, 4, 9]];
+
+        (0..p.B.len() / 2)
+            .into_par_iter()
+            .map(|k_prime| {
+                // Get B evaluations at points 0, 2, 3
+                let B_evals =
+                    p.B.sumcheck_evals_array::<DEGREE>(k_prime, BindingOrder::LowToHigh);
+
+                let inner_sum = (0..1 << m)
+                    .into_par_iter()
+                    .map(|k| {
+                        // Since we're binding variables from low to high, k_m is the high bit
+                        let k_m = k >> (m - 1);
+                        // We then index into F using (k_{m-1}, ..., k_1)
+                        let F_k = p.F[k % (1 << (m - 1))];
+                        // G_times_F := G[k] * F[k_1, ...., k_{m-1}]
+                        let k_G = (k_prime << m) + k;
+                        let G_ref = &p.G;
+                        let G_times_F = G_ref
+                            .iter()
+                            .zip(self.gamma.iter())
+                            .map(|(g, gamma)| g[k_G] * gamma)
+                            .sum::<F>()
+                            * F_k;
+                        // For c \in {0, 2, 3} compute:
+                        //    G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                        //    = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
+                        [
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][0].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][0] as i64)),
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][1].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][1] as i64)),
+                            G_times_F
+                                * (EQ_KM_C_SQUARED[k_m][2].field_mul(F_k)
+                                    - F::from_i64(EQ_KM_C[k_m][2] as i64)),
+                        ]
+                    })
+                    .fold_with([F::Unreduced::<5>::zero(); 3], |running, new| {
+                        [
+                            running[0] + new[0].as_unreduced_ref(),
+                            running[1] + new[1].as_unreduced_ref(),
+                            running[2] + new[2].as_unreduced_ref(),
+                        ]
+                    })
+                    .reduce(
+                        || [F::Unreduced::zero(); 3],
+                        |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        },
+                    );
+
+                [
+                    inner_sum[0].mul_trunc::<4, 9>(B_evals[0].as_unreduced_ref()),
+                    inner_sum[1].mul_trunc::<4, 9>(B_evals[1].as_unreduced_ref()),
+                    inner_sum[2].mul_trunc::<4, 9>(B_evals[2].as_unreduced_ref()),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
+    }
+
+    fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
+        let p = self.prover_state.as_ref().unwrap();
+        const DEGREE: usize = 3;
+
+        (0..p.D.len() / 2)
+            .into_par_iter()
+            .map(|j| {
+                // Get D evaluations at points 0, 2, 3
+                let D_evals =
+                    p.D.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+
+                // Compute ra evaluations using RaPolynomial
+                let h_evals =
+                    p.H.iter()
+                        .zip(self.gamma.iter())
+                        .map(|(h, gamma)| {
+                            let h_evals = h.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                            [
+                                (h_evals[0].square() - h_evals[0]) * gamma,
+                                (h_evals[1].square() - h_evals[1]) * gamma,
+                                (h_evals[2].square() - h_evals[2]) * gamma,
+                            ]
+                        })
+                        .fold([F::zero(); 3], |running, new| {
+                            [
+                                running[0] + new[0],
+                                running[1] + new[1],
+                                running[2] + new[2],
+                            ]
+                        });
+
+                [
+                    D_evals[0].mul_unreduced::<9>(h_evals[0]),
+                    D_evals[1].mul_unreduced::<9>(h_evals[1]),
+                    D_evals[2].mul_unreduced::<9>(h_evals[2]),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            )
+            .into_par_iter()
+            .map(|evals| p.eq_r_r * F::from_montgomery_reduce(evals))
+            .collect()
+    }
+}

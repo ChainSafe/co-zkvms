@@ -2,8 +2,7 @@ use jolt_core::poly::identity_poly::UnmapRamAddressPolynomial;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::sumcheck::SumcheckInstance;
-use jolt_core::transcripts::{KeccakTranscript, Transcript};
+use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::raf_evaluation::RafEvaluationSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::PartyID;
@@ -14,15 +13,15 @@ use crate::subprotocols::sumcheck::{PublicSumcheckInstance, PublicSumcheckInstan
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
-        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::degree(self)
+        self.degree()
     }
 
     fn num_rounds(&self) -> usize {
-        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::num_rounds(self)
+        self.num_rounds()
     }
 
     fn input_claim_public(&self) -> F {
-        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::input_claim(self)
+        self.input_claim()
     }
 
     fn expected_output_claim(
@@ -43,10 +42,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluation
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        <RafEvaluationSumcheck<F> as SumcheckInstance<F, KeccakTranscript>>::normalize_opening_point(
-            self,
-            opening_point,
-        )
+        self.normalize_opening_point(opening_point)
     }
 
     fn cache_openings(
