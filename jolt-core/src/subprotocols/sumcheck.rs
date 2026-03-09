@@ -3,7 +3,7 @@
 
 use crate::field::JoltField;
 use crate::poly::opening_proof::{
-    OpeningPoint, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -38,6 +38,27 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript> {
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
+
+    // Prover-side methods with default panic implementations.
+    // These exist to allow files that implement both prover and verifier
+    // logic to compile. Only the verifier methods above are required.
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+        unimplemented!("prover not available")
+    }
+    fn bind(&mut self, _r_j: F::Challenge, _round: usize) {
+        unimplemented!("prover not available")
+    }
+    fn cache_openings_prover(
+        &self,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _transcript: &mut T,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        unimplemented!("prover not available")
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, _flamegraph: &mut allocative::FlameGraphBuilder) {}
 }
 
 pub enum SingleSumcheck {}

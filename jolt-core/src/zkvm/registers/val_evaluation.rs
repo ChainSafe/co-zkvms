@@ -44,6 +44,7 @@ pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
+    #[cfg(any())]
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,

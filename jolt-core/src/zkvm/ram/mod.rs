@@ -9,8 +9,11 @@ use common::{
 pub mod booleanity;
 pub mod hamming_booleanity;
 pub mod hamming_weight;
+pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
+pub mod read_write_checking;
+pub mod val_evaluation;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAMPreprocessing {
@@ -63,6 +66,105 @@ pub fn bytes_to_ram_word(bytes: &[u8]) -> u64 {
         word[i] = *byte;
     }
     u64::from_le_bytes(word)
+}
+
+use crate::field::JoltField;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
+use crate::utils::math::Math;
+use tracer::JoltDevice;
+
+pub fn build_initial_memory_state(
+    ram_preprocessing: &RAMPreprocessing,
+    program_io: &JoltDevice,
+    K: usize,
+) -> Vec<u64> {
+    let memory_layout = &program_io.memory_layout;
+    let mut initial_memory_state: Vec<u64> = vec![0; K];
+
+    // Copy bytecode
+    let mut index =
+        remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+    for word in &ram_preprocessing.bytecode_words {
+        initial_memory_state[index] = *word;
+        index += 1;
+    }
+
+    // Copy trusted advice
+    index = remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
+    for chunk in program_io.trusted_advice.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        initial_memory_state[index] = u64::from_le_bytes(word);
+        index += 1;
+    }
+
+    // Copy untrusted advice
+    index = remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
+    for chunk in program_io.untrusted_advice.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        initial_memory_state[index] = u64::from_le_bytes(word);
+        index += 1;
+    }
+
+    // Copy inputs
+    index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
+    for chunk in program_io.inputs.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        initial_memory_state[index] = u64::from_le_bytes(word);
+        index += 1;
+    }
+
+    initial_memory_state
+}
+
+/// Compute the contribution of an advice region to the full initial memory MLE at `r_address`.
+///
+/// The advice polynomial covers addresses [start_index, start_index + 2^log_advice_size),
+/// so its contribution to the full memory MLE evaluated at r_address is:
+///   eq(r_address_high, binary(start_index >> log_advice_size)) * advice_eval
+/// where advice_eval is the evaluation of the advice polynomial at the low bits of r_address.
+pub fn calculate_advice_memory_evaluation<F: JoltField>(
+    advice_opening: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
+    log_advice_size: usize,
+    advice_start_address: u64,
+    memory_layout: &MemoryLayout,
+    r_address: &[F::Challenge],
+    total_memory_vars: usize,
+) -> F {
+    let (_, advice_eval) = match advice_opening {
+        Some(opening) => opening,
+        None => return F::zero(),
+    };
+
+    let start_index = remap_address(advice_start_address, memory_layout).unwrap() as usize;
+    let block_index = start_index >> log_advice_size;
+
+    // The high bits of r_address select which block we're in
+    let high_bits = total_memory_vars - log_advice_size;
+    let r_high = &r_address[..high_bits];
+
+    // Compute eq(r_high, binary(block_index))
+    let block_bits: Vec<F::Challenge> = (0..high_bits)
+        .map(|i| {
+            if (block_index >> i) & 1 == 1 {
+                F::Challenge::from(1u128)
+            } else {
+                F::Challenge::from(0u128)
+            }
+        })
+        .collect();
+    let eq_val = EqPolynomial::<F>::mle(&block_bits, r_high);
+
+    eq_val * advice_eval
 }
 
 /// Returns Some(address) if there was read/write

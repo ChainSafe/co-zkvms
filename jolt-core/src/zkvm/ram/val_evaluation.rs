@@ -52,6 +52,7 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
+    #[cfg(any())]
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: &[u64],

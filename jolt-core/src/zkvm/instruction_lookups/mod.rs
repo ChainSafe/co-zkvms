@@ -2,6 +2,8 @@ use common::constants::XLEN;
 
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod ra_virtual;
+pub mod read_raf_checking;
 
 const LOG_K: usize = XLEN * 2;
 const PHASES: usize = 8;

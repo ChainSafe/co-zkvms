@@ -10,6 +10,8 @@ use crate::zkvm::witness::{
 };
 use anyhow::Context;
 
+use super::verifier_dags::{BytecodeDag, LookupsDag, RamDag, RegistersDag, SpartanDag};
+
 pub enum JoltDAG {}
 
 impl JoltDAG {
@@ -49,7 +51,7 @@ impl JoltDAG {
         }
 
         // Stage 1:
-        let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
+        let trace_length = state_manager.get_verifier_data().2;
         let padded_trace_length = trace_length.next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
@@ -193,7 +195,7 @@ impl JoltDAG {
         if state_manager.trusted_advice_commitment.is_some() {
             Self::verify_trusted_advice_proofs(
                 &state_manager,
-                &preprocessing.generators,
+                &state_manager.preprocessing.generators,
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
@@ -203,7 +205,7 @@ impl JoltDAG {
         if state_manager.untrusted_advice_commitment.is_some() {
             Self::verify_untrusted_advice_proofs(
                 &state_manager,
-                &preprocessing.generators,
+                &state_manager.preprocessing.generators,
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
@@ -229,7 +231,7 @@ impl JoltDAG {
         accumulator
             .borrow_mut()
             .reduce_and_verify(
-                &preprocessing.generators,
+                &state_manager.preprocessing.generators,
                 &mut commitments_map,
                 batched_opening_proof,
                 &mut *transcript.borrow_mut(),

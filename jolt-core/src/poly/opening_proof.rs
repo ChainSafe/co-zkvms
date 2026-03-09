@@ -13,8 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme,
-    eq_poly::EqPolynomial,
+    commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
     multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
@@ -371,8 +370,7 @@ where
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
             let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
             let key = OpeningId::Committed(*label, sumcheck);
-            self.openings
-                .insert(key, (opening_point_struct, *claim));
+            self.openings.insert(key, (opening_point_struct, *claim));
         }
     }
 
@@ -392,8 +390,7 @@ where
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
             let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             let key = OpeningId::Committed(*label, sumcheck);
-            self.openings
-                .insert(key, (opening_point_struct, *claim));
+            self.openings.insert(key, (opening_point_struct, *claim));
         }
     }
 
@@ -490,6 +487,10 @@ where
 
     pub fn openings_mut(&mut self) -> &mut Openings<F> {
         &mut self.openings
+    }
+
+    pub fn get_opening(&self, key: OpeningId) -> F {
+        self.openings.get(&key).unwrap().1
     }
 
     pub fn get_virtual_polynomial_opening(

@@ -71,6 +71,7 @@ struct ReadWriteCheckingProverState<F: JoltField> {
     val: Option<MultilinearPolynomial<F>>,
 }
 
+#[cfg(any())]
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
         initial_memory_state: &[u64],
@@ -320,6 +321,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
+    #[cfg(any())]
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_memory_state: &[u64],
