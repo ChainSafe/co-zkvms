@@ -20,10 +20,14 @@ use crate::utils::panic::CallFrame;
 use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
-use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
-    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
-};
+
+pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E; // "C Y C L E"
+pub const JOLT_CYCLE_MARKER_START: u32 = 1;
+pub const JOLT_CYCLE_MARKER_END: u32 = 2;
+pub const JOLT_PRINT_ECALL_NUM: u32 = 0x505249;
+pub const JOLT_PRINT_STRING: u32 = 1;
+pub const JOLT_PRINT_LINE: u32 = 2; // with newline
+
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 

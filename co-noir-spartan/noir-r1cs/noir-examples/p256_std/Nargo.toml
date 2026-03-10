@@ -1,6 +1,0 @@
-[package]
-name = "p256"
-type = "bin"
-authors = [""]
-
-[dependencies]

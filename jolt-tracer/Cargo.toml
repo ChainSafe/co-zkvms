@@ -30,7 +30,6 @@ default = ["std"]
 rv32 = []
 rv64 = ["common/rv64"]
 std = [
-    "jolt-platform/std",
     "common/std",
     "fnv/std",
     "object/std",
@@ -40,7 +39,6 @@ std = [
 test-utils = ["dep:rand"]
 
 [dependencies]
-jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true
 tracing = { workspace = true, features = [

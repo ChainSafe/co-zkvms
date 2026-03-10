@@ -74,7 +74,7 @@ version = "0.3.4"
 source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "allocative_derive",
- "ctor 0.1.26",
+ "ctor",
 ]
 
 [[package]]
@@ -926,20 +926,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.2.0"
-dependencies = [
- "ark-serialize",
- "derive_more",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "syn 1.0.109",
- "tracing",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1108,16 +1094,6 @@ checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
 dependencies = [
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "ctor"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
-dependencies = [
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -2180,15 +2156,6 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
@@ -2283,10 +2250,7 @@ dependencies = [
  "inferno",
  "itertools 0.12.1",
  "jolt-common",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
  "jolt-optimizations",
- "jolt-platform",
  "jolt-tracer",
  "lazy_static",
  "memory-stats",
@@ -2316,24 +2280,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-inlines-keccak256"
-version = "0.1.0"
-dependencies = [
- "ctor 0.2.9",
- "tracer",
- "tracing",
-]
-
-[[package]]
-name = "jolt-inlines-sha2"
-version = "0.1.0"
-dependencies = [
- "ctor 0.2.9",
- "tracer",
- "tracing",
-]
-
-[[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
@@ -2352,15 +2298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-platform"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "jolt-tracer"
 version = "0.2.0"
 dependencies = [
@@ -2371,7 +2308,6 @@ dependencies = [
  "fnv",
  "itertools 0.12.1",
  "jolt-common",
- "jolt-platform",
  "lazy_static",
  "object 0.36.7",
  "paste",
@@ -4435,30 +4371,6 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
-
-[[package]]
-name = "tracer"
-version = "0.2.0"
-dependencies = [
- "addr2line",
- "ark-serialize",
- "clap",
- "common",
- "derive_more",
- "fnv",
- "itertools 0.10.5",
- "jolt-platform",
- "lazy_static",
- "object 0.36.7",
- "paste",
- "postcard",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "tracing",
- "tracing-subscriber 0.3.22",
-]
 
 [[package]]
 name = "tracing"

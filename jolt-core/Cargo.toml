@@ -12,8 +12,6 @@ host = [
     "dep:dirs",
     "dep:target-lexicon",
     "prover",
-    "dep:jolt-inlines-sha2",
-    "dep:jolt-inlines-keccak256",
 ]
 prover = [
     "minimal",
@@ -28,8 +26,6 @@ rv32 = []
 rv64 = [
     "common/rv64",
     "tracer/rv64",
-    "jolt-inlines-sha2?/rv64",
-    "jolt-inlines-keccak256?/rv64",
 ]
 challenge-254-bit = []
 
@@ -82,9 +78,9 @@ dory.workspace = true
 lazy_static.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-jolt-platform = { workspace = true, features = ["std"] }
-jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
-jolt-inlines-keccak256 = { workspace = true, features = ["host"], optional = true }
+# jolt-platform = { workspace = true, features = ["std"] }
+# jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
+# jolt-inlines-keccak256 = { workspace = true, features = ["host"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
