@@ -255,7 +255,7 @@ impl Rep3JoltDagWorker {
                 if let Some(poly) = witness_polys.get(&key) {
                     if matches!(
                         poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_))
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
                     ) {
                         let mut field_shares: Vec<Rep3PrimeFieldShare<F>> =
                             Vec::with_capacity(n);

@@ -8,6 +8,7 @@ use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
+use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction::{
     CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
 };
@@ -23,20 +24,19 @@ use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
-use jolt_core::utils::math::Math;
 use tracing::info_span;
 
-use jolt_core::field::JoltField;
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
-use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 #[cfg(feature = "ring-msm")]
 use crate::poly::compact_polynomial::Rep3CompactPolynomial;
+use crate::poly::dense_mlpoly::Rep3DensePolynomial;
+use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
+use jolt_core::field::JoltField;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 
@@ -886,7 +886,7 @@ where
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
                     results.insert(
                         *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(compact)),
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)),
                     );
                 }
                 #[cfg(not(feature = "ring-msm"))]
@@ -894,7 +894,14 @@ where
                     let party_id = io_ctx.party_id();
                     let n = state.prover_state.cycle_witness.len();
                     let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
-                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).0)
+                        .map(|t| {
+                            state
+                                .prover_state
+                                .cycle_witness
+                                .row_stage1(t)
+                                .to_instruction_inputs(party_id)
+                                .0
+                        })
                         .collect();
                     results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
                 }
@@ -905,7 +912,7 @@ where
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
                     results.insert(
                         *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(compact)),
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)),
                     );
                 }
                 #[cfg(not(feature = "ring-msm"))]
@@ -913,7 +920,14 @@ where
                     let party_id = io_ctx.party_id();
                     let n = state.prover_state.cycle_witness.len();
                     let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
-                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).1)
+                        .map(|t| {
+                            state
+                                .prover_state
+                                .cycle_witness
+                                .row_stage1(t)
+                                .to_instruction_inputs(party_id)
+                                .1
+                        })
                         .collect();
                     results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
                 }
@@ -1311,7 +1325,7 @@ mod tests {
                         &format!("{poly_key:?} (shared dense)"),
                     );
                 }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                     unreachable!("U64Scalars variant should not appear in witness polynomials");
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {

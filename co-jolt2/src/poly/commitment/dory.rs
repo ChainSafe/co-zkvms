@@ -55,7 +55,7 @@ type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
 // Helpers for commit_rep3 / batch_commit_rep3
 // =============================================================================
 
-/// Commit a local-only (non-U64Scalars) polynomial. No io_ctx/preproc needed.
+/// Commit a local-only (non-CompactRing) polynomial. No io_ctx/preproc needed.
 /// Used by the parallel branch of `batch_commit_rep3`.
 pub fn commit_local_rep3<ProofTranscript: Transcript>(
     poly: &Rep3MultilinearPolynomial<Fr>,
@@ -69,7 +69,7 @@ pub fn commit_local_rep3<ProofTranscript: Transcript>(
         Rep3MultilinearPolynomial::Public(poly) => {
             if commit_to_public {
                 let _span = tracing::trace_span!("commit_public").entered();
-                let (c, hint) = commit_public_fast(poly, setup);
+                let (c, hint) = commit_public(poly, setup);
                 Ok((
                     MaybeShared::Public(Some(c)),
                     MaybeShared::Public(Some(hint)),
@@ -78,19 +78,47 @@ pub fn commit_local_rep3<ProofTranscript: Transcript>(
                 Ok((MaybeShared::Public(None), MaybeShared::Public(None)))
             }
         }
-        Rep3MultilinearPolynomial::Shared(shared_poly) => match shared_poly {
-            Rep3SharedPoly::U64Scalars(_) => {
-                panic!("commit_local_rep3 called on U64Scalars poly; use commit_rep3 instead")
-            }
-            _ => commit_shared_local_rep3::<ProofTranscript>(shared_poly, setup),
-        },
+        Rep3MultilinearPolynomial::Shared(shared_poly) => {
+            assert!(
+                !matches!(shared_poly, Rep3SharedPoly::CompactRing(_)),
+                "commit_local_rep3 called on CompactRing poly; use commit_rep3 instead"
+            );
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let num_columns = DoryGlobals::get_num_columns();
+            let (num_vars, row_commitments_share) = match shared_poly {
+                Rep3SharedPoly::Dense(poly) => {
+                    let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+                    (
+                        poly.get_num_vars(),
+                        compute_row_commitment_shares_a(poly, setup, nu),
+                    )
+                }
+                Rep3SharedPoly::OneHot(poly) => {
+                    let g1_proj = &setup_g1_projective(setup)[..num_columns];
+                    let bases = G1Projective::normalize_batch(g1_proj);
+                    let rows = poly
+                        .commit_rows::<G1Projective>(&bases)
+                        .expect("OneHot commit_rows preconditions met");
+                    (poly.get_num_vars(), rows)
+                }
+                Rep3SharedPoly::CompactRing(_) => unreachable!(),
+                Rep3SharedPoly::RLC(_) => {
+                    unreachable!("RLC polynomials should not be committed directly")
+                }
+            };
+            rows_to_commitment(row_commitments_share, num_vars, sigma, setup)
+        }
     }
 }
 
-/// Row-commit + pairing for Dense/OneHot/RLC shared polys (no network).
-fn commit_shared_local_rep3<ProofTranscript: Transcript>(
+/// Row-commit + pairing for a shared polynomial.
+/// Dense/OneHot are committed locally; CompactRing (ring-msm) dispatches to ring MSM.
+#[tracing::instrument(skip_all)]
+fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
     shared_poly: &Rep3SharedPoly<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    _io_ctx: &mut IoContextPool<N>,
+    _preproc: &mut PreprocessingPool<Fr>,
 ) -> eyre::Result<(
     MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
@@ -114,50 +142,14 @@ fn commit_shared_local_rep3<ProofTranscript: Transcript>(
                 .expect("OneHot commit_rows preconditions met");
             (poly.get_num_vars(), rows)
         }
-        Rep3SharedPoly::U64Scalars(_) => unreachable!(),
-        Rep3SharedPoly::RLC(_) => {
-            unreachable!("RLC polynomials should not be committed directly")
-        }
-    };
-
-    rows_to_commitment(row_commitments_share, num_vars, sigma, setup)
-}
-
-/// Commit a shared polynomial that may include U64Scalars (needs io_ctx/preproc).
-#[cfg(feature = "ring-msm")]
-fn commit_shared_rep3<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
-    shared_poly: &Rep3SharedPoly<Fr>,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-    io_ctx: &mut IoContextPool<N>,
-    preproc: &mut PreprocessingPool<Fr>,
-) -> eyre::Result<(
-    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
-    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
-)> {
-    let sigma = DoryGlobals::get_num_columns().log_2();
-    let num_columns = DoryGlobals::get_num_columns();
-
-    let (num_vars, row_commitments_share) = match shared_poly {
-        Rep3SharedPoly::Dense(poly) => {
-            let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-            (
-                poly.get_num_vars(),
-                compute_row_commitment_shares_a(poly, setup, nu),
-            )
-        }
-        Rep3SharedPoly::OneHot(poly) => {
-            let g1_proj = &setup_g1_projective(setup)[..num_columns];
-            let bases = G1Projective::normalize_batch(g1_proj);
-            let rows = poly
-                .commit_rows::<G1Projective>(&bases)
-                .expect("OneHot commit_rows preconditions met");
-            (poly.get_num_vars(), rows)
-        }
-        Rep3SharedPoly::U64Scalars(poly_ring) => {
+        #[cfg(feature = "ring-msm")]
+        Rep3SharedPoly::CompactRing(poly_ring) => {
             let nu = dory::vmv::compute_nu(poly_ring.get_num_vars(), sigma);
-            let rows = compute_row_commitment_shares_ring(poly_ring, setup, nu, io_ctx, preproc)?;
+            let rows = compute_row_commitment_shares_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
             (poly_ring.get_num_vars(), rows)
         }
+        #[cfg(not(feature = "ring-msm"))]
+        Rep3SharedPoly::CompactRing(_) => unreachable!(),
         Rep3SharedPoly::RLC(_) => {
             unreachable!("RLC polynomials should not be committed directly")
         }
@@ -167,6 +159,7 @@ fn commit_shared_rep3<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
 }
 
 /// Shared helper: pad row commitments, compute pairing, return commitment + hint.
+#[tracing::instrument(skip_all, level = "trace")]
 fn rows_to_commitment(
     row_commitments_share: Vec<G1Projective>,
     num_vars: usize,
@@ -237,7 +230,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let _span = tracing::trace_span!("commit_public").entered();
-                    let (c, hint) = commit_public_fast(poly, setup);
+                    let (c, hint) = commit_public(poly, setup);
                     Ok((
                         MaybeShared::Public(Some(c)),
                         MaybeShared::Public(Some(hint)),
@@ -247,15 +240,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 }
             }
             Rep3MultilinearPolynomial::Shared(shared_poly) => {
-                #[cfg(feature = "ring-msm")]
-                {
-                    commit_shared_rep3::<ProofTranscript, N>(shared_poly, setup, io_ctx, preproc)
-                }
-                #[cfg(not(feature = "ring-msm"))]
-                {
-                    let _ = (io_ctx, preproc);
-                    commit_shared_local_rep3::<ProofTranscript>(shared_poly, setup)
-                }
+                commit_shared::<ProofTranscript, N>(shared_poly, setup, io_ctx, preproc)
             }
         }
     }
@@ -302,7 +287,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             for (i, p) in polys.iter().enumerate() {
                 if matches!(
                     p.borrow(),
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_))
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
                 ) {
                     ring_idxs.push(i);
                 } else {
@@ -439,7 +424,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                         rows.resize(num_rows_target, G1Projective::zero());
                         rows
                     }
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                         return Err(eyre::eyre!(
                             "Dory prove_rep3: U64Scalars requires an opening_hint (networked recompute unsupported)"
                         ));
@@ -498,7 +483,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 one_hot.compute_v_vec_share(Fr::from(1u64), &l_vec, &mut v);
                 v
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 return Err(eyre::eyre!(
                     "Dory prove_rep3: U64Scalars unsupported (field-domain v_vec computation missing)"
                 ));
@@ -727,6 +712,7 @@ pub fn setup_g2_projective(
 /// `compute_row_commitment_shares_ring`: for each row, [q0_segment, q1_segment].
 ///
 /// Q points: `q0[c] = 2^64 * g1_vec[c]`, `q1[c] = 2 * q0[c]` for c in 0..num_columns.
+#[tracing::instrument(skip_all)]
 pub fn precompute_dapoint_qs(
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     num_coeffs: usize,
@@ -767,7 +753,8 @@ fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
     (global_offset, local)
 }
 
-fn commit_public_fast(
+#[tracing::instrument(skip_all)]
+fn commit_public(
     poly: &jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
 ) -> (DoryCommitment, Vec<JoltG1Wrapper>) {
@@ -870,6 +857,7 @@ fn compute_row_commitment_shares_a(
 ///
 /// Public coefficients (NoOp padding, immediates) skip ring B2A, wrap extraction,
 /// and daPoint correction — only shared coefficients consume MPC preprocessing.
+#[tracing::instrument(skip_all, name = "dense::commit_rows_ring", level = "trace")]
 fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
     poly: &Rep3CompactPolynomial,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
@@ -1508,7 +1496,7 @@ mod tests {
                 all_arith_shares.iter().map(|s| s[pid]).collect();
             let shares_bin: Vec<Rep3RingShare<XlenInt>> =
                 all_bin_shares.iter().map(|s| s[pid]).collect();
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(
                 Rep3CompactPolynomial::from_shares(shares, shares_bin),
             ))
         });
@@ -1642,7 +1630,7 @@ mod tests {
                     }
                 })
                 .collect();
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(
                 Rep3CompactPolynomial::from_operands(operands),
             ))
         });
