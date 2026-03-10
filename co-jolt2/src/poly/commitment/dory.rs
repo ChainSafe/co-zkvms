@@ -119,49 +119,16 @@ enum CommitRows {
     },
 }
 
-/// Phase 1: compute row commitments for a local (non-CompactRing) polynomial.
-/// Returns a `LocalRowResult` without doing the pairing.
-fn compute_rows_local(
-    poly: &Rep3MultilinearPolynomial<Fr>,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-    bases: &[G1Affine],
-    sigma: usize,
-    commit_to_public: bool,
-) -> CommitRows {
-    match poly {
-        Rep3MultilinearPolynomial::Public(poly) => {
-            if commit_to_public {
-                let _span = tracing::trace_span!("commit_public").entered();
-                let (c, hint) = commit_public(poly, setup);
-                CommitRows::Public(Some((c, hint)))
-            } else {
-                CommitRows::Public(None)
-            }
-        }
-        Rep3MultilinearPolynomial::Shared(shared_poly) => {
-            assert!(
-                !matches!(shared_poly, Rep3SharedPoly::CompactRing(_)),
-                "compute_rows_local called on CompactRing poly"
-            );
-            let (num_vars, rows) = match shared_poly {
-                Rep3SharedPoly::Dense(poly) => {
-                    let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-                    (poly.get_num_vars(), compute_rows_field(poly, setup, nu))
-                }
-                Rep3SharedPoly::OneHot(poly) => {
-                    let rows = poly
-                        .commit_rows::<G1Projective>(bases)
-                        .expect("OneHot commit_rows preconditions met");
-                    (poly.get_num_vars(), rows)
-                }
-                Rep3SharedPoly::CompactRing(_) => unreachable!(),
-                Rep3SharedPoly::RLC(_) => {
-                    unreachable!("RLC polynomials should not be committed directly")
-                }
-            };
-            CommitRows::Rows { num_vars, rows }
-        }
-    }
+/// Pre-extracted Dense poly metadata + local coefficients for flat row-level parallelism.
+struct DenseRowTask {
+    /// Original index into the polys array.
+    poly_idx: usize,
+    num_vars: usize,
+    num_rows_target: usize,
+    global_offset: usize,
+    local_coeffs: Vec<Fr>,
+    first_row: usize,
+    last_row: usize,
 }
 
 /// Phase 2: finalize a `LocalRowResult` by running `rows_to_commitment` (pairing).
@@ -349,76 +316,205 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
 
         #[cfg(feature = "ring-msm")]
         {
-            // Partition into U64Scalars (need io_ctx/preproc) vs local-only.
-            let mut ring_idxs = Vec::new();
-            let mut local_idxs = Vec::new();
-            for (i, p) in polys.iter().enumerate() {
-                if matches!(
-                    p.borrow(),
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
-                ) {
-                    ring_idxs.push(i);
-                } else {
-                    local_idxs.push(i);
-                }
-            }
-
-            type CommitResult =
-                eyre::Result<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>;
-
             let sigma = DoryGlobals::get_num_columns().log_2();
             let num_columns = DoryGlobals::get_num_columns();
             let g1_proj = &setup_g1_projective(setup)[..num_columns];
             let bases = G1Projective::normalize_batch(g1_proj);
 
-            // rayon::join: local polys two-phase parallel (branch A),
-            // U64Scalars sequentially (branch B).
-            let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) = rayon::join(
-                || {
-                    // Phase 1: compute row commitments for all local polys in parallel.
-                    let row_results: Vec<CommitRows> = local_idxs
-                        .par_iter()
-                        .map(|&i| {
-                            compute_rows_local(
-                                polys[i].borrow(),
-                                setup,
-                                &bases,
-                                sigma,
-                                per_poly_commit_public[i],
-                            )
-                        })
-                        .collect();
+            // ── Step 1: Classify polys into Dense / OneHot / Public / Ring ──
+            let mut dense_tasks: Vec<DenseRowTask> = Vec::new();
+            let mut onehot_idxs: Vec<usize> = Vec::new();
+            let mut public_idxs: Vec<usize> = Vec::new();
+            let mut ring_idxs: Vec<usize> = Vec::new();
 
-                    // Phase 2: rows_to_commitment (pairing) for all local polys in parallel.
-                    row_results
-                        .into_par_iter()
-                        .map(|r| finalize_row_result(r, sigma, setup))
+            for (i, p) in polys.iter().enumerate() {
+                match p.borrow() {
+                    Rep3MultilinearPolynomial::Public(_) => public_idxs.push(i),
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                        let num_vars = dense.get_num_vars();
+                        let nu = dory::vmv::compute_nu(num_vars, sigma);
+                        let num_rows_target = 1usize << nu;
+                        let (global_offset, local_coeffs) = rep3_local_coeffs_a(dense);
+                        let local_len = local_coeffs.len();
+                        let (first_row, last_row) = if local_len == 0 {
+                            (0, 0)
+                        } else {
+                            let start = global_offset;
+                            let end = global_offset + local_len;
+                            (start / num_columns, (end - 1) / num_columns)
+                        };
+                        dense_tasks.push(DenseRowTask {
+                            poly_idx: i,
+                            num_vars,
+                            num_rows_target,
+                            global_offset,
+                            local_coeffs,
+                            first_row,
+                            last_row,
+                        });
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                        onehot_idxs.push(i);
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
+                        ring_idxs.push(i);
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                        unreachable!("RLC polynomials should not be committed directly")
+                    }
+                }
+            }
+
+            // ── Step 2+3: Flat Dense row par_iter + OneHot/Public/Ring concurrent ──
+            type CommitResult =
+                eyre::Result<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>;
+
+            // Build flat task list: (dense_task_idx, row)
+            let flat_tasks: Vec<(usize, usize)> = dense_tasks
+                .iter()
+                .enumerate()
+                .flat_map(|(di, d)| {
+                    if d.local_coeffs.is_empty() {
+                        // no rows to compute
+                        (0..0).map(move |row| (di, row)).collect::<Vec<_>>()
+                    } else {
+                        (d.first_row..=d.last_row)
+                            .map(move |row| (di, row))
+                            .collect::<Vec<_>>()
+                    }
+                })
+                .collect();
+
+            let (dense_row_msms, (onehot_results, ring_results)): (
+                Vec<(usize, usize, G1Projective)>,
+                (Vec<(usize, CommitRows)>, Vec<(usize, CommitResult)>),
+            ) = rayon::join(
+                || {
+                    // Flat par_iter over ALL rows across ALL Dense polys
+                    let _span = tracing::info_span!("dense_flat_rows").entered();
+                    flat_tasks
+                        .par_iter()
+                        .map(|&(di, row)| {
+                            let d = &dense_tasks[di];
+                            let start = d.global_offset;
+                            let end = start + d.local_coeffs.len();
+                            let row_start = row * num_columns;
+                            let row_end = row_start + num_columns;
+                            let seg_start = start.max(row_start);
+                            let seg_end = end.min(row_end);
+                            let seg_len = seg_end - seg_start;
+                            if seg_len == 0 {
+                                return (di, row, G1Projective::zero());
+                            }
+                            let col_start = seg_start - row_start;
+                            let local_start = seg_start - start;
+                            let scalars =
+                                &d.local_coeffs[local_start..local_start + seg_len];
+                            let msm = ArkVariableBaseMSM::msm(
+                                &bases[col_start..col_start + seg_len],
+                                scalars,
+                            )
+                            .expect("row segment MSM should succeed");
+                            (di, row, msm)
+                        })
                         .collect()
                 },
                 || {
-                    ring_idxs
-                        .iter()
-                        .map(|&i| {
-                            <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
-                                polys[i].borrow(),
-                                setup,
-                                per_poly_commit_public[i],
-                                io_ctx,
-                                preproc,
-                            )
-                        })
-                        .collect()
+                    rayon::join(
+                        || {
+                            // OneHot + Public polys
+                            let oh: Vec<(usize, CommitRows)> = onehot_idxs
+                                .par_iter()
+                                .map(|&i| {
+                                    let poly = match polys[i].borrow() {
+                                        Rep3MultilinearPolynomial::Shared(
+                                            Rep3SharedPoly::OneHot(p),
+                                        ) => p,
+                                        _ => unreachable!(),
+                                    };
+                                    let rows = poly
+                                        .commit_rows::<G1Projective>(&bases)
+                                        .expect("OneHot commit_rows preconditions met");
+                                    (i, CommitRows::Rows {
+                                        num_vars: poly.get_num_vars(),
+                                        rows,
+                                    })
+                                })
+                                .chain(public_idxs.par_iter().map(|&i| {
+                                    let poly = match polys[i].borrow() {
+                                        Rep3MultilinearPolynomial::Public(p) => p,
+                                        _ => unreachable!(),
+                                    };
+                                    if per_poly_commit_public[i] {
+                                        let (c, hint) = commit_public(poly, setup);
+                                        (i, CommitRows::Public(Some((c, hint))))
+                                    } else {
+                                        (i, CommitRows::Public(None))
+                                    }
+                                }))
+                                .collect();
+                            oh
+                        },
+                        || {
+                            // Ring polys — sequential (MPC network rounds)
+                            ring_idxs
+                                .iter()
+                                .map(|&i| {
+                                    let r = <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                                        polys[i].borrow(),
+                                        setup,
+                                        per_poly_commit_public[i],
+                                        io_ctx,
+                                        preproc,
+                                    );
+                                    (i, r)
+                                })
+                                .collect::<Vec<_>>()
+                        },
+                    )
                 },
             );
 
-            // Merge results back into original order.
+            // ── Scatter Dense row results back per-poly ──
+            let dense_commit_rows: Vec<(usize, CommitRows)> = {
+                let mut per_dense: Vec<Vec<G1Projective>> = dense_tasks
+                    .iter()
+                    .map(|d| vec![G1Projective::zero(); d.num_rows_target])
+                    .collect();
+                for (di, row, msm) in dense_row_msms {
+                    per_dense[di][row] = msm;
+                }
+                dense_tasks
+                    .iter()
+                    .zip(per_dense)
+                    .map(|(d, rows)| {
+                        (d.poly_idx, CommitRows::Rows {
+                            num_vars: d.num_vars,
+                            rows,
+                        })
+                    })
+                    .collect()
+            };
+
+            // ── Step 4: rows_to_commitment (pairing) in parallel ──
+            let local_commit_rows: Vec<(usize, CommitRows)> = dense_commit_rows
+                .into_iter()
+                .chain(onehot_results)
+                .collect();
+
+            let local_results: Vec<(usize, CommitResult)> = local_commit_rows
+                .into_par_iter()
+                .map(|(i, r)| (i, finalize_row_result(r, sigma, setup)))
+                .collect();
+
+            // ── Merge all results back into original order ──
             let mut out: Vec<
                 Option<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>,
             > = (0..polys.len()).map(|_| None).collect();
-            for (&i, r) in local_idxs.iter().zip(local_results) {
+            for (i, r) in local_results {
                 out[i] = Some(r?);
             }
-            for (&i, r) in ring_idxs.iter().zip(ring_results) {
+            for (i, r) in ring_results {
                 out[i] = Some(r?);
             }
             Ok(out.into_iter().map(|o| o.unwrap()).collect())
@@ -432,20 +528,169 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             let g1_proj = &setup_g1_projective(setup)[..num_columns];
             let bases = G1Projective::normalize_batch(g1_proj);
 
-            // Phase 1: compute row commitments for all polys in parallel.
-            let row_results: Vec<CommitRows> = polys
-                .par_iter()
-                .zip(per_poly_commit_public.par_iter())
-                .map(|(p, &do_commit_public)| {
-                    compute_rows_local(p.borrow(), setup, &bases, sigma, do_commit_public)
+            // ── Step 1: Classify polys, pre-extract Dense coefficients ──
+            let mut dense_tasks: Vec<DenseRowTask> = Vec::new();
+            let mut onehot_idxs: Vec<usize> = Vec::new();
+            let mut public_idxs: Vec<usize> = Vec::new();
+
+            for (i, p) in polys.iter().enumerate() {
+                match p.borrow() {
+                    Rep3MultilinearPolynomial::Public(_) => public_idxs.push(i),
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
+                        let num_vars = dense.get_num_vars();
+                        let nu = dory::vmv::compute_nu(num_vars, sigma);
+                        let num_rows_target = 1usize << nu;
+                        let (global_offset, local_coeffs) = rep3_local_coeffs_a(dense);
+                        let local_len = local_coeffs.len();
+                        let (first_row, last_row) = if local_len == 0 {
+                            (0, 0)
+                        } else {
+                            let start = global_offset;
+                            let end = global_offset + local_len;
+                            (start / num_columns, (end - 1) / num_columns)
+                        };
+                        dense_tasks.push(DenseRowTask {
+                            poly_idx: i,
+                            num_vars,
+                            num_rows_target,
+                            global_offset,
+                            local_coeffs,
+                            first_row,
+                            last_row,
+                        });
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
+                        onehot_idxs.push(i);
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
+                        unreachable!("CompactRing without ring-msm feature")
+                    }
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
+                        unreachable!("RLC polynomials should not be committed directly")
+                    }
+                }
+            }
+
+            // ── Step 2+3: Flat Dense row par_iter + OneHot/Public concurrent ──
+            let flat_tasks: Vec<(usize, usize)> = dense_tasks
+                .iter()
+                .enumerate()
+                .flat_map(|(di, d)| {
+                    if d.local_coeffs.is_empty() {
+                        (0..0).map(move |row| (di, row)).collect::<Vec<_>>()
+                    } else {
+                        (d.first_row..=d.last_row)
+                            .map(move |row| (di, row))
+                            .collect::<Vec<_>>()
+                    }
                 })
                 .collect();
 
-            // Phase 2: rows_to_commitment (pairing) for all polys in parallel.
-            row_results
+            let (dense_row_msms, onehot_public_results): (
+                Vec<(usize, usize, G1Projective)>,
+                Vec<(usize, CommitRows)>,
+            ) = rayon::join(
+                || {
+                    let _span = tracing::info_span!("dense_flat_rows").entered();
+                    flat_tasks
+                        .par_iter()
+                        .map(|&(di, row)| {
+                            let d = &dense_tasks[di];
+                            let start = d.global_offset;
+                            let end = start + d.local_coeffs.len();
+                            let row_start = row * num_columns;
+                            let row_end = row_start + num_columns;
+                            let seg_start = start.max(row_start);
+                            let seg_end = end.min(row_end);
+                            let seg_len = seg_end - seg_start;
+                            if seg_len == 0 {
+                                return (di, row, G1Projective::zero());
+                            }
+                            let col_start = seg_start - row_start;
+                            let local_start = seg_start - start;
+                            let scalars =
+                                &d.local_coeffs[local_start..local_start + seg_len];
+                            let msm = ArkVariableBaseMSM::msm(
+                                &bases[col_start..col_start + seg_len],
+                                scalars,
+                            )
+                            .expect("row segment MSM should succeed");
+                            (di, row, msm)
+                        })
+                        .collect()
+                },
+                || {
+                    // OneHot + Public polys
+                    onehot_idxs
+                        .par_iter()
+                        .map(|&i| {
+                            let poly = match polys[i].borrow() {
+                                Rep3MultilinearPolynomial::Shared(
+                                    Rep3SharedPoly::OneHot(p),
+                                ) => p,
+                                _ => unreachable!(),
+                            };
+                            let rows = poly
+                                .commit_rows::<G1Projective>(&bases)
+                                .expect("OneHot commit_rows preconditions met");
+                            (i, CommitRows::Rows {
+                                num_vars: poly.get_num_vars(),
+                                rows,
+                            })
+                        })
+                        .chain(public_idxs.par_iter().map(|&i| {
+                            let poly = match polys[i].borrow() {
+                                Rep3MultilinearPolynomial::Public(p) => p,
+                                _ => unreachable!(),
+                            };
+                            if per_poly_commit_public[i] {
+                                let (c, hint) = commit_public(poly, setup);
+                                (i, CommitRows::Public(Some((c, hint))))
+                            } else {
+                                (i, CommitRows::Public(None))
+                            }
+                        }))
+                        .collect()
+                },
+            );
+
+            // ── Scatter Dense row results back per-poly ──
+            let mut per_dense: Vec<Vec<G1Projective>> = dense_tasks
+                .iter()
+                .map(|d| vec![G1Projective::zero(); d.num_rows_target])
+                .collect();
+            for (di, row, msm) in dense_row_msms {
+                per_dense[di][row] = msm;
+            }
+            let dense_commit_rows: Vec<(usize, CommitRows)> = dense_tasks
+                .iter()
+                .zip(per_dense)
+                .map(|(d, rows)| {
+                    (d.poly_idx, CommitRows::Rows {
+                        num_vars: d.num_vars,
+                        rows,
+                    })
+                })
+                .collect();
+
+            // ── Step 4: rows_to_commitment (pairing) in parallel ──
+            let all_commit_rows: Vec<(usize, CommitRows)> = dense_commit_rows
+                .into_iter()
+                .chain(onehot_public_results)
+                .collect();
+
+            let results: Vec<(usize, eyre::Result<_>)> = all_commit_rows
                 .into_par_iter()
-                .map(|r| finalize_row_result(r, sigma, setup))
-                .collect()
+                .map(|(i, r)| (i, finalize_row_result(r, sigma, setup)))
+                .collect();
+
+            let mut out: Vec<
+                Option<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>,
+            > = (0..polys.len()).map(|_| None).collect();
+            for (i, r) in results {
+                out[i] = Some(r?);
+            }
+            Ok(out.into_iter().map(|o| o.unwrap()).collect())
         }
     }
 
