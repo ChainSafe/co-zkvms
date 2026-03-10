@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracing::info_span;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;

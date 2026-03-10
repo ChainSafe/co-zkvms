@@ -3,7 +3,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
 

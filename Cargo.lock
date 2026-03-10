@@ -796,7 +796,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "rcgen",
- "snarks-core",
  "strum",
  "tracing",
 ]
@@ -841,7 +840,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "snarks-core",
  "strum",
  "strum_macros",
  "tikv-jemalloc-ctl",
@@ -2562,6 +2560,7 @@ dependencies = [
  "eyre",
  "fancy-garbling",
  "itertools 0.12.1",
+ "jolt-core",
  "libc",
  "mpc-net",
  "mpc-types",
@@ -2575,7 +2574,6 @@ dependencies = [
  "scuttlebutt",
  "serde",
  "sha3",
- "snarks-core",
  "subtle",
  "thiserror 2.0.18",
  "tracing",
@@ -2625,7 +2623,6 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde",
- "snarks-core",
 ]
 
 [[package]]
@@ -3771,24 +3768,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "snarks-core"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-crypto-primitives",
- "ark-ec",
- "ark-ff",
- "ark-linear-sumcheck",
- "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-poly-commit",
- "ark-serialize",
- "ark-std",
- "jolt-core",
- "merlin",
- "rand 0.8.5",
-]
 
 [[package]]
 name = "socket2"

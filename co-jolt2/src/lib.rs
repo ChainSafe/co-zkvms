@@ -8,7 +8,6 @@
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::too_long_first_doc_paragraph)]
 
-pub mod field;
 pub mod host;
 pub mod poly;
 pub mod subprotocols;

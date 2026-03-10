@@ -9,7 +9,7 @@ pub mod spartan;
 pub mod suffixes;
 pub mod witness;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::host::memory::Rep3Memory;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::zkvm::dag::state_manager::StateManagerWorker;

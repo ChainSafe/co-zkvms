@@ -11,7 +11,7 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::r1cs::inputs::Rep3R1CSCycleInputs;
 

@@ -6,7 +6,7 @@ use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;

@@ -9,7 +9,6 @@ members = [
     "mpc-net",
     "mpc-core",
     "mpc-types",
-    "snarks-core",
 ]
 default-members = [
     "co-jolt2",
@@ -17,7 +16,6 @@ default-members = [
     "mpc-net",
     "mpc-core",
     "mpc-types",
-    "snarks-core",
 ]
 
 [workspace.package]

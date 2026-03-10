@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::additive::AdditiveShare;
 
 /// Lagrange interpolation through 4 points (0, y0), (1, y1), (2, y2), (3, y3) at x.

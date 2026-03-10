@@ -18,7 +18,8 @@ pub use multilinear_polynomial::*;
 pub use rep3_compact_polynomial::*;
 pub use rlc_polynomial::*;
 
-use crate::{field::JoltField, utils::types::Rep3Value};
+use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 
 pub trait Polynomial<F: JoltField> {
     fn len(&self) -> usize;

@@ -76,7 +76,7 @@ impl<F: PrimeField> Rep3PrimeFieldShare<F> {
     /// Converts the share into an additive share.
     pub fn into_additive(self) -> AdditivePrimeFieldShare<F>
     where
-        F: snarks_core::field::FieldExt,
+        F: jolt_core::field::FieldExt,
     {
         AdditivePrimeFieldShare((self.a + self.b) * F::TWO_INV)
     }

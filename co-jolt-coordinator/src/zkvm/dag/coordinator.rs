@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;

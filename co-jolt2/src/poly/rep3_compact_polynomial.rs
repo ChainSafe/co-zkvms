@@ -1,7 +1,7 @@
 use allocative::Allocative;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
-use snarks_core::math::Math;
+use jolt_core::utils::math::Math;
 
 /// Compact multilinear polynomial over ring coefficients represented as full Rep3 shares.
 ///

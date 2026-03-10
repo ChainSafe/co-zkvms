@@ -1,6 +1,6 @@
 use std::ops::Index;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::Polynomial;
 use crate::utils::future_ring::{FutureOp, FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::types::Rep3Value;
@@ -15,7 +15,7 @@ use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
-use snarks_core::math::Math;
+use jolt_core::utils::math::Math;
 
 /// Compact polynomials are used to store coefficients of small scalars (in a 2^k ring).
 /// They have two representations:

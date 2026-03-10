@@ -13,7 +13,7 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;

@@ -50,7 +50,7 @@ use tracer::instruction::format::NormalizedOperands;
 use tracer::instruction::{Cycle, Instruction, RAMAccess, RISCVCycle, RISCVInstruction};
 
 use self::format::{Rep3InstructionFormat, Rep3RegisterState};
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
 pub use crate::utils::instruction_utils::bit_to_ring64;

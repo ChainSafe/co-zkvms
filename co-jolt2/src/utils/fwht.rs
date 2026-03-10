@@ -4,7 +4,7 @@ use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 
 // ─── Butterfly primitives ─────────────────────────────────────────────────────
 

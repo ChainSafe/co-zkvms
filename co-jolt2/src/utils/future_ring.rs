@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::{
     rep3::{
         network::{IoContextPool, Rep3NetworkWorker},

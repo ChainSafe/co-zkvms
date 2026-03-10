@@ -6,7 +6,7 @@ use jolt_core::zkvm::ram::booleanity::BooleanitySumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::PartyID;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
 

@@ -9,7 +9,7 @@ use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 

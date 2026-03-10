@@ -8,7 +8,7 @@ use jolt_core::utils::small_scalar::SmallScalar;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 
 #[derive(Clone, Debug)]

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::JoltVerifierPreprocessing;

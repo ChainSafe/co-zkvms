@@ -1,11 +1,10 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::MaybeShared;
 
 pub mod dory;
-pub mod pst13;
 
 pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     CommitmentScheme<Field = F>

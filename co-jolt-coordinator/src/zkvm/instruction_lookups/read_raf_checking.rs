@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use jolt_common::constants::XLEN;

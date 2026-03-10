@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::witness::Stage1RowRef;

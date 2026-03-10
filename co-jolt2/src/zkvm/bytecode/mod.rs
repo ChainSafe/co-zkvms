@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 

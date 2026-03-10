@@ -1,7 +1,7 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
 

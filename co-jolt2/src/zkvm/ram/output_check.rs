@@ -17,7 +17,7 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;

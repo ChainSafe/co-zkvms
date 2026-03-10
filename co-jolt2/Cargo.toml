@@ -64,7 +64,6 @@ dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 
 co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 mpc-core = { path = "../mpc-core" }
-snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
 rcgen = { version = "0.13", optional = true }
 

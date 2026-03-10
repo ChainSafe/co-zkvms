@@ -10,7 +10,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::r1cs::inputs::{

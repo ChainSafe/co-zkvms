@@ -5,7 +5,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;

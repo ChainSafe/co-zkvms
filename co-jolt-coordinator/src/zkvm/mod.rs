@@ -5,7 +5,7 @@ pub mod ram;
 pub mod registers;
 pub mod spartan;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
