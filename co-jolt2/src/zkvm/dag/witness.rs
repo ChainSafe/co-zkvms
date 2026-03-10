@@ -31,8 +31,7 @@ struct PcInputs {
 #[derive(Clone, Debug, Default)]
 struct Stage1Witness<F: JoltField> {
     imm: Vec<i128>,
-    /// Advice payload (public for now); only meaningful when `Advice` flag is set.
-    advice: Vec<u64>,
+    advice: Vec<Rep3PrimeFieldShare<F>>,
 
     /// Cached lookup output per cycle (field shares).
     lookup_output: Vec<Rep3PrimeFieldShare<F>>,
@@ -201,7 +200,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     pub fn set_stage1(
         &mut self,
         imm: Vec<i128>,
-        advice: Vec<u64>,
+        advice: Vec<Rep3PrimeFieldShare<F>>,
         lookup_output: Vec<Rep3PrimeFieldShare<F>>,
         rs1_value: Vec<Rep3PrimeFieldShare<F>>,
         rs2_value: Vec<Rep3PrimeFieldShare<F>>,
@@ -344,7 +343,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         self.w.meta[self.t].ram_addr
     }
 
-    pub fn advice(&self) -> u64 {
+    pub fn advice(&self) -> Rep3PrimeFieldShare<F> {
         self.stage1().advice[self.t]
     }
 
@@ -477,7 +476,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (zero, Rep3Value::Public(F::from_u64(self.advice())))
+            (zero, Rep3Value::Shared(self.advice()))
         } else {
             (left_u64, right_u64)
         }
@@ -535,10 +534,8 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
-            (
-                zero,
-                promote_to_trivial_share(party_id, F::from_u64(self.advice())),
-            )
+            let _ = party_id;
+            (zero, self.advice())
         } else {
             (left_u64, right_u64)
         }

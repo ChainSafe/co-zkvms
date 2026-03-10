@@ -47,6 +47,7 @@ enum SparseCastCol {
     RdWrite = 2,
     RamRead = 3,
     RamWrite = 4,
+    Advice = 5,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +63,7 @@ struct SharedSparseFieldCols<F: JoltField> {
     rd_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
     ram_read: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
     ram_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    advice: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
 }
 
 unsafe impl<F: JoltField> Sync for SharedSparseFieldCols<F> {}
@@ -114,6 +116,7 @@ where
                     SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
                     SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
                     SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
+                    SparseCastCol::Advice => (&mut *out.advice.get())[row] = value,
                 }
             }
         }
@@ -153,10 +156,6 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
         Rep3Cycle::LUI(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::AUIPC(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::JAL(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
-        Rep3Cycle::VirtualAdvice(c) => Some(
-            Rep3LookupQuery::<XLEN>::to_public_lookup_output(c)
-                .expect("VirtualAdvice lookup index must be public") as LookupIndexInt,
-        ),
         Rep3Cycle::VirtualPow2(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -396,7 +395,7 @@ where
     let mut flags_bits: Vec<u32> = Vec::with_capacity(n);
 
     let mut imm: Vec<i128> = Vec::with_capacity(n);
-    let mut advice: Vec<u64> = vec![0; n];
+    let mut advice: Vec<Rep3PrimeFieldShare<F>> = vec![Rep3PrimeFieldShare::zero_share(); n];
     let mut lookup_tables: Vec<Option<LookupTables<XLEN>>> = Vec::with_capacity(n);
     let mut is_interleaved_operands: Vec<bool> = Vec::with_capacity(n);
     let mut right_operand_public_mask: Vec<Option<u64>> = Vec::with_capacity(n);
@@ -410,6 +409,7 @@ where
         rd_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         ram_read: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         ram_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        advice: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
     });
     let mut cast_jobs: Vec<SparseCastJob> = Vec::new();
     cast_jobs.reserve(n * 5);
@@ -427,6 +427,7 @@ where
                     SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
                     SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
                     SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
+                    SparseCastCol::Advice => (&mut *shared_cols.advice.get())[row] = share,
                 }
             }
         }
@@ -485,7 +486,13 @@ where
         // Advice value (only meaningful for VirtualAdvice).
         if circuit_flags[CircuitFlags::Advice as usize] {
             if let Rep3Cycle::VirtualAdvice(c) = cycle {
-                advice[t] = c.instruction.advice;
+                maybe_push(
+                    SparseCastCol::Advice,
+                    t,
+                    c.advice
+                        .as_ref()
+                        .expect("VirtualAdvice shared advice payload missing"),
+                );
             }
         }
 
@@ -524,6 +531,7 @@ where
     let rd_write_value = shared_cols.rd_write.into_inner();
     let ram_read_value = shared_cols.ram_read.into_inner();
     let ram_write_value = shared_cols.ram_write.into_inner();
+    advice = shared_cols.advice.into_inner();
 
     let cw = &mut state.prover_state.cycle_witness;
     cw.set_len(n);

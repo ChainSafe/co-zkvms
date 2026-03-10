@@ -121,8 +121,12 @@ fn share_cycle(
     cycle: &tracer::instruction::Cycle,
     rng: &mut impl rand::Rng,
 ) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
-    let values = Rep3Cycle::extract_operand_values(cycle);
+    let mut copied_cycle = cycle.clone();
+    let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
+    if let tracer::instruction::Cycle::VirtualAdvice(c) = &mut copied_cycle {
+        c.instruction.advice = None;
+    }
 
     // Generate shares for each operand — public indices get replicated as
     // Rep3Operand::Public(v) for all 3 parties instead of binary shares.
@@ -152,8 +156,8 @@ fn share_cycle(
     let mut s1 = operands_per_party.iter().map(|s| s[1]);
     let mut s2 = operands_per_party.iter().map(|s| s[2]);
     (
-        Rep3Cycle::from_cycle_shared(cycle, &mut s0),
-        Rep3Cycle::from_cycle_shared(cycle, &mut s1),
-        Rep3Cycle::from_cycle_shared(cycle, &mut s2),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s0),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s1),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s2),
     )
 }
