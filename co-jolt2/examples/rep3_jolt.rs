@@ -19,7 +19,6 @@ use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span, trace_span, warn};
 
-use co_jolt_coordinator::zkvm::Rep3Jolt;
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
 use co_jolt2::host::program::Rep3Program;
@@ -30,17 +29,13 @@ use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::JoltArch;
 use co_jolt2::zkvm::Rep3JoltWorker;
+use co_jolt_coordinator::zkvm::Rep3Jolt;
 use jolt_core::host::Program;
-use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-use jolt_core::zkvm::ram::RAMPreprocessing;
-use mpc_net::rep3::quic::Rep3QuicNetCoordinator;
-use mpc_net::topology::MpcStarNetCoordinator;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
-use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
-use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::{
     JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };

@@ -3,8 +3,6 @@ use std::sync::Arc;
 use ark_bn254::Fr;
 use ark_std::test_rng;
 
-use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
-use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
@@ -12,7 +10,9 @@ use co_jolt2::utils::tracing::init_tracing;
 use co_jolt2::zkvm::dag::state_manager::StateManagerWorker;
 use co_jolt2::zkvm::dag::worker::Rep3JoltDagWorker;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
-use co_jolt2::zkvm::Rep3JoltWorker;
+use co_jolt2::zkvm::{JoltArch, Rep3JoltWorker};
+use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
+use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
@@ -176,10 +176,9 @@ fn dag_correct() {
     );
 
     // 5) Verify the MPC-produced proof using the local jolt-core verifier.
-    let verifier_preprocessing = Arc::try_unwrap(verifier_preprocessing_arc)
-        .unwrap_or_else(|arc| (*arc).clone());
-    let io_device = Arc::try_unwrap(io_device_arc)
-        .unwrap_or_else(|arc| (*arc).clone());
+    let verifier_preprocessing =
+        Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
+    let io_device = Arc::try_unwrap(io_device_arc).unwrap_or_else(|arc| (*arc).clone());
 
     let verifier_sm = VanillaStateManager::from_proof(
         rep3_proof,
