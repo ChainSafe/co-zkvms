@@ -59,4 +59,5 @@ RAF proves that lookup reads are consistent with the intended instruction tables
 ### Notable limitations
 
 - The current one-hot path reuses one RandOHV mask across many rows of a polynomial, which leaks equality and XOR relations between masked indices.
+- This is a masked-index-opening problem, not a missing mask-before-resharing-additive-shares problem.
 - This is the main semi-honest leakage issue still confirmed in the current tree.

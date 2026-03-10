@@ -49,6 +49,8 @@
   - `mpc-core` `rep3_ring/gadgets/{lut,ohv}` matches the reference masking discipline:
     - fresh RandOHV masks for per-lookup masked opens
     - masked local field terms before resharing in LUT write/update paths
+  - `co-jolt2` resharing call sites reviewed in `src/subprotocols/mles_product_sum.rs` and `src/zkvm/instruction_lookups/read_raf_checking.rs` do not expose an additional missing-mask-before-reshare bug.
+  - `co-jolt2` additive message paths reviewed in `src/subprotocols/sumcheck.rs`, `src/poly/spartan_interleaved_poly.rs`, `src/zkvm/spartan/worker.rs`, and `src/zkvm/instruction_lookups/ra_virtual.rs` send additive protocol messages to the coordinator, but they do not convert those messages back into replicated worker state; the mask-before-reshare rule therefore does not apply to those send sites.
   - `co-jolt2` custom advice and RAM initialization paths keep advice shared through `binary_ring_to_field_many` and do not reconstruct to plaintext on workers.
   - `co-jolt2` Dory commitment sharing and coordinator recombination do not bypass the shared commitment path.
 
@@ -78,6 +80,50 @@
   - the reviewed local `mpc-core` masking/open/reshare discipline is materially aligned with the `co-snarks` reference
   - the main security gap in the current tree is in `co-jolt2`’s higher-level one-hot masking design, not in a weakened `mpc-core` primitive
   - reviewed differences from the reference were API or helper-surface differences, not weaker MPC semantics
+
+## Additive-share resharing rule
+
+- Operational rule:
+  - multiplying two replicated shares produces a local additive share
+  - that additive share is only a local intermediate, not yet a fresh replicated share
+  - if the local additive value is converted back into replicated sharing, or reused across another non-linear MPC boundary, it must be one-time masked first
+- Why the mask is needed:
+  - without masking, each party holds a deterministic local partial evaluation of secret data
+  - `reshare_additive_many` in local `mpc-core` is only a transport/re-encoding step; it does not add privacy on its own
+  - the privacy obligation therefore sits at the site that constructs the additive local value
+- Reference pattern:
+  - `/Users/timofey/repos/examples/co-snarks/mpc-core/src/protocols/rep3/arithmetic.rs` masks local products before `reshare` or fused `mul_open`
+  - `/Users/timofey/repos/examples/co-snarks/mpc-core/src/protocols/rep3_ring/gadgets/lut.rs` masks local LUT accumulators before later resharing
+- Distinct mechanisms:
+  - this is different from opening a masked value such as `k XOR r`, where the masking goal is to hide an index before an explicit open
+  - this is also different from additive protocol messages that are sent as outputs of a subprotocol and never reshared back into Rep3 worker state
+
+## Audited additive-share sites
+
+- `mpc-core/src/protocols/rep3/arithmetic.rs`
+  - `mul`, `mul_vec`, `mul_vec_par`: replicated field shares in, local additive product out, then reshared to replicated shares; mask required and present.
+  - `mul_open`, `mul_open_vec`: replicated field shares in, local additive product out, then opened; mask required and present.
+  - `reshare_additive_many`: additive shares in, replicated shares out; no masking inside this helper by design, so callers must only pass additive values that were already produced under the masked-additive discipline.
+- `mpc-core/src/protocols/rep3_ring/gadgets/lut.rs`
+  - `read_shared_lut`, `read_shared_lut_from_ohv`, `read_shared_lut_from_many_ohvs`: replicated LUT/selector inputs in, local additive field accumulator out; mask required for later resharing/opening and present.
+  - `write_lut_from_ohv`: replicated LUT/value/selector inputs in, local additive update terms out, then reshared; mask required and present.
+- `co-jolt2/src/subprotocols/mles_product_sum.rs`
+  - `level1_rep3`, `level2_rep3`, `level3_rep3`: additive shares in, replicated shares out via `reshare_additive_many`; reviewed as resharing sites.
+  - No additional missing-mask finding confirmed here: the reshared values are `AdditiveShare<F>` protocol intermediates produced from Rep3 algebra, not an obvious raw unmasked `F` accumulator pattern like the LUT reference.
+- `co-jolt2/src/zkvm/instruction_lookups/read_raf_checking.rs`
+  - `reshare_hists_chunk` and `q_reshare`: additive histogram terms in, replicated shares out via `reshare_additive_many`; reviewed as resharing sites.
+  - No additional missing-mask finding confirmed here: the code reshapes additive-share objects, not raw per-party field accumulators that bypass `mpc-core` masking semantics.
+- `co-jolt2/src/subprotocols/sumcheck.rs`
+  - `exchange(batched_evals)`, `send_response(opening_claims_by_instance)`, `send_response(openings_by_instance)`: additive protocol messages sent to the coordinator; these are not reshared back into replicated worker state at the send site, so the mask-before-reshare rule is not the relevant audit criterion there.
+- `co-jolt2/src/poly/spartan_interleaved_poly.rs`
+  - `send_response((t0, t_inf))`: additive quadratic-evaluation messages sent to the coordinator; not a resharing site.
+- `co-jolt2/src/zkvm/spartan/worker.rs`
+  - `send_response(final_evals.to_vec())`, `send_response(claimed_additive)`: additive evaluation messages sent to the coordinator; not a resharing site.
+- `co-jolt2/src/zkvm/instruction_lookups/ra_virtual.rs`
+  - `exchange(msg.clone())`, `send_response(vec![additive_claims])`: additive RAF round/opening messages sent to the coordinator; not a resharing site.
+- Conclusion:
+  - no additional confirmed “missing mask before resharing additive shares” issue was found in the reviewed local `mpc-core` or `co-jolt2` paths
+  - the confirmed masking issue in the current tree remains the separate RandOHV-mask-reuse bug in `co-jolt2/src/poly/one_hot_polynomial.rs`
 
 ## Findings
 
