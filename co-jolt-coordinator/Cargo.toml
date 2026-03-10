@@ -6,8 +6,14 @@ authors.workspace = true
 description = "Coordinator-side MPC proving for co-jolt2"
 license.workspace = true
 
+[[bin]]
+name = "coordinator"
+path = "src/bin/coordinator.rs"
+
 [dependencies]
 mpc-core = { path = "../mpc-core" }
+mpc-net = { path = "../mpc-net" }
+mpc-types = { path = "../mpc-types" }
 
 jolt-core.workspace = true
 jolt-common.workspace = true
@@ -18,20 +24,24 @@ ark-std.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
 ark-serialize.workspace = true
-ark-poly-commit.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 rayon = "1.10.0"
 itertools.workspace = true
-dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
+dory.workspace = true
 rand.workspace = true
 num-traits.workspace = true
 strum = "0.26.3"
 
+# Transport / E2EE
+rcgen = "0.13"
+rustls = { version = "0.23.15", default-features = false, features = ["std", "tls12", "ring"] }
+vsock = { version = "0.5", optional = true }
+aws-nitro-enclaves-nsm-api = { version = "0.4", optional = true }
 
 [features]
 rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
+aws_nitro = ["dep:vsock", "dep:aws-nitro-enclaves-nsm-api"]
 
 [dev-dependencies]
 co-jolt2 = { path = "../co-jolt2", features = ["test-utils"] }
-rcgen = "0.13"

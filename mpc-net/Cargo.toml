@@ -11,7 +11,7 @@ clap = { workspace = true }
 futures = "0.3.30"
 quinn = { version = "0.11", optional = true }
 rcgen = "0.13"
-rustls = "0.23.15"
+rustls = { version = "0.23.15", default-features = false, features = ["std", "tls12", "ring"] }
 serde = { workspace = true }
 tokio = { version = "1.34.0", features = [
     "rt",
