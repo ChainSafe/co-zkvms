@@ -16,7 +16,7 @@ use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::multilinear_polynomial::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomialProverOpening;

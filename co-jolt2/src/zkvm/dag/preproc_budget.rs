@@ -1,5 +1,5 @@
 use crate::zkvm::suffixes::suffix_edabit_ring_bits;
-use jolt2_common::constants::XLEN;
+use jolt_common::constants::XLEN;
 use jolt_core::zkvm::instruction_lookups::LOG_M;
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use jolt_core::zkvm::lookup_table::LookupTables;
@@ -19,7 +19,7 @@ pub struct PreprocessingBudget {
     pub u128: usize,
     /// daBits for BitInject (single-bit → field) suffix conversions.
     pub dabits: usize,
-    /// daPoints for Dory RingCompact wrap correction (2 per committed coefficient).
+    /// daPoints for Dory U64Scalars wrap correction (2 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub dapoints: usize,
     /// Wrap masks for DaBit-based wrap-m extraction (1 per committed coefficient).
@@ -109,7 +109,7 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
         .max()
         .unwrap_or(0);
     budget.dabits = max_dabits_per_cycle * n;
-    // Dory RingCompact wrap correction (ring-msm only).
+    // Dory U64Scalars wrap correction (ring-msm only).
     #[cfg(feature = "ring-msm")]
     {
         let padded_n = n.next_power_of_two();

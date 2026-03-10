@@ -1,5 +1,5 @@
-use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
-use jolt2_common::jolt_device::MemoryLayout;
+use jolt_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
+use jolt_common::jolt_device::MemoryLayout;
 use jolt_core::zkvm::ram::remap_address;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};

@@ -7,3 +7,4 @@
 pub mod field;
 pub mod protocols;
 pub mod serde_compat;
+pub mod utils;

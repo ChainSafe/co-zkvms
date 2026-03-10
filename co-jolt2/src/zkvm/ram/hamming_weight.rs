@@ -4,7 +4,7 @@ use jolt_core::zkvm::ram::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::rep3::PartyID;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
 

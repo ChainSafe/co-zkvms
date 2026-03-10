@@ -3,7 +3,7 @@
 //! Values are pushed into typed buckets during suffix evaluation, then
 //! fulfilled in a single batched pass per ring type.
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;

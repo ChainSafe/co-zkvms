@@ -9,7 +9,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::witness::Stage1RowRef;
@@ -83,7 +83,7 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let imm = if row.flag(CircuitFlags::Branch) {
             row.imm() as i32 as i128
         } else {
-            row.imm() as jolt2_common::constants::XlenInt as i128
+            row.imm() as jolt_common::constants::XlenInt as i128
         };
         #[cfg(feature = "rv64")]
         let imm = row.imm();
@@ -261,7 +261,7 @@ where
                     let imm_val = if row.flag(CircuitFlags::Branch) {
                         F::from_i128(row.imm() as i32 as i128)
                     } else {
-                        F::from_i128(row.imm() as jolt2_common::constants::XlenInt as i128)
+                        F::from_i128(row.imm() as jolt_common::constants::XlenInt as i128)
                     };
                     #[cfg(feature = "rv64")]
                     let imm_val = F::from_i128(row.imm());

@@ -35,7 +35,7 @@ parking_lot = "0.12.0"
 
 mpc-types.workspace = true
 mpc-net = { path = "../mpc-net" }
-snarks-core = { path = "../snarks-core" }
+jolt-core.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

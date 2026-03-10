@@ -2,7 +2,7 @@
 
 use super::future::{B2ABucketExtend, SuffixFutureBatch};
 use super::{to_u32_share, MixedBatch, Uninterleavable};
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::utils::types::Either;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;

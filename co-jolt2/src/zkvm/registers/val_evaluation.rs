@@ -1,4 +1,4 @@
-use jolt2_common::constants::REGISTER_COUNT;
+use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -14,7 +14,7 @@ use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFiel
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;

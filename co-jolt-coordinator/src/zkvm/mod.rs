@@ -1,16 +1,12 @@
 pub mod bytecode;
 pub mod dag;
-pub use co_jolt2::zkvm::instruction;
 pub mod instruction_lookups;
-pub use co_jolt2::zkvm::r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
-pub use co_jolt2::zkvm::suffixes;
-pub use co_jolt2::zkvm::witness;
 
-use co_jolt2::field::JoltField;
-use co_jolt2::poly::commitment::Rep3CommitmentScheme;
+use jolt_core::field::JoltField;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof;
@@ -18,7 +14,6 @@ use jolt_core::zkvm::JoltVerifierPreprocessing;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use tracer::JoltDevice;
 
-use crate::poly::commitment::Rep3CoordinatorCommitmentScheme;
 use crate::zkvm::dag::coordinator::Rep3JoltDag;
 use crate::zkvm::dag::state_manager::StateManager;
 
@@ -29,8 +24,7 @@ use crate::zkvm::dag::state_manager::StateManager;
 pub trait Rep3Jolt<F: JoltField, PCS, ProofTranscript: Transcript>
 where
     PCS: CommitmentScheme<Field = F>
-        + Rep3CommitmentScheme<F, ProofTranscript>
-        + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
+        + Rep3CommitmentScheme<F, ProofTranscript>,
 {
     fn prove<N: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
@@ -46,10 +40,15 @@ where
 // Implementation for JoltArch
 // ---------------------------------------------------------------------------
 
-use co_jolt2::zkvm::JoltArch;
 use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::Blake2bTranscript;
+use jolt_core::zkvm::JoltRV32IM;
+
+#[cfg(not(feature = "rv64"))]
+pub type JoltArch = JoltRV32IM;
+#[cfg(feature = "rv64")]
+pub type JoltArch = jolt_core::zkvm::JoltRV64IMAC;
 
 impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
     fn prove<N: Rep3NetworkCoordinator>(

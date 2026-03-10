@@ -10,7 +10,7 @@ pub mod types;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::JoltSharedPreprocessing;
 use mpc_core::protocols::additive::AdditiveShare;

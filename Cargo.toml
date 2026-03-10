@@ -9,7 +9,6 @@ members = [
     "mpc-net",
     "mpc-core",
     "mpc-types",
-    "snarks-core",
 ]
 default-members = [
     "co-jolt2",
@@ -17,7 +16,6 @@ default-members = [
     "mpc-net",
     "mpc-core",
     "mpc-types",
-    "snarks-core",
 ]
 
 [workspace.package]
@@ -41,24 +39,24 @@ ark-bls12-381 = { version = "^0.5.0", default-features = false, features = [
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
     "curve",
 ] }
-ark-serialize = { version = "0.5.0" }
+ark-serialize = { version = "0.5.0", default-features = false }
 ark-poly = { version = "0.5.0", features = ["parallel"] }
 ark-ec = { version = "0.5.0", features = ["parallel"] }
 ark-crypto-primitives = { version = "^0.5.0", default-features = false, features = [
     "sponge",
 ] }
 
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = [
+tracing = { version = "0.1.41", default-features = false }
+tracing-subscriber = { version = "0.3.19", default-features = false, features = [
     "env-filter",
     "ansi",
     "registry",
     "std",
 ] }
-tracing-forest = { version = "0.1.6", features = ["ansi", "smallvec"] }
+tracing-forest = { version = "0.1.6", default-features = false, features = ["ansi", "smallvec"] }
 tracing-chrome = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false }
 base64 = "0.22.1"
 divan = "0.1.21"
 rand = "0.8.5"
@@ -106,7 +104,7 @@ strum_macros = "0.26.4"
 
 # Dependencies for local jolt-core
 ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-serialize-derive = { version = "0.5.0", default-features = false }
+ark-serialize-derive = { version = "0.5.0"}
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 # jolt-platform = { path = "/Users/timofey/repos/examples/jolt/jolt-platform", default-features = false }
@@ -137,15 +135,15 @@ object = { version = "0.36.7", features = ["build_core", "elf"], default-feature
 addr2line = "0.25.1"
 
 jolt-core = { path = "./jolt-core" }
-tracer = { path = "./jolt-tracer", package = "jolt-tracer" }
-jolt2-common = { path = "./jolt-common", package = "jolt-common" }
+tracer = { path = "./jolt-tracer", package = "jolt-tracer", default-features = false }
+jolt-common = { path = "./jolt-common", package = "jolt-common" }
 # jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 # ark-bls12-381 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }

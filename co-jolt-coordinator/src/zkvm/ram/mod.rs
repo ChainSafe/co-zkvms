@@ -1,21 +1,15 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
+use jolt_common::constants::RAM_WORD_SIZE;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
-use co_jolt2::zkvm::ram::RamStage4Init;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use rayon::prelude::ParallelSlice;
 
-use crate::field::JoltField;
-use crate::host::jolt_device::Rep3ProgramIOInput;
+use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
 
@@ -75,77 +69,27 @@ pub fn build_initial_memory_state(
     initial_memory_state
 }
 
-/// Build the initial memory state as secret-shared field elements.
-///
-/// Public regions (bytecode, inputs) use trivial shares. Advice regions
-/// (trusted, untrusted) are packed from `Rep3RingShare<u8>` byte shares into
-/// `Rep3RingShare<u64>` word shares, then converted to field shares via
-/// `binary_ring_to_field_many` (one MPC round).
-pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWorker>(
-    ram_preprocessing: &jolt_core::zkvm::ram::RAMPreprocessing,
-    program_io: &tracer::JoltDevice,
-    advice: &Rep3ProgramIOInput,
-    party_id: PartyID,
-    K: usize,
-    io_ctx: &mut IoContextPool<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let memory_layout = &program_io.memory_layout;
-    let ws = RAM_WORD_SIZE as usize;
-    let mut initial_memory_state: Vec<Rep3PrimeFieldShare<F>> =
-        vec![Rep3PrimeFieldShare::zero_share(); K];
-
-    // Copy bytecode (PUBLIC → trivial shares)
-    let mut index =
-        remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
-    for word in &ram_preprocessing.bytecode_words {
-        initial_memory_state[index] =
-            rep3_arith::promote_to_trivial_share(party_id, F::from_u64(*word));
-        index += 1;
-    }
-
-    // Pack and convert trusted advice (SHARED)
-    let trusted_advice_start =
-        remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
-    if !advice.trusted_advice.is_empty() {
-        let trusted_words: Vec<Rep3RingShare<u64>> = advice
-            .trusted_advice
-            .chunks(ws)
-            .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
-            .collect();
-        let trusted_field: Vec<Rep3PrimeFieldShare<F>> =
-            binary_ring_to_field_many(&trusted_words, io_ctx.main())?;
-        for (i, share) in trusted_field.into_iter().enumerate() {
-            initial_memory_state[trusted_advice_start + i] = share;
-        }
-    }
-
-    // Pack and convert untrusted advice (SHARED)
-    let untrusted_advice_start =
-        remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
-    if !advice.untrusted_advice.is_empty() {
-        let untrusted_words: Vec<Rep3RingShare<u64>> = advice
-            .untrusted_advice
-            .chunks(ws)
-            .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
-            .collect();
-        let untrusted_field: Vec<Rep3PrimeFieldShare<F>> =
-            binary_ring_to_field_many(&untrusted_words, io_ctx.main())?;
-        for (i, share) in untrusted_field.into_iter().enumerate() {
-            initial_memory_state[untrusted_advice_start + i] = share;
-        }
-    }
-
-    // Copy inputs (PUBLIC → trivial shares)
-    index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
-    for chunk in program_io.inputs.chunks(ws) {
-        initial_memory_state[index] = rep3_arith::promote_to_trivial_share(
-            party_id,
-            F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)),
-        );
-        index += 1;
-    }
-
-    Ok(initial_memory_state)
+/// Init data for RAM stage4 instances, broadcast by coordinator.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct RamStage4Init<F: JoltField> {
+    /// HammingWeight gamma powers
+    pub hamming_gamma_powers: Vec<F>,
+    /// HammingWeight input claim
+    pub hamming_input_claim: F,
+    /// Booleanity r_cycle
+    pub bool_r_cycle: Vec<F::Challenge>,
+    /// Booleanity r_address
+    pub bool_r_address: Vec<F::Challenge>,
+    /// Booleanity gamma powers
+    pub bool_gamma_powers: Vec<F>,
+    /// RaSumcheck gamma [1, γ, γ²]
+    pub ra_gamma: [F; 3],
+    /// RaSumcheck combined claim
+    pub ra_claim: F,
+    /// RaSumcheck r_cycle (val, rw, raf)
+    pub ra_r_cycle: [Vec<F::Challenge>; 3],
+    /// RaSumcheck r_address_chunks
+    pub ra_r_address_chunks: Vec<Vec<F::Challenge>>,
 }
 
 // ---------------------------------------------------------------------------

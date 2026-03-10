@@ -1,5 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
+use jolt_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
@@ -13,7 +13,7 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
@@ -156,28 +156,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
 // Worker
 // ---------------------------------------------------------------------------
 
-/// Init data for RAM stage4 instances, broadcast by coordinator.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct RamStage4Init<F: JoltField> {
-    /// HammingWeight gamma powers
-    pub hamming_gamma_powers: Vec<F>,
-    /// HammingWeight input claim
-    pub hamming_input_claim: F,
-    /// Booleanity r_cycle
-    pub bool_r_cycle: Vec<F::Challenge>,
-    /// Booleanity r_address
-    pub bool_r_address: Vec<F::Challenge>,
-    /// Booleanity gamma powers
-    pub bool_gamma_powers: Vec<F>,
-    /// RaSumcheck gamma [1, γ, γ²]
-    pub ra_gamma: [F; 3],
-    /// RaSumcheck combined claim
-    pub ra_claim: F,
-    /// RaSumcheck r_cycle (val, rw, raf)
-    pub ra_r_cycle: [Vec<F::Challenge>; 3],
-    /// RaSumcheck r_address_chunks
-    pub ra_r_address_chunks: Vec<Vec<F::Challenge>>,
-}
+pub use co_jolt_coordinator::zkvm::ram::RamStage4Init;
 
 pub struct Rep3RamDagWorker<F: JoltField> {
     /// val_init (SHARED) — initial RAM state as a dense MLE.

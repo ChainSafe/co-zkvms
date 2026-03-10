@@ -1,29 +1,15 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
-};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
-use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use rayon::prelude::*;
 
-use crate::field::JoltField;
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::utils::types::Rep3Value;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use jolt_core::field::JoltField;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
-use crate::zkvm::instruction_lookups::booleanity::{extend_degree_3_evals, gruen_evals_deg_3};
+use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use crate::zkvm::dag::state_manager::StateManager;
 
 const DEGREE: usize = 3;
 

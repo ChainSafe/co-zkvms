@@ -1,15 +1,13 @@
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
-use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::rep3::PartyID;
 
-use crate::field::JoltField;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::subprotocols::sumcheck::{PublicSumcheckInstance, PublicSumcheckInstanceWorker};
+use jolt_core::field::JoltField;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
+use crate::subprotocols::sumcheck::PublicSumcheckInstance;
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F> {
     fn degree(&self) -> usize {

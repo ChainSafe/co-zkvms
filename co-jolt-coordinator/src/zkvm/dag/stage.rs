@@ -2,12 +2,8 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use co_jolt2::field::JoltField;
-use co_jolt2::poly::commitment::Rep3CommitmentScheme;
-pub use co_jolt2::subprotocols::sumcheck::{
-    BatchedSumcheckWorkerInstance, PublicSumcheckInstanceWorker, Rep3SumcheckInstanceWorker,
-};
-pub use co_jolt2::zkvm::dag::stage::SumcheckStagesWorker;
+use jolt_core::field::JoltField;
+use crate::poly::commitment::Rep3CommitmentScheme;
 pub use crate::subprotocols::sumcheck::{
     BatchedSumcheckInstance, PublicSumcheckInstance, Rep3SumcheckInstance,
 };

@@ -1,9 +1,6 @@
-use jolt2_common::constants::RAM_START_ADDRESS;
+use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::program_io_polynomial::ProgramIOPolynomial;
 use jolt_core::poly::range_mask_polynomial::RangeMaskPolynomial;
@@ -11,23 +8,13 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use rayon::prelude::*;
 use tracer::JoltDevice;
 
-use crate::field::JoltField;
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
-use crate::poly::mixed_polynomial::MixedPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::poly::Polynomial;
-use crate::utils::types::Rep3Value;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use jolt_core::field::JoltField;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
-use crate::zkvm::instruction_lookups::booleanity::extend_degree_3_evals;
+use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use crate::zkvm::dag::state_manager::StateManager;
 
 const DEGREE_OUTPUT: usize = 3;
 const DEGREE_VAL_FINAL: usize = 2;

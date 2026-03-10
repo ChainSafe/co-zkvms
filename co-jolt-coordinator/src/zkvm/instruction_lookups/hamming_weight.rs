@@ -1,21 +1,12 @@
-use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use rayon::prelude::*;
-use std::sync::Arc;
 
-use crate::field::JoltField;
-use crate::poly::dense_mlpoly::Rep3DensePolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::utils::types::Rep3Value;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use jolt_core::field::JoltField;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
+use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 
 const DEGREE: usize = 1;
 

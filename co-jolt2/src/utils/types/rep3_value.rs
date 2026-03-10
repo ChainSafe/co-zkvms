@@ -9,7 +9,7 @@ use mpc_core::protocols::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 
 /// Stores and implements interation between different value types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

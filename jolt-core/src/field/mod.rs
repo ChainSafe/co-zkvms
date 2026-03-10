@@ -1,3 +1,7 @@
+pub trait FieldExt {
+    const TWO_INV: Self;
+}
+
 use allocative::Allocative;
 use ark_ff::biginteger::S224;
 use ark_ff::{BigInteger, UniformRand};
@@ -110,6 +114,7 @@ pub trait JoltField:
     + UniformRand
     + From<u128>
     + From<u64>
+    + FieldExt
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;

@@ -1,9 +1,8 @@
-use allocative::Allocative;
 use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
-use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
+use allocative::Allocative;
+use jolt_common::constants::{ArithmeticWideInt, XlenInt};
+use jolt_core::{utils::math::Math};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
-use snarks_core::math::Math;
-
 /// Compact multilinear polynomial over u64 coefficients stored as `Rep3Operand`.
 ///
 /// Each coefficient is either `Rep3Operand::Public(value)` (no MPC correction needed)
@@ -30,7 +29,10 @@ impl Allocative for Rep3CompactPolynomial {
 impl Rep3CompactPolynomial {
     /// Construct from a vec of operands, padding to next power of two with `Public(0)`.
     pub fn from_operands(mut coeffs: Vec<Rep3Operand>) -> Self {
-        assert!(!coeffs.is_empty(), "Rep3CompactPolynomial: empty coefficients");
+        assert!(
+            !coeffs.is_empty(),
+            "Rep3CompactPolynomial: empty coefficients"
+        );
         let len = coeffs.len().next_power_of_two();
         coeffs.resize(len, Rep3Operand::Public(0));
         Self {
@@ -61,12 +63,10 @@ impl Rep3CompactPolynomial {
         let coeffs: Vec<Rep3Operand> = shares
             .into_iter()
             .zip(shares_bin)
-            .map(|(arith, bin)| {
-                Rep3Operand::Shared {
-                    binary: bin,
-                    arithmetic: Some(arith),
-                    public: None,
-                }
+            .map(|(arith, bin)| Rep3Operand::Shared {
+                binary: bin,
+                arithmetic: Some(arith),
+                public: None,
             })
             .collect();
         let len = coeffs.len();
@@ -91,6 +91,9 @@ impl Rep3CompactPolynomial {
 
     /// Count of shared (non-public) coefficients.
     pub fn shared_count(&self) -> usize {
-        self.coeffs.iter().filter(|c| matches!(c, Rep3Operand::Shared { .. })).count()
+        self.coeffs
+            .iter()
+            .filter(|c| matches!(c, Rep3Operand::Shared { .. }))
+            .count()
     }
 }

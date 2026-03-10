@@ -23,7 +23,7 @@ use eyre::Context;
 use rand::Rng;
 use rand::RngCore;
 
-use snarks_core::field::FieldExt;
+use jolt_core::field::FieldExt;
 
 use crate::protocols::additive::AdditiveShare;
 use crate::protocols::rep3::rngs::SSRandom;

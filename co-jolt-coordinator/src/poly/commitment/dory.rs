@@ -1,12 +1,13 @@
+use ark_ec::pairing::Pairing as ArkPairing;
+use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{One, Zero};
-use co_jolt2::poly::commitment::dory::{
-    msm_g1, msm_g1_affine, msm_g2_affine, multi_pairing_g2_affine, setup_g1_projective,
-    setup_g2_projective, DoryCommitment, DoryCommitmentScheme, DoryProofData, JoltFieldWrapper,
-    JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254, JoltGTWrapper, JoltGroupWrapper,
-    JoltToDoryTranscriptRef,
+use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::poly::commitment::dory::{
+    DoryCommitment, DoryCommitmentScheme, DoryProofData, JoltFieldWrapper, JoltG1Wrapper,
+    JoltG2Wrapper, JoltGTBn254, JoltGTWrapper, JoltGroupWrapper, JoltToDoryTranscriptRef,
 };
-use co_jolt2::utils::types::MaybeShared;
+use mpc_core::MaybeShared;
 use dory::{DoryProofBuilder, ProofBuilder};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
@@ -16,7 +17,7 @@ use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use rayon::prelude::*;
 
-use crate::poly::commitment::Rep3CoordinatorCommitmentScheme;
+use crate::poly::commitment::Rep3CommitmentScheme;
 
 type DoryTranscriptRef<'a, T> = JoltToDoryTranscriptRef<'a, Fr, T>;
 type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
@@ -27,7 +28,7 @@ type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
     DoryTranscriptRef<'a, T>,
 >;
 
-impl<ProofTranscript> Rep3CoordinatorCommitmentScheme<Fr, ProofTranscript> for DoryCommitmentScheme
+impl<ProofTranscript> Rep3CommitmentScheme<Fr, ProofTranscript> for DoryCommitmentScheme
 where
     ProofTranscript: Transcript,
 {
@@ -295,4 +296,57 @@ where
             _ => unreachable!(),
         }
     }
+}
+
+// =============================================================================
+// Dory helper functions (shared between coordinator and workers)
+// =============================================================================
+
+/// Zero-copy view of `setup.core.g1_vec` as `&[G1Projective]`.
+/// Safety: `JoltGroupWrapper<G1Projective>` is `#[repr(transparent)]`.
+pub fn setup_g1_projective(
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> &[G1Projective] {
+    unsafe {
+        std::slice::from_raw_parts(
+            setup.core.g1_vec.as_ptr() as *const G1Projective,
+            setup.core.g1_vec.len(),
+        )
+    }
+}
+
+/// Zero-copy view of `setup.core.g2_vec` as `&[G2Projective]`.
+/// Safety: `JoltGroupWrapper<G2Projective>` is `#[repr(transparent)]`.
+pub fn setup_g2_projective(
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> &[G2Projective] {
+    unsafe {
+        std::slice::from_raw_parts(
+            setup.core.g2_vec.as_ptr() as *const G2Projective,
+            setup.core.g2_vec.len(),
+        )
+    }
+}
+
+/// MSM with projective bases (normalizes to affine internally).
+pub fn msm_g1(bases: &[G1Projective], scalars: &[Fr]) -> G1Projective {
+    let bases_aff = G1Projective::normalize_batch(bases);
+    ArkVariableBaseMSM::msm(&bases_aff, scalars).expect("msm should succeed")
+}
+
+/// MSM with pre-computed affine bases (avoids redundant normalization).
+pub fn msm_g1_affine(bases_aff: &[G1Affine], scalars: &[Fr]) -> G1Projective {
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
+}
+
+/// MSM with pre-computed affine bases (avoids redundant normalization).
+pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
+    ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
+}
+
+/// Pairing with pre-computed G2 affine bases.
+pub fn multi_pairing_g2_affine(ps: &[G1Projective], qs_aff: &[G2Affine]) -> Fq12 {
+    let ps_aff = G1Projective::normalize_batch(ps);
+    let n = ps_aff.len();
+    <Bn254 as ArkPairing>::multi_pairing(ps_aff, &qs_aff[..n]).0
 }

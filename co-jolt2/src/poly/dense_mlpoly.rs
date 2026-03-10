@@ -6,7 +6,7 @@ use mpc_core::protocols::{additive::AdditiveShare, rep3};
 use std::ops::{Index, Range};
 use std::sync::Arc;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::Rep3MultilinearPolynomial;
 use jolt_core::{poly::dense_mlpoly::DensePolynomial, utils::math::Math};
 

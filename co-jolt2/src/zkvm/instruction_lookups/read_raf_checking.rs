@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
@@ -7,7 +7,7 @@ use crate::utils::fwht::{
 };
 use crate::utils::types::{Either, Rep3Value};
 use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;
-use jolt2_common::constants::{LookupIndexInt, XLEN};
+use jolt_common::constants::{LookupIndexInt, XLEN};
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 use jolt_core::poly::multilinear_polynomial::{

@@ -1,11 +1,11 @@
-use jolt2_common::constants::{LookupIndexInt, XlenInt, XLEN};
+use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::utils::types::Either;
 use crate::utils::types::Rep3Value;

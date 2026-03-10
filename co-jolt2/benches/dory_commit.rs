@@ -53,7 +53,7 @@ fn main() {
     let polys_u64: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
         let shares: Vec<Rep3RingShare<ArithmeticWideInt>> = all_arith.iter().map(|s| s[pid]).collect();
         let shares_bin: Vec<Rep3RingShare<XlenInt>> = all_bin.iter().map(|s| s[pid]).collect();
-        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(
+        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(
             Rep3CompactPolynomial::from_shares(shares, shares_bin),
         ))
     });

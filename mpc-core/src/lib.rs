@@ -2,6 +2,7 @@ pub mod lut;
 pub mod protocols;
 
 pub use mpc_types::serde_compat::{ark_de, ark_se};
+pub use mpc_types::utils::MaybeShared;
 
 pub(crate) type RngType = rand_chacha::ChaCha12Rng;
 pub(crate) type IoResult<T> = std::io::Result<T>;

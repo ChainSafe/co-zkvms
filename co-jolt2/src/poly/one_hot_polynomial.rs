@@ -15,9 +15,9 @@ use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
 use rayon::prelude::*;
-use snarks_core::math::Math;
+use jolt_core::utils::math::Math;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::utils::fwht::fwht_in_place;
 

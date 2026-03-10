@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 
-use jolt2_common::constants::{LookupIndexInt, XlenInt, XLEN};
+use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -23,10 +23,10 @@ use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
-use snarks_core::math::Math;
+use jolt_core::utils::math::Math;
 use tracing::info_span;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 #[cfg(feature = "ring-msm")]
@@ -886,7 +886,7 @@ where
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
                     results.insert(
                         *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(compact)),
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(compact)),
                     );
                 }
                 #[cfg(not(feature = "ring-msm"))]
@@ -905,7 +905,7 @@ where
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
                     results.insert(
                         *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(compact)),
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(compact)),
                     );
                 }
                 #[cfg(not(feature = "ring-msm"))]
@@ -1311,8 +1311,8 @@ mod tests {
                         &format!("{poly_key:?} (shared dense)"),
                     );
                 }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
-                    unreachable!("RingCompact variant should not appear in witness polynomials");
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                    unreachable!("U64Scalars variant should not appear in witness polynomials");
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                     unreachable!("RLC variant should not appear in witness polynomials");

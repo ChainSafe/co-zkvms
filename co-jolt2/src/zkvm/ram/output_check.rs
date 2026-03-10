@@ -1,4 +1,4 @@
-use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
+use jolt_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -17,7 +17,7 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;

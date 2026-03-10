@@ -1,27 +1,14 @@
-use std::sync::Arc;
-
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
-use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
-use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
+use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::PartyID;
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use rayon::prelude::*;
-use snarks_core::math::Math;
 
-use crate::field::JoltField;
-use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
-use crate::utils::types::Rep3Value;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use jolt_core::field::JoltField;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
+use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 
 const DEGREE: usize = 3;
 
@@ -141,51 +128,6 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
             claims,
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// Gruen helpers for shared/additive coefficients
-// ---------------------------------------------------------------------------
-
-/// Gruen degree-3 expansion with Rep3PrimeFieldShare quadratic coefficients.
-///
-/// Uses the linearity of `gruen_evals_deg_3(q0, q_inf, prev)` in (q0, q_inf)
-/// to extract public coefficients via basis vector calls, then applies them
-/// to the shared quadratic coefficients. Returns `[eval_0, eval_2, eval_3]`
-/// as `AdditiveShare`.
-pub(crate) fn gruen_evals_deg_3<F: JoltField>(
-    eq: &GruenSplitEqPolynomial<F>,
-    q0: Rep3Value<F>,
-    q_inf: Rep3Value<F>,
-    previous_claim: AdditiveShare<F>,
-    party_id: PartyID,
-) -> Vec<AdditiveShare<F>> {
-    // gruen_evals_deg_3 is affine-linear in (q0, q_inf, previous_claim):
-    //   f(q0, q_inf, prev) = A*q0 + B*q_inf + C*prev + D
-    // where:
-    //   D = f(0,0,0)
-    //   A = f(1,0,0) - D
-    //   B = f(0,1,0) - D
-    //   C = f(0,0,1) - D
-    let d = eq.gruen_evals_deg_3(F::zero(), F::zero(), F::zero());
-    let a_plus_d = eq.gruen_evals_deg_3(F::one(), F::zero(), F::zero());
-    let b_plus_d = eq.gruen_evals_deg_3(F::zero(), F::one(), F::zero());
-    let c_plus_d = eq.gruen_evals_deg_3(F::zero(), F::zero(), F::one());
-
-    let prev = Rep3Value::Additive(previous_claim);
-    let result: Vec<AdditiveShare<F>> = (0..3)
-        .map(|i| {
-            let a_i = a_plus_d[i] - d[i];
-            let b_i = b_plus_d[i] - d[i];
-            let c_i = c_plus_d[i] - d[i];
-
-            let t = q0.mul_public(a_i).add(&q_inf.mul_public(b_i), party_id);
-            let t = t.add(&prev.mul_public(c_i), party_id);
-            t.add_public(d[i], party_id).into_additive(party_id)
-        })
-        .collect();
-
-    result
 }
 
 pub(crate) fn extend_degree_3_evals<F: JoltField>(

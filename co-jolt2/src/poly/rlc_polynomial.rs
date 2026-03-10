@@ -8,7 +8,7 @@ use jolt_core::utils::small_scalar::SmallScalar;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 
 #[derive(Clone, Debug)]
@@ -119,9 +119,8 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                                 unreachable!("OneHot polynomials excluded from dense_indices")
                             }
-                            #[cfg(feature = "ring-msm")]
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
-                                unreachable!("RingCompact polynomials excluded from dense_indices")
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                                unreachable!("U64Scalars polynomials excluded from dense_indices")
                             }
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                                 unreachable!("RLC polynomials excluded from dense_indices")

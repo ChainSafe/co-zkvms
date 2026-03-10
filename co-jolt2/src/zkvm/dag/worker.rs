@@ -5,7 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracing::info_span;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
@@ -242,8 +242,8 @@ impl Rep3JoltDagWorker {
             })
             .collect();
 
-        // Replace RingCompact (used for ring MSM commit) with Dense field-share polys
-        // for opening proof evaluation. The RingCompact variant cannot evaluate in the field.
+        // Replace U64Scalars (used for ring MSM commit) with Dense field-share polys
+        // for opening proof evaluation. The U64Scalars variant cannot evaluate in the field.
         #[cfg(feature = "ring-msm")]
         {
             use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
@@ -255,7 +255,7 @@ impl Rep3JoltDagWorker {
                 if let Some(poly) = witness_polys.get(&key) {
                     if matches!(
                         poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_))
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_))
                     ) {
                         let mut field_shares: Vec<Rep3PrimeFieldShare<F>> =
                             Vec::with_capacity(n);

@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use itertools::Itertools;
 use mpc_core::protocols::{
     additive::AdditiveShare,

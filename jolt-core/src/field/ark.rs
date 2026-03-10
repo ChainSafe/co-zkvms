@@ -16,6 +16,11 @@ lazy_static::lazy_static! {
     static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
 }
 
+impl super::FieldExt for ark_bn254::Fr {
+    const TWO_INV: ark_bn254::Fr =
+        ark_ff::MontFp!("0x183227397098d014dc2822db40c0ac2e9419f4243cdcb848a1f0fac9f8000001");
+}
+
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
     /// The Montgomery factor R = 2^(64*N) mod p

@@ -6,7 +6,7 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{self, arithmetic as rep3_arith};
 use rayon::prelude::*;
 
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::{unsafe_allocate_zero_share_vec, Rep3DensePolynomial};
 use crate::utils::fwht::fwht_in_place;
 

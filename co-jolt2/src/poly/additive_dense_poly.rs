@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::additive::AdditiveShare;
 
 /// A dense multilinear polynomial stored as additive shares.

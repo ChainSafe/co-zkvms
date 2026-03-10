@@ -1,19 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
 
-use co_jolt2::field::JoltField;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-use crate::poly::commitment::Rep3CoordinatorCommitmentScheme;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::subprotocols::sumcheck::{Rep3BatchedSumcheck, Rep3SumcheckInstance};
-
-pub use co_jolt2::poly::opening_proof::{
-    Rep3DensePolynomialProverOpening, Rep3OpeningAccumulatorWorker,
-    Rep3OpeningProofReductionSumcheck, Rep3ProverOpening,
-};
 
 pub struct Rep3OpeningAccumulator<F: JoltField> {
     pub openings: BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>,
@@ -138,8 +133,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
     ) -> eyre::Result<ReducedOpeningProof<F, PCS, ProofTranscript>>
     where
         PCS: CommitmentScheme<Field = F>
-            + co_jolt2::poly::commitment::Rep3CommitmentScheme<F, ProofTranscript>
-            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
+            + Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
     {
@@ -219,7 +213,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             .sum();
 
         let joint_opening_proof =
-            <PCS as Rep3CoordinatorCommitmentScheme<F, ProofTranscript>>::coordinate_prove(
+            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::coordinate_prove(
                 pcs_setup,
                 transcript,
                 network,
