@@ -1,0 +1,69 @@
+[package]
+name = "jolt-sdk"
+version = "0.1.0"
+authors = [
+    "Michael Zhu <mzhu@a16z.com>",
+    "Sam Ragsdale <sragsdale@a16z.com>",
+    "Noah Citron <ncitron@a16z.com>",
+    "Andrew Tretyakov <atretyakov@a16z.com>",
+    "Markos Georghiades <mgeorghiades@a16z.com>",
+]
+description = "SDK for Jolt"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+edition = "2021"
+
+[workspace]
+
+[features]
+default = ["random"]
+host = [
+    "jolt-core/default",
+    "random",
+    "dep:tracer",
+    "dep:common",
+    "dep:ark-ec",
+    "dep:ark-bn254",
+    "postcard/use-std",
+    "serde/std",
+]
+guest-std = [
+    "postcard/use-std",
+    "random",
+    "jolt-sdk-macros/guest-std",
+    "serde/std",
+]
+guest-verifier = [
+    "guest-std",
+    "dep:tracer",
+    "dep:common",
+    "dep:ark-bn254",
+    "jolt-core/minimal",
+]
+random = ["dep:getrandom_v02", "dep:getrandom_v03", "dep:rand"]
+malloc-shim = []
+
+[dependencies]
+postcard = { version = "1.0.8", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+ark-ec = { version = "0.5.0", default-features = false, optional = true }
+ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
+
+jolt-sdk-macros = { path = "./macros" }
+# Host-only dependencies
+common = { path = "../jolt-common", package = "jolt-common", default-features = false, optional = true }
+jolt-core = { path = "../jolt-core", default-features = false, optional = true }
+tracer = { path = "../jolt-tracer", package = "jolt-tracer", default-features = false, optional = true }
+rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["custom"], optional = true }
+getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["js"], optional = true }
+getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false, features = ["wasm_js"], optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"

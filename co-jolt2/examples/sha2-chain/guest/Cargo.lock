@@ -79,20 +79,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.2.0"
-dependencies = [
- "ark-serialize",
- "derive_more",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "syn 1.0.109",
- "tracing",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -192,21 +178,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
-name = "jolt-platform"
-version = "0.1.0"
+name = "jolt-common"
+version = "0.2.0"
 dependencies = [
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "rand",
+ "ark-serialize",
+ "derive_more",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "syn 1.0.109",
+ "tracing",
 ]
 
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
- "jolt-platform",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "jolt-sdk-macros",
  "postcard",
+ "rand",
  "serde",
 ]
 
@@ -214,9 +207,12 @@ dependencies = [
 name = "jolt-sdk-macros"
 version = "0.1.0"
 dependencies = [
- "common",
+ "ark-serialize",
+ "ark-serialize-derive",
+ "jolt-common",
  "proc-macro2",
  "quote",
+ "serde",
  "syn 1.0.109",
 ]
 
