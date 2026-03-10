@@ -10,7 +10,6 @@ pub mod format_u;
 pub mod format_virtual_right_shift_i;
 pub mod format_virtual_right_shift_r;
 
-use mpc_core::protocols::rep3::PartyID;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 use tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
@@ -40,9 +39,6 @@ pub trait Rep3RegisterState:
         public_state: &T,
         shares: &mut impl Iterator<Item = Rep3Operand>,
     ) -> Self;
-
-    /// Promote public operands to trivial shares
-    fn promote_to_shares(&mut self, party_id: PartyID);
 
     /// Returns mutable references to all shared operand fields.
     /// Used by batched `populate_operands_casts` to collect binary shares

@@ -1,7 +1,7 @@
 pub mod format;
 pub mod types;
 
-pub use types::rep3_operand::{promote_operand_to_share, Rep3Operand, PUBLIC_ZERO};
+pub use types::rep3_operand::{Rep3Operand, PUBLIC_ZERO};
 pub use types::rep3_ram::{Rep3RAMAccess, Rep3RAMRead, Rep3RAMWrite, REP3_RAM_NOOP};
 
 use jolt2_common::constants::XLEN;
@@ -85,15 +85,6 @@ impl<T: RISCVInstruction> Rep3RISCVCycle<T>
 where
     T::Format: Rep3InstructionFormat,
 {
-    /// Promote all public operands to trivial shares
-    pub fn promote_to_shares(&mut self, party_id: PartyID) {
-        self.register_state.promote_to_shares(party_id);
-        self.ram_access.promote_to_shares(party_id);
-        if let Some(advice) = &mut self.advice {
-            *advice = promote_operand_to_share(advice, party_id);
-        }
-    }
-
     /// Build from vanilla RISCVCycle using pre-generated binary shares.
     /// `shares` must yield operands in the same order as `shared_operands_mut`:
     /// register state operands first, then RAM operands.
@@ -419,17 +410,6 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
-            /// Promote all public operands to trivial shares.
-            pub fn promote_to_shares(&mut self, party_id: PartyID) {
-                match self {
-                    Rep3Cycle::NoOp => {}
-                    $(
-                        Rep3Cycle::$instr(cycle) => cycle.promote_to_shares(party_id),
-                    )*
-                    Rep3Cycle::INLINE(cycle) => cycle.promote_to_shares(party_id),
-                }
-            }
-
             /// Returns mutable references to all shared operands in this cycle.
             pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
                 match self {
@@ -601,13 +581,6 @@ impl_rep3_lookup_query! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63
     ]
-}
-
-/// Promote all trace operands to trivial shares.
-pub fn promote_rep3_trace_to_shares(trace: &mut [Rep3Cycle], party_id: PartyID) {
-    for cycle in trace.iter_mut() {
-        cycle.promote_to_shares(party_id);
-    }
 }
 
 /// Populate arithmetic representations for all shared operands across the trace

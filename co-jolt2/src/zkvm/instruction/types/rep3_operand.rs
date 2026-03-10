@@ -158,21 +158,3 @@ impl From<Rep3Operand> for u32 {
         }
     }
 }
-
-/// Convert a public Rep3Operand to a shared operand with trivial shares.
-pub fn promote_operand_to_share(operand: &Rep3Operand, party_id: PartyID) -> Rep3Operand {
-    match operand {
-        Rep3Operand::Public(x) => Rep3Operand::Shared {
-            binary: rep3_ring::binary::promote_to_trivial_share(
-                party_id,
-                &RingElement(*x as XlenInt),
-            ),
-            arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
-                party_id,
-                RingElement(*x as XlenInt as ArithmeticWideInt),
-            )),
-            public: Some(*x),
-        },
-        already_shared @ Rep3Operand::Shared { .. } => already_shared.clone(),
-    }
-}
