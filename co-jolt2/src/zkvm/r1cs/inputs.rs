@@ -537,41 +537,51 @@ mod tests {
         );
 
         let preprocessing_arc = Arc::new(preprocessing);
-        let io_device_arc = Arc::new(io_device);
         let base_port: u16 = 14300;
 
         let share_evals: [Vec<Rep3PrimeFieldShare<F>>; 3] = run_rep3_test(
             base_port,
             4,
             |party_idx| {
-                let (trace, mem, _io_share) = shares[party_idx].clone();
+                let (trace, mem, program_io) = shares[party_idx].clone();
                 let preprocessing = Arc::clone(&preprocessing_arc);
-                let io_device = Arc::clone(&io_device_arc);
-                (trace, mem, io_device, preprocessing, ram_k, r_cycle.clone())
+                (trace, mem, program_io, preprocessing, ram_k, r_cycle.clone())
             },
             |input, mut io_ctx| {
-                let (mut trace, mem, io_device, preprocessing, ram_k, r_cycle) = input;
+                let (mut trace, mem, program_io, preprocessing, ram_k, r_cycle) = input;
                 populate_operands_casts(&mut trace, io_ctx.main())?;
                 let party_id = io_ctx.party_id();
 
                 // Create EdaBits pool for B2A conversions in witness gen
                 let budget = crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                 let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-r1cs-preproc-{}", io_ctx.party_idx()));
+                #[cfg(not(feature = "ring-msm"))]
                 let mut preproc =
-                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
+                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
                         counts,
                         budget.dabits,
+                        &mut io_ctx,
+                    )?;
+                #[cfg(feature = "ring-msm")]
+                let mut preproc =
+                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
+                        counts,
+                        budget.dabits,
+                        0,
+                        0,
                         &mut io_ctx,
                     )?;
 
                 let mut state = StateManagerWorker::new(
                     &preprocessing,
                     trace,
-                    (*io_device).clone(),
+                    program_io,
                     mem,
                     io_ctx.party_id(),
                     ram_k,
-                    None,
                 );
 
                 populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;

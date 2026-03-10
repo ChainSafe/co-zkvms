@@ -233,19 +233,26 @@ impl Rep3JoltDag {
             + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
-        let commitments: Vec<Option<PCS::Commitment>> = network.receive_responses()?;
+        let commitments: Vec<Option<MaybeShared<PCS::Commitment>>> = network.receive_responses()?;
         eyre::ensure!(
             commitments.len() == 3,
             "expected untrusted advice commitment from 3 parties, got {}",
             commitments.len()
         );
 
-        eyre::ensure!(
-            commitments[0] == commitments[1] && commitments[1] == commitments[2],
-            "untrusted advice commitment mismatch across parties"
-        );
-
-        state.untrusted_advice_commitment = commitments.into_iter().next().unwrap();
+        let present: Vec<MaybeShared<PCS::Commitment>> = commitments.into_iter().flatten().collect();
+        state.untrusted_advice_commitment = if present.is_empty() {
+            None
+        } else {
+            eyre::ensure!(
+                present.len() == 3,
+                "expected untrusted advice commitment shares from all 3 parties"
+            );
+            let shares: Vec<&MaybeShared<PCS::Commitment>> = present.iter().collect();
+            Some(<PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
+                &shares,
+            ))
+        };
         Ok(())
     }
 }
