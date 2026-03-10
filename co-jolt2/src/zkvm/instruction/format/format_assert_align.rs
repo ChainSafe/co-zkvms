@@ -27,7 +27,7 @@ impl Rep3RegisterState for Rep3AssertAlignRegisterState {
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
         Self {
-            rs1: Rep3Operand::Public(public_state.rs1_value()),
+            rs1: Rep3Operand::Public(public_state.rs1_value().into()),
         }
     }
 

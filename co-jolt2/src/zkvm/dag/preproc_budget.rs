@@ -20,19 +20,30 @@ pub struct PreprocessingBudget {
     /// daBits for BitInject (single-bit → field) suffix conversions.
     pub dabits: usize,
     /// daPoints for Dory U64Scalars wrap correction (2 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
     pub dapoints: usize,
     /// Wrap masks for DaBit-based wrap-m extraction (1 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
     pub wrap_masks: usize,
     /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
     pub ring_edabits_u66: usize,
 }
 
 impl std::fmt::Debug for PreprocessingBudget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}; daPoints: {}; wrapMasks: {}; ringEdaBitsU66: {}",
-            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits, self.dapoints, self.wrap_masks, self.ring_edabits_u66
-        ))
+        write!(
+            f,
+            "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
+            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
+        )?;
+        #[cfg(feature = "ring-msm")]
+        write!(
+            f,
+            "; daPoints: {}; wrapMasks: {}; ringEdaBitsU66: {}",
+            self.dapoints, self.wrap_masks, self.ring_edabits_u66
+        )?;
+        Ok(())
     }
 }
 
@@ -98,12 +109,14 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
         .max()
         .unwrap_or(0);
     budget.dabits = max_dabits_per_cycle * n;
-    // Dory U64Scalars wrap correction: 2 daPoints per committed coefficient.
-    budget.dapoints = 2 * n;
-    // Wrap masks for DaBit-based wrap-m extraction: 1 per committed coefficient.
-    budget.wrap_masks = n;
-    // Ring edaBits (U66) for ring-domain B2A: 1 per committed coefficient.
-    budget.ring_edabits_u66 = n;
+    // Dory U64Scalars wrap correction (ring-msm only).
+    #[cfg(feature = "ring-msm")]
+    {
+        let padded_n = n.next_power_of_two();
+        budget.dapoints = 2 * 2 * padded_n;
+        budget.wrap_masks = 2 * padded_n;
+        budget.ring_edabits_u66 = 2 * padded_n;
+    }
 
     for phase in 0..PHASES {
         let suffix_len = (PHASES - 1 - phase) * LOG_M;

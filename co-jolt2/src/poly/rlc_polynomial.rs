@@ -8,8 +8,8 @@ use jolt_core::utils::small_scalar::SmallScalar;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Debug)]
 pub struct Rep3RLCPolynomial<F: JoltField> {
@@ -45,7 +45,6 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                 !matches!(
                     p.as_ref(),
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_))
-                        | Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_))
                         | Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_))
                         | Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(_))
                 )
@@ -120,7 +119,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                                 unreachable!("OneHot polynomials excluded from dense_indices")
                             }
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                                 unreachable!("U64Scalars polynomials excluded from dense_indices")
                             }
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {

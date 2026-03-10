@@ -36,6 +36,20 @@ pub struct DaPointsBatch<C: CurveGroup> {
     pub alphas: Vec<C>,
 }
 
+impl<C: CurveGroup> DaPointsBatch<C> {
+    /// Select a subset of entries by index, preserving the given order.
+    pub fn select(&self, indices: &[usize]) -> Self {
+        let gammas = indices.iter().map(|&i| self.gammas[i]).collect();
+        let alphas = if self.alphas.is_empty() {
+            // P0 has no alphas
+            Vec::new()
+        } else {
+            indices.iter().map(|&i| self.alphas[i]).collect()
+        };
+        Self { gammas, alphas }
+    }
+}
+
 /// Cursor-based daPoints source with persistence support.
 ///
 /// P0 stores only gamma bits (tiny). P1/P2 store materialized curve points

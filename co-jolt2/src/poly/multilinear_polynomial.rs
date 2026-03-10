@@ -1,9 +1,9 @@
-use jolt_core::field::JoltField;
+use crate::poly::compact_polynomial::Rep3CompactPolynomial;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::rep3_compact_polynomial::Rep3CompactPolynomial;
 use crate::poly::rlc_polynomial::Rep3RLCPolynomial;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
@@ -18,7 +18,7 @@ pub enum Rep3SharedPoly<F: JoltField> {
     Dense(Rep3DensePolynomial<F>),
     OneHot(Rep3OneHotPolynomial<F>),
     /// U64 coefficients stored as single-limb Rep3 ring shares (arith + binary).
-    U64Scalars(Rep3CompactPolynomial),
+    CompactRing(Rep3CompactPolynomial),
     RLC(Rep3RLCPolynomial<F>),
 }
 
@@ -123,8 +123,8 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Self::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: to_full_poly not applicable")
             }
-            Self::Shared(Rep3SharedPoly::U64Scalars(poly)) => {
-                Self::Shared(Rep3SharedPoly::U64Scalars(poly))
+            Self::Shared(Rep3SharedPoly::CompactRing(poly)) => {
+                Self::Shared(Rep3SharedPoly::CompactRing(poly))
             }
             Self::Shared(Rep3SharedPoly::RLC(_)) => {
                 unreachable!("RLC: to_full_poly not applicable")
@@ -151,7 +151,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: dot_product_with_public")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: dot_product_with_public")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -169,7 +169,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_coeff")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: get_coeff")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -187,7 +187,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_bound_coeff")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: get_bound_coeff")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -203,7 +203,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(poly)) => poly.len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(poly)) => poly.len(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
@@ -217,7 +217,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(poly)) => poly.len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(poly)) => poly.len(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
@@ -229,7 +229,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => {
                 1 << poly.get_num_vars()
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(poly)) => poly.len(),
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(poly)) => poly.len(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.dense_rlc.len(),
         }
     }
@@ -239,7 +239,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Public(poly) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => poly.get_num_vars(),
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(poly)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(poly)) => {
                 poly.get_num_vars()
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
@@ -258,7 +258,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: is_bound")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => false,
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => false,
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                 unreachable!("RLC: is_bound not applicable")
             }
@@ -275,7 +275,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: bind handled by Rep3OneHotPolynomialProverOpening")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: bind not implemented")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -303,7 +303,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: sumcheck_evals_into_share")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -324,7 +324,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                     todo!("OneHot: batch_evaluate_at_chi")
                 }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                     todo!("U64Scalars: batch_evaluate_at_chi")
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -351,7 +351,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                     todo!("OneHot: batch_evaluate")
                 }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                     todo!("U64Scalars: batch_evaluate")
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -375,7 +375,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: evaluate")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: evaluate")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -396,7 +396,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: final_sumcheck_claim")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: final_sumcheck_claim")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -424,7 +424,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: sumcheck_evals handled by Rep3OneHotPolynomialProverOpening")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: sumcheck_evals")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
@@ -451,7 +451,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                 todo!("OneHot: get_bound_coeffs")
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                 todo!("U64Scalars: get_bound_coeffs")
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {

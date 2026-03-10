@@ -28,7 +28,7 @@ impl Rep3RegisterState for Rep3RegisterStateFormatU {
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
         let (old, new) = public_state.rd_values();
         Self {
-            rd: (Rep3Operand::Public(old), Rep3Operand::Public(new)),
+            rd: (Rep3Operand::Public(old.into()), Rep3Operand::Public(new.into())),
         }
     }
 

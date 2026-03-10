@@ -188,7 +188,7 @@ impl Rep3JoltDagWorker {
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
 
-        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
+        let mut witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);
@@ -204,7 +204,6 @@ impl Rep3JoltDagWorker {
         });
 
         // Collect polys in AllCommittedPolynomials order for alignment with coordinator.
-        let commit_to_public = party_id == PartyID::ID0;
         let generators = &state.prover_state.preprocessing.generators;
 
         // Avoid cloning large polynomials just to commit: commit borrows them.
@@ -214,11 +213,13 @@ impl Rep3JoltDagWorker {
             .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
-        let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
-            &ordered_polys,
-            generators,
-            commit_to_public,
-        );
+        let commit_results =
+            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
+                &ordered_polys,
+                generators,
+                io_ctx,
+                preproc,
+            )?;
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 
@@ -240,6 +241,44 @@ impl Rep3JoltDagWorker {
                 _ => Some((*key, hint)),
             })
             .collect();
+
+        // Replace U64Scalars (used for ring MSM commit) with Dense field-share polys
+        // for opening proof evaluation. The U64Scalars variant cannot evaluate in the field.
+        #[cfg(feature = "ring-msm")]
+        {
+            use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+            let n = state.prover_state.cycle_witness.len();
+            for key in [
+                CommittedPolynomial::LeftInstructionInput,
+                CommittedPolynomial::RightInstructionInput,
+            ] {
+                if let Some(poly) = witness_polys.get(&key) {
+                    if matches!(
+                        poly,
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
+                    ) {
+                        let mut field_shares: Vec<Rep3PrimeFieldShare<F>> =
+                            Vec::with_capacity(n);
+                        for t in 0..n {
+                            let (l, r) = state
+                                .prover_state
+                                .cycle_witness
+                                .row_stage1(t)
+                                .to_instruction_inputs(party_id);
+                            field_shares.push(
+                                if key == CommittedPolynomial::LeftInstructionInput {
+                                    l
+                                } else {
+                                    r
+                                },
+                            );
+                        }
+                        witness_polys
+                            .insert(key, Rep3MultilinearPolynomial::from(field_shares));
+                    }
+                }
+            }
+        }
 
         // Build Arc-wrapped polynomial map for reduce_and_prove.
         let polynomials_map: HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>> =

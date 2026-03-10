@@ -135,7 +135,7 @@ fn share_cycle(
         .enumerate()
         .map(|(i, &v)| {
             if public_indices.contains(&i) {
-                let op = Rep3Operand::Public(v);
+                let op = Rep3Operand::Public(v as i128);
                 [op, op, op]
             } else {
                 let s = rep3_ring::binary::generate_shares_rep3(

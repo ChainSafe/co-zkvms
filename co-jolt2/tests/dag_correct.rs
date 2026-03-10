@@ -15,10 +15,11 @@ use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
 use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 
 use jolt_core::host::Program;
-use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
+use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
+use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
 use jolt_core::zkvm::{
     JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
@@ -78,6 +79,7 @@ fn dag_correct() {
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
 
     // 4) Rep3 MPC proof.
+    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
     let preprocessing_arc = Arc::new(preprocessing);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
@@ -130,11 +132,40 @@ fn dag_correct() {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
-                edabits::preprocess_pool::<F, _>(
+                let mut pool = edabits::preprocess_pool::<F, _>(
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
                     &mut io_ctx,
-                )?
+                )?;
+
+                // Ring MSM preprocessing (daPoints, wrap masks, ring edaBits)
+                #[cfg(feature = "ring-msm")]
+                {
+                    if budget.dapoints > 0 {
+                        let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
+                        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+                            &preprocessing.generators,
+                            budget.dapoints / 2,
+                            dory_num_columns,
+                        );
+                        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                        pool.set_dapoints(lazy_dp);
+                    }
+                    if budget.wrap_masks > 0 {
+                        let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
+                            budget.wrap_masks,
+                            io_ctx.main(),
+                        )?;
+                        pool.set_wrap_masks(wm);
+                    }
+                    if budget.ring_edabits_u66 > 0 {
+                        let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
+                            mpc_core::protocols::rep3_ring::ring::u66::U66, _,
+                        >(budget.ring_edabits_u66, &mut io_ctx)?;
+                        pool.set_ring_edabits_u66(eb);
+                    }
+                }
+                pool
             };
 
             let state = StateManagerWorker::new(

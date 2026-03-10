@@ -1,8 +1,6 @@
 use crate::field::JoltField;
 use crate::guest;
 use crate::host::analyze::ProgramSummary;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
@@ -105,11 +103,6 @@ impl Program {
                 self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
                 return;
             }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            install_toolchain().unwrap();
-            #[cfg(not(target_arch = "wasm32"))]
-            install_no_std_toolchain().unwrap();
 
             self.save_linker();
 

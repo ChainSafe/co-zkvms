@@ -1,6 +1,7 @@
 use ark_bn254::Fr;
 use co_jolt2::poly::commitment::dory::{
-    precompute_dapoint_qs, test_support::init_dory_globals, DoryCommitmentScheme, DoryGlobals,
+    commit_local_rep3, precompute_dapoint_qs, test_support::init_dory_globals,
+    DoryCommitmentScheme, DoryGlobals,
 };
 use co_jolt2::poly::commitment::Rep3CommitmentScheme;
 use co_jolt2::poly::{Rep3CompactPolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
@@ -40,18 +41,25 @@ fn main() {
     let polys_f = Rep3MultilinearPolynomial::generate_shares_from_coeffs(&coeffs_fr, &mut rng);
 
     // Generate ring-share polynomials (arith + bin, one per party)
+    use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
     let all_arith: Vec<_> = values
         .iter()
-        .map(|&v| rep3_ring::arithmetic::generate_shares_rep3::<u64, _>(v, &mut rng))
+        .map(|&v| {
+            rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(
+                v as ArithmeticWideInt,
+                &mut rng,
+            )
+        })
         .collect();
     let all_bin: Vec<_> = values
         .iter()
-        .map(|&v| rep3_ring::binary::generate_shares_rep3::<u64, _>(v, &mut rng))
+        .map(|&v| rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng))
         .collect();
     let polys_u64: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
-        let shares: Vec<Rep3RingShare<u64>> = all_arith.iter().map(|s| s[pid]).collect();
-        let shares_bin: Vec<Rep3RingShare<u64>> = all_bin.iter().map(|s| s[pid]).collect();
-        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(
+        let shares: Vec<Rep3RingShare<ArithmeticWideInt>> =
+            all_arith.iter().map(|s| s[pid]).collect();
+        let shares_bin: Vec<Rep3RingShare<XlenInt>> = all_bin.iter().map(|s| s[pid]).collect();
+        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(
             Rep3CompactPolynomial::from_shares(shares, shares_bin),
         ))
     });
@@ -67,15 +75,11 @@ fn main() {
         move |poly, _io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
             // Warmup
             for _ in 0..WARMUP {
-                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                    &poly, &setup1, false,
-                );
+                let _ = commit_local_rep3::<Blake2bTranscript>(&poly, &setup1, false);
             }
             let start = Instant::now();
             for _ in 0..ITERS {
-                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                    &poly, &setup1, false,
-                );
+                let _ = commit_local_rep3::<Blake2bTranscript>(&poly, &setup1, false);
             }
             Ok(start.elapsed())
         },
@@ -88,69 +92,65 @@ fn main() {
     );
 
     // =========================================================================
-    // Bench 2: batch_commit_rep3_preproc (ring shares, MPC)
+    // Bench 2: batch_commit_rep3 (ring shares, MPC)
     // =========================================================================
     let setup2 = setup.clone();
-    let (durations_u64, _) = run_rep3_local_test_with_coordinator(
-        0,
-        |pid| polys_u64[pid].clone(),
-        || (),
-        move |poly, mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
-            let total_coeffs = (WARMUP + ITERS) * N;
+    let (durations_u64, _) =
+        run_rep3_local_test_with_coordinator(
+            0,
+            |pid| polys_u64[pid].clone(),
+            || (),
+            move |poly, mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+                let total_coeffs = (WARMUP + ITERS) * N;
 
-            // Measure preprocessing time
-            let preproc_start = Instant::now();
-            let mut preproc = edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+                // Measure preprocessing time
+                let preproc_start = Instant::now();
+                let mut preproc =
+                    edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
 
-            let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
-            let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
-            preproc.set_dapoints(lazy_dp);
+                let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
+                let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                preproc.set_dapoints(lazy_dp);
 
-            let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(total_coeffs, io_ctx.main())?;
-            preproc.set_wrap_masks(wm);
+                let wm =
+                    rep3_ring::wrap_mask::generate_wrap_masks_lazy(total_coeffs, io_ctx.main())?;
+                preproc.set_wrap_masks(wm);
 
-            let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(total_coeffs, &mut io_ctx)?;
-            preproc.set_ring_edabits_u66(ring_eb);
-            let preproc_elapsed = preproc_start.elapsed();
+                let ring_eb =
+                    edabits::random_edabits_ring_lazy::<U66, _>(total_coeffs, &mut io_ctx)?;
+                preproc.set_ring_edabits_u66(ring_eb);
+                let preproc_elapsed = preproc_start.elapsed();
 
-            // Warmup
-            for _ in 0..WARMUP {
-                let polys = vec![&poly];
-                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
-                    Fr,
-                    Blake2bTranscript,
-                >>::batch_commit_rep3_preproc(
-                    &polys,
-                    &setup2,
-                    false,
-                    &mut io_ctx,
-                    &mut preproc,
-                )?;
-            }
+                // Warmup
+                for _ in 0..WARMUP {
+                    let polys = vec![&poly];
+                    let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
+                        Fr,
+                        Blake2bTranscript,
+                    >>::batch_commit_rep3(
+                        &polys, &setup2, &mut io_ctx, &mut preproc
+                    )?;
+                }
 
-            let start = Instant::now();
-            for _ in 0..ITERS {
-                let polys = vec![&poly];
-                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
-                    Fr,
-                    Blake2bTranscript,
-                >>::batch_commit_rep3_preproc(
-                    &polys,
-                    &setup2,
-                    false,
-                    &mut io_ctx,
-                    &mut preproc,
-                )?;
-            }
-            Ok((start.elapsed(), preproc_elapsed))
-        },
-        |(), _net| Ok(()),
-    );
+                let start = Instant::now();
+                for _ in 0..ITERS {
+                    let polys = vec![&poly];
+                    let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
+                        Fr,
+                        Blake2bTranscript,
+                    >>::batch_commit_rep3(
+                        &polys, &setup2, &mut io_ctx, &mut preproc
+                    )?;
+                }
+                Ok((start.elapsed(), preproc_elapsed))
+            },
+            |(), _net| Ok(()),
+        );
     let (online_u64, preproc_u64) = durations_u64[0];
     let per_iter_u64 = online_u64 / ITERS as u32;
     let preproc_per_commit = preproc_u64 / (WARMUP + ITERS) as u32;
     println!(
-        "batch_commit_rep3_preproc (ring shares): {:?} / iter  ({ITERS} iters, total {:?})",
+        "batch_commit_rep3 (ring shares): {:?} / iter  ({ITERS} iters, total {:?})",
         per_iter_u64, online_u64
     );
     println!(
@@ -167,7 +167,7 @@ fn main() {
         per_iter_f
     );
     println!(
-        "  Ring shares  (batch_commit_rep3_preproc):  {:?} / iter (online only)",
+        "  Ring shares  (batch_commit_rep3):  {:?} / iter (online only)",
         per_iter_u64
     );
     println!(
