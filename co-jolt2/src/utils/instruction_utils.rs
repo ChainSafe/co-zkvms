@@ -117,18 +117,16 @@ mod tests {
         ];
 
         for (x_val, y_val) in &test_cases {
-            let vanilla = interleave_bits(*x_val, *y_val);
+            let vanilla = interleave_bits(*x_val, *y_val) as LookupIndexInt;
 
-            // 3-party binary (XOR) sharing of x and y as u128
-            // IMPORTANT: share components must only have low 64 bits set
-            // (matching operand_to_binary_u128 which zero-extends u64 to u128)
-            let ax: u128 = 0x0000_0000_0000_0000_2345_6789_ABCD_EF01;
-            let bx: u128 = 0x0000_0000_0000_0000_FEDC_BA98_7654_3210;
-            let cx: u128 = (*x_val as u128) ^ ax ^ bx;
+            // 3-party binary (XOR) sharing of x and y in the lookup-index ring.
+            let ax: LookupIndexInt = 0x2345_6789_ABCD_EF01;
+            let bx: LookupIndexInt = 0xFEDC_BA98_7654_3210;
+            let cx: LookupIndexInt = (*x_val as LookupIndexInt) ^ ax ^ bx;
 
-            let ay: u128 = 0x0000_0000_0000_0000_1111_2222_3333_4444;
-            let by: u128 = 0x0000_0000_0000_0000_9999_AAAA_BBBB_CCCC;
-            let cy: u128 = (*y_val as u128) ^ ay ^ by;
+            let ay: LookupIndexInt = 0x1111_2222_3333_4444;
+            let by: LookupIndexInt = 0x9999_AAAA_BBBB_CCCC;
+            let cy: LookupIndexInt = (*y_val as LookupIndexInt) ^ ay ^ by;
 
             // Party 0: (a, b), Party 1: (b, c), Party 2: (c, a)
             let x_share0 = Rep3RingShare {

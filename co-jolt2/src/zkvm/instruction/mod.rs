@@ -78,25 +78,20 @@ where
     pub instruction: T,
     pub register_state: Rep3RegState<T>,
     pub ram_access: Rep3RAMAccess,
+    pub advice: Option<Rep3Operand>,
 }
 
 impl<T: RISCVInstruction> Rep3RISCVCycle<T>
 where
     T::Format: Rep3InstructionFormat,
 {
-    /// Convert from vanilla RISCVCycle with public values
-    pub fn from_public_cycle(cycle: &RISCVCycle<T>) -> Self {
-        Self {
-            instruction: cycle.instruction,
-            register_state: Rep3RegState::<T>::from_public(&cycle.register_state),
-            ram_access: Rep3RAMAccess::from(Into::<RAMAccess>::into(cycle.ram_access)),
-        }
-    }
-
     /// Promote all public operands to trivial shares
     pub fn promote_to_shares(&mut self, party_id: PartyID) {
         self.register_state.promote_to_shares(party_id);
         self.ram_access.promote_to_shares(party_id);
+        if let Some(advice) = &mut self.advice {
+            *advice = promote_operand_to_share(advice, party_id);
+        }
     }
 
     /// Build from vanilla RISCVCycle using pre-generated binary shares.
@@ -113,6 +108,7 @@ where
                 Into::<RAMAccess>::into(cycle.ram_access),
                 shares,
             ),
+            advice: None,
         }
     }
 
@@ -129,37 +125,11 @@ where
     pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
         let mut ops = self.register_state.shared_operands_mut();
         ops.extend(self.ram_access.shared_operands_mut());
+        if let Some(advice) = &mut self.advice {
+            ops.push(advice);
+        }
         ops
     }
-}
-
-/// Convert vanilla trace to Rep3 trace (public values)
-pub fn convert_public_trace_to_rep3<T: RISCVInstruction>(
-    public_trace: &[RISCVCycle<T>],
-) -> Vec<Rep3RISCVCycle<T>>
-where
-    T::Format: Rep3InstructionFormat,
-{
-    public_trace
-        .iter()
-        .map(|cycle| Rep3RISCVCycle::from_public_cycle(cycle))
-        .collect()
-}
-
-/// Promote all trace operands to trivial shares (parallel)
-pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
-    trace: &mut [Rep3RISCVCycle<T>],
-    party_id: PartyID,
-) where
-    T::Format: Rep3InstructionFormat,
-    Rep3RegState<T>: Send + Sync,
-{
-    use rayon::prelude::*;
-    trace
-        .par_iter_mut()
-        .for_each(|step: &mut Rep3RISCVCycle<T>| {
-            step.promote_to_shares(party_id);
-        });
 }
 
 // ── Rep3LookupQuery ─────────────────────────────────────────────────────────
@@ -168,10 +138,6 @@ pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
 /// Returns shared operands instead of plaintext values.
 pub trait Rep3LookupQuery<const XLEN: usize> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand);
-
-    fn to_public_lookup_output(&self) -> Option<u64> {
-        None
-    }
 
     /// Returns a FutureRep3Ring representing the lookup index.
     /// - Interleave instructions: Ready(interleaved) — no network needed.
@@ -393,24 +359,33 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
-            /// Convert from vanilla Cycle (all values become public Rep3Operands).
-            pub fn from_public_cycle(cycle: &Cycle) -> Self {
-                match cycle {
-                    Cycle::NoOp => Rep3Cycle::NoOp,
-                    $(
-                        Cycle::$instr(c) => Rep3Cycle::$instr(Rep3RISCVCycle::from_public_cycle(c)),
-                    )*
-                    Cycle::INLINE(c) => Rep3Cycle::INLINE(Rep3RISCVCycle::from_public_cycle(c)),
-                    other => panic!("Unsupported instruction for Rep3: {:?}", other.instruction()),
-                }
-            }
-
             /// Build from vanilla Cycle using pre-generated binary shares.
             /// `shares` must yield operands in the same order as `extract_operand_values`.
             pub fn from_cycle_shared(
                 cycle: &Cycle,
                 shares: &mut impl Iterator<Item = Rep3Operand>,
             ) -> Self {
+                if let Cycle::VirtualAdvice(c) = cycle {
+                    debug_assert!(
+                        c.instruction.advice.is_none(),
+                        "VirtualAdvice plaintext advice must be scrubbed before Rep3 conversion"
+                    );
+                    let register_state =
+                        Rep3RegState::<VirtualAdvice>::from_shared(&c.register_state, shares);
+                    let ram_access = Rep3RAMAccess::from_shared(
+                        Into::<RAMAccess>::into(c.ram_access),
+                        shares,
+                    );
+                    let advice = shares
+                        .next()
+                        .expect("missing shared advice operand for VirtualAdvice");
+                    return Rep3Cycle::VirtualAdvice(Rep3RISCVCycle {
+                        instruction: c.instruction,
+                        register_state,
+                        ram_access,
+                        advice: Some(advice),
+                    });
+                }
                 match cycle {
                     Cycle::NoOp => Rep3Cycle::NoOp,
                     $(
@@ -424,6 +399,16 @@ macro_rules! define_rep3_cycle {
             /// Extract operand values from a vanilla Cycle in the same order
             /// as `shared_operands_mut` returns them.
             pub fn extract_operand_values(cycle: &Cycle) -> Vec<u64> {
+                if let Cycle::VirtualAdvice(c) = cycle {
+                    let mut values = Rep3RISCVCycle::extract_operand_values(c);
+                    values.push(
+                        c.instruction
+                            .advice
+                            .expect("VirtualAdvice advice must be materialized before sharing")
+                            as u64,
+                    );
+                    return values;
+                }
                 match cycle {
                     Cycle::NoOp => vec![],
                     $(
@@ -556,21 +541,6 @@ macro_rules! impl_rep3_lookup_query {
                 }
             }
 
-            fn to_public_lookup_output(&self) -> Option<u64> {
-                match self {
-                    Rep3Cycle::NoOp => None,
-                    $(
-                        Rep3Cycle::$instr(cycle) => {
-                            Rep3LookupQuery::<XLEN>::to_public_lookup_output(cycle)
-                        },
-                    )*
-                    _ => panic!(
-                        "Unexpected instruction for Rep3LookupQuery: {:?}",
-                        self.instruction()
-                    ),
-                }
-            }
-
             fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
                 &self,
                 steps: &[&impl Rep3LookupQuery<XLEN>],
@@ -631,11 +601,6 @@ impl_rep3_lookup_query! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63
     ]
-}
-
-/// Convert a full vanilla trace to Rep3 (public values).
-pub fn convert_trace_to_rep3(trace: &[Cycle]) -> Vec<Rep3Cycle> {
-    trace.iter().map(Rep3Cycle::from_public_cycle).collect()
 }
 
 /// Promote all trace operands to trivial shares.
