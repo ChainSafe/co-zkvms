@@ -47,15 +47,7 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
             .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
     )
     .is_err()
-    {
-        // If some dependency already installed a global tracing subscriber, we silently lose:
-        // - Tracy zones/plots (TracyLayer)
-        // - chrome trace output (ChromeLayer)
-        // This is rare, but when it happens it looks exactly like "missing zones" in `.tracy`.
-        eprintln!(
-            "warning: global tracing subscriber already set; tracy/chrome layers may be missing"
-        );
-    }
+    {}
     info!("tracing_chrome writes to file: {}", file);
     TracingGuard {
         _guard: Some(_guard),

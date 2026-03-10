@@ -1,8 +1,7 @@
-use mpc_core::protocols::rep3::PartyID;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::{RAMAccess, RAMRead, RAMWrite};
 
-use super::rep3_operand::{promote_operand_to_share, Rep3Operand};
+use super::rep3_operand::Rep3Operand;
 
 /// Rep3 version of vanilla `RAMRead`. Address is public, value is shared.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,19 +35,6 @@ impl Rep3RAMAccess {
             Rep3RAMAccess::Read(read) => read.address,
             Rep3RAMAccess::Write(write) => write.address,
             Rep3RAMAccess::NoOp => 0,
-        }
-    }
-
-    pub fn promote_to_shares(&mut self, party_id: PartyID) {
-        match self {
-            Rep3RAMAccess::Read(read) => {
-                read.value = promote_operand_to_share(&read.value, party_id);
-            }
-            Rep3RAMAccess::Write(write) => {
-                write.pre_value = promote_operand_to_share(&write.pre_value, party_id);
-                write.post_value = promote_operand_to_share(&write.post_value, party_id);
-            }
-            Rep3RAMAccess::NoOp => {}
         }
     }
 

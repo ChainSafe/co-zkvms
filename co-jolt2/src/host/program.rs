@@ -103,7 +103,9 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
     use tracer::instruction::Cycle;
     match cycle {
         // rs1 holds the shift/exponent amount — keep it public
-        Cycle::VirtualPow2(_) | Cycle::VirtualPow2W(_) | Cycle::VirtualShiftRightBitmask(_) => &[0], // rs1
+        Cycle::VirtualPow2(_) | Cycle::VirtualShiftRightBitmask(_) => &[0], // rs1
+        #[cfg(feature = "rv64")]
+        Cycle::VirtualPow2W(_) => &[0],     // rs1
         // rs2 holds the bitmask (from VirtualShiftRightBitmask) — keep it public
         Cycle::VirtualSRL(_) | Cycle::VirtualSRA(_) => &[1], // rs2
         _ => &[],
@@ -119,8 +121,12 @@ fn share_cycle(
     cycle: &tracer::instruction::Cycle,
     rng: &mut impl rand::Rng,
 ) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
-    let values = Rep3Cycle::extract_operand_values(cycle);
+    let mut copied_cycle = cycle.clone();
+    let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
+    if let tracer::instruction::Cycle::VirtualAdvice(c) = &mut copied_cycle {
+        c.instruction.advice = None;
+    }
 
     // Generate shares for each operand — public indices get replicated as
     // Rep3Operand::Public(v) for all 3 parties instead of binary shares.
@@ -132,7 +138,10 @@ fn share_cycle(
                 let op = Rep3Operand::Public(v);
                 [op, op, op]
             } else {
-                let s = rep3_ring::binary::generate_shares_rep3(v, rng);
+                let s = rep3_ring::binary::generate_shares_rep3(
+                    v as jolt2_common::constants::XlenInt,
+                    rng,
+                );
                 [
                     Rep3Operand::from_binary(s[0]),
                     Rep3Operand::from_binary(s[1]),
@@ -147,8 +156,8 @@ fn share_cycle(
     let mut s1 = operands_per_party.iter().map(|s| s[1]);
     let mut s2 = operands_per_party.iter().map(|s| s[2]);
     (
-        Rep3Cycle::from_cycle_shared(cycle, &mut s0),
-        Rep3Cycle::from_cycle_shared(cycle, &mut s1),
-        Rep3Cycle::from_cycle_shared(cycle, &mut s2),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s0),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s1),
+        Rep3Cycle::from_cycle_shared(&copied_cycle, &mut s2),
     )
 }

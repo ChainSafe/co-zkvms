@@ -76,6 +76,16 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let next_pc = row.next_pc_index();
         let unexpanded_pc = row.unexpanded_pc();
         let next_unexpanded_pc = row.next_unexpanded_pc();
+        // For rv32, branch target updates need the signed branch offset while the rest of the
+        // immediate-using constraints operate on the low-word bit pattern. For rv64, keep the
+        // original i128.
+        #[cfg(not(feature = "rv64"))]
+        let imm = if row.flag(CircuitFlags::Branch) {
+            row.imm() as i32 as i128
+        } else {
+            row.imm() as jolt2_common::constants::XlenInt as i128
+        };
+        #[cfg(feature = "rv64")]
         let imm = row.imm();
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
@@ -246,7 +256,17 @@ where
                     .add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
                 inner[idx_rd]
                     .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
-                inner[idx_imm].add_public_assign(F::from_i128(row.imm()) * eq2_val, party_id);
+                {
+                    #[cfg(not(feature = "rv64"))]
+                    let imm_val = if row.flag(CircuitFlags::Branch) {
+                        F::from_i128(row.imm() as i32 as i128)
+                    } else {
+                        F::from_i128(row.imm() as jolt2_common::constants::XlenInt as i128)
+                    };
+                    #[cfg(feature = "rv64")]
+                    let imm_val = F::from_i128(row.imm());
+                    inner[idx_imm].add_public_assign(imm_val * eq2_val, party_id);
+                }
                 inner[idx_ram_addr]
                     .add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
 

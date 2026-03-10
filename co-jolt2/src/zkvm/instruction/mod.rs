@@ -1,10 +1,11 @@
 pub mod format;
 pub mod types;
 
-pub use types::rep3_operand::{promote_operand_to_share, Rep3Operand, PUBLIC_ZERO};
+pub use types::rep3_operand::{Rep3Operand, PUBLIC_ZERO};
 pub use types::rep3_ram::{Rep3RAMAccess, Rep3RAMRead, Rep3RAMWrite, REP3_RAM_NOOP};
 
 use jolt2_common::constants::XLEN;
+pub use jolt2_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt};
 use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
@@ -12,6 +13,35 @@ use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
+
+/// Zero-extend a binary-domain share to u64 (the lookup output ring).
+/// Unlike `downcast`, this handles both T=u64 (no-op) and T=u32→u64 (zero-extend).
+/// Safe for binary (XOR-domain) shares because `as` extension preserves XOR secret sharing.
+pub fn binary_to_output<T>(share: Rep3RingShare<T>) -> Rep3RingShare<u64>
+where
+    T: mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k + num_traits::AsPrimitive<u64>,
+{
+    Rep3RingShare::new_ring(RingElement(share.a.0.as_()), RingElement(share.b.0.as_()))
+}
+pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
+    shares: &[Rep3RingShare<u64>],
+    io_ctx: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    #[cfg(not(feature = "rv64"))]
+    {
+        let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
+        Ok(rep3_ring::casts::ring_to_field_many_selector(
+            &truncated, io_ctx,
+        )?)
+    }
+    #[cfg(feature = "rv64")]
+    {
+        Ok(rep3_ring::casts::ring_to_field_many_selector(
+            shares, io_ctx,
+        )?)
+    }
+}
+
 pub use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 pub use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 pub use mpc_core::protocols::rep3_ring::{self as rep3_ring, Rep3RingShare};
@@ -24,7 +54,7 @@ use crate::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
 pub use crate::utils::instruction_utils::bit_to_ring64;
-use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_u128};
+use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_wide};
 use rayon::prelude::*;
 
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
@@ -48,27 +78,13 @@ where
     pub instruction: T,
     pub register_state: Rep3RegState<T>,
     pub ram_access: Rep3RAMAccess,
+    pub advice: Option<Rep3Operand>,
 }
 
 impl<T: RISCVInstruction> Rep3RISCVCycle<T>
 where
     T::Format: Rep3InstructionFormat,
 {
-    /// Convert from vanilla RISCVCycle with public values
-    pub fn from_public_cycle(cycle: &RISCVCycle<T>) -> Self {
-        Self {
-            instruction: cycle.instruction,
-            register_state: Rep3RegState::<T>::from_public(&cycle.register_state),
-            ram_access: Rep3RAMAccess::from(Into::<RAMAccess>::into(cycle.ram_access)),
-        }
-    }
-
-    /// Promote all public operands to trivial shares
-    pub fn promote_to_shares(&mut self, party_id: PartyID) {
-        self.register_state.promote_to_shares(party_id);
-        self.ram_access.promote_to_shares(party_id);
-    }
-
     /// Build from vanilla RISCVCycle using pre-generated binary shares.
     /// `shares` must yield operands in the same order as `shared_operands_mut`:
     /// register state operands first, then RAM operands.
@@ -83,6 +99,7 @@ where
                 Into::<RAMAccess>::into(cycle.ram_access),
                 shares,
             ),
+            advice: None,
         }
     }
 
@@ -99,37 +116,11 @@ where
     pub fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {
         let mut ops = self.register_state.shared_operands_mut();
         ops.extend(self.ram_access.shared_operands_mut());
+        if let Some(advice) = &mut self.advice {
+            ops.push(advice);
+        }
         ops
     }
-}
-
-/// Convert vanilla trace to Rep3 trace (public values)
-pub fn convert_public_trace_to_rep3<T: RISCVInstruction>(
-    public_trace: &[RISCVCycle<T>],
-) -> Vec<Rep3RISCVCycle<T>>
-where
-    T::Format: Rep3InstructionFormat,
-{
-    public_trace
-        .iter()
-        .map(|cycle| Rep3RISCVCycle::from_public_cycle(cycle))
-        .collect()
-}
-
-/// Promote all trace operands to trivial shares (parallel)
-pub fn promote_trace_to_shares<T: RISCVInstruction + Send + Sync>(
-    trace: &mut [Rep3RISCVCycle<T>],
-    party_id: PartyID,
-) where
-    T::Format: Rep3InstructionFormat,
-    Rep3RegState<T>: Send + Sync,
-{
-    use rayon::prelude::*;
-    trace
-        .par_iter_mut()
-        .for_each(|step: &mut Rep3RISCVCycle<T>| {
-            step.promote_to_shares(party_id);
-        });
 }
 
 // ── Rep3LookupQuery ─────────────────────────────────────────────────────────
@@ -145,10 +136,13 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
     /// - Mul-index: Pending(RingMulA2B(a, b)) — needs batch mul + A2B.
     ///
     /// Default: computes interleave from binary operands (Ready, no comms).
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = self.to_instruction_inputs();
-        let left = operand_to_binary_u128(&left, party_id);
-        let right = operand_to_binary_u128(&right, party_id);
+        let left = operand_to_binary_wide(&left, party_id);
+        let right = operand_to_binary_wide(&right, party_id);
         FutureRep3Ring::Ready(interleave_bits_shared(left, right))
     }
 
@@ -184,6 +178,7 @@ use tracer::instruction::jal::JAL;
 use tracer::instruction::jalr::JALR;
 use tracer::instruction::lb::LB;
 use tracer::instruction::lbu::LBU;
+#[cfg(feature = "rv64")]
 use tracer::instruction::ld::LD;
 use tracer::instruction::lh::LH;
 use tracer::instruction::lhu::LHU;
@@ -198,6 +193,7 @@ use tracer::instruction::ori::ORI;
 use tracer::instruction::rem::REM;
 use tracer::instruction::remu::REMU;
 use tracer::instruction::sb::SB;
+#[cfg(feature = "rv64")]
 use tracer::instruction::sd::SD;
 use tracer::instruction::sh::SH;
 use tracer::instruction::sll::SLL;
@@ -221,20 +217,26 @@ use tracer::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use tracer::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use tracer::instruction::virtual_change_divisor::VirtualChangeDivisor;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW;
 use tracer::instruction::virtual_lw::VirtualLW;
 use tracer::instruction::virtual_move::VirtualMove;
 use tracer::instruction::virtual_movsign::VirtualMovsign;
 use tracer::instruction::virtual_muli::VirtualMULI;
 use tracer::instruction::virtual_pow2::VirtualPow2;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_pow2_w::VirtualPow2W;
 use tracer::instruction::virtual_pow2i::VirtualPow2I;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_pow2i_w::VirtualPow2IW;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_rev8w::VirtualRev8W;
 use tracer::instruction::virtual_rotri::VirtualROTRI;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_rotriw::VirtualROTRIW;
 use tracer::instruction::virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use tracer::instruction::virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_sign_extend_word::VirtualSignExtendWord;
 use tracer::instruction::virtual_sra::VirtualSRA;
 use tracer::instruction::virtual_srai::VirtualSRAI;
@@ -244,9 +246,11 @@ use tracer::instruction::virtual_sw::VirtualSW;
 use tracer::instruction::virtual_xor_rot::{
     VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
 };
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
 };
+#[cfg(feature = "rv64")]
 use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
 use tracer::instruction::xori::XORI;
@@ -346,24 +350,33 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
-            /// Convert from vanilla Cycle (all values become public Rep3Operands).
-            pub fn from_public_cycle(cycle: &Cycle) -> Self {
-                match cycle {
-                    Cycle::NoOp => Rep3Cycle::NoOp,
-                    $(
-                        Cycle::$instr(c) => Rep3Cycle::$instr(Rep3RISCVCycle::from_public_cycle(c)),
-                    )*
-                    Cycle::INLINE(c) => Rep3Cycle::INLINE(Rep3RISCVCycle::from_public_cycle(c)),
-                    other => panic!("Unsupported instruction for Rep3: {:?}", other.instruction()),
-                }
-            }
-
             /// Build from vanilla Cycle using pre-generated binary shares.
             /// `shares` must yield operands in the same order as `extract_operand_values`.
             pub fn from_cycle_shared(
                 cycle: &Cycle,
                 shares: &mut impl Iterator<Item = Rep3Operand>,
             ) -> Self {
+                if let Cycle::VirtualAdvice(c) = cycle {
+                    debug_assert!(
+                        c.instruction.advice.is_none(),
+                        "VirtualAdvice plaintext advice must be scrubbed before Rep3 conversion"
+                    );
+                    let register_state =
+                        Rep3RegState::<VirtualAdvice>::from_shared(&c.register_state, shares);
+                    let ram_access = Rep3RAMAccess::from_shared(
+                        Into::<RAMAccess>::into(c.ram_access),
+                        shares,
+                    );
+                    let advice = shares
+                        .next()
+                        .expect("missing shared advice operand for VirtualAdvice");
+                    return Rep3Cycle::VirtualAdvice(Rep3RISCVCycle {
+                        instruction: c.instruction,
+                        register_state,
+                        ram_access,
+                        advice: Some(advice),
+                    });
+                }
                 match cycle {
                     Cycle::NoOp => Rep3Cycle::NoOp,
                     $(
@@ -377,6 +390,16 @@ macro_rules! define_rep3_cycle {
             /// Extract operand values from a vanilla Cycle in the same order
             /// as `shared_operands_mut` returns them.
             pub fn extract_operand_values(cycle: &Cycle) -> Vec<u64> {
+                if let Cycle::VirtualAdvice(c) = cycle {
+                    let mut values = Rep3RISCVCycle::extract_operand_values(c);
+                    values.push(
+                        c.instruction
+                            .advice
+                            .expect("VirtualAdvice advice must be materialized before sharing")
+                            as u64,
+                    );
+                    return values;
+                }
                 match cycle {
                     Cycle::NoOp => vec![],
                     $(
@@ -384,17 +407,6 @@ macro_rules! define_rep3_cycle {
                     )*
                     Cycle::INLINE(c) => Rep3RISCVCycle::extract_operand_values(c),
                     other => panic!("Unsupported instruction for Rep3: {:?}", other.instruction()),
-                }
-            }
-
-            /// Promote all public operands to trivial shares.
-            pub fn promote_to_shares(&mut self, party_id: PartyID) {
-                match self {
-                    Rep3Cycle::NoOp => {}
-                    $(
-                        Rep3Cycle::$instr(cycle) => cycle.promote_to_shares(party_id),
-                    )*
-                    Rep3Cycle::INLINE(cycle) => cycle.promote_to_shares(party_id),
                 }
             }
 
@@ -422,6 +434,8 @@ macro_rules! define_rep3_cycle {
 }
 
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+
+#[cfg(feature = "rv64")]
 define_rep3_cycle! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
@@ -439,6 +453,26 @@ define_rep3_cycle! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+    ]
+}
+
+#[cfg(not(feature = "rv64"))]
+define_rep3_cycle! {
+    instructions: [
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE, DIV, DIVU,
+        ECALL, FENCE, JAL, JALR, LB, LBU, LH, LHU, LUI, LW, MUL, MULH, MULHSU,
+        MULHU, OR, ORI, REM, REMU, SB, SH, SLL, SLLI, SLT, SLTI, SLTIU, SLTU,
+        SRA, SRAI, SRL, SRLI, SUB, SW, XOR, XORI,
+        // Virtual
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment,
+        VirtualAssertLTE, VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualAssertMulUNoOverflow, VirtualChangeDivisor,
+        VirtualLW, VirtualSW,
+        VirtualMove, VirtualMovsign, VirtualMULI,
+        VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
     ]
 }
 
@@ -474,7 +508,7 @@ macro_rules! impl_rep3_lookup_query {
             fn to_lookup_index(
                 &self,
                 party_id: PartyID,
-            ) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+            ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
                 match self {
                     Rep3Cycle::NoOp => FutureRep3Ring::Ready(Rep3RingShare::default()),
                     $(
@@ -510,6 +544,7 @@ macro_rules! impl_rep3_lookup_query {
     };
 }
 
+#[cfg(feature = "rv64")]
 impl_rep3_lookup_query! {
     instructions: [
         ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
@@ -519,6 +554,7 @@ impl_rep3_lookup_query! {
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
+        VirtualLW, VirtualSW,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
         VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
@@ -528,16 +564,23 @@ impl_rep3_lookup_query! {
     ]
 }
 
-/// Convert a full vanilla trace to Rep3 (public values).
-pub fn convert_trace_to_rep3(trace: &[Cycle]) -> Vec<Rep3Cycle> {
-    trace.iter().map(Rep3Cycle::from_public_cycle).collect()
-}
-
-/// Promote all trace operands to trivial shares.
-pub fn promote_rep3_trace_to_shares(trace: &mut [Rep3Cycle], party_id: PartyID) {
-    for cycle in trace.iter_mut() {
-        cycle.promote_to_shares(party_id);
-    }
+#[cfg(not(feature = "rv64"))]
+impl_rep3_lookup_query! {
+    instructions: [
+        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ECALL, FENCE, JAL, JALR, LUI, MUL, MULHU, OR, ORI,
+        SLT, SLTI, SLTIU, SLTU, SUB, XOR, XORI,
+        VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
+        VirtualAssertWordAlignment, VirtualAssertLTE,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualChangeDivisor, VirtualAssertMulUNoOverflow,
+        VirtualLW, VirtualSW,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
+        VirtualPow2I, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualROTRI,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63
+    ]
 }
 
 /// Populate arithmetic representations for all shared operands across the trace
@@ -552,7 +595,7 @@ pub fn populate_operands_casts<N: Rep3Network>(
     trace: &mut [Rep3Cycle],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<()> {
-    let (binary, operands): (Vec<Rep3RingShare<u64>>, Vec<&mut Rep3Operand>) = trace
+    let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {
@@ -608,6 +651,7 @@ mod ecall;
 mod fence;
 mod jal;
 mod jalr;
+#[cfg(feature = "rv64")]
 mod ld;
 mod lui;
 mod mul;
@@ -615,6 +659,7 @@ mod mulhu;
 mod or;
 mod ori;
 mod rem;
+#[cfg(feature = "rv64")]
 mod sd;
 mod slt;
 mod slti;
@@ -631,21 +676,27 @@ mod virtual_assert_valid_div0;
 mod virtual_assert_valid_unsigned_remainder;
 mod virtual_assert_word_alignment;
 mod virtual_change_divisor;
+mod virtual_lw;
 mod virtual_move;
 mod virtual_movsign;
 mod virtual_muli;
 mod virtual_pow2;
+#[cfg(feature = "rv64")]
 mod virtual_pow2_w;
+#[cfg(feature = "rv64")]
 mod virtual_rev8w;
 mod virtual_rotri;
 mod virtual_shift_right_bitmask;
+#[cfg(feature = "rv64")]
 mod virtual_sign_extend_word;
 mod virtual_sra;
 mod virtual_srai;
 mod virtual_srl;
 mod virtual_srli;
 mod virtual_xor_rot;
+#[cfg(feature = "rv64")]
 mod virtual_xor_rotw;
+#[cfg(feature = "rv64")]
 mod virtual_zero_extend_word;
 mod xor;
 mod xori;

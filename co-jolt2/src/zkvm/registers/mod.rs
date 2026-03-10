@@ -4,16 +4,11 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
-use crate::zkvm::dag::stage::{
-    BatchedSumcheckInstance, BatchedSumcheckWorkerInstance, SumcheckStagesCoordinator,
-    SumcheckStagesWorker,
-};
-use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
+use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
+use crate::zkvm::dag::state_manager::StateManagerWorker;
 
-use self::read_write_checking::{
-    Rep3RegistersReadWriteChecking, Rep3RegistersReadWriteCheckingWorker,
-};
-use self::val_evaluation::{Rep3ValEvaluation, Rep3ValEvaluationWorker};
+use self::read_write_checking::Rep3RegistersReadWriteCheckingWorker;
+use self::val_evaluation::Rep3ValEvaluationWorker;
 
 pub mod read_write_checking;
 pub mod val_evaluation;
@@ -84,31 +79,3 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
 }
 
 // ---------------------------------------------------------------------------
-// Coordinator
-// ---------------------------------------------------------------------------
-
-pub struct Rep3RegistersDag;
-
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>, N>
-    SumcheckStagesCoordinator<F, ProofTranscript, PCS, N> for Rep3RegistersDag
-where
-    N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
-{
-    fn stage2_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _network: &mut N,
-    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
-        let rwc = Rep3RegistersReadWriteChecking::new(sm);
-        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(rwc))])
-    }
-
-    fn stage3_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _network: &mut N,
-    ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
-        let val_eval = Rep3ValEvaluation::new(sm);
-        Ok(vec![BatchedSumcheckInstance::Secret(Box::new(val_eval))])
-    }
-}

@@ -116,9 +116,10 @@ impl Rep3SpartanDagWorker {
                     let right_shared = (fb & mask_right_rs2) != 0;
 
                     match (left_shared, right_shared) {
-                        (true, false) => {
-                            rep3_arithmetic::mul_public(row.rs1_value(), row.to_right_public_input())
-                        }
+                        (true, false) => rep3_arithmetic::mul_public(
+                            row.rs1_value(),
+                            row.to_right_public_input(),
+                        ),
                         (false, true) => {
                             rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
                         }
@@ -151,8 +152,7 @@ impl Rep3SpartanDagWorker {
                 .collect()
         };
 
-        let mut az_bz_cz_poly =
-            Rep3SpartanInterleavedPolynomial::<F>::new(&key, cycle_inputs)?;
+        let mut az_bz_cz_poly = Rep3SpartanInterleavedPolynomial::<F>::new(&key, cycle_inputs)?;
         drop(product_per_cycle);
         drop(mul_products);
         drop(shared_mul_rows);
@@ -165,12 +165,10 @@ impl Rep3SpartanDagWorker {
 
         for round in 0..num_rounds_x {
             if round == 0 {
-                let _span =
-                    tracing::trace_span!("spartan_stage1_round_streaming", round).entered();
+                let _span = tracing::trace_span!("spartan_stage1_round_streaming", round).entered();
                 az_bz_cz_poly.streaming_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
             } else {
-                let _span =
-                    tracing::trace_span!("spartan_stage1_round_remaining", round).entered();
+                let _span = tracing::trace_span!("spartan_stage1_round_remaining", round).entered();
                 az_bz_cz_poly.remaining_sumcheck_round(&mut eq_poly, &mut r, io_ctx)?;
             }
         }

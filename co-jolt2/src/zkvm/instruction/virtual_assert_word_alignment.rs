@@ -8,10 +8,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertWo
         )
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
-        let l = left.as_arithmetic_or_trivial_u128(party_id);
-        let r = right.as_arithmetic_or_trivial_u128(party_id);
+        let l = left.as_arithmetic_or_trivial_wide(party_id);
+        let r = right.as_arithmetic_or_trivial_wide(party_id);
         FutureRep3Ring::a2b(l + r)
     }
 
@@ -35,7 +38,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertWo
             .unzip();
         let sums = rep3_ring::binary::add_many(&a, &b, io_ctx)?;
         // Mask to get 2 LSBs (as u32 share), then check if zero
-        let low_bits: Vec<_> = sums.iter().map(|s| *s & RingElement(3u64)).collect();
+        let low_bits: Vec<_> = sums
+            .iter()
+            .map(|s| *s & RingElement(3 as XlenInt))
+            .collect();
         let is_aligned = rep3_ring::binary::is_zero_many(&low_bits, io_ctx)?;
         is_aligned.into_iter().zip(out).for_each(|(x, out)| {
             *out = FutureRep3Ring::bit_inject_to_field(x);

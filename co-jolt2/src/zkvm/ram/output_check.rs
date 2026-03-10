@@ -1,4 +1,4 @@
-use jolt2_common::constants::RAM_START_ADDRESS;
+use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{
@@ -20,13 +20,13 @@ use tracer::JoltDevice;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::mixed_polynomial::MixedPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
+use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::Polynomial;
 use crate::utils::types::Rep3Value;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
-use crate::zkvm::dag::stage::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::zkvm::dag::state_manager::{StateManager, StateManagerWorker};
+use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;
+use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction_lookups::booleanity::extend_degree_3_evals;
 
 const DEGREE_OUTPUT: usize = 3;
@@ -65,6 +65,7 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
         let party_id = sm.party_id;
         let K = val_final.len();
         let memory_layout = &sm.program_io.memory_layout;
+        let ws = RAM_WORD_SIZE as usize;
 
         // Build val_io (PUBLIC) from program_io — for correct execution this
         // matches val_final at I/O addresses and is 0 elsewhere.
@@ -75,23 +76,15 @@ impl<F: JoltField> Rep3OutputSumcheckWorker<F> {
         let program_io = &sm.program_io;
         // Populate input words
         let mut input_index = io_start;
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            val_io_evals[input_index] = u64::from_le_bytes(word);
+        for chunk in program_io.inputs.chunks(ws) {
+            val_io_evals[input_index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
             input_index += 1;
         }
         // Populate output words
         let mut output_index =
             remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
-        for chunk in program_io.outputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            val_io_evals[output_index] = u64::from_le_bytes(word);
+        for chunk in program_io.outputs.chunks(ws) {
+            val_io_evals[output_index] = jolt_core::zkvm::ram::bytes_to_ram_word(chunk);
             output_index += 1;
         }
         // Panic bit
@@ -264,108 +257,6 @@ fn sumcheck_evals_deg_3_high_to_low_public<F: JoltField>(
     [eval_0, eval_2, eval_3]
 }
 
-// ---------------------------------------------------------------------------
-// OutputSumcheck Coordinator
-// ---------------------------------------------------------------------------
-
-pub struct Rep3OutputSumcheck<F: JoltField> {
-    K: usize,
-    r_address: Vec<F::Challenge>,
-    program_io: JoltDevice,
-}
-
-impl<F: JoltField> Rep3OutputSumcheck<F> {
-    pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Self {
-        let K = sm.ram_K;
-        let r_address = sm.transcript.challenge_vector_optimized::<F>(K.log_2());
-        Self {
-            K,
-            r_address,
-            program_io: sm.program_io.clone(),
-        }
-    }
-
-    pub fn r_address(&self) -> &[F::Challenge] {
-        &self.r_address
-    }
-}
-
-impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3OutputSumcheck<F> {
-    fn degree(&self) -> usize {
-        DEGREE_OUTPUT
-    }
-    fn num_rounds(&self) -> usize {
-        self.K.log_2()
-    }
-    fn input_claim_public(&self) -> F {
-        F::zero()
-    }
-
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let val_final_claim = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
-
-        let r_address_prime = &r[..self.r_address.len()];
-
-        let io_mask = RangeMaskPolynomial::<F>::new(
-            remap_address(
-                self.program_io.memory_layout.input_start,
-                &self.program_io.memory_layout,
-            )
-            .unwrap() as u128,
-            remap_address(RAM_START_ADDRESS, &self.program_io.memory_layout).unwrap() as u128,
-        );
-        let val_io = ProgramIOPolynomial::new(&self.program_io);
-
-        let eq_eval: F = EqPolynomial::<F>::mle(&self.r_address, r_address_prime);
-        let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
-        let val_io_eval: F = val_io.evaluate(r_address_prime);
-
-        eq_eval * io_mask_eval * (val_final_claim - val_io_eval)
-    }
-
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
-    }
-
-    fn cache_openings(
-        &self,
-        accumulator: &mut Rep3OpeningAccumulator<F>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-        claims: Vec<F>,
-    ) {
-        // claims: [val_final, val_init]
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValFinal,
-            SumcheckId::RamOutputCheck,
-            opening_point.clone(),
-            claims[0],
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamValInit,
-            SumcheckId::RamOutputCheck,
-            opening_point,
-            claims[1],
-        );
-    }
-}
-
 // ===========================================================================
 // ValFinalSumcheck
 // ===========================================================================
@@ -445,39 +336,38 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     fn compute_prover_message_share(
         &mut self,
         _round: usize,
-        _previous_claim: AdditiveShare<F>,
+        previous_claim: AdditiveShare<F>,
         max_degree: usize,
         _io_ctx: &mut IoContextPool<N>,
     ) -> Vec<AdditiveShare<F>> {
         // inc(SHARED) * wa(PUBLIC) → SHARED → AdditiveShare
-        let eval_degree = max_degree.max(DEGREE_VAL_FINAL);
-        let evals: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)
+        let base: Vec<AdditiveShare<F>> = (0..self.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals = self
-                    .inc
-                    .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
+                let inc_evals =
+                    self.inc
+                        .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
                 let wa_evals: Vec<F> =
                     self.wa
-                        .sumcheck_evals(j, eval_degree, BindingOrder::HighToLow);
+                        .sumcheck_evals(j, DEGREE_VAL_FINAL, BindingOrder::HighToLow);
 
-                let mut result = vec![AdditiveShare::<F>::zero(); max_degree];
-                for d in 0..max_degree {
+                let mut result = vec![AdditiveShare::<F>::zero(); DEGREE_VAL_FINAL];
+                for d in 0..DEGREE_VAL_FINAL {
                     result[d] = rep3_arith::mul_public(inc_evals[d], wa_evals[d]).into_additive();
                 }
                 result
             })
             .reduce(
-                || vec![AdditiveShare::<F>::zero(); max_degree],
+                || vec![AdditiveShare::<F>::zero(); DEGREE_VAL_FINAL],
                 |mut r, n| {
-                    for d in 0..max_degree {
+                    for d in 0..DEGREE_VAL_FINAL {
                         r[d] += n[d];
                     }
                     r
                 },
             );
 
-        evals
+        extend_degree_2_evals(previous_claim, &base, max_degree)
     }
 
     fn bind(
@@ -538,114 +428,33 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
     }
 }
 
-// ---------------------------------------------------------------------------
-// ValFinalSumcheck Coordinator
-// ---------------------------------------------------------------------------
+fn extend_degree_2_evals<F: JoltField>(
+    previous_claim: AdditiveShare<F>,
+    base: &[AdditiveShare<F>],
+    max_degree: usize,
+) -> Vec<AdditiveShare<F>> {
+    debug_assert_eq!(base.len(), DEGREE_VAL_FINAL);
+    debug_assert!(max_degree >= DEGREE_VAL_FINAL);
 
-pub struct Rep3ValFinalSumcheck<F: JoltField> {
-    T: usize,
-    val_init_eval: F,
-    val_final_claim: F,
-}
-
-impl<F: JoltField> Rep3ValFinalSumcheck<F> {
-    pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Self {
-        let val_init_eval = sm
-            .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValInit,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
-        let val_final_claim = sm
-            .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
-
-        Self {
-            T: sm.trace_length,
-            val_init_eval,
-            val_final_claim,
-        }
+    if max_degree == DEGREE_VAL_FINAL {
+        return base.to_vec();
     }
 
-    pub fn input_claim(&self) -> F {
-        self.val_final_claim - self.val_init_eval
-    }
-}
+    let y0 = base[0];
+    let y1 = previous_claim - y0;
+    let y2 = base[1];
 
-impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ValFinalSumcheck<F> {
-    fn degree(&self) -> usize {
-        DEGREE_VAL_FINAL
-    }
-    fn num_rounds(&self) -> usize {
-        self.T.log_2()
-    }
-    fn input_claim_public(&self) -> F {
-        self.val_final_claim - self.val_init_eval
-    }
+    let mut evals = vec![AdditiveShare::<F>::zero(); max_degree];
+    evals[0] = y0;
+    evals[1] = y2;
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        _r: &[F::Challenge],
-    ) -> F {
-        let inc_claim = accumulator
-            .get_committed_polynomial_opening(
-                CommittedPolynomial::RamInc,
-                SumcheckId::RamValFinalEvaluation,
-            )
-            .1;
-        let wa_claim = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValFinalEvaluation,
-            )
-            .1;
-        inc_claim * wa_claim
+    for x in 3..=max_degree {
+        let xf = F::from(x as u64);
+        let l0 = (xf - F::from(1u64)) * (xf - F::from(2u64)) * F::TWO_INV;
+        let l1 = -xf * (xf - F::from(2u64));
+        let l2 = xf * (xf - F::from(1u64)) * F::TWO_INV;
+        evals[x - 1] = y0 * l0 + y1 * l1 + y2 * l2;
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
-    }
-
-    fn cache_openings(
-        &self,
-        accumulator: &mut Rep3OpeningAccumulator<F>,
-        transcript: &mut T,
-        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
-        claims: Vec<F>,
-    ) {
-        let r_address = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            )
-            .0;
-        let wa_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
-
-        accumulator.append_dense(
-            transcript,
-            vec![CommittedPolynomial::RamInc],
-            SumcheckId::RamValFinalEvaluation,
-            r_cycle_prime.r,
-            vec![claims[0]],
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValFinalEvaluation,
-            wa_opening_point,
-            claims[1],
-        );
-    }
+    evals
 }

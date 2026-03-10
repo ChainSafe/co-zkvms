@@ -268,15 +268,8 @@ pub fn check_poly<F: JoltField>(
         }
     }
     if !mismatches.is_empty() {
-        eprintln!(
-            "[check_poly] {label}: {}/{len} mismatches",
-            mismatches.len()
-        );
-        for &(i, a, b) in mismatches.iter().take(20) {
-            eprintln!("  pos {i}: mpc={a} vanilla={b}");
-        }
         panic!(
-            "{label}: {} mismatches (first at pos {})",
+            "{label}: {} mismatches (first at pos {}, len {len})",
             mismatches.len(),
             mismatches[0].0,
         );

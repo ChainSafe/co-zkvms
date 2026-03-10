@@ -1,3 +1,4 @@
+use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::casts::downcast;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
@@ -9,15 +10,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Rep3Operand {
     Shared {
-        binary: Rep3RingShare<u64>,
-        arithmetic: Option<Rep3RingShare<u128>>,
+        binary: Rep3RingShare<XlenInt>,
+        arithmetic: Option<Rep3RingShare<ArithmeticWideInt>>,
         public: Option<u64>, // Some for trivial shares
     },
     Public(u64),
 }
 
 impl Rep3Operand {
-    pub fn from_binary(share: Rep3RingShare<u64>) -> Self {
+    pub fn from_binary(share: Rep3RingShare<XlenInt>) -> Self {
         Rep3Operand::Shared {
             binary: share,
             arithmetic: None,
@@ -25,7 +26,10 @@ impl Rep3Operand {
         }
     }
 
-    pub fn from_arithmetic(binary: Rep3RingShare<u64>, arithmetic: Rep3RingShare<u128>) -> Self {
+    pub fn from_arithmetic(
+        binary: Rep3RingShare<XlenInt>,
+        arithmetic: Rep3RingShare<ArithmeticWideInt>,
+    ) -> Self {
         Rep3Operand::Shared {
             binary,
             arithmetic: Some(arithmetic),
@@ -45,7 +49,7 @@ impl Rep3Operand {
 
     pub fn as_arithmetic<T: IntRing2k>(&self) -> Rep3RingShare<T>
     where
-        u128: AsPrimitive<T>,
+        ArithmeticWideInt: AsPrimitive<T>,
     {
         match self {
             Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
@@ -67,47 +71,51 @@ impl Rep3Operand {
         }
     }
 
-    pub fn as_arithmetic_u128(&self) -> Rep3RingShare<u128> {
+    pub fn as_arithmetic_wide(&self) -> Rep3RingShare<ArithmeticWideInt> {
         match self {
-            Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
+            Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             _ => panic!("Not an arithmetic operand"),
         }
     }
 
-    pub fn as_binary(&self) -> Rep3RingShare<u64> {
+    pub fn as_binary(&self) -> Rep3RingShare<XlenInt> {
         match self {
             Rep3Operand::Shared { binary, .. } => binary.clone(),
             _ => panic!("Not a binary operand"),
         }
     }
 
-    pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<u64> {
+    pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<XlenInt> {
         match *self {
             Rep3Operand::Shared { binary, .. } => binary,
             Rep3Operand::Public(value) => {
-                rep3_ring::binary::promote_to_trivial_share(id, &value.into())
+                rep3_ring::binary::promote_to_trivial_share(id, &RingElement(value as XlenInt))
             }
         }
     }
 
-    pub fn as_arithmetic_or_trivial_u128(&self, id: PartyID) -> Rep3RingShare<u128> {
+    pub fn as_arithmetic_or_trivial_wide(&self, id: PartyID) -> Rep3RingShare<ArithmeticWideInt> {
         match self {
             Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
-            Rep3Operand::Public(v) => {
-                rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement(*v as u128))
-            }
+            // Truncate to XlenInt first to match vanilla Jolt's `val as u32/u64`
+            // truncation. For rv32, this drops the upper 32 bits of sign-extended imms.
+            Rep3Operand::Public(v) => rep3_ring::arithmetic::promote_to_trivial_share(
+                id,
+                RingElement(*v as XlenInt as ArithmeticWideInt),
+            ),
         }
     }
 
     pub fn as_arithmetic_or_trivial<T: IntRing2k>(&self, id: PartyID) -> Rep3RingShare<T>
     where
-        u128: AsPrimitive<T>,
+        ArithmeticWideInt: AsPrimitive<T>,
     {
         match self {
             Rep3Operand::Shared { arithmetic, .. } => downcast(arithmetic.unwrap()),
-            Rep3Operand::Public(v) => {
-                rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement((*v as u128).as_()))
-            }
+            Rep3Operand::Public(v) => rep3_ring::arithmetic::promote_to_trivial_share(
+                id,
+                RingElement((*v as XlenInt as ArithmeticWideInt).as_()),
+            ),
         }
     }
 }
@@ -148,20 +156,5 @@ impl From<Rep3Operand> for u32 {
             Rep3Operand::Public(x) => x as u32,
             _ => panic!("Cannot convert Rep3Operand to u32"),
         }
-    }
-}
-
-/// Convert a public Rep3Operand to a shared operand with trivial shares.
-pub fn promote_operand_to_share(operand: &Rep3Operand, party_id: PartyID) -> Rep3Operand {
-    match operand {
-        Rep3Operand::Public(x) => Rep3Operand::Shared {
-            binary: rep3_ring::binary::promote_to_trivial_share(party_id, &RingElement(*x)),
-            arithmetic: Some(rep3_ring::arithmetic::promote_to_trivial_share(
-                party_id,
-                RingElement(*x as u128),
-            )),
-            public: Some(*x),
-        },
-        already_shared @ Rep3Operand::Shared { .. } => already_shared.clone(),
     }
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 
-use jolt2_common::constants::XLEN;
+use jolt2_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -31,10 +31,10 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
+use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
-use crate::utils::memory::maybe_purge_jemalloc;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 
@@ -47,13 +47,14 @@ enum SparseCastCol {
     RdWrite = 2,
     RamRead = 3,
     RamWrite = 4,
+    Advice = 5,
 }
 
 #[derive(Clone, Debug)]
 struct SparseCastJob {
     col: SparseCastCol,
     row: usize,
-    share: Rep3RingShare<u64>,
+    share: Rep3RingShare<XlenInt>,
 }
 
 struct SharedSparseFieldCols<F: JoltField> {
@@ -62,16 +63,17 @@ struct SharedSparseFieldCols<F: JoltField> {
     rd_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
     ram_read: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
     ram_write: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
+    advice: UnsafeCell<Vec<Rep3PrimeFieldShare<F>>>,
 }
 
 unsafe impl<F: JoltField> Sync for SharedSparseFieldCols<F> {}
 
 #[tracing::instrument(
     skip_all,
-    name = "fill_field_from_operands_sparse_u64",
+    name = "fill_field_from_operands_sparse",
     fields(jobs = jobs.len())
 )]
-fn fill_field_from_operands_sparse_u64<F, N>(
+fn fill_field_from_operands_sparse<F, N>(
     io_ctx: &mut IoContextPool<N>,
     jobs: Vec<SparseCastJob>,
     out: Arc<SharedSparseFieldCols<F>>,
@@ -80,7 +82,7 @@ fn fill_field_from_operands_sparse_u64<F, N>(
 where
     F: JoltField,
     N: Rep3NetworkWorker,
-    Standard: Distribution<u64>,
+    Standard: Distribution<XlenInt>,
 {
     if jobs.is_empty() {
         return Ok(());
@@ -93,16 +95,16 @@ where
 
     for chunk in jobs.chunks(chunk_size) {
         let n = chunk.len();
-        let mut shares: Vec<Rep3RingShare<u64>> = Vec::with_capacity(n);
+        let mut shares: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(n);
         let mut targets: Vec<(SparseCastCol, usize)> = Vec::with_capacity(n);
         for job in chunk {
             shares.push(job.share);
             targets.push((job.col, job.row));
         }
 
-        let batch = preproc.take_edabits::<u64>(n);
+        let batch = preproc.take_edabits::<XlenInt>(n);
         let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &batch, ctx)
+            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &batch, ctx)
         })?;
 
         debug_assert_eq!(casted.len(), targets.len());
@@ -114,6 +116,7 @@ where
                     SparseCastCol::RdWrite => (&mut *out.rd_write.get())[row] = value,
                     SparseCastCol::RamRead => (&mut *out.ram_read.get())[row] = value,
                     SparseCastCol::RamWrite => (&mut *out.ram_write.get())[row] = value,
+                    SparseCastCol::Advice => (&mut *out.advice.get())[row] = value,
                 }
             }
         }
@@ -124,13 +127,13 @@ where
 
 /// Compute the plaintext lookup index for cycles with fully-public operands.
 ///
-/// Returns `Some(plain_u128)` for instructions where both operands are public
-/// (control-only: LUI, AUIPC, JAL, VirtualPow2*, VirtualShiftRightBitmask*).
-/// These use the "add" path: index = left + right (u128 arithmetic).
+/// Returns `Some(plain)` for instructions where both operands are public
+/// (control-only: LUI, AUIPC, JAL, VirtualAdvice, VirtualPow2*, VirtualShiftRightBitmask*).
+/// These use the "add" path: index = left + right (LookupIndexInt arithmetic).
 ///
 /// Returns `None` for all other instructions (operands may be secret-shared).
-fn compute_public_index(cycle: &Rep3Cycle) -> Option<u128> {
-    let try_public_add = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u128> {
+fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
+    let try_public_add = |inputs: (Rep3Operand, Rep3Operand)| -> Option<LookupIndexInt> {
         let (l, r) = inputs;
         let l_val = match l {
             Rep3Operand::Public(v)
@@ -146,7 +149,7 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<u128> {
             } => v,
             _ => return None,
         };
-        Some((l_val as u128).wrapping_add(r_val as u128))
+        Some((l_val as XlenInt as LookupIndexInt) + (r_val as XlenInt as LookupIndexInt))
     };
 
     match cycle {
@@ -159,9 +162,11 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<u128> {
         Rep3Cycle::VirtualPow2I(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualPow2W(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualPow2IW(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -191,7 +196,7 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
             Rep3Operand::Public(v)
             | Rep3Operand::Shared {
                 public: Some(v), ..
-            } => Some(v as u64),
+            } => Some(v as XlenInt as u64),
             _ => None,
         }
     };
@@ -212,6 +217,7 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
         Rep3Cycle::VirtualROTRI(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
+        #[cfg(feature = "rv64")]
         Rep3Cycle::VirtualROTRIW(c) => {
             extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -233,13 +239,13 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
 
 /// Mirrors vanilla `WitnessData` but uses `Rep3RingShare` for shared fields.
 struct Rep3WitnessData {
-    rd_pre: Vec<Rep3RingShare<u64>>,
-    rd_post: Vec<Rep3RingShare<u64>>,
+    rd_pre: Vec<Rep3RingShare<XlenInt>>,
+    rd_post: Vec<Rep3RingShare<XlenInt>>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_jump: Vec<u8>,
-    ram_pre: Vec<Rep3RingShare<u64>>,
-    ram_post: Vec<Rep3RingShare<u64>>,
+    ram_pre: Vec<Rep3RingShare<XlenInt>>,
+    ram_post: Vec<Rep3RingShare<XlenInt>>,
     // Deferred: instruction_ra (needs to_lookup_index_rep3)
     instruction_ra: [Vec<Option<Rep3RingShare<u8>>>; instruction_lookups::D],
     bytecode_ra: Vec<Vec<Option<u8>>>,
@@ -389,7 +395,7 @@ where
     let mut flags_bits: Vec<u32> = Vec::with_capacity(n);
 
     let mut imm: Vec<i128> = Vec::with_capacity(n);
-    let mut advice: Vec<u64> = vec![0; n];
+    let mut advice: Vec<Rep3PrimeFieldShare<F>> = vec![Rep3PrimeFieldShare::zero_share(); n];
     let mut lookup_tables: Vec<Option<LookupTables<XLEN>>> = Vec::with_capacity(n);
     let mut is_interleaved_operands: Vec<bool> = Vec::with_capacity(n);
     let mut right_operand_public_mask: Vec<Option<u64>> = Vec::with_capacity(n);
@@ -403,6 +409,7 @@ where
         rd_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         ram_read: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         ram_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
+        advice: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
     });
     let mut cast_jobs: Vec<SparseCastJob> = Vec::new();
     cast_jobs.reserve(n * 5);
@@ -420,6 +427,7 @@ where
                     SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
                     SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
                     SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
+                    SparseCastCol::Advice => (&mut *shared_cols.advice.get())[row] = share,
                 }
             }
         }
@@ -438,6 +446,13 @@ where
 
         let pc_index = cycle.get_pc(&preprocessing.shared.bytecode) as u64;
         unexpanded_pc.push(norm.address as u64);
+        #[cfg(not(feature = "rv64"))]
+        imm.push(if circuit_flags[CircuitFlags::Branch as usize] {
+            norm.operands.imm as i32 as i128
+        } else {
+            norm.operands.imm as XlenInt as i128
+        });
+        #[cfg(feature = "rv64")]
         imm.push(norm.operands.imm);
 
         let (rs1_i, rs1_v) = cycle.rs1_read();
@@ -471,7 +486,13 @@ where
         // Advice value (only meaningful for VirtualAdvice).
         if circuit_flags[CircuitFlags::Advice as usize] {
             if let Rep3Cycle::VirtualAdvice(c) = cycle {
-                advice[t] = c.instruction.advice;
+                maybe_push(
+                    SparseCastCol::Advice,
+                    t,
+                    c.advice
+                        .as_ref()
+                        .expect("VirtualAdvice shared advice payload missing"),
+                );
             }
         }
 
@@ -499,12 +520,7 @@ where
         }
     }
 
-    fill_field_from_operands_sparse_u64::<F, N>(
-        io_ctx,
-        cast_jobs,
-        Arc::clone(&shared_cols),
-        preproc,
-    )?;
+    fill_field_from_operands_sparse::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), preproc)?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
@@ -515,6 +531,7 @@ where
     let rd_write_value = shared_cols.rd_write.into_inner();
     let ram_read_value = shared_cols.ram_read.into_inner();
     let ram_write_value = shared_cols.ram_write.into_inner();
+    advice = shared_cols.advice.into_inner();
 
     let cw = &mut state.prover_state.cycle_witness;
     cw.set_len(n);
@@ -645,7 +662,8 @@ where
     //
     // Phase 1: Collect all data that doesn't require communication, plus
     //          FutureRep3Ring futures for instruction_ra indices.
-    let index_futures: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> = (0..trace.len())
+    let index_futures: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = (0
+        ..trace.len())
         .into_par_iter()
         .map({
             let batch_cell = batch_cell.clone();
@@ -715,14 +733,14 @@ where
         .collect();
 
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
-    let indices: Vec<Rep3RingShare<u128>> = {
+    let indices: Vec<Rep3RingShare<LookupIndexInt>> = {
         let total = index_futures.len();
         let _span = info_span!("fulfill_index_futures", count = total).entered();
-        let mut out: Vec<Rep3RingShare<u128>> = Vec::with_capacity(total);
+        let mut out: Vec<Rep3RingShare<LookupIndexInt>> = Vec::with_capacity(total);
         let mut iter = index_futures.into_iter();
         let mut chunk_id: usize = 0;
         loop {
-            let mut chunk: Vec<FutureRep3Ring<u128, Rep3RingShare<u128>>> =
+            let mut chunk: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> =
                 Vec::with_capacity(fulfill_index_chunk);
             for _ in 0..fulfill_index_chunk {
                 let Some(f) = iter.next() else { break };
@@ -737,7 +755,8 @@ where
                 chunk_len = chunk.len()
             )
             .entered();
-            let resolved: Vec<Rep3RingShare<u128>> = chunk.fulfill_batched(io_ctx, |r, ()| r)?;
+            let resolved: Vec<Rep3RingShare<LookupIndexInt>> =
+                chunk.fulfill_batched(io_ctx, |r, ()| r)?;
             drop(_chunk_span);
             out.extend(resolved);
             chunk_id += 1;
@@ -748,20 +767,17 @@ where
 
     // Phase 3: Chunk resolved indices into instruction_ra (parallel, no comms)
     // SAFETY: Each thread writes to a unique index i across the D arrays.
-    // NoOp padding cycles are left as None (the default) so that
-    // masked_indices_c[j] = None downstream, excluding them from non_noop_cycles
-    // and avoiding redundant B2A / edaBit consumption on padding.
+    //
+    // Match vanilla witness generation exactly: padded NoOp cycles contribute
+    // lookup index 0, so all InstructionRa chunks are `Some(0)`.
     indices
         .par_iter()
         .enumerate()
         .for_each(|(i, lookup_index)| {
-            if matches!(trace[i], Rep3Cycle::NoOp) {
-                return;
-            }
             let batch_ref = unsafe { &mut *batch_cell.0.get() };
             for j in 0..instruction_lookups::D {
                 let k = (*lookup_index >> instruction_ra_shifts[j])
-                    & RingElement(instruction_lookups::K_CHUNK as u128 - 1);
+                    & RingElement(instruction_lookups::K_CHUNK as LookupIndexInt - 1);
                 batch_ref.instruction_ra[j][i] = Some(k.downcast());
             }
         });
@@ -769,7 +785,7 @@ where
     // Classify lookup indices as Either::Public or Either::Shared.
     // Public indices are for control-only instructions (LUI, AUIPC, JAL, VirtualPow2*, etc.)
     // where the entire lookup index is deterministic from public instruction fields.
-    let either_indices: Vec<Either<u128, Rep3RingShare<u128>>> = indices
+    let either_indices: Vec<Either<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = indices
         .into_par_iter()
         .zip(trace.par_iter())
         .map(|(share, cycle)| match compute_public_index(cycle) {
@@ -900,22 +916,26 @@ where
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<u64>> = Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
+                        Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&rd_pre[off..end]);
                     combined.extend_from_slice(&rd_post[off..end]);
 
-                    let batch_eda = preproc.take_edabits::<u64>(2 * chunk_len);
+                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len);
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<u64, F, _>(
+                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
                             &combined,
                             &batch_eda,
                             io_ctx.main(),
                         )?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &b, c)
-                        })?
+                        io_ctx.par_chunks_preproc(
+                            combined,
+                            batch_eda,
+                            Some(chunk_size),
+                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
+                        )?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {
@@ -949,22 +969,26 @@ where
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<u64>> = Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
+                        Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&ram_pre[off..end]);
                     combined.extend_from_slice(&ram_post[off..end]);
 
-                    let batch_eda = preproc.take_edabits::<u64>(2 * chunk_len);
+                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len);
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<u64, F, _>(
+                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
                             &combined,
                             &batch_eda,
                             io_ctx.main(),
                         )?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<u64, F, _>(&xs, &b, c)
-                        })?
+                        io_ctx.par_chunks_preproc(
+                            combined,
+                            batch_eda,
+                            Some(chunk_size),
+                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
+                        )?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {

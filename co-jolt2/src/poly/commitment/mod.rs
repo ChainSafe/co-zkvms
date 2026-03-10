@@ -2,10 +2,10 @@ use crate::field::JoltField;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::types::MaybeShared;
 use jolt_core::transcripts::Transcript;
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::network::IoContextPool;
+use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use std::borrow::Borrow;
 
 pub use jolt_core::poly::commitment::commitment_scheme;
@@ -59,27 +59,18 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         commit_to_public: bool,
         _io_ctx: &mut IoContextPool<N>,
         _preproc: &mut PreprocessingPool<F>,
-    ) -> eyre::Result<Vec<(
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    )>>
+    ) -> eyre::Result<
+        Vec<(
+            MaybeShared<Self::Commitment>,
+            MaybeShared<Self::OpeningProofHint>,
+        )>,
+    >
     where
         U: Borrow<Rep3MultilinearPolynomial<F>> + Sync,
         N: Rep3NetworkWorker,
     {
         Ok(Self::batch_commit_rep3(polys, setup, commit_to_public))
     }
-
-    fn coordinate_prove<Network>(
-        setup: &Self::ProverSetup,
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-        opening_point: &[<F as jolt_core::field::JoltField>::Challenge],
-        claimed_opening: &F,
-        commitment: &Self::Commitment,
-    ) -> eyre::Result<Self::Proof>
-    where
-        Network: Rep3NetworkCoordinator;
 
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<F>,
@@ -90,14 +81,6 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     ) -> eyre::Result<()>
     where
         Network: Rep3NetworkWorker;
-
-    fn combine_commitment_shares(
-        commitments: &[&MaybeShared<Self::Commitment>],
-    ) -> Self::Commitment;
-
-    fn combine_hint_shares(
-        hints: &[&MaybeShared<Self::OpeningProofHint>],
-    ) -> Self::OpeningProofHint;
 
     /// Homomorphically combine per-polynomial hint shares using public RLC coefficients.
     ///

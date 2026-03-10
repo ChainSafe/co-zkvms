@@ -8,10 +8,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
         )
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<u128, Rep3RingShare<u128>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
-        let l = left.as_arithmetic_or_trivial_u128(party_id);
-        let r = right.as_arithmetic_or_trivial_u128(party_id);
+        let l = left.as_arithmetic_or_trivial_wide(party_id);
+        let r = right.as_arithmetic_or_trivial_wide(party_id);
         FutureRep3Ring::mul_a2b(l, r)
     }
 
@@ -27,19 +30,21 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    l.as_arithmetic_or_trivial::<u128>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u128>(io_ctx.id),
+                    l.as_arithmetic_or_trivial::<ArithmeticWideInt>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<ArithmeticWideInt>(io_ctx.id),
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?
+        let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
+        let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
+        let upper_words: Vec<Rep3RingShare<XlenInt>> = binary_products
             .into_iter()
-            .zip(out)
-            .for_each(|(product, out)| {
-                // RV64 MULHU: upper 64 bits of the 128-bit product.
-                let upper: Rep3RingShare<u64> = downcast(product >> 64);
-                *out = FutureRep3Ring::cast_to_field(upper);
-            });
+            .map(|product| downcast(product >> XLEN))
+            .collect();
+        let outputs = rep3_ring::casts::binary_ring_to_field_many(&upper_words, io_ctx)?;
+        outputs.into_iter().zip(out).for_each(|(output, out)| {
+            *out = FutureRep3Ring::Ready(output);
+        });
         Ok(())
     }
 }

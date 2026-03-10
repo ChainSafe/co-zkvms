@@ -1,15 +1,14 @@
 # co-jolt2 Deferred Optimizations
 
+## Critical
+VirtualAdvice - public `advice`!
+
 ring_to_field_b2a_many
 would it be better to pass batch: EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
 
 ## Missing networked par_chunks
 - `co-jolt2/src/zkvm/witness.rs` `for poly in polynomials` 
 - `co-jolt2/src/zkvm/suffixes/future.rs` `ring_to_field_b2a_many`, `bit_inject_field_many`
-
-## Missing misc optimizations
-- Use FWHT in `one_hot::select_public_table_at_masked_index`
-- init_operandQ_polys: Do shared indexing & unmask on rings (ring ehat16) -> b2a
 
 ## Memory optimizations
 - ManuallyDrop in Dory::commit_rep3 — safe?
@@ -53,6 +52,50 @@ combined with shared values.
 
 **Goal**: keep these as public scalars end-to-end and only secret-share them when strictly required by
 a downstream protocol interface.
+
+## Risky optimizations (may hurt memory)
+
+### Increase RA `wr_tile` default (stage4)
+**File**: `src/subprotocols/mles_product_sum.rs:124-128`
+
+`compute_mles_product_16_rep3` tiles the wr dimension with `RA_MLES_WR_TILE=32`. Each tile does
+3 sequential reshares (levels 1→2→3, data-dependent — cannot be batched). Increasing `wr_tile`
+reduces total reshare count from `3 * ceil(n_wr/32)` to `3 * ceil(n_wr/wr_tile)`.
+
+Proposed: increase default to 256. Memory cost: level1 buffer grows to `256 * n_wl * 24 * sizeof(F)`.
+
+**Risk**: Larger tile = larger intermediate buffers. For big instances could spike RSS.
+
+### Remove B2A outer chunking loop (witness phases)
+**File**: `src/zkvm/witness.rs:89-94`
+
+`fill_field_from_operands_sparse_u64` processes jobs in sequential chunks of `B2A_CHUNK=8192`,
+each calling `par_chunks_preproc`. The outer loop serializes work that could be a single call.
+
+Proposed: remove the `for chunk in jobs.chunks(chunk_size)` loop, pass all jobs at once.
+
+**Risk**: Single large batch means all preprocessing material consumed at once — higher peak memory.
+
+### Parallelize ReadRaf condensation/cache_phase `mul_vec` across forks (stage3)
+**Files**: `src/zkvm/instruction_lookups/read_raf_checking.rs:560,1237`
+
+`init_phase` condensation and `cache_phase` each do `mul_vec` on up to ~500K elements using only
+the main fork. Could use `par_chunks` to split across forks.
+
+**Risk**: Duplicates intermediate vectors across forks. Memory scales with fork count.
+
+### Async cache_phase || init_phase pipeline (stage3)
+**File**: `src/zkvm/instruction_lookups/read_raf_checking.rs:1482-1490`
+
+`cache_phase(i)` and `init_phase(i+1)` run sequentially at each phase boundary. They operate on
+different data and could run concurrently on separate forks.
+
+Note: plan.md's claim about overlapping init_phase with sumcheck rounds is wrong — bind triggers
+at round end and the next round immediately needs the initialized data. The real opportunity is
+concurrent cache_phase + init_phase within the same bind call.
+
+**Risk**: Doubles memory during phase transition (both old and new phase data live simultaneously).
+Requires splitting `&mut self` on `ReadRafProverState`. High complexity.
 
 ## Make `Rep3Value` support integers (avoid public → F casts)
 

@@ -1,10 +1,9 @@
-use mpc_core::protocols::rep3::PartyID;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::format::format_i::FormatI;
 use tracer::instruction::format::InstructionRegisterState;
 
 use super::{Rep3InstructionFormat, Rep3RegisterState};
-use crate::zkvm::instruction::{promote_operand_to_share, Rep3Operand, PUBLIC_ZERO};
+use crate::zkvm::instruction::{Rep3Operand, PUBLIC_ZERO};
 
 /// Rep3 register state for I-format instructions (ADDI, ANDI, ORI, JALR, etc.)
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,12 +41,6 @@ impl Rep3RegisterState for Rep3RegisterStateFormatI {
             rs1: shares.next().unwrap(),
             rd: (shares.next().unwrap(), shares.next().unwrap()),
         }
-    }
-
-    fn promote_to_shares(&mut self, party_id: PartyID) {
-        self.rs1 = promote_operand_to_share(&self.rs1, party_id);
-        self.rd.0 = promote_operand_to_share(&self.rd.0, party_id);
-        self.rd.1 = promote_operand_to_share(&self.rd.1, party_id);
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {

@@ -1,4 +1,4 @@
-use jolt2_common::constants::RAM_START_ADDRESS;
+use jolt2_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt2_common::jolt_device::MemoryLayout;
 use jolt_core::zkvm::ram::remap_address;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
@@ -37,11 +37,16 @@ impl Rep3Memory {
 
         let dram_start_index = remap_address(RAM_START_ADDRESS, memory_layout).unwrap() as usize;
         let dram_words_needed = ram_K.saturating_sub(dram_start_index);
-        let share_len = dram_words_needed.min(memory.data.len());
+        let ws = RAM_WORD_SIZE;
+        let total_dram_words = (memory.data.len() as u64 * 8).div_ceil(ws) as usize;
+        let share_len = dram_words_needed.min(total_dram_words);
 
-        let shares_per_word: Vec<Vec<Rep3RingShare<u64>>> = memory.data[..share_len]
-            .iter()
-            .map(|&word| rep3_ring::binary::generate_shares_rep3(word, rng))
+        let shares_per_word: Vec<Vec<Rep3RingShare<u64>>> = (0..share_len)
+            .map(|word_idx| {
+                let address = word_idx as u64 * ws;
+                let word = memory.read_bytes(address, ws);
+                rep3_ring::binary::generate_shares_rep3(word, rng)
+            })
             .collect();
 
         let transposed = transpose(shares_per_word);

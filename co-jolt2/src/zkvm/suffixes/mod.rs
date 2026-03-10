@@ -18,7 +18,7 @@
 use crate::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
 use crate::utils::types::Either;
-use jolt2_common::constants::XLEN;
+use jolt2_common::constants::{LookupIndexInt, XLEN};
 use jolt_core::utils::interleave_bits;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
@@ -230,7 +230,7 @@ pub enum SuffixBitsBatch<T: Uninterleavable> {
     /// Raw interleaved bits in full ring T.
     /// Used by tables whose suffixes operate on raw interleaved bits
     /// (UpperWord, LowerWord, LowerHalfWord, Rev8W, Pow2, etc.)
-    Interleaved(MixedBatch<u128, T>),
+    Interleaved(MixedBatch<LookupIndexInt, T>),
 }
 
 impl<T: Uninterleavable> SuffixBitsBatch<T> {
@@ -301,17 +301,23 @@ where
 /// All other tables use `SuffixBitsBatch::Uninterleaved`.
 pub fn table_uses_interleaved_data(suffixes: &[Suffixes]) -> bool {
     suffixes.iter().any(|s| {
-        matches!(
+        if matches!(
             s,
             Suffixes::UpperWord
                 | Suffixes::LowerWord
                 | Suffixes::LowerHalfWord
-                | Suffixes::Rev8W
                 | Suffixes::Pow2
                 | Suffixes::Pow2W
                 | Suffixes::SignExtensionUpperHalf
                 | Suffixes::OverflowBitsZero
-        )
+        ) {
+            return true;
+        }
+        #[cfg(feature = "rv64")]
+        if matches!(s, Suffixes::Rev8W) {
+            return true;
+        }
+        false
     })
 }
 
@@ -346,8 +352,16 @@ pub fn suffix_edabit_ring_bits(suffix: &Suffixes, t_k: usize, t_half_k: usize) -
         | Suffixes::XorRotW7
         | Suffixes::XorRotW8
         | Suffixes::XorRotW12
-        | Suffixes::XorRotW16
-        | Suffixes::Rev8W => {
+        | Suffixes::XorRotW16 => {
+            if t_half_k >= 32 {
+                Some(t_half_k)
+            } else {
+                Some(32)
+            }
+        }
+
+        #[cfg(feature = "rv64")]
+        Suffixes::Rev8W => {
             if t_half_k >= 32 {
                 Some(t_half_k)
             } else {
@@ -426,7 +440,7 @@ pub fn suffix_uses_b2a_edabits(suffix: &Suffixes) -> bool {
 /// Returns the positions and shares for entries that need MPC evaluation.
 fn split_interleaved_public<T: Uninterleavable, F: JoltField>(
     suffix: &Suffixes,
-    bits: &MixedBatch<u128, T>,
+    bits: &MixedBatch<LookupIndexInt, T>,
     suffix_len: usize,
     base: usize,
     out: &mut SuffixFutureBatch<F>,
@@ -434,10 +448,10 @@ fn split_interleaved_public<T: Uninterleavable, F: JoltField>(
 where
     Standard: Distribution<T>,
 {
-    let mask = if suffix_len >= 128 {
-        u128::MAX
+    let mask = if suffix_len >= LookupIndexInt::BITS as usize {
+        LookupIndexInt::MAX
     } else {
-        (1u128 << suffix_len) - 1
+        ((1 as LookupIndexInt) << suffix_len) - 1
     };
 
     match bits {
@@ -447,7 +461,8 @@ where
         }
         MixedBatch::Public(pubs) => {
             for (i, &p) in pubs.iter().enumerate() {
-                let val = suffix.suffix_mle::<XLEN>(LookupBits::new(p & mask, suffix_len));
+                let val =
+                    suffix.suffix_mle::<XLEN>(LookupBits::new((p & mask) as u128, suffix_len));
                 out.extend_ready(
                     std::iter::once(base + i),
                     std::iter::once(Rep3Value::Public(F::from_u64(val))),
@@ -461,7 +476,8 @@ where
             for (i, entry) in mixed.iter().enumerate() {
                 match entry {
                     Either::Public(p) => {
-                        let val = suffix.suffix_mle::<XLEN>(LookupBits::new(*p & mask, suffix_len));
+                        let val = suffix
+                            .suffix_mle::<XLEN>(LookupBits::new((*p & mask) as u128, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
                             std::iter::once(Rep3Value::Public(F::from_u64(val))),
@@ -936,11 +952,17 @@ where
         Suffixes::UpperWord
         | Suffixes::LowerWord
         | Suffixes::LowerHalfWord
-        | Suffixes::Rev8W
         | Suffixes::Pow2
         | Suffixes::Pow2W
         | Suffixes::SignExtensionUpperHalf
         | Suffixes::OverflowBitsZero => {
+            unreachable!(
+                "Interleaved suffix {:?} received Uninterleaved data",
+                suffix
+            );
+        }
+        #[cfg(feature = "rv64")]
+        Suffixes::Rev8W => {
             unreachable!(
                 "Interleaved suffix {:?} received Uninterleaved data",
                 suffix
@@ -954,7 +976,7 @@ where
 /// Evaluate an interleaved suffix on shared bits, pushing into SuffixFutureBatch.
 fn eval_suffix_interleaved<T, F, N>(
     suffix: &Suffixes,
-    bits: &MixedBatch<u128, T>,
+    bits: &MixedBatch<LookupIndexInt, T>,
     suffix_len: usize,
     io_ctx: &mut IoContext<N>,
     party_id: PartyID,
@@ -1058,6 +1080,7 @@ where
                 out.extend_b2a_ring::<T>(indices, masked.into_iter());
             }
         }
+        #[cfg(feature = "rv64")]
         Suffixes::Rev8W => {
             let mask_byte = RingElement(0xFFu32);
             let reversed_u32: Vec<Rep3RingShare<u32>> = shared_bits
@@ -1341,8 +1364,7 @@ where
 
 /// Compute the sign-extension suffix value from a public right-operand bitmask.
 ///
-/// Mirrors vanilla `SignExtensionSuffix::suffix_mle` logic:
-/// sign extension padding length = trailing_zeros of the right operand's low bits.
+/// Mirrors vanilla `SignExtensionSuffix::suffix_mle` on the uninterleaved `y` bits.
 fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
     let y_len = suffix_len / 2;
     let y_low = if y_len >= 64 {
@@ -1350,9 +1372,12 @@ fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
     } else {
         mask_u64 & ((1u64 << y_len) - 1)
     };
-    let padding_len = y_low.trailing_zeros() as u64;
-    // The sign-extension MLE value: 2^padding_len
-    1u64 << padding_len.min(63)
+    let padding_len = std::cmp::min(y_low.trailing_zeros() as usize, y_len);
+    if padding_len == 0 {
+        0
+    } else {
+        ((1u128 << XLEN) - (1u128 << (XLEN - padding_len))) as u64
+    }
 }
 
 /// Truncate a share to u32 (used by W-variant instructions).

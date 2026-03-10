@@ -18,8 +18,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<SLTI> {
     ) -> eyre::Result<()> {
         // ge_many's internal unsigned_ge_many expects binary (XOR-domain) shares.
         // Flip the sign bit (binary XOR) to convert signed comparison to unsigned.
-        let sign_bit = RingElement(1u64 << (XLEN - 1));
-        let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
+        let sign_bit = RingElement((1 as XlenInt) << (XLEN - 1));
+        let (a, b): (Vec<Rep3RingShare<XlenInt>>, Vec<Rep3RingShare<XlenInt>>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);

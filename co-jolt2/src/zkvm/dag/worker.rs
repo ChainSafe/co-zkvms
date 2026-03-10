@@ -214,14 +214,11 @@ impl Rep3JoltDagWorker {
             .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
-        let commit_results =
-            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3_preproc(
-                &ordered_polys,
-                generators,
-                commit_to_public,
-                io_ctx,
-                preproc,
-            )?;
+        let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
+            &ordered_polys,
+            generators,
+            commit_to_public,
+        );
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 
