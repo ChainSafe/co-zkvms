@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CO_JOLT2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$CO_JOLT2_DIR/.." && pwd)"
+
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
 NUM_ITERS=${NUM_ITERS:-1}
-TRACE_DIR=${TRACE_DIR:-./.traces}
-ARTIFACT_DIR=.artifacts
+TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
+ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
 # Base port for Tracy profiling. Worker p listens on TRACY_BASE_PORT + p.
 # Connect with: tracy-capture -a 127.0.0.1 -p <port>
 #   worker 0 → 8086, worker 1 → 8087, worker 2 → 8088
 TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 # When set, preprocessing is saved to (and loaded from) this directory.
-PREPROC_DIR=${PREPROC_DIR:-./.preprocessing}
+PREPROC_DIR=${PREPROC_DIR:-"$CO_JOLT2_DIR/.preprocessing"}
 # When set to 1, builds with the `reuse-preproc` feature so that mmap'd
 # backing files are NOT zeroed on read and can be loaded multiple times.
 REUSE_PREPROC=${REUSE_PREPROC:-0}
@@ -89,18 +93,19 @@ fi
 
 # Build the example binaries (release mode)
 # Note: Guest ELF is auto-compiled by Program::build() on first run
+cd "$CO_JOLT2_DIR"
 cargo build --example rep3_jolt --release --features "$FEATURES"
 cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release
 
 # Build gen_configs
-cd ../mpc-net
+cd "$REPO_DIR/mpc-net"
 cargo build --bin gen_configs --release
-cd ../co-jolt2
+cd "$CO_JOLT2_DIR"
 
 # Generate network configs (1 worker per party)
 # Configs, certs, and keys all go into ARTIFACT_DIR.
 # The -c flag sets both where DER files are written AND the paths embedded in TOMLs.
-../target/release/gen_configs \
+"$REPO_DIR/target/release/gen_configs" \
   -n 1 \
   -o "$ARTIFACT_DIR" \
   -c "$ARTIFACT_DIR" \
@@ -152,7 +157,7 @@ for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
     TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-      gtime -v -- ../target/release/examples/rep3_jolt \
+      gtime -v -- "$REPO_DIR/target/release/examples/rep3_jolt" \
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \

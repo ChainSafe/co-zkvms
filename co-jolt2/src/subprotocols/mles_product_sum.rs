@@ -155,8 +155,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
                 let j_wr = wr0 + local_wr;
                 for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
                     let j = j_wl + (j_wr << wl_len);
-                    let out =
-                        &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
+                    let out = &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
 
                     let mut pairs: [(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>); D] =
                         std::array::from_fn(|i| {
@@ -170,8 +169,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
                     pairs[0].1 *= eq_wl_eval;
 
                     for pair_idx in 0..8 {
-                        let triple =
-                            eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
+                        let triple = eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
                         let base = pair_idx * 3;
                         out[base] = triple[0];
                         out[base + 1] = triple[1];
@@ -257,8 +255,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
                     let in_block = &level3_rep3[start..start + level3_block_len];
 
                     let a: [Rep3PrimeFieldShare<F>; 9] = std::array::from_fn(|k| in_block[k]);
-                    let b: [Rep3PrimeFieldShare<F>; 9] =
-                        std::array::from_fn(|k| in_block[9 + k]);
+                    let b: [Rep3PrimeFieldShare<F>; 9] = std::array::from_fn(|k| in_block[9 + k]);
 
                     eval_inter16_final_accumulate_rep3(&a, &b, eq_wr_eval, &mut local);
                 }

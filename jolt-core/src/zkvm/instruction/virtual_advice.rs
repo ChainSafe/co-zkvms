@@ -30,11 +30,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAdvice> {
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
+        let advice = self.instruction.advice.unwrap_or(0);
         match XLEN {
             #[cfg(test)]
-            8 => (0, self.instruction.advice as u8 as u128),
-            32 => (0, self.instruction.advice as u32 as u128),
-            64 => (0, self.instruction.advice as u128),
+            8 => (0, advice as u8 as u128),
+            32 => (0, advice as u32 as u128),
+            64 => (0, advice as u128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -44,11 +45,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAdvice> {
     }
 
     fn to_lookup_output(&self) -> u64 {
+        let advice = self.instruction.advice.unwrap_or(0);
         match XLEN {
             #[cfg(test)]
-            8 => (self.instruction.advice as u8).into(),
-            32 => (self.instruction.advice as u32).into(),
-            64 => self.instruction.advice,
+            8 => (advice as u8).into(),
+            32 => (advice as u32).into(),
+            64 => advice.into(),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }

@@ -8,7 +8,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMu
         )
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -32,17 +35,18 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMu
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
+                    l.as_arithmetic_or_trivial::<ArithmeticWideInt>(io_ctx.id),
+                    r.as_arithmetic_or_trivial::<ArithmeticWideInt>(io_ctx.id),
                 )
             })
             .unzip();
         let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
-        let upper_halves: Vec<Rep3RingShare<u64>> = products.iter().map(|p| *p >> 32).collect();
-        let zeros: Vec<_> = (0..steps.len())
-            .map(|_| Rep3RingShare::<u64>::default())
+        let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
+        let upper_halves: Vec<Rep3RingShare<XlenInt>> = binary_products
+            .into_iter()
+            .map(|product| downcast(product >> XLEN))
             .collect();
-        rep3_ring::arithmetic::eq_many(&upper_halves, &zeros, io_ctx)?
+        rep3_ring::binary::is_zero_many(&upper_halves, io_ctx)?
             .into_iter()
             .zip(out)
             .for_each(|(x, out)| {

@@ -88,17 +88,13 @@ impl Rep3Operand {
     pub fn as_binary_or_trivial(&self, id: PartyID) -> Rep3RingShare<XlenInt> {
         match *self {
             Rep3Operand::Shared { binary, .. } => binary,
-            Rep3Operand::Public(value) => rep3_ring::binary::promote_to_trivial_share(
-                id,
-                &RingElement(value as XlenInt),
-            ),
+            Rep3Operand::Public(value) => {
+                rep3_ring::binary::promote_to_trivial_share(id, &RingElement(value as XlenInt))
+            }
         }
     }
 
-    pub fn as_arithmetic_or_trivial_wide(
-        &self,
-        id: PartyID,
-    ) -> Rep3RingShare<ArithmeticWideInt> {
+    pub fn as_arithmetic_or_trivial_wide(&self, id: PartyID) -> Rep3RingShare<ArithmeticWideInt> {
         match self {
             Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             // Truncate to XlenInt first to match vanilla Jolt's `val as u32/u64`

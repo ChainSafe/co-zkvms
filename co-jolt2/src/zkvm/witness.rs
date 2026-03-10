@@ -31,10 +31,10 @@ use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
+use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
-use crate::utils::memory::maybe_purge_jemalloc;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 
@@ -125,7 +125,7 @@ where
 /// Compute the plaintext lookup index for cycles with fully-public operands.
 ///
 /// Returns `Some(plain)` for instructions where both operands are public
-/// (control-only: LUI, AUIPC, JAL, VirtualPow2*, VirtualShiftRightBitmask*).
+/// (control-only: LUI, AUIPC, JAL, VirtualAdvice, VirtualPow2*, VirtualShiftRightBitmask*).
 /// These use the "add" path: index = left + right (LookupIndexInt arithmetic).
 ///
 /// Returns `None` for all other instructions (operands may be secret-shared).
@@ -153,6 +153,10 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
         Rep3Cycle::LUI(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::AUIPC(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::JAL(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualAdvice(c) => Some(
+            Rep3LookupQuery::<XLEN>::to_public_lookup_output(c)
+                .expect("VirtualAdvice lookup index must be public") as LookupIndexInt,
+        ),
         Rep3Cycle::VirtualPow2(c) => {
             try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
         }
@@ -481,7 +485,7 @@ where
         // Advice value (only meaningful for VirtualAdvice).
         if circuit_flags[CircuitFlags::Advice as usize] {
             if let Rep3Cycle::VirtualAdvice(c) = cycle {
-                advice[t] = c.instruction.advice;
+                advice[t] = c.instruction.advice.unwrap_or(0) as u64;
             }
         }
 
@@ -509,12 +513,7 @@ where
         }
     }
 
-    fill_field_from_operands_sparse::<F, N>(
-        io_ctx,
-        cast_jobs,
-        Arc::clone(&shared_cols),
-        preproc,
-    )?;
+    fill_field_from_operands_sparse::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), preproc)?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let shared_cols = Arc::try_unwrap(shared_cols)
@@ -655,7 +654,8 @@ where
     //
     // Phase 1: Collect all data that doesn't require communication, plus
     //          FutureRep3Ring futures for instruction_ra indices.
-    let index_futures: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = (0..trace.len())
+    let index_futures: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = (0
+        ..trace.len())
         .into_par_iter()
         .map({
             let batch_cell = batch_cell.clone();
@@ -747,7 +747,8 @@ where
                 chunk_len = chunk.len()
             )
             .entered();
-            let resolved: Vec<Rep3RingShare<LookupIndexInt>> = chunk.fulfill_batched(io_ctx, |r, ()| r)?;
+            let resolved: Vec<Rep3RingShare<LookupIndexInt>> =
+                chunk.fulfill_batched(io_ctx, |r, ()| r)?;
             drop(_chunk_span);
             out.extend(resolved);
             chunk_id += 1;
@@ -907,7 +908,8 @@ where
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
+                        Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&rd_pre[off..end]);
                     combined.extend_from_slice(&rd_post[off..end]);
 
@@ -920,9 +922,12 @@ where
                         )?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
-                        })?
+                        io_ctx.par_chunks_preproc(
+                            combined,
+                            batch_eda,
+                            Some(chunk_size),
+                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
+                        )?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {
@@ -956,7 +961,8 @@ where
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
+                        Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&ram_pre[off..end]);
                     combined.extend_from_slice(&ram_post[off..end]);
 
@@ -969,9 +975,12 @@ where
                         )?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
-                        })?
+                        io_ctx.par_chunks_preproc(
+                            combined,
+                            batch_eda,
+                            Some(chunk_size),
+                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
+                        )?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {

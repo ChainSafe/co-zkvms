@@ -8,7 +8,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
         )
     }
 
-    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(
+        &self,
+        party_id: PartyID,
+    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -32,14 +35,16 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?
+        let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
+        let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
+        let upper_words: Vec<Rep3RingShare<XlenInt>> = binary_products
             .into_iter()
-            .zip(out)
-            .for_each(|(product, out)| {
-                // MULHU: upper XLEN bits of the wide product.
-                let upper: Rep3RingShare<u64> = downcast(product >> XLEN);
-                *out = FutureRep3Ring::cast_to_field(upper);
-            });
+            .map(|product| downcast(product >> XLEN))
+            .collect();
+        let outputs = rep3_ring::casts::binary_ring_to_field_many(&upper_words, io_ctx)?;
+        outputs.into_iter().zip(out).for_each(|(output, out)| {
+            *out = FutureRep3Ring::Ready(output);
+        });
         Ok(())
     }
 }

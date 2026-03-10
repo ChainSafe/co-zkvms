@@ -4,15 +4,15 @@
 //! diff = m·2^64 in Z_{2^66}, replacing the expensive A2B Kogge-Stone adder
 //! (7 rounds for u128) with a single batched open (1 round).
 
-use crate::protocols::rep3::network::{IoContext, Rep3Network};
-use crate::protocols::rep3::PartyID;
-use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
 use crate::IoResult;
+use crate::protocols::rep3::PartyID;
+use crate::protocols::rep3::network::{IoContext, Rep3Network};
+use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
+use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use mpc_types::protocols::rep3_ring::ring::bit::Bit;
 use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_types::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_types::protocols::rep3_ring::ring::u66::U66;
-use mpc_types::protocols::rep3_ring::Rep3RingShare;
 use rand::{Rng, SeedableRng};
 
 use super::backing_store;
@@ -278,12 +278,11 @@ pub fn generate_wrap_masks_lazy<N: Rep3Network>(
         .collect();
 
     // Flatten to interleaved [a₀, b₀, a₁, b₁, ...] for BackingStore.
-    let flat: Vec<RingElement<U66>> = mask_arith
-        .iter()
-        .flat_map(|s| [s.a, s.b])
-        .collect();
+    let flat: Vec<RingElement<U66>> = mask_arith.iter().flat_map(|s| [s.a, s.b]).collect();
 
-    Ok(LazyWrapMasks::new(seed1, pos1, seed2, pos2, n, flat, party_id))
+    Ok(LazyWrapMasks::new(
+        seed1, pos1, seed2, pos2, n, flat, party_id,
+    ))
 }
 
 /// Extract binary shares of wrap bits m0, m1 from diff_u66 = m·2^64 in Z_{2^66}.
@@ -346,11 +345,7 @@ fn two_bit_add_public_const_into_binary_share(
     let m0 = binary::xor_public(&r0_b, &RingElement(Bit::new(c0)), party_id);
 
     // carry = c0 AND r0 (public AND: if c0=0 → 0, if c0=1 → r0)
-    let carry = if c0 {
-        r0_b
-    } else {
-        Rep3RingShare::default()
-    };
+    let carry = if c0 { r0_b } else { Rep3RingShare::default() };
 
     // m1 = (r1 XOR carry) XOR c1
     let r1_xor_carry = Rep3RingShare {
@@ -365,9 +360,9 @@ fn two_bit_add_public_const_into_binary_share(
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
-    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use crate::protocols::rep3::network::IoContextPool;
     use crate::protocols::rep3::test_utils::LocalRep3TestWorkerNet;
+    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
 
     #[test]
     fn wrap_mask_extraction_correct() {
@@ -400,7 +395,8 @@ mod tests {
                 (party_diffs, n)
             },
             || (),
-            |(party_diffs, n): (Vec<Rep3RingShare<U66>>, usize), mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+            |(party_diffs, n): (Vec<Rep3RingShare<U66>>, usize),
+             mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let io = io_ctx.main();
                 let mut lazy_masks = generate_wrap_masks_lazy(n, io)?;
                 let masks = lazy_masks.take_batch(n);
