@@ -5,4 +5,5 @@
 pub mod bit;
 pub mod int_ring;
 pub mod ring_impl;
+pub mod u34;
 pub mod u66;

@@ -29,7 +29,9 @@ use tracing::info_span;
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::Rep3MultilinearPolynomial;
+#[cfg(feature = "ring-msm")]
+use crate::poly::compact_polynomial::Rep3CompactPolynomial;
+use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
@@ -136,17 +138,17 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
     let try_public_add = |inputs: (Rep3Operand, Rep3Operand)| -> Option<LookupIndexInt> {
         let (l, r) = inputs;
         let l_val = match l {
-            Rep3Operand::Public(v)
-            | Rep3Operand::Shared {
+            Rep3Operand::Public(v) => v,
+            Rep3Operand::Shared {
                 public: Some(v), ..
-            } => v,
+            } => v as i128,
             _ => return None,
         };
         let r_val = match r {
-            Rep3Operand::Public(v)
-            | Rep3Operand::Shared {
+            Rep3Operand::Public(v) => v,
+            Rep3Operand::Shared {
                 public: Some(v), ..
-            } => v,
+            } => v as i128,
             _ => return None,
         };
         Some((l_val as XlenInt as LookupIndexInt) + (r_val as XlenInt as LookupIndexInt))
@@ -193,8 +195,8 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
 fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
     let extract_right = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u64> {
         match inputs.1 {
-            Rep3Operand::Public(v)
-            | Rep3Operand::Shared {
+            Rep3Operand::Public(v) => Some(v as u64),
+            Rep3Operand::Shared {
                 public: Some(v), ..
             } => Some(v as XlenInt as u64),
             _ => None,
@@ -415,8 +417,20 @@ where
     cast_jobs.reserve(n * 5);
 
     let mut maybe_push = |col: SparseCastCol, row: usize, op: &Rep3Operand| match op {
-        Rep3Operand::Public(v)
-        | Rep3Operand::Shared {
+        Rep3Operand::Public(v) => {
+            let share = promote_to_trivial_share(party_id, F::from_u64(*v as u64));
+            unsafe {
+                match col {
+                    SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
+                    SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
+                    SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
+                    SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
+                    SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
+                    SparseCastCol::Advice => (&mut *shared_cols.advice.get())[row] = share,
+                }
+            }
+        }
+        Rep3Operand::Shared {
             public: Some(v), ..
         } => {
             let share = promote_to_trivial_share(party_id, F::from_u64(*v));
@@ -841,37 +855,68 @@ where
         );
     }
 
-    let mut left_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
-    let mut right_input_field: Vec<Rep3PrimeFieldShare<F>> = Vec::new();
+    // Build instruction input polynomials.
+    #[cfg(feature = "ring-msm")]
+    let mut left_ops: Vec<Rep3Operand> = Vec::new();
+    #[cfg(feature = "ring-msm")]
+    let mut right_ops: Vec<Rep3Operand> = Vec::new();
+    #[cfg(feature = "ring-msm")]
     if polynomials.iter().any(|p| {
         matches!(
             p,
             CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput
         )
     }) {
-        let n = state.prover_state.cycle_witness.len();
-        left_input_field = Vec::with_capacity(n);
-        right_input_field = Vec::with_capacity(n);
-        for t in 0..n {
-            let (l, r) = state
-                .prover_state
-                .cycle_witness
-                .row_stage1(t)
-                .to_instruction_inputs(party_id);
-            left_input_field.push(l);
-            right_input_field.push(r);
+        let trace: &[Rep3Cycle] = state.trace_ref();
+        let n = trace.len();
+        left_ops = Vec::with_capacity(n);
+        right_ops = Vec::with_capacity(n);
+        for cycle in trace {
+            let (left_op, right_op) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+            left_ops.push(left_op);
+            right_ops.push(right_op);
         }
     }
 
     for poly in polynomials {
         match poly {
             CommittedPolynomial::LeftInstructionInput => {
-                let field_shares = std::mem::take(&mut left_input_field);
-                results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
+                #[cfg(feature = "ring-msm")]
+                {
+                    let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
+                    results.insert(
+                        *poly,
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(compact)),
+                    );
+                }
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    let party_id = io_ctx.party_id();
+                    let n = state.prover_state.cycle_witness.len();
+                    let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
+                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).0)
+                        .collect();
+                    results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
+                }
             }
             CommittedPolynomial::RightInstructionInput => {
-                let field_shares = std::mem::take(&mut right_input_field);
-                results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
+                #[cfg(feature = "ring-msm")]
+                {
+                    let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
+                    results.insert(
+                        *poly,
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(compact)),
+                    );
+                }
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    let party_id = io_ctx.party_id();
+                    let n = state.prover_state.cycle_witness.len();
+                    let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
+                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).1)
+                        .collect();
+                    results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
+                }
             }
             CommittedPolynomial::WriteLookupOutputToRD => {
                 let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
@@ -1266,8 +1311,8 @@ mod tests {
                         &format!("{poly_key:?} (shared dense)"),
                     );
                 }
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
-                    unreachable!("U64Scalars variant should not appear in witness polynomials");
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
+                    unreachable!("RingCompact variant should not appear in witness polynomials");
                 }
                 Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                     unreachable!("RLC variant should not appear in witness polynomials");

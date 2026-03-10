@@ -28,8 +28,8 @@ impl Rep3RegisterState for Rep3RegisterStateFormatB {
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
         Self {
-            rs1: Rep3Operand::Public(public_state.rs1_value()),
-            rs2: Rep3Operand::Public(public_state.rs2_value()),
+            rs1: Rep3Operand::Public(public_state.rs1_value().into()),
+            rs2: Rep3Operand::Public(public_state.rs2_value().into()),
         }
     }
 

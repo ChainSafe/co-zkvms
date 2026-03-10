@@ -19,14 +19,16 @@ pub mod pst13;
 pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     CommitmentScheme<Field = F>
 {
-    fn commit_rep3(
+    fn commit_rep3<N: Rep3NetworkWorker>(
         poly: &Rep3MultilinearPolynomial<F>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> (
+        io_ctx: &mut IoContextPool<N>,
+        preproc: &mut PreprocessingPool<F>,
+    ) -> eyre::Result<(
         MaybeShared<Self::Commitment>,
         MaybeShared<Self::OpeningProofHint>,
-    );
+    )>;
 
     fn distributed_commit_rep3(
         _poly: &Rep3MultilinearPolynomial<F>,
@@ -39,38 +41,18 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         todo!("distributed commit not implemented for this PCS")
     }
 
-    fn batch_commit_rep3<U>(
+    fn batch_commit_rep3<U, N>(
         polys: &[U],
         setup: &Self::ProverSetup,
-        commit_to_public: bool,
-    ) -> Vec<(
+        io_ctx: &mut IoContextPool<N>,
+        preproc: &mut PreprocessingPool<F>,
+    ) -> eyre::Result<Vec<(
         MaybeShared<Self::Commitment>,
         MaybeShared<Self::OpeningProofHint>,
-    )>
-    where
-        U: Borrow<Rep3MultilinearPolynomial<F>> + Sync;
-
-    /// Sequential MPC commit that may perform network operations and consume preprocessing.
-    ///
-    /// Default implementation falls back to the local-only `batch_commit_rep3`.
-    fn batch_commit_rep3_preproc<U, N>(
-        polys: &[U],
-        setup: &Self::ProverSetup,
-        commit_to_public: bool,
-        _io_ctx: &mut IoContextPool<N>,
-        _preproc: &mut PreprocessingPool<F>,
-    ) -> eyre::Result<
-        Vec<(
-            MaybeShared<Self::Commitment>,
-            MaybeShared<Self::OpeningProofHint>,
-        )>,
-    >
+    )>>
     where
         U: Borrow<Rep3MultilinearPolynomial<F>> + Sync,
-        N: Rep3NetworkWorker,
-    {
-        Ok(Self::batch_commit_rep3(polys, setup, commit_to_public))
-    }
+        N: Rep3NetworkWorker;
 
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<F>,

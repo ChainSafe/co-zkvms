@@ -14,7 +14,13 @@ pub enum Rep3Operand {
         arithmetic: Option<Rep3RingShare<ArithmeticWideInt>>,
         public: Option<u64>, // Some for trivial shares
     },
-    Public(u64),
+    /// Public (plaintext) operand, stored as signed i128.
+    ///
+    /// Stores both unsigned register values (0..2^64, via `u64 as i128`) and
+    /// signed immediates (-2^63..2^63, via `i64 as i128`). The `as u64` casts
+    /// in ring-domain helpers give the correct two's complement bit pattern
+    /// for both cases. Values outside [-2^63, 2^64) would silently truncate.
+    Public(i128),
 }
 
 impl Rep3Operand {
@@ -39,8 +45,8 @@ impl Rep3Operand {
 
     pub fn as_public(&self) -> u64 {
         match self {
-            Rep3Operand::Public(x)
-            | Rep3Operand::Shared {
+            Rep3Operand::Public(x) => *x as u64,
+            Rep3Operand::Shared {
                 public: Some(x), ..
             } => *x,
             _ => panic!("Not a public operand"),
@@ -131,20 +137,20 @@ impl Default for Rep3Operand {
 
 impl From<u64> for Rep3Operand {
     fn from(value: u64) -> Self {
-        Rep3Operand::Public(value)
+        Rep3Operand::Public(value as i128)
     }
 }
 
 impl From<u32> for Rep3Operand {
     fn from(value: u32) -> Self {
-        Rep3Operand::Public(value as u64)
+        Rep3Operand::Public(value as i128)
     }
 }
 
 impl From<Rep3Operand> for u64 {
     fn from(value: Rep3Operand) -> u64 {
         match value {
-            Rep3Operand::Public(x) => x,
+            Rep3Operand::Public(x) => x as u64,
             _ => panic!("Cannot convert Rep3Operand to u64"),
         }
     }

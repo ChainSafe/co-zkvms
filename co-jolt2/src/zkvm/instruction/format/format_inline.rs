@@ -29,8 +29,8 @@ impl Rep3RegisterState for Rep3RegisterStateFormatInline {
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
         Self {
-            rs1: Rep3Operand::Public(public_state.rs1_value()),
-            rs2: Rep3Operand::Public(public_state.rs2_value()),
+            rs1: Rep3Operand::Public(public_state.rs1_value().into()),
+            rs2: Rep3Operand::Public(public_state.rs2_value().into()),
             // rs3 is not exposed by InstructionRegisterState trait, default to 0
             rs3: Rep3Operand::Public(0),
         }

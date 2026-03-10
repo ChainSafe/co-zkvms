@@ -18,7 +18,8 @@ use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
 use jolt_core::utils::errors::ProofVerifyError;
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use std::borrow::Borrow;
@@ -413,24 +414,66 @@ where
 // Rep3CommitmentScheme implementation
 // =============================================================================
 
+/// Local-only PST13 commit (no io_ctx/preproc needed). Used by batch_commit_rep3.
+fn pst13_commit_rep3_local(
+    poly: &Rep3MultilinearPolynomial<ark_bn254::Fr>,
+    setup: &PST13Setup<ark_bn254::Bn254>,
+    commit_to_public: bool,
+) -> (
+    MaybeShared<PST13Commitment<ark_bn254::Bn254>>,
+    MaybeShared<()>,
+) {
+    match poly {
+        Rep3MultilinearPolynomial::Public(poly) => {
+            if !commit_to_public {
+                return (MaybeShared::Public(None), MaybeShared::Public(None));
+            }
+            let (c, hint) = <PST13<ark_bn254::Bn254> as CommitmentScheme>::commit(poly, setup);
+            (MaybeShared::Public(Some(c)), MaybeShared::Public(Some(hint)))
+        }
+        Rep3MultilinearPolynomial::Shared(shared_poly) => match shared_poly {
+            Rep3SharedPoly::Dense(poly) => {
+                let poly_a =
+                    MultilinearPolynomial::LargeScalars(poly.into_distributed_commit_form());
+                let (commitment, hint) =
+                    <PST13<ark_bn254::Bn254> as CommitmentScheme>::commit(&poly_a, setup);
+                (MaybeShared::Shared(commitment), MaybeShared::Shared(hint))
+            }
+            Rep3SharedPoly::OneHot(one_hot) => {
+                let (commitment, hint) = commit_one_hot_shared(one_hot, setup);
+                (MaybeShared::Shared(commitment), MaybeShared::Shared(hint))
+            }
+            #[cfg(feature = "ring-msm")]
+            Rep3SharedPoly::RingCompact(_) => {
+                panic!("PST13: RingCompact unsupported (Dory-only)")
+            }
+            Rep3SharedPoly::RLC(_) => {
+                unreachable!("RLC polynomials should not be committed directly")
+            }
+        },
+    }
+}
+
 impl<ProofTranscript> Rep3CommitmentScheme<ark_bn254::Fr, ProofTranscript>
     for PST13<ark_bn254::Bn254>
 where
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "PST13::commit_rep3", level = "trace")]
-    fn commit_rep3(
+    fn commit_rep3<N: Rep3NetworkWorker>(
         poly: &Rep3MultilinearPolynomial<ark_bn254::Fr>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> (
+        _io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<ark_bn254::Fr>,
+    ) -> eyre::Result<(
         MaybeShared<Self::Commitment>,
         MaybeShared<Self::OpeningProofHint>,
-    ) {
-        match poly {
+    )> {
+        Ok(match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if !commit_to_public {
-                    return (MaybeShared::Public(None), MaybeShared::Public(None));
+                    return Ok((MaybeShared::Public(None), MaybeShared::Public(None)));
                 }
                 match poly {
                     MultilinearPolynomial::OneHot(one_hot) => {
@@ -475,38 +518,56 @@ where
                     let (commitment, hint) = commit_one_hot_shared(one_hot, setup);
                     (MaybeShared::Shared(commitment), MaybeShared::Shared(hint))
                 }
-                Rep3SharedPoly::U64Scalars(_) => {
-                    panic!("PST13 commit_rep3: U64Scalars unsupported (Dory-only)")
+                #[cfg(feature = "ring-msm")]
+                Rep3SharedPoly::RingCompact(_) => {
+                    panic!("PST13 commit_rep3: RingCompact unsupported (Dory-only)")
                 }
                 Rep3SharedPoly::RLC(_) => {
                     unreachable!("RLC polynomials should not be committed directly")
                 }
             },
-        }
+        })
     }
 
     #[tracing::instrument(skip_all, name = "PST13::batch_commit_rep3", level = "trace")]
-    fn batch_commit_rep3<U>(
+    fn batch_commit_rep3<U, N>(
         polys: &[U],
         setup: &Self::ProverSetup,
-        commit_to_public: bool,
-    ) -> Vec<(
+        io_ctx: &mut IoContextPool<N>,
+        _preproc: &mut PreprocessingPool<ark_bn254::Fr>,
+    ) -> eyre::Result<Vec<(
         MaybeShared<Self::Commitment>,
         MaybeShared<Self::OpeningProofHint>,
-    )>
+    )>>
     where
         U: Borrow<Rep3MultilinearPolynomial<ark_bn254::Fr>> + Sync,
+        N: Rep3NetworkWorker,
     {
-        polys
-            .par_iter()
+        let party_id = io_ctx.party_id();
+
+        // Distribute public poly commits across workers: public poly i is
+        // committed by worker (i % 3).
+        let mut public_counter = 0usize;
+        let per_poly_commit_public: Vec<bool> = polys
+            .iter()
             .map(|p| {
-                <Self as Rep3CommitmentScheme<ark_bn254::Fr, ProofTranscript>>::commit_rep3(
-                    p.borrow(),
-                    setup,
-                    commit_to_public,
-                )
+                if matches!(p.borrow(), Rep3MultilinearPolynomial::Public(_)) {
+                    let should_commit = public_counter % 3 == party_id as usize;
+                    public_counter += 1;
+                    should_commit
+                } else {
+                    false
+                }
             })
-            .collect()
+            .collect();
+
+        Ok(polys
+            .par_iter()
+            .enumerate()
+            .map(|(i, p)| {
+                pst13_commit_rep3_local(p.borrow(), setup, per_poly_commit_public[i])
+            })
+            .collect())
     }
 
     #[tracing::instrument(skip_all, name = "PST13::prove_rep3", level = "trace")]
@@ -528,9 +589,10 @@ where
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
                 materialize_one_hot_share_a(one_hot)
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            #[cfg(feature = "ring-msm")]
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
                 return Err(eyre::eyre!(
-                    "PST13 prove_rep3: U64Scalars unsupported (Dory-only)"
+                    "PST13 prove_rep3: RingCompact unsupported (Dory-only)"
                 ));
             }
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {

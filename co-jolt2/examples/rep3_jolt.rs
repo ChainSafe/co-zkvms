@@ -494,6 +494,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     // Init DoryGlobals (must stay alive during proving)
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
+    #[cfg(feature = "ring-msm")]
     let dory_num_columns = DoryGlobals::get_num_columns();
 
     // Init AllCommittedPolynomials
@@ -576,18 +577,34 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         }
     };
 
-    // daPoints for Dory U64Scalars wrap correction (offline, not persisted)
-    if budget.dapoints > 0 {
-        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
-            &preprocessing.generators,
-            budget.dapoints / 2,
-            dory_num_columns,
-        );
-        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(
-            &qs,
-            &mut io_ctx,
-        )?;
-        preproc.set_dapoints(lazy_dp);
+    // Ring MSM preprocessing (daPoints, wrap masks, ring edaBits)
+    #[cfg(feature = "ring-msm")]
+    {
+        if budget.dapoints > 0 {
+            let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+                &preprocessing.generators,
+                budget.dapoints / 2,
+                dory_num_columns,
+            );
+            let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(
+                &qs,
+                &mut io_ctx,
+            )?;
+            preproc.set_dapoints(lazy_dp);
+        }
+        if budget.wrap_masks > 0 {
+            let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
+                budget.wrap_masks,
+                io_ctx.main(),
+            )?;
+            preproc.set_wrap_masks(wm);
+        }
+        if budget.ring_edabits_u66 > 0 {
+            let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
+                mpc_core::protocols::rep3_ring::ring::u66::U66, _,
+            >(budget.ring_edabits_u66, &mut io_ctx)?;
+            preproc.set_ring_edabits_u66(eb);
+        }
     }
     drop(_span);
 

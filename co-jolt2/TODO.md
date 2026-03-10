@@ -1,10 +1,9 @@
 # co-jolt2 Deferred Optimizations
 
-## Critical
-VirtualAdvice - public `advice`!
+## Pass all preprocessing batches (edabits, dabits, etc) as owned
+e.g. ring_to_field_b2a_many pass EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
 
-ring_to_field_b2a_many
-would it be better to pass batch: EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
+## Distribute public poly commitments work between workers 
 
 ## Missing networked par_chunks
 - `co-jolt2/src/zkvm/witness.rs` `for poly in polynomials` 

@@ -77,7 +77,7 @@ impl From<RAMRead> for Rep3RAMAccess {
     fn from(read: RAMRead) -> Self {
         Rep3RAMAccess::Read(Rep3RAMRead {
             address: read.address,
-            value: Rep3Operand::Public(read.value),
+            value: Rep3Operand::Public(read.value as i128),
         })
     }
 }
@@ -86,8 +86,8 @@ impl From<RAMWrite> for Rep3RAMAccess {
     fn from(write: RAMWrite) -> Self {
         Rep3RAMAccess::Write(Rep3RAMWrite {
             address: write.address,
-            pre_value: Rep3Operand::Public(write.pre_value),
-            post_value: Rep3Operand::Public(write.post_value),
+            pre_value: Rep3Operand::Public(write.pre_value as i128),
+            post_value: Rep3Operand::Public(write.post_value as i128),
         })
     }
 }

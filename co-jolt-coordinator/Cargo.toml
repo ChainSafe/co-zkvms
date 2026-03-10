@@ -57,6 +57,7 @@ libc = "0.2"
 
 [features]
 rv64 = ["co-jolt2/rv64"]
+ring-msm = ["co-jolt2/ring-msm"]
 
 [dev-dependencies]
 co-jolt2 = { path = "../co-jolt2", features = ["test-utils"] }

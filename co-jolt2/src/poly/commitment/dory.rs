@@ -1,6 +1,6 @@
-use crate::poly::{
-    Rep3CompactPolynomial, Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly,
-};
+#[cfg(feature = "ring-msm")]
+use crate::poly::compact_polynomial::Rep3CompactPolynomial;
+use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::types::MaybeShared;
 use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ec::pairing::MillerLoopOutput;
@@ -20,12 +20,18 @@ use mpc_core::protocols::rep3::network::{
     IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
 };
 use mpc_core::protocols::rep3::PartyID;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::conversion as ring_conv;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::ring::u66::U66;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 use std::borrow::Borrow;
@@ -46,165 +52,227 @@ type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
 >;
 
 // =============================================================================
+// Helpers for commit_rep3 / batch_commit_rep3
+// =============================================================================
+
+/// Commit a local-only (non-RingCompact) polynomial. No io_ctx/preproc needed.
+/// Used by the parallel branch of `batch_commit_rep3`.
+pub fn commit_local_rep3<ProofTranscript: Transcript>(
+    poly: &Rep3MultilinearPolynomial<Fr>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    commit_to_public: bool,
+) -> eyre::Result<(
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
+)> {
+    match poly {
+        Rep3MultilinearPolynomial::Public(poly) => {
+            if commit_to_public {
+                let _span = tracing::trace_span!("commit_public").entered();
+                let (c, hint) = commit_public_fast(poly, setup);
+                Ok((
+                    MaybeShared::Public(Some(c)),
+                    MaybeShared::Public(Some(hint)),
+                ))
+            } else {
+                Ok((MaybeShared::Public(None), MaybeShared::Public(None)))
+            }
+        }
+        Rep3MultilinearPolynomial::Shared(shared_poly) => {
+            match shared_poly {
+                #[cfg(feature = "ring-msm")]
+                Rep3SharedPoly::RingCompact(_) => {
+                    panic!("commit_local_rep3 called on RingCompact poly; use commit_rep3 instead")
+                }
+                _ => commit_shared_local_rep3::<ProofTranscript>(shared_poly, setup),
+            }
+        }
+    }
+}
+
+/// Row-commit + pairing for Dense/OneHot/RLC shared polys (no network).
+fn commit_shared_local_rep3<ProofTranscript: Transcript>(
+    shared_poly: &Rep3SharedPoly<Fr>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> eyre::Result<(
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
+)> {
+    let sigma = DoryGlobals::get_num_columns().log_2();
+    let num_columns = DoryGlobals::get_num_columns();
+
+    let (num_vars, row_commitments_share) = match shared_poly {
+        Rep3SharedPoly::Dense(poly) => {
+            let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+            (
+                poly.get_num_vars(),
+                compute_row_commitment_shares_a(poly, setup, nu),
+            )
+        }
+        Rep3SharedPoly::OneHot(poly) => {
+            let g1_proj = &setup_g1_projective(setup)[..num_columns];
+            let bases = G1Projective::normalize_batch(g1_proj);
+            let rows = poly
+                .commit_rows::<G1Projective>(&bases)
+                .expect("OneHot commit_rows preconditions met");
+            (poly.get_num_vars(), rows)
+        }
+        #[cfg(feature = "ring-msm")]
+        Rep3SharedPoly::RingCompact(_) => unreachable!(),
+        Rep3SharedPoly::RLC(_) => {
+            unreachable!("RLC polynomials should not be committed directly")
+        }
+    };
+
+    rows_to_commitment(row_commitments_share, num_vars, sigma, setup)
+}
+
+/// Commit a shared polynomial that may include RingCompact (needs io_ctx/preproc).
+#[cfg(feature = "ring-msm")]
+fn commit_shared_rep3<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
+    shared_poly: &Rep3SharedPoly<Fr>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    io_ctx: &mut IoContextPool<N>,
+    preproc: &mut PreprocessingPool<Fr>,
+) -> eyre::Result<(
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
+)> {
+    let sigma = DoryGlobals::get_num_columns().log_2();
+    let num_columns = DoryGlobals::get_num_columns();
+
+    let (num_vars, row_commitments_share) = match shared_poly {
+        Rep3SharedPoly::Dense(poly) => {
+            let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+            (
+                poly.get_num_vars(),
+                compute_row_commitment_shares_a(poly, setup, nu),
+            )
+        }
+        Rep3SharedPoly::OneHot(poly) => {
+            let g1_proj = &setup_g1_projective(setup)[..num_columns];
+            let bases = G1Projective::normalize_batch(g1_proj);
+            let rows = poly
+                .commit_rows::<G1Projective>(&bases)
+                .expect("OneHot commit_rows preconditions met");
+            (poly.get_num_vars(), rows)
+        }
+        Rep3SharedPoly::RingCompact(poly_ring) => {
+            let nu = dory::vmv::compute_nu(poly_ring.get_num_vars(), sigma);
+            let rows =
+                compute_row_commitment_shares_ring(poly_ring, setup, nu, io_ctx, preproc)?;
+            (poly_ring.get_num_vars(), rows)
+        }
+        Rep3SharedPoly::RLC(_) => {
+            unreachable!("RLC polynomials should not be committed directly")
+        }
+    };
+
+    rows_to_commitment(row_commitments_share, num_vars, sigma, setup)
+}
+
+/// Shared helper: pad row commitments, compute pairing, return commitment + hint.
+fn rows_to_commitment(
+    row_commitments_share: Vec<G1Projective>,
+    num_vars: usize,
+    sigma: usize,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> eyre::Result<(
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
+)> {
+    let _span = tracing::trace_span!("combine_rows").entered();
+    let nu = dory::vmv::compute_nu(num_vars, sigma);
+    let num_rows_target = 1usize << nu;
+
+    let mut row_commitments = row_commitments_share;
+    row_commitments.resize(num_rows_target, G1Projective::zero());
+
+    let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
+
+    let _pairing_span = tracing::trace_span!("multi_pairing").entered();
+    let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
+        let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
+        let num_chunks = rayon::current_num_threads();
+        let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
+        let ml_result = row_commitments_aff
+            .par_chunks(chunk_size)
+            .zip(g2_entries.par_chunks(chunk_size))
+            .map(|(g1_chunk, g2_chunk)| {
+                bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk)
+            })
+            .product();
+        Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+            .expect("final exponentiation should not fail")
+    } else {
+        let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
+        let g2_aff = G2Projective::normalize_batch(g2_proj);
+        Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
+    };
+    drop(_pairing_span);
+
+    // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
+    let hint_share: Vec<JoltG1Wrapper> = unsafe {
+        let mut v = std::mem::ManuallyDrop::new(row_commitments);
+        Vec::from_raw_parts(v.as_mut_ptr() as *mut JoltG1Wrapper, v.len(), v.capacity())
+    };
+
+    Ok((
+        MaybeShared::Shared(DoryCommitment(commitment_share.into())),
+        MaybeShared::Shared(hint_share),
+    ))
+}
+
+// =============================================================================
 // Rep3CommitmentScheme implementation
 // =============================================================================
 
 impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
     for DoryCommitmentScheme
 {
-    fn commit_rep3(
+    fn commit_rep3<N: Rep3NetworkWorker>(
         poly: &Rep3MultilinearPolynomial<Fr>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
-    ) -> (
+        io_ctx: &mut IoContextPool<N>,
+        preproc: &mut PreprocessingPool<Fr>,
+    ) -> eyre::Result<(
         MaybeShared<Self::Commitment>,
         MaybeShared<Self::OpeningProofHint>,
-    ) {
+    )> {
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let _span = tracing::trace_span!("commit_public").entered();
                     let (c, hint) = commit_public_fast(poly, setup);
-                    (
+                    Ok((
                         MaybeShared::Public(Some(c)),
                         MaybeShared::Public(Some(hint)),
-                    )
+                    ))
                 } else {
-                    (MaybeShared::Public(None), MaybeShared::Public(None))
+                    Ok((MaybeShared::Public(None), MaybeShared::Public(None)))
                 }
             }
             Rep3MultilinearPolynomial::Shared(shared_poly) => {
-                let sigma = DoryGlobals::get_num_columns().log_2();
-                let num_columns = DoryGlobals::get_num_columns();
-
-                let (num_vars, row_commitments_share) = match shared_poly {
-                    Rep3SharedPoly::Dense(poly) => {
-                        let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-                        (
-                            poly.get_num_vars(),
-                            compute_row_commitment_shares_a(poly, setup, nu),
-                        )
-                    }
-                    Rep3SharedPoly::OneHot(poly) => {
-                        let g1_proj = &setup_g1_projective(setup)[..num_columns];
-                        let bases = G1Projective::normalize_batch(g1_proj);
-                        let rows = poly
-                            .commit_rows::<G1Projective>(&bases)
-                            .expect("OneHot commit_rows preconditions met");
-                        (poly.get_num_vars(), rows)
-                    }
-                    Rep3SharedPoly::U64Scalars(_) => {
-                        panic!(
-                            "Dory commit_rep3: U64Scalars requires preprocessing; call batch_commit_rep3_preproc"
-                        )
-                    }
-                    Rep3SharedPoly::RLC(_) => {
-                        unreachable!("RLC polynomials should not be committed directly")
-                    }
-                };
-                let _span = tracing::trace_span!("combine_rows").entered();
-
-                let nu = dory::vmv::compute_nu(num_vars, sigma);
-                let num_rows_target = 1usize << nu;
-
-                let mut row_commitments = row_commitments_share;
-                row_commitments.resize(num_rows_target, G1Projective::zero());
-
-                let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
-
-                let _pairing_span = tracing::trace_span!("multi_pairing").entered();
-                let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
-                    let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
-
-                    // Chunked parallel Miller loops + single final exponentiation.
-                    //
-                    // Important: avoid `Bn254::multi_miller_loop_ref`, which clones `G2Prepared`
-                    // (deep-cloning `ell_coeffs`) and causes large transient allocations. We
-                    // instead borrow cached `ell_coeffs` directly.
-                    let num_chunks = rayon::current_num_threads();
-                    let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
-                    let ml_result = row_commitments_aff
-                        .par_chunks(chunk_size)
-                        .zip(g2_entries.par_chunks(chunk_size))
-                        .map(|(g1_chunk, g2_chunk)| {
-                            bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk)
-                        })
-                        .product();
-                    Bn254::final_exponentiation(MillerLoopOutput(ml_result))
-                        .expect("final exponentiation should not fail")
-                } else {
-                    // Fallback: no prepared cache available (slower and typically higher-churn).
-                    let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
-                    let g2_aff = G2Projective::normalize_batch(g2_proj);
-                    Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
-                };
-                drop(_pairing_span);
-                // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
-                let hint_share: Vec<JoltG1Wrapper> = unsafe {
-                    let mut v = std::mem::ManuallyDrop::new(row_commitments);
-                    Vec::from_raw_parts(v.as_mut_ptr() as *mut JoltG1Wrapper, v.len(), v.capacity())
-                };
-
-                (
-                    MaybeShared::Shared(DoryCommitment(commitment_share.into())),
-                    MaybeShared::Shared(hint_share),
-                )
+                #[cfg(feature = "ring-msm")]
+                {
+                    commit_shared_rep3::<ProofTranscript, N>(
+                        shared_poly, setup, io_ctx, preproc,
+                    )
+                }
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    let _ = (io_ctx, preproc);
+                    commit_shared_local_rep3::<ProofTranscript>(shared_poly, setup)
+                }
             }
         }
     }
 
     #[tracing::instrument(skip_all, name = "Dory::batch_commit")]
-    fn batch_commit_rep3<U>(
+    fn batch_commit_rep3<U, N>(
         polys: &[U],
         setup: &Self::ProverSetup,
-        commit_to_public: bool,
-    ) -> Vec<(
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    )>
-    where
-        U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
-    {
-        // Dory commitment involves large transient MSM/pairing buffers. Committing in smaller
-        // batches reduces peak RSS (at a small throughput cost).
-        let batch_size: usize = std::env::var("DORY_COMMIT_BATCH")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8);
-        if batch_size == 0 || polys.len() <= batch_size {
-            return polys
-                .par_iter()
-                .map(|p| {
-                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
-                        p.borrow(),
-                        setup,
-                        commit_to_public,
-                    )
-                })
-                .collect();
-        }
-
-        let mut out = Vec::with_capacity(polys.len());
-        for chunk in polys.chunks(batch_size) {
-            let mut results: Vec<_> = chunk
-                .par_iter()
-                .map(|p| {
-                    <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
-                        p.borrow(),
-                        setup,
-                        commit_to_public,
-                    )
-                })
-                .collect();
-            out.append(&mut results);
-        }
-        out
-    }
-
-    fn batch_commit_rep3_preproc<U, N>(
-        polys: &[U],
-        setup: &Self::ProverSetup,
-        commit_to_public: bool,
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<Fr>,
     ) -> eyre::Result<
@@ -217,18 +285,98 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         U: Borrow<Rep3MultilinearPolynomial<Fr>> + Sync,
         N: Rep3NetworkWorker,
     {
-        let mut out = Vec::with_capacity(polys.len());
-        for p in polys {
-            let res = commit_rep3_preproc_single::<ProofTranscript, N>(
-                p.borrow(),
-                setup,
-                commit_to_public,
-                io_ctx,
-                preproc,
-            )?;
-            out.push(res);
+        let party_id = io_ctx.party_id();
+
+        // Distribute public poly commits across workers: public poly i is
+        // committed by worker (i % 3). This balances work evenly.
+        let mut public_counter = 0usize;
+        let per_poly_commit_public: Vec<bool> = polys
+            .iter()
+            .map(|p| {
+                if matches!(p.borrow(), Rep3MultilinearPolynomial::Public(_)) {
+                    let should_commit = public_counter % 3 == party_id as usize;
+                    public_counter += 1;
+                    should_commit
+                } else {
+                    false // not applicable for shared polys
+                }
+            })
+            .collect();
+
+        #[cfg(feature = "ring-msm")]
+        {
+            // Partition into RingCompact (need io_ctx/preproc) vs local-only.
+            let mut ring_idxs = Vec::new();
+            let mut local_idxs = Vec::new();
+            for (i, p) in polys.iter().enumerate() {
+                if matches!(
+                    p.borrow(),
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_))
+                ) {
+                    ring_idxs.push(i);
+                } else {
+                    local_idxs.push(i);
+                }
+            }
+
+            type CommitResult = eyre::Result<(
+                MaybeShared<DoryCommitment>,
+                MaybeShared<Vec<JoltG1Wrapper>>,
+            )>;
+
+            // rayon::join: local polys in parallel (branch A), RingCompact sequentially (branch B).
+            let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) = rayon::join(
+                || {
+                    local_idxs
+                        .par_iter()
+                        .map(|&i| {
+                            commit_local_rep3::<ProofTranscript>(
+                                polys[i].borrow(),
+                                setup,
+                                per_poly_commit_public[i],
+                            )
+                        })
+                        .collect()
+                },
+                || {
+                    ring_idxs
+                        .iter()
+                        .map(|&i| {
+                            <Self as Rep3CommitmentScheme<Fr, ProofTranscript>>::commit_rep3(
+                                polys[i].borrow(),
+                                setup,
+                                per_poly_commit_public[i],
+                                io_ctx,
+                                preproc,
+                            )
+                        })
+                        .collect()
+                },
+            );
+
+            // Merge results back into original order.
+            let mut out: Vec<Option<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>> =
+                (0..polys.len()).map(|_| None).collect();
+            for (&i, r) in local_idxs.iter().zip(local_results) {
+                out[i] = Some(r?);
+            }
+            for (&i, r) in ring_idxs.iter().zip(ring_results) {
+                out[i] = Some(r?);
+            }
+            Ok(out.into_iter().map(|o| o.unwrap()).collect())
         }
-        Ok(out)
+
+        #[cfg(not(feature = "ring-msm"))]
+        {
+            let _ = (io_ctx, preproc); // suppress unused warnings
+            polys
+                .par_iter()
+                .zip(per_poly_commit_public.par_iter())
+                .map(|(p, &commit_public)| {
+                    commit_local_rep3::<ProofTranscript>(p.borrow(), setup, commit_public)
+                })
+                .collect()
+        }
     }
 
     #[tracing::instrument(skip_all, name = "Dory::prove")]
@@ -301,9 +449,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                         rows.resize(num_rows_target, G1Projective::zero());
                         rows
                     }
-                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+                    #[cfg(feature = "ring-msm")]
+                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
                         return Err(eyre::eyre!(
-                            "Dory prove_rep3: U64Scalars requires an opening_hint (networked recompute unsupported)"
+                            "Dory prove_rep3: RingCompact requires an opening_hint (networked recompute unsupported)"
                         ));
                     }
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => one_hot
@@ -360,9 +509,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 one_hot.compute_v_vec_share(Fr::from(1u64), &l_vec, &mut v);
                 v
             }
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(_)) => {
+            #[cfg(feature = "ring-msm")]
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(_)) => {
                 return Err(eyre::eyre!(
-                    "Dory prove_rep3: U64Scalars unsupported (field-domain v_vec computation missing)"
+                    "Dory prove_rep3: RingCompact unsupported (field-domain v_vec computation missing)"
                 ));
             }
             Rep3MultilinearPolynomial::Public(_) => {
@@ -517,11 +667,11 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
         for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
             // Determine the effective hint for this polynomial.
-            // Public(None) → skip (zero hint, no-op in accumulation).
-            // Public(Some(_)) with party_id != ID0 → skip (trivial share: non-ID0 holds zero).
+            // Public(None) → skip (this worker didn't commit this public poly).
+            // Public(Some(h)) → this worker committed it; add its hint.
             let mut effective_hint = match hint {
                 MaybeShared::Shared(h) => h,
-                MaybeShared::Public(Some(h)) if party_id == PartyID::ID0 => h,
+                MaybeShared::Public(Some(h)) => h,
                 _ => continue,
             };
 
@@ -582,10 +732,11 @@ pub fn setup_g2_projective(
     }
 }
 
-/// Precompute the full Q-point array for daPoint preprocessing of U64Scalars wrap correction.
+#[cfg(feature = "ring-msm")]
+/// Precompute the full Q-point array for daPoint preprocessing of RingCompact wrap correction.
 ///
 /// Returns `2 * num_coeffs` points ordered to match consumption in
-/// `compute_row_commitment_shares_u64`: for each row, [q0_segment, q1_segment].
+/// `compute_row_commitment_shares_ring`: for each row, [q0_segment, q1_segment].
 ///
 /// Q points: `q0[c] = 2^64 * g1_vec[c]`, `q1[c] = 2 * q0[c]` for c in 0..num_columns.
 pub fn precompute_dapoint_qs(
@@ -726,14 +877,22 @@ fn compute_row_commitment_shares_a(
     row_commitments
 }
 
-// TODO: document this func step by step (see ring_shared_msm_correctness)
-fn compute_row_commitment_shares_u64<N: Rep3NetworkWorker>(
+#[cfg(feature = "ring-msm")]
+/// Compute row commitment shares for a RingCompact polynomial.
+///
+/// Public coefficients (NoOp padding, immediates) skip ring B2A, wrap extraction,
+/// and daPoint correction — only shared coefficients consume MPC preprocessing.
+fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
     poly: &Rep3CompactPolynomial,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     nu: usize,
     io_ctx: &mut IoContextPool<N>,
     preproc: &mut PreprocessingPool<Fr>,
 ) -> eyre::Result<Vec<G1Projective>> {
+    use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
+    use jolt2_common::constants::XlenInt;
+    use mpc_core::protocols::rep3_ring::casts::downcast;
+
     let sigma = DoryGlobals::get_num_columns().log_2();
     let num_columns = 1usize << sigma;
     let num_rows_target = 1usize << nu;
@@ -741,46 +900,73 @@ fn compute_row_commitment_shares_u64<N: Rep3NetworkWorker>(
     let g1_proj = &setup_g1_projective(setup)[..num_columns];
     let bases_aff = G1Projective::normalize_batch(g1_proj);
 
-    eyre::ensure!(
-        poly.shares.len() == poly.shares_bin.len(),
-        "U64Scalars: shares length mismatch"
-    );
+    let n = poly.coeffs.len();
+    if n == 0 {
+        return Ok(vec![G1Projective::zero(); num_rows_target]);
+    }
 
+    let party_id = io_ctx.main().id;
     let mut io = io_ctx.main();
 
-    // Extract wrap bits m0,m1 for each coefficient.
-    // Zero-extend u64 → U66 shares (skip u128 entirely).
-    let arith_ext: Vec<Rep3RingShare<U66>> = poly
-        .shares
-        .iter()
-        .map(|s| Rep3RingShare {
-            a: RingElement(U66::new(s.a.0 as u128)),
-            b: RingElement(U66::new(s.b.0 as u128)),
-        })
-        .collect();
-    let bin_ext: Vec<Rep3RingShare<U66>> = poly
-        .shares_bin
-        .iter()
-        .map(|s| Rep3RingShare {
-            a: RingElement(U66::new(s.a.0 as u128)),
-            b: RingElement(U66::new(s.b.0 as u128)),
-        })
-        .collect();
+    // Partition coefficients: extract shared-only binary + arithmetic shares,
+    // and build a position map from global index → shared index.
+    let mut shared_pos_map: Vec<Option<usize>> = vec![None; n];
+    let mut shared_bins: Vec<Rep3RingShare<u64>> = Vec::new();
+    let mut shared_ariths_u64: Vec<Rep3RingShare<u64>> = Vec::new();
+    for (i, coeff) in poly.coeffs.iter().enumerate() {
+        if let Rep3Operand::Shared {
+            binary, arithmetic, ..
+        } = coeff
+        {
+            shared_pos_map[i] = Some(shared_bins.len());
+            shared_bins.push(Rep3RingShare {
+                a: RingElement(binary.a.0 as u64),
+                b: RingElement(binary.b.0 as u64),
+            });
+            shared_ariths_u64.push(downcast(arithmetic.unwrap()));
+        }
+    }
+    let num_shared = shared_bins.len();
 
-    // Ring B2A via edaBits Π₂ — 2 rounds (replaces 7-round Kogge-Stone b2a_many)
-    let ring_edabits = preproc.take_ring_edabits_u66(bin_ext.len());
-    let val_arith: Vec<Rep3RingShare<U66>> =
-        rep3_ring::edabits::ring_b2a_many(&bin_ext, &ring_edabits, &mut io)?;
-    let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext
-        .iter()
-        .zip(val_arith.iter())
-        .map(|(a, v)| *a - *v)
-        .collect();
+    // Ring B2A + wrap extraction only for shared coefficients.
+    let (m0_bin, m1_bin) = if num_shared > 0 {
+        // Zero-extend shared u64 → U66.
+        let arith_ext: Vec<Rep3RingShare<U66>> = shared_ariths_u64
+            .iter()
+            .map(|s| Rep3RingShare {
+                a: RingElement(U66::new(s.a.0 as u128)),
+                b: RingElement(U66::new(s.b.0 as u128)),
+            })
+            .collect();
+        let bin_ext: Vec<Rep3RingShare<U66>> = shared_bins
+            .iter()
+            .map(|s| Rep3RingShare {
+                a: RingElement(U66::new(s.a.0 as u128)),
+                b: RingElement(U66::new(s.b.0 as u128)),
+            })
+            .collect();
 
-    // Extract m bits via DaBit mask+open (1 round)
-    let wrap_masks = preproc.take_wrap_masks(diff_u66.len());
-    let (m0_bin, m1_bin) =
-        rep3_ring::wrap_mask::extract_wrap_m2_from_diff_u66_many(&diff_u66, &wrap_masks, &mut io)?;
+        // Ring B2A via edaBits Π₂ — 2 rounds
+        let ring_edabits = preproc.take_ring_edabits_u66(num_shared);
+        let val_arith: Vec<Rep3RingShare<U66>> =
+            rep3_ring::edabits::ring_b2a_many(&bin_ext, &ring_edabits, &mut io)?;
+        let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext
+            .iter()
+            .zip(val_arith.iter())
+            .map(|(a, v)| *a - *v)
+            .collect();
+
+        // Extract m bits via DaBit mask+open (1 round)
+        let wrap_masks = preproc.take_wrap_masks(num_shared);
+        let (m0, m1) = rep3_ring::wrap_mask::extract_wrap_m2_from_diff_u66_many(
+            &diff_u66,
+            &wrap_masks,
+            &mut io,
+        )?;
+        (m0, m1)
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     // Precompute q0/q1 for all columns: q0[c] = 2^64*Γ1[c], q1[c] = 2*q0[c].
     let mut q0_cols: Vec<G1Projective> = Vec::with_capacity(num_columns);
@@ -795,140 +981,87 @@ fn compute_row_commitment_shares_u64<N: Rep3NetworkWorker>(
 
     // MSM + correction, computed per row segment.
     let mut row_commitments = vec![G1Projective::zero(); num_rows_target];
-
-    let local_len = poly.shares.len();
-    let start = 0usize;
-    let end = local_len;
-    if local_len == 0 {
-        return Ok(row_commitments);
-    }
-
-    let first_row = start / num_columns;
-    let last_row = (end - 1) / num_columns;
+    let first_row = 0;
+    let last_row = (n - 1) / num_columns;
 
     for row in first_row..=last_row {
         let row_start = row * num_columns;
         let row_end = row_start + num_columns;
-        let seg_start = start.max(row_start);
-        let seg_end = end.min(row_end);
-        let seg_len = seg_end - seg_start;
+        let seg_end = n.min(row_end);
+        let seg_len = seg_end - row_start;
         if seg_len == 0 {
             continue;
         }
-        let col_start = seg_start - row_start;
-        let local_start = seg_start - start;
+        let local_start = row_start;
 
-        // Base MSM over this party's `a`-limb arithmetic shares.
-        let scalars_u64: Vec<u64> = poly.shares[local_start..local_start + seg_len]
+        // Build MSM scalars: shared → a-limb, public → trivial share for ID0.
+        //
+        // Public values (signed immediates) must be cast through XlenInt to match
+        // the field-share representation: `F::from_i128(v as XlenInt as i128)`.
+        // This wraps negative values to their unsigned XlenInt representation
+        // (e.g. -5i128 → 4294967291u32 → 4294967291u64), which fits in u64
+        // and matches the vanilla Jolt field encoding.
+        let scalars_u64: Vec<u64> = poly.coeffs[local_start..local_start + seg_len]
             .iter()
-            .map(|s| s.a.0)
+            .map(|op| match op {
+                Rep3Operand::Shared { arithmetic, .. } => {
+                    let arith_u64: Rep3RingShare<u64> = downcast(arithmetic.unwrap());
+                    arith_u64.a.0
+                }
+                Rep3Operand::Public(v) => {
+                    if party_id == PartyID::ID0 {
+                        // Cast through XlenInt to match vanilla: `v as XlenInt as u64`
+                        (*v as XlenInt) as u64
+                    } else {
+                        0
+                    }
+                }
+            })
             .collect();
         let msm: G1Projective = ArkVariableBaseMSM::msm_u64(
-            &bases_aff[col_start..col_start + seg_len],
+            &bases_aff[..seg_len],
             &scalars_u64,
             false,
         );
 
-        // Secure wrap correction using secret bits m0,m1.
-        let mut bits_all: Vec<Rep3RingShare<Bit>> = Vec::with_capacity(2 * seg_len);
-        bits_all.extend_from_slice(&m0_bin[local_start..local_start + seg_len]);
-        bits_all.extend_from_slice(&m1_bin[local_start..local_start + seg_len]);
-
-        let mut q_all: Vec<G1Projective> = Vec::with_capacity(2 * seg_len);
-        q_all.extend_from_slice(&q0_cols[col_start..col_start + seg_len]);
-        q_all.extend_from_slice(&q1_cols[col_start..col_start + seg_len]);
-
+        // daPoint correction only for shared coefficients in this segment.
+        // Take daPoints for ALL positions in the segment (matching the offline
+        // precompute_dapoint_qs order: all m0/q0 first, then all m1/q1),
+        // then select only the shared-position entries for the dot product.
         let batch = preproc.take_dapoints(2 * seg_len);
-        let corr_add =
-            rep3_ring::daPoint::dot_product_dapoints(&bits_all, &q_all, &batch, &mut io)?;
+        let mut bits_all: Vec<Rep3RingShare<Bit>> = Vec::new();
+        let mut q_all: Vec<G1Projective> = Vec::new();
+        let mut dp_selected: Vec<usize> = Vec::new();
+        for seg_i in 0..seg_len {
+            if let Some(shared_idx) = shared_pos_map[local_start + seg_i] {
+                bits_all.push(m0_bin[shared_idx]);
+                q_all.push(q0_cols[seg_i]);
+                dp_selected.push(seg_i);
+            }
+        }
+        for seg_i in 0..seg_len {
+            if let Some(shared_idx) = shared_pos_map[local_start + seg_i] {
+                bits_all.push(m1_bin[shared_idx]);
+                q_all.push(q1_cols[seg_i]);
+                dp_selected.push(seg_len + seg_i);
+            }
+        }
 
-        if row < row_commitments.len() {
-            row_commitments[row] += msm - corr_add;
+        if !bits_all.is_empty() {
+            let filtered_batch = batch.select(&dp_selected);
+            let corr_add =
+                rep3_ring::daPoint::dot_product_dapoints(&bits_all, &q_all, &filtered_batch, &mut io)?;
+            if row < row_commitments.len() {
+                row_commitments[row] += msm - corr_add;
+            }
+        } else if row < row_commitments.len() {
+            row_commitments[row] += msm;
         }
     }
 
     Ok(row_commitments)
 }
 
-fn commit_rep3_preproc_single<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
-    poly: &Rep3MultilinearPolynomial<Fr>,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-    commit_to_public: bool,
-    io_ctx: &mut IoContextPool<N>,
-    preproc: &mut PreprocessingPool<Fr>,
-) -> eyre::Result<(
-    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
-    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
-)> {
-    match poly {
-        Rep3MultilinearPolynomial::Public(poly) => {
-            if commit_to_public {
-                let (c, hint) = <DoryCommitmentScheme as CommitmentScheme>::commit(poly, setup);
-                Ok((
-                    MaybeShared::Public(Some(c)),
-                    MaybeShared::Public(Some(hint)),
-                ))
-            } else {
-                Ok((MaybeShared::Public(None), MaybeShared::Public(None)))
-            }
-        }
-        Rep3MultilinearPolynomial::Shared(shared_poly) => {
-            let sigma = DoryGlobals::get_num_columns().log_2();
-            let num_columns = DoryGlobals::get_num_columns();
-
-            let (num_vars, row_commitments_share) = match shared_poly {
-                Rep3SharedPoly::Dense(poly) => {
-                    let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-                    (
-                        poly.get_num_vars(),
-                        compute_row_commitment_shares_a(poly, setup, nu),
-                    )
-                }
-                Rep3SharedPoly::OneHot(poly) => {
-                    let g1_proj = &setup_g1_projective(setup)[..num_columns];
-                    let bases = G1Projective::normalize_batch(g1_proj);
-                    let rows = poly
-                        .commit_rows::<G1Projective>(&bases)
-                        .expect("OneHot commit_rows preconditions met");
-                    (poly.get_num_vars(), rows)
-                }
-                Rep3SharedPoly::U64Scalars(poly_u64) => {
-                    let nu = dory::vmv::compute_nu(poly_u64.get_num_vars(), sigma);
-                    let rows =
-                        compute_row_commitment_shares_u64(poly_u64, setup, nu, io_ctx, preproc)?;
-                    (poly_u64.get_num_vars(), rows)
-                }
-                Rep3SharedPoly::RLC(_) => {
-                    unreachable!("RLC polynomials should not be committed directly")
-                }
-            };
-
-            let nu = dory::vmv::compute_nu(num_vars, sigma);
-            let num_rows_target = 1usize << nu;
-
-            let mut row_commitments = row_commitments_share;
-            row_commitments.resize(num_rows_target, G1Projective::zero());
-
-            let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
-
-            let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
-            let g2_aff = G2Projective::normalize_batch(g2_proj);
-
-            let commitment_share = Bn254::multi_pairing(&row_commitments_aff, &g2_aff);
-
-            // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
-            let hint_share: Vec<JoltG1Wrapper> = unsafe {
-                let mut v = std::mem::ManuallyDrop::new(row_commitments);
-                Vec::from_raw_parts(v.as_mut_ptr() as *mut JoltG1Wrapper, v.len(), v.capacity())
-            };
-
-            Ok((
-                MaybeShared::Shared(DoryCommitment(commitment_share.into())),
-                MaybeShared::Shared(hint_share),
-            ))
-        }
-    }
-}
 
 /// MSM with projective bases (normalizes to affine internally).
 pub fn msm_g1(bases: &[G1Projective], scalars: &[Fr]) -> G1Projective {
@@ -1126,23 +1259,23 @@ mod tests {
         // Rep3 commit shares (each party commits to its local share.a coefficients).
         let shared_polys = share_poly_rep3(&coeffs, &mut rng);
         let (comm_0, hint_0) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+            commit_local_rep3::<Blake2bTranscript>(
                 &Rep3MultilinearPolynomial::shared(shared_polys[0].clone()),
                 &setup,
                 false,
-            );
+            ).unwrap();
         let (comm_1, hint_1) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+            commit_local_rep3::<Blake2bTranscript>(
                 &Rep3MultilinearPolynomial::shared(shared_polys[1].clone()),
                 &setup,
                 false,
-            );
+            ).unwrap();
         let (comm_2, hint_2) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
+            commit_local_rep3::<Blake2bTranscript>(
                 &Rep3MultilinearPolynomial::shared(shared_polys[2].clone()),
                 &setup,
                 false,
-            );
+            ).unwrap();
 
         let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
             Fr,
@@ -1224,27 +1357,27 @@ mod tests {
             Rep3MultilinearPolynomial::shared_one_hot(one_hot)
         });
 
-        let (comm_0, hint_0) = <DoryCommitmentScheme as Rep3CommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::commit_rep3(&rep3_polys[0], &setup, false);
-        let (comm_1, hint_1) = <DoryCommitmentScheme as Rep3CommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::commit_rep3(&rep3_polys[1], &setup, false);
-        let (comm_2, hint_2) = <DoryCommitmentScheme as Rep3CommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::commit_rep3(&rep3_polys[2], &setup, false);
+        let (comm_0, hint_0) =
+            commit_local_rep3::<Blake2bTranscript>(
+                &rep3_polys[0], &setup, false,
+            ).unwrap();
+        let (comm_1, hint_1) =
+            commit_local_rep3::<Blake2bTranscript>(
+                &rep3_polys[1], &setup, false,
+            ).unwrap();
+        let (comm_2, hint_2) =
+            commit_local_rep3::<Blake2bTranscript>(
+                &rep3_polys[2], &setup, false,
+            ).unwrap();
 
-        let reconstructed_commitment = <DoryCommitmentScheme as Rep3CommitmentScheme<
+        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
             Fr,
             Blake2bTranscript,
         >>::combine_commitment_shares(&[
             &comm_0, &comm_1, &comm_2,
         ]);
 
-        let reconstructed_hint = <DoryCommitmentScheme as Rep3CommitmentScheme<
+        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
             Fr,
             Blake2bTranscript,
         >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
@@ -1271,16 +1404,12 @@ mod tests {
         let poly = Rep3MultilinearPolynomial::public(public_poly.clone());
 
         let (c0, h0) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &poly, &setup, false,
-            );
+            commit_local_rep3::<Blake2bTranscript>(&poly, &setup, false).unwrap();
         assert!(matches!(c0, MaybeShared::Public(None)));
         assert!(matches!(h0, MaybeShared::Public(None)));
 
         let (c1, h1) =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &poly, &setup, true,
-            );
+            commit_local_rep3::<Blake2bTranscript>(&poly, &setup, true).unwrap();
         let (vanilla_commitment, vanilla_hint) =
             <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
 
@@ -1319,20 +1448,15 @@ mod tests {
 
         let polys = vec![public_poly, shared_poly];
 
-        let batch = <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::batch_commit_rep3(
-            &polys,
-            &setup,
-            true,
-        );
+        // For Dense/Public polys without RingCompact, verify batch == single
+        // via individual commit_local_rep3 calls.
+        let batch: Vec<_> = polys
+            .iter()
+            .map(|p| commit_local_rep3::<Blake2bTranscript>(p, &setup, true).unwrap())
+            .collect();
 
-        let single_0 =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &polys[0], &setup, true,
-            );
-        let single_1 =
-            <DoryCommitmentScheme as Rep3CommitmentScheme<Fr, Blake2bTranscript>>::commit_rep3(
-                &polys[1], &setup, true,
-            );
+        let single_0 = commit_local_rep3::<Blake2bTranscript>(&polys[0], &setup, true).unwrap();
+        let single_1 = commit_local_rep3::<Blake2bTranscript>(&polys[1], &setup, true).unwrap();
 
         fn assert_commit_and_hint_eq(
             a: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
@@ -1383,63 +1507,188 @@ mod tests {
             <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
         vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
-        // Share each u64 value in both arithmetic and XOR ring forms.
+        // Share each value in both arithmetic (ArithmeticWideInt) and XOR (XlenInt) ring forms.
+        use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<_> = values
             .iter()
-            .map(|&v| rep3_ring::arithmetic::generate_shares_rep3::<u64, _>(v, &mut rng))
+            .map(|&v| rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(v as ArithmeticWideInt, &mut rng))
             .collect();
         let all_bin_shares: Vec<_> = values
             .iter()
-            .map(|&v| rep3_ring::binary::generate_shares_rep3::<u64, _>(v, &mut rng))
+            .map(|&v| rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng))
             .collect();
 
         let polys_by_party: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
-            let shares: Vec<Rep3RingShare<u64>> = all_arith_shares.iter().map(|s| s[pid]).collect();
-            let shares_bin: Vec<Rep3RingShare<u64>> =
+            let shares: Vec<Rep3RingShare<ArithmeticWideInt>> = all_arith_shares.iter().map(|s| s[pid]).collect();
+            let shares_bin: Vec<Rep3RingShare<XlenInt>> =
                 all_bin_shares.iter().map(|s| s[pid]).collect();
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::U64Scalars(
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(
                 Rep3CompactPolynomial::from_shares(shares, shares_bin),
             ))
         });
 
-        let (results, _) = run_rep3_local_test_with_coordinator(
-            0,
-            |party_idx| polys_by_party[party_idx].clone(),
-            || (),
-            move |poly, mut io_ctx| {
-                use mpc_core::protocols::rep3_ring::edabits;
+        let (results, _) =
+            run_rep3_local_test_with_coordinator(
+                0,
+                |party_idx| polys_by_party[party_idx].clone(),
+                || (),
+                move |poly, mut io_ctx| {
+                    use mpc_core::protocols::rep3_ring::edabits;
 
-                let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+                    let mut preproc =
+                        edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
 
-                // daPoints for Dory wrap correction (offline preprocessing)
-                let qs = precompute_dapoint_qs(&setup, len, num_columns);
-                let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
-                preproc.set_dapoints(lazy_dp);
+                    // daPoints for Dory wrap correction (offline preprocessing)
+                    let qs = precompute_dapoint_qs(&setup, len, num_columns);
+                    let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                    preproc.set_dapoints(lazy_dp);
 
-                // Wrap masks for DaBit-based wrap-m extraction (offline)
-                let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(len, io_ctx.main())?;
-                preproc.set_wrap_masks(wm);
+                    // Wrap masks for DaBit-based wrap-m extraction (offline)
+                    let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(len, io_ctx.main())?;
+                    preproc.set_wrap_masks(wm);
 
-                // Ring edaBits (U66) for ring-domain B2A (offline)
-                let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(len, &mut io_ctx)?;
-                preproc.set_ring_edabits_u66(ring_eb);
+                    // Ring edaBits (U66) for ring-domain B2A (offline)
+                    let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(len, &mut io_ctx)?;
+                    preproc.set_ring_edabits_u66(ring_eb);
 
-                let polys = vec![&poly];
-                let out = <DoryCommitmentScheme as Rep3CommitmentScheme<
-                    Fr,
-                    Blake2bTranscript,
-                >>::batch_commit_rep3_preproc(
-                        &polys,
-                        &setup,
-                        false,
-                        &mut io_ctx,
-                        &mut preproc,
+                    let polys = vec![&poly];
+                    let out = <DoryCommitmentScheme as Rep3CommitmentScheme<
+                        Fr,
+                        Blake2bTranscript,
+                    >>::batch_commit_rep3(
+                        &polys, &setup, &mut io_ctx, &mut preproc
                     )?;
-                Ok(out[0].clone())
-            },
-            |(), _net| Ok(()),
-        );
+                    Ok(out[0].clone())
+                },
+                |(), _net| Ok(()),
+            );
+
+        let (c0, h0) = results[0].clone();
+        let (c1, h1) = results[1].clone();
+        let (c2, h2) = results[2].clone();
+
+        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_commitment_shares(&[&c0, &c1, &c2]);
+
+        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::combine_hint_shares(&[&h0, &h1, &h2]);
+
+        assert_eq!(reconstructed_commitment, vanilla_commitment);
+        assert_eq!(reconstructed_hint, vanilla_hint);
+    }
+
+    /// Same as `dory_u64_scalars_commit_correct` but with mixed Public + Shared operands.
+    /// Exercises the daPoint Q-value alignment when public positions are skipped.
+    #[test]
+    fn dory_u64_scalars_mixed_public_shared_commit_correct() {
+        use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
+        use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+
+        let mut rng = test_rng();
+
+        let num_vars = 6;
+        crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
+        let num_columns = DoryGlobals::get_num_columns();
+        let sigma = num_columns.log_2();
+        let num_rows = DoryGlobals::get_max_num_rows();
+
+        let len = 1usize << num_vars;
+        // Every other value is public (even indices), the rest are shared.
+        let values: Vec<u64> = (0..len).map(|_| rng.gen()).collect();
+        let is_public: Vec<bool> = (0..len).map(|i| i % 2 == 0).collect();
+        let coeffs_fr: Vec<Fr> = values.iter().copied().map(Fr::from).collect();
+
+        let setup =
+            <DoryCommitmentScheme as CommitmentScheme>::setup_prover((2 * sigma).max(num_vars));
+
+        let public_poly = MultilinearPolynomial::from(coeffs_fr.clone());
+        let (vanilla_commitment, mut vanilla_hint) =
+            <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
+        vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
+
+        // Share shared values in both arithmetic and XOR ring forms.
+        use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
+        let all_arith_shares: Vec<Option<Vec<Rep3RingShare<ArithmeticWideInt>>>> = values
+            .iter()
+            .zip(is_public.iter())
+            .map(|(&v, &pub_)| {
+                if pub_ {
+                    None
+                } else {
+                    Some(rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(v as ArithmeticWideInt, &mut rng))
+                }
+            })
+            .collect();
+        let all_bin_shares: Vec<Option<Vec<Rep3RingShare<XlenInt>>>> = values
+            .iter()
+            .zip(is_public.iter())
+            .map(|(&v, &pub_)| {
+                if pub_ {
+                    None
+                } else {
+                    Some(rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng))
+                }
+            })
+            .collect();
+
+        let polys_by_party: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
+            let operands: Vec<Rep3Operand> = (0..len)
+                .map(|i| {
+                    if is_public[i] {
+                        Rep3Operand::Public(values[i] as i128)
+                    } else {
+                        let arith = all_arith_shares[i].as_ref().unwrap()[pid];
+                        let bin = all_bin_shares[i].as_ref().unwrap()[pid];
+                        Rep3Operand::Shared {
+                            binary: bin,
+                            arithmetic: Some(arith),
+                            public: None,
+                        }
+                    }
+                })
+                .collect();
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingCompact(
+                Rep3CompactPolynomial::from_operands(operands),
+            ))
+        });
+
+        let (results, _) =
+            run_rep3_local_test_with_coordinator(
+                0,
+                |party_idx| polys_by_party[party_idx].clone(),
+                || (),
+                move |poly, mut io_ctx| {
+                    use mpc_core::protocols::rep3_ring::edabits;
+
+                    let mut preproc =
+                        edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+
+                    // daPoints for ALL positions (matching precompute_dapoint_qs order)
+                    let qs = precompute_dapoint_qs(&setup, len, num_columns);
+                    let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                    preproc.set_dapoints(lazy_dp);
+
+                    let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(len, io_ctx.main())?;
+                    preproc.set_wrap_masks(wm);
+
+                    let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(len, &mut io_ctx)?;
+                    preproc.set_ring_edabits_u66(ring_eb);
+
+                    let polys = vec![&poly];
+                    let out = <DoryCommitmentScheme as Rep3CommitmentScheme<
+                        Fr,
+                        Blake2bTranscript,
+                    >>::batch_commit_rep3(
+                        &polys, &setup, &mut io_ctx, &mut preproc
+                    )?;
+                    Ok(out[0].clone())
+                },
+                |(), _net| Ok(()),
+            );
 
         let (c0, h0) = results[0].clone();
         let (c1, h1) = results[1].clone();
