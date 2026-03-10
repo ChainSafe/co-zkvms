@@ -111,13 +111,30 @@ pub struct NetworkWorkerConfig {
     pub cert_path: PathBuf,
 }
 
+/// Protocol used for the worker↔coordinator connection.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum CoordinatorProtocol {
+    /// QUIC transport (default). Requires `cert_path` for pre-shared coordinator cert.
+    #[default]
+    Quic,
+    /// Raw TLS over TCP. Used in TEE mode where the coordinator has an ephemeral cert
+    /// verified via attestation. `cert_path` is not required.
+    Tls,
+}
+
 /// A coordinator in the network config file.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct NetworkCoordinatorConfig {
     /// The DNS name of the party.
     pub dns_name: Address,
+    /// Protocol for the coordinator connection.
+    #[serde(default)]
+    pub protocol: CoordinatorProtocol,
     /// The path to the public certificate of the party.
-    pub cert_path: PathBuf,
+    /// Required for QUIC mode, optional for TLS/TEE mode.
+    #[serde(default)]
+    pub cert_path: Option<PathBuf>,
 }
 
 /// A party in the network.
@@ -131,6 +148,8 @@ pub struct NetworkParty {
     pub dns_name: Address,
     /// The public certificate of the party.
     pub cert: CertificateDer<'static>,
+    /// Connection protocol (only meaningful for coordinators).
+    pub protocol: CoordinatorProtocol,
 }
 
 impl NetworkParty {
@@ -141,6 +160,7 @@ impl NetworkParty {
             worker,
             dns_name: address,
             cert,
+            protocol: CoordinatorProtocol::default(),
         }
     }
 }
@@ -154,6 +174,7 @@ impl TryFrom<NetworkWorkerConfig> for NetworkParty {
             worker: value.worker,
             dns_name: value.dns_name,
             cert,
+            protocol: CoordinatorProtocol::default(),
         })
     }
 }
@@ -161,12 +182,16 @@ impl TryFrom<NetworkWorkerConfig> for NetworkParty {
 impl TryFrom<NetworkCoordinatorConfig> for NetworkParty {
     type Error = std::io::Error;
     fn try_from(value: NetworkCoordinatorConfig) -> Result<Self, Self::Error> {
-        let cert = CertificateDer::from(std::fs::read(value.cert_path)?).into_owned();
+        let cert = match value.cert_path {
+            Some(path) => CertificateDer::from(std::fs::read(path)?).into_owned(),
+            None => CertificateDer::from(vec![]),
+        };
         Ok(NetworkParty {
             id: usize::MAX,
             worker: usize::MAX,
             dns_name: value.dns_name,
             cert,
+            protocol: value.protocol,
         })
     }
 }
@@ -371,7 +396,8 @@ impl NetworkConfig {
         ];
         let coordinator = NetworkCoordinatorConfig {
             dns_name: "localhost:20000".parse().unwrap(),
-            cert_path: format!("{data_dir}/cert_coordinator.der").into(),
+            protocol: CoordinatorProtocol::default(),
+            cert_path: Some(format!("{data_dir}/cert_coordinator.der").into()),
         };
         let mut workers = BTreeMap::new();
 

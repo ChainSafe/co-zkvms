@@ -10,6 +10,11 @@ license.workspace = true
 name = "coordinator"
 path = "src/bin/coordinator.rs"
 
+[[bin]]
+name = "host_proxy"
+path = "src/bin/host_proxy.rs"
+required-features = ["aws_nitro"]
+
 [dependencies]
 mpc-core = { path = "../mpc-core" }
 mpc-net = { path = "../mpc-net" }

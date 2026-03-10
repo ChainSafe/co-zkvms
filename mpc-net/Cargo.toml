@@ -45,3 +45,4 @@ mpi = { version = "0.7.0", features = [
 default = ["quic"]
 mpi = ["dep:mpi"]
 quic = ["dep:quinn", "dep:tokio", "dep:tokio-util"]
+tls = []

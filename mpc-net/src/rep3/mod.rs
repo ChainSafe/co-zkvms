@@ -8,6 +8,9 @@ pub mod mpi;
 #[cfg(feature = "quic")]
 pub mod quic;
 
+#[cfg(feature = "tls")]
+pub mod tls;
+
 pub type WorkerID = usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]

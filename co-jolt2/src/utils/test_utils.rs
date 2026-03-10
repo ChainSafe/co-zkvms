@@ -35,6 +35,7 @@ fn build_test_configs(base_port: u16) -> [NetworkConfig; 3] {
             worker: 0,
             dns_name: Address::new("localhost".into(), base_port + i as u16),
             cert: certs_keys[i].0.clone(),
+            protocol: Default::default(),
         })
         .collect();
 
@@ -122,6 +123,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
             worker: 0,
             dns_name: Address::new("localhost".into(), base_port + i as u16),
             cert: certs_keys[i].0.clone(),
+            protocol: Default::default(),
         })
         .collect();
 
@@ -131,6 +133,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
         worker: 0,
         dns_name: Address::new("localhost".into(), base_port + 3),
         cert: certs_keys[3].0.clone(),
+        protocol: Default::default(),
     };
 
     let worker_configs: [NetworkConfig; 3] = std::array::from_fn(|i| NetworkConfig {
