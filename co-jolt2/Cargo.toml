@@ -63,7 +63,7 @@ dory.workspace = true
 
 co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 mpc-core = { path = "../mpc-core" }
-mpc-net = { path = "../mpc-net" }
+mpc-net = { path = "../mpc-net", features = ["tls"] }
 rcgen = { version = "0.13", optional = true }
 
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
@@ -75,6 +75,10 @@ rcgen = "0.13"
 
 [build-dependencies]
 jolt-common.workspace = true
+
+[[bin]]
+name = "worker"
+path = "src/bin/worker.rs"
 
 [[example]]
 name = "rep3_jolt"
@@ -98,5 +102,5 @@ reuse-preproc = ["mpc-core/reuse-preproc"]
 tracy-mem = []
 rv32 = []
 rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
-ring-msm = ["mpc-core/ring-msm"]
+ring-msm = []
 jemalloc-stats = ["dep:tikv-jemalloc-ctl"]

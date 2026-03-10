@@ -11,5 +11,6 @@
 pub mod poly;
 pub mod subprotocols;
 pub mod transport;
+pub mod types;
 pub mod utils;
 pub mod zkvm;

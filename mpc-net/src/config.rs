@@ -219,6 +219,9 @@ pub struct NetworkConfigFile {
     pub key_path: PathBuf,
     /// The connect timeout in seconds.
     pub timeout_secs: Option<u64>,
+    /// Optional TLS listen address for accepting user proof requests.
+    #[serde(default)]
+    pub user_listen_addr: Option<SocketAddr>,
 }
 
 /// The network configuration.
@@ -240,6 +243,8 @@ pub struct NetworkConfig {
     pub key: PrivateKeyDer<'static>,
     /// The connect timeout.
     pub timeout: Option<Duration>,
+    /// Optional TLS listen address for accepting user proof requests.
+    pub user_listen_addr: Option<SocketAddr>,
 }
 
 impl NetworkConfig {
@@ -261,6 +266,7 @@ impl NetworkConfig {
             bind_addr,
             key,
             timeout,
+            user_listen_addr: None,
         }
     }
 
@@ -314,6 +320,7 @@ impl TryFrom<NetworkConfigFile> for NetworkConfig {
             bind_addr: value.bind_addr,
             key,
             timeout: value.timeout_secs.map(Duration::from_secs),
+            user_listen_addr: value.user_listen_addr,
         })
     }
 }
@@ -329,6 +336,7 @@ impl Clone for NetworkConfig {
             bind_addr: self.bind_addr,
             key: self.key.clone_key(),
             timeout: self.timeout,
+            user_listen_addr: self.user_listen_addr,
         }
     }
 }
@@ -425,6 +433,7 @@ impl NetworkConfig {
                         coordinator: Some(coordinator.clone()),
                         is_coordinator: false,
                         timeout_secs: None,
+                        user_listen_addr: None,
                     },
                 );
             }
@@ -447,6 +456,7 @@ impl NetworkConfig {
                 .collect(),
             coordinator: Some(coordinator),
             timeout_secs: None,
+            user_listen_addr: None,
         };
 
         (workers, coordinator_config)
