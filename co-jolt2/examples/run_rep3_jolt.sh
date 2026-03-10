@@ -138,13 +138,10 @@ fi
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
 
-# Optionally pass --preproc-dir to workers.  Each worker stores its data in
+# Pass --preproc-dir to workers.  Each worker stores its data in
 # <PREPROC_DIR>/party_<id>/ so files from different parties don't collide.
-PREPROC_ARGS=()
-if [ -n "$PREPROC_DIR" ]; then
-  mkdir -p "$PREPROC_DIR"
-  PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
-fi
+mkdir -p "$PREPROC_DIR"
+PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
 if [ "$PREPROC_ONLY" = "1" ]; then
   PREPROC_ARGS+=(--preprocess-only true)
 fi

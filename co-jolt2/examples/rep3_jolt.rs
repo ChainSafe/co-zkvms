@@ -67,7 +67,7 @@ struct Args {
     /// On subsequent runs (requires `--features reuse-preproc`):
     /// preprocessing is skipped and data is loaded from disk.
     #[clap(short = 'p', long)]
-    preproc_dir: Option<PathBuf>,
+    preproc_dir: PathBuf,
 
     /// Preprocess only, without running the main computation.
     #[clap(short = 'P', long)]
@@ -407,8 +407,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             compute_edabit_budget(pp.trace_len)
         };
 
-        if let Some(ref base_dir) = args.preproc_dir {
-            let pool_dir = base_dir.join(format!("party_{}", my_id));
+        {
+            let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
             use mpc_core::protocols::rep3_ring::edabits;
 
             let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
@@ -491,10 +491,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             drop(pool);
             return Ok(());
         }
-
-        return Err(eyre::eyre!(
-            "preprocess-only requires --preproc-dir so alpha2/stored data can be persisted without OOM"
-        ));
     }
 
     let CoordToWorkerMsg::Full(first_payload) = first_msg else {
@@ -570,101 +566,77 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let num_dabits = budget.dabits;
         log_preproc_size_estimates(counts, num_dabits);
 
-        if let Some(ref base_dir) = args.preproc_dir {
-            let pool_dir = base_dir.join(format!("party_{}", my_id));
-            match edabits::PreprocessingPool::load(&pool_dir, party_id) {
-                Ok(mut pool) => {
-                    let (rem_eda, rem_da) = pool.remaining_counts();
-                    let deficit_counts: [usize; 5] =
-                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
-                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
-                    #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re) = (
-                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+        let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
+        match edabits::PreprocessingPool::load(&pool_dir, party_id) {
+            Ok(mut pool) => {
+                let (rem_eda, rem_da) = pool.remaining_counts();
+                let deficit_counts: [usize; 5] =
+                    std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                #[cfg(feature = "ring-msm")]
+                let (deficit_wm, deficit_re) = (
+                    budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
+                    budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                );
+
+                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                #[cfg(feature = "ring-msm")]
+                let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+
+                if need_extend {
+                    info!(
+                        "extending pool: deficit edabits={:?}, dabits={}",
+                        deficit_counts, deficit_dabits
                     );
-
-                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
-                    #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
-
-                    if need_extend {
-                        info!(
-                            "extending pool: deficit edabits={:?}, dabits={}",
-                            deficit_counts, deficit_dabits
-                        );
-                        #[cfg(not(feature = "ring-msm"))]
-                        edabits::extend_pool_batched(
-                            &mut pool,
-                            deficit_counts,
-                            deficit_dabits,
-                            &mut io_ctx,
-                        )?;
-                        #[cfg(feature = "ring-msm")]
-                        edabits::extend_pool_batched(
-                            &mut pool,
-                            deficit_counts,
-                            deficit_dabits,
-                            deficit_wm,
-                            deficit_re,
-                            &mut io_ctx,
-                        )?;
-                        match pool.save(&pool_dir) {
-                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
-                            Err(e) => {
-                                tracing::warn!("failed to save extended pool: {e}")
-                            }
-                        }
-                    } else {
-                        info!("reusing preprocessing from {:?}", pool_dir);
-                    }
-                    pool
-                }
-                Err(e) => {
-                    info!("no cached preprocessing ({e}); running preprocessing...");
                     #[cfg(not(feature = "ring-msm"))]
-                    {
-                        edabits::preprocess_pool::<F, _>(
-                            &pool_dir,
-                            counts,
-                            num_dabits,
-                            &mut io_ctx,
-                        )?
-                    }
+                    edabits::extend_pool_batched(
+                        &mut pool,
+                        deficit_counts,
+                        deficit_dabits,
+                        &mut io_ctx,
+                    )?;
                     #[cfg(feature = "ring-msm")]
-                    {
-                        edabits::preprocess_pool::<F, _>(
-                            &pool_dir,
-                            counts,
-                            num_dabits,
-                            budget.wrap_masks,
-                            budget.ring_edabits_u66,
-                            &mut io_ctx,
-                        )?
+                    edabits::extend_pool_batched(
+                        &mut pool,
+                        deficit_counts,
+                        deficit_dabits,
+                        deficit_wm,
+                        deficit_re,
+                        &mut io_ctx,
+                    )?;
+                    match pool.save(&pool_dir) {
+                        Ok(()) => info!("saved extended pool to {:?}", pool_dir),
+                        Err(e) => {
+                            tracing::warn!("failed to save extended pool: {e}")
+                        }
                     }
+                } else {
+                    info!("reusing preprocessing from {:?}", pool_dir);
                 }
+                pool
             }
-        } else {
-            let tmp = std::env::temp_dir().join(format!("co-jolt2-preproc-{}", io_ctx.party_idx()));
-            #[cfg(not(feature = "ring-msm"))]
-            {
-                edabits::preprocess_pool::<F, _>(
-                    &tmp,
-                    counts,
-                    num_dabits,
-                    &mut io_ctx,
-                )?
-            }
-            #[cfg(feature = "ring-msm")]
-            {
-                edabits::preprocess_pool::<F, _>(
-                    &tmp,
-                    counts,
-                    num_dabits,
-                    budget.wrap_masks,
-                    budget.ring_edabits_u66,
-                    &mut io_ctx,
-                )?
+            Err(e) => {
+                info!("no cached preprocessing ({e}); running preprocessing...");
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        &mut io_ctx,
+                    )?
+                }
+                #[cfg(feature = "ring-msm")]
+                {
+                    edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        budget.wrap_masks,
+                        budget.ring_edabits_u66,
+                        &mut io_ctx,
+                    )?
+                }
             }
         }
     };

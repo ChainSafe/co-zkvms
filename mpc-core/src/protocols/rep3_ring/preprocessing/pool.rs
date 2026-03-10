@@ -197,7 +197,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     ///
     /// Returns an error if `T` is not one of u8, u16, u32, u64, u128, or if
     /// there are not enough edaBits remaining.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), level = "trace")]
     pub fn take_edabits<T: IntRing2k>(&mut self, n: usize) -> eyre::Result<EdaBitsBatch<T, F>>
     where
         Standard: Distribution<T>,

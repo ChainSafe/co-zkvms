@@ -88,10 +88,7 @@ pub fn commit_local_rep3<ProofTranscript: Transcript>(
             let (num_vars, row_commitments_share) = match shared_poly {
                 Rep3SharedPoly::Dense(poly) => {
                     let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-                    (
-                        poly.get_num_vars(),
-                        compute_row_commitment_shares_a(poly, setup, nu),
-                    )
+                    (poly.get_num_vars(), compute_rows_field(poly, setup, nu))
                 }
                 Rep3SharedPoly::OneHot(poly) => {
                     let g1_proj = &setup_g1_projective(setup)[..num_columns];
@@ -108,6 +105,81 @@ pub fn commit_local_rep3<ProofTranscript: Transcript>(
             };
             rows_to_commitment(row_commitments_share, num_vars, sigma, setup)
         }
+    }
+}
+
+/// Intermediate result from Phase 1 (row computation) of two-phase batch commit.
+enum CommitRows {
+    /// Public poly: already fully committed (or skipped by this party).
+    Public(Option<(DoryCommitment, Vec<JoltG1Wrapper>)>),
+    /// Shared poly: row commitments computed, needs pairing in Phase 2.
+    Rows {
+        num_vars: usize,
+        rows: Vec<G1Projective>,
+    },
+}
+
+/// Phase 1: compute row commitments for a local (non-CompactRing) polynomial.
+/// Returns a `LocalRowResult` without doing the pairing.
+fn compute_rows_local(
+    poly: &Rep3MultilinearPolynomial<Fr>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    bases: &[G1Affine],
+    sigma: usize,
+    commit_to_public: bool,
+) -> CommitRows {
+    match poly {
+        Rep3MultilinearPolynomial::Public(poly) => {
+            if commit_to_public {
+                let _span = tracing::trace_span!("commit_public").entered();
+                let (c, hint) = commit_public(poly, setup);
+                CommitRows::Public(Some((c, hint)))
+            } else {
+                CommitRows::Public(None)
+            }
+        }
+        Rep3MultilinearPolynomial::Shared(shared_poly) => {
+            assert!(
+                !matches!(shared_poly, Rep3SharedPoly::CompactRing(_)),
+                "compute_rows_local called on CompactRing poly"
+            );
+            let (num_vars, rows) = match shared_poly {
+                Rep3SharedPoly::Dense(poly) => {
+                    let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+                    (poly.get_num_vars(), compute_rows_field(poly, setup, nu))
+                }
+                Rep3SharedPoly::OneHot(poly) => {
+                    let rows = poly
+                        .commit_rows::<G1Projective>(bases)
+                        .expect("OneHot commit_rows preconditions met");
+                    (poly.get_num_vars(), rows)
+                }
+                Rep3SharedPoly::CompactRing(_) => unreachable!(),
+                Rep3SharedPoly::RLC(_) => {
+                    unreachable!("RLC polynomials should not be committed directly")
+                }
+            };
+            CommitRows::Rows { num_vars, rows }
+        }
+    }
+}
+
+/// Phase 2: finalize a `LocalRowResult` by running `rows_to_commitment` (pairing).
+fn finalize_row_result(
+    result: CommitRows,
+    sigma: usize,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> eyre::Result<(
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
+)> {
+    match result {
+        CommitRows::Public(Some((c, hint))) => Ok((
+            MaybeShared::Public(Some(c)),
+            MaybeShared::Public(Some(hint)),
+        )),
+        CommitRows::Public(None) => Ok((MaybeShared::Public(None), MaybeShared::Public(None))),
+        CommitRows::Rows { num_vars, rows } => rows_to_commitment(rows, num_vars, sigma, setup),
     }
 }
 
@@ -129,10 +201,7 @@ fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
     let (num_vars, row_commitments_share) = match shared_poly {
         Rep3SharedPoly::Dense(poly) => {
             let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
-            (
-                poly.get_num_vars(),
-                compute_row_commitment_shares_a(poly, setup, nu),
-            )
+            (poly.get_num_vars(), compute_rows_field(poly, setup, nu))
         }
         Rep3SharedPoly::OneHot(poly) => {
             let g1_proj = &setup_g1_projective(setup)[..num_columns];
@@ -145,7 +214,7 @@ fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
         #[cfg(feature = "ring-msm")]
         Rep3SharedPoly::CompactRing(poly_ring) => {
             let nu = dory::vmv::compute_nu(poly_ring.get_num_vars(), sigma);
-            let rows = compute_row_commitment_shares_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
+            let rows = compute_rows_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
             (poly_ring.get_num_vars(), rows)
         }
         #[cfg(not(feature = "ring-msm"))]
@@ -229,7 +298,6 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         match poly {
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
-                    let _span = tracing::trace_span!("commit_public").entered();
                     let (c, hint) = commit_public(poly, setup);
                     Ok((
                         MaybeShared::Public(Some(c)),
@@ -298,18 +366,33 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             type CommitResult =
                 eyre::Result<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>;
 
-            // rayon::join: local polys in parallel (branch A), U64Scalars sequentially (branch B).
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let num_columns = DoryGlobals::get_num_columns();
+            let g1_proj = &setup_g1_projective(setup)[..num_columns];
+            let bases = G1Projective::normalize_batch(g1_proj);
+
+            // rayon::join: local polys two-phase parallel (branch A),
+            // U64Scalars sequentially (branch B).
             let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) = rayon::join(
                 || {
-                    local_idxs
+                    // Phase 1: compute row commitments for all local polys in parallel.
+                    let row_results: Vec<CommitRows> = local_idxs
                         .par_iter()
                         .map(|&i| {
-                            commit_local_rep3::<ProofTranscript>(
+                            compute_rows_local(
                                 polys[i].borrow(),
                                 setup,
+                                &bases,
+                                sigma,
                                 per_poly_commit_public[i],
                             )
                         })
+                        .collect();
+
+                    // Phase 2: rows_to_commitment (pairing) for all local polys in parallel.
+                    row_results
+                        .into_par_iter()
+                        .map(|r| finalize_row_result(r, sigma, setup))
                         .collect()
                 },
                 || {
@@ -344,12 +427,24 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
         #[cfg(not(feature = "ring-msm"))]
         {
             let _ = (io_ctx, preproc); // suppress unused warnings
-            polys
+            let sigma = DoryGlobals::get_num_columns().log_2();
+            let num_columns = DoryGlobals::get_num_columns();
+            let g1_proj = &setup_g1_projective(setup)[..num_columns];
+            let bases = G1Projective::normalize_batch(g1_proj);
+
+            // Phase 1: compute row commitments for all polys in parallel.
+            let row_results: Vec<CommitRows> = polys
                 .par_iter()
                 .zip(per_poly_commit_public.par_iter())
-                .map(|(p, &commit_public)| {
-                    commit_local_rep3::<ProofTranscript>(p.borrow(), setup, commit_public)
+                .map(|(p, &do_commit_public)| {
+                    compute_rows_local(p.borrow(), setup, &bases, sigma, do_commit_public)
                 })
+                .collect();
+
+            // Phase 2: rows_to_commitment (pairing) for all polys in parallel.
+            row_results
+                .into_par_iter()
+                .map(|r| finalize_row_result(r, sigma, setup))
                 .collect()
         }
     }
@@ -420,7 +515,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
                 let g1_col_affine = &g1_affine_all[..num_columns];
                 match poly {
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
-                        let mut rows = compute_row_commitment_shares_a(dense, setup, nu);
+                        let mut rows = compute_rows_field(dense, setup, nu);
                         rows.resize(num_rows_target, G1Projective::zero());
                         rows
                     }
@@ -709,7 +804,7 @@ pub fn setup_g2_projective(
 /// Precompute the full Q-point array for daPoint preprocessing of U64Scalars wrap correction.
 ///
 /// Returns `2 * num_coeffs` points ordered to match consumption in
-/// `compute_row_commitment_shares_ring`: for each row, [q0_segment, q1_segment].
+/// `compute_rows_ring`: for each row, [q0_segment, q1_segment].
 ///
 /// Q points: `q0[c] = 2^64 * g1_vec[c]`, `q1[c] = 2 * q0[c]` for c in 0..num_columns.
 #[tracing::instrument(skip_all)]
@@ -753,7 +848,7 @@ fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
     (global_offset, local)
 }
 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, level = "trace")]
 fn commit_public(
     poly: &jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
@@ -800,8 +895,8 @@ fn commit_public(
     (DoryCommitment(commitment_share.into()), row_commitments)
 }
 
-#[tracing::instrument(skip_all, name = "dense::commit_rows", level = "trace")]
-fn compute_row_commitment_shares_a(
+#[tracing::instrument(skip_all, name = "dense::commit_rows_field", level = "trace")]
+fn compute_rows_field(
     poly: &Rep3DensePolynomial<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     nu: usize,
@@ -828,26 +923,30 @@ fn compute_row_commitment_shares_a(
     let first_row = start / num_columns;
     let last_row = (end - 1) / num_columns;
 
-    for row in first_row..=last_row {
-        let row_start = row * num_columns;
-        let row_end = row_start + num_columns;
-        let seg_start = start.max(row_start);
-        let seg_end = end.min(row_end);
-        let seg_len = seg_end - seg_start;
-        if seg_len == 0 {
-            continue;
-        }
-        let col_start = seg_start - row_start;
-        let local_start = seg_start - start;
+    let segment: Vec<G1Projective> = (first_row..=last_row)
+        .into_par_iter()
+        .map(|row| {
+            let row_start = row * num_columns;
+            let row_end = row_start + num_columns;
+            let seg_start = start.max(row_start);
+            let seg_end = end.min(row_end);
+            let seg_len = seg_end - seg_start;
+            if seg_len == 0 {
+                return G1Projective::zero();
+            }
+            let col_start = seg_start - row_start;
+            let local_start = seg_start - start;
 
-        let scalars = &local_coeffs[local_start..local_start + seg_len];
-        let msm: G1Projective =
+            let scalars = &local_coeffs[local_start..local_start + seg_len];
             ArkVariableBaseMSM::msm(&bases[col_start..col_start + seg_len], scalars)
-                .expect("row segment MSM should succeed");
-        if row < row_commitments.len() {
-            row_commitments[row] += msm;
-        }
-    }
+                .expect("row segment MSM should succeed")
+        })
+        .collect();
+
+    row_commitments[first_row..=last_row]
+        .iter_mut()
+        .zip(segment)
+        .for_each(|(dst, src)| *dst = src);
 
     row_commitments
 }
@@ -858,7 +957,7 @@ fn compute_row_commitment_shares_a(
 /// Public coefficients (NoOp padding, immediates) skip ring B2A, wrap extraction,
 /// and daPoint correction — only shared coefficients consume MPC preprocessing.
 #[tracing::instrument(skip_all, name = "dense::commit_rows_ring", level = "trace")]
-fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
+fn compute_rows_ring<N: Rep3NetworkWorker>(
     poly: &Rep3CompactPolynomial,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     nu: usize,
@@ -1508,9 +1607,16 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
-                let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, &mut io_ctx)?;
+                let pool_dir =
+                    std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
+                let mut preproc = edabits::preprocess_pool::<Fr, _>(
+                    &pool_dir,
+                    [0, 0, 0, 0, 0],
+                    0,
+                    len,
+                    len,
+                    &mut io_ctx,
+                )?;
 
                 // daPoints for Dory wrap correction (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
@@ -1635,9 +1741,16 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
-                let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, &mut io_ctx)?;
+                let pool_dir = std::env::temp_dir()
+                    .join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
+                let mut preproc = edabits::preprocess_pool::<Fr, _>(
+                    &pool_dir,
+                    [0, 0, 0, 0, 0],
+                    0,
+                    len,
+                    len,
+                    &mut io_ctx,
+                )?;
 
                 // daPoints (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);

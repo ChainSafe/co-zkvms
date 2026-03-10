@@ -303,7 +303,7 @@ mod tests {
             || (),
             |qs, mut io_ctx| {
                 let mut lazy = random_dapoints(&qs, &mut io_ctx)?;
-                let batch = lazy.take_batch(qs.len());
+                let batch = lazy.take_batch(qs.len())?;
                 Ok((batch.gammas, batch.alphas))
             },
             |(), _net| Ok(()),
@@ -451,7 +451,7 @@ mod tests {
             || (),
             |(bits, qs), mut io_ctx| {
                 let mut lazy = random_dapoints(&qs, &mut io_ctx)?;
-                let batch = lazy.take_batch(qs.len());
+                let batch = lazy.take_batch(qs.len())?;
                 dot_product_dapoints(&bits, &qs, &batch, io_ctx.main())
             },
             |(), _net| Ok(()),
@@ -499,7 +499,7 @@ mod tests {
             || (),
             |(bits, qs), mut io_ctx| {
                 let mut lazy = random_dapoints(&qs, &mut io_ctx)?;
-                let batch = lazy.take_batch(qs.len());
+                let batch = lazy.take_batch(qs.len())?;
                 dot_product_dapoints(&bits, &qs, &batch, io_ctx.main())
             },
             |(), _net| Ok(()),
@@ -545,7 +545,7 @@ mod tests {
             || (),
             |(bits, qs), mut io_ctx| {
                 let mut lazy = random_dapoints(&qs, &mut io_ctx)?;
-                let batch = lazy.take_batch(qs.len());
+                let batch = lazy.take_batch(qs.len())?;
                 dot_product_dapoints(&bits, &qs, &batch, io_ctx.main())
             },
             |(), _net| Ok(()),
