@@ -69,30 +69,10 @@ impl JoltDAG {
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .collect();
-        let mut stage2_instances = stage2_instances;
-        if let Some(limit) = std::env::var("CO_JOLT2_STAGE2_LIMIT")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-        {
-            stage2_instances.truncate(limit.min(stage2_instances.len()));
-        }
         let stage2_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage2_instances
             .iter()
             .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
             .collect();
-
-        #[cfg(not(feature = "rv64"))]
-        {
-            eprintln!("VERIFIER stage2: {} instances", stage2_instances_ref.len());
-            for (i, inst) in stage2_instances_ref.iter().enumerate() {
-                eprintln!(
-                    "  instance[{i}]: rounds={} degree={} input_claim={:?}",
-                    inst.num_rounds(),
-                    inst.degree(),
-                    inst.input_claim()
-                );
-            }
-        }
 
         let proofs = state_manager.proofs.borrow();
         let stage2_proof_data = proofs
@@ -114,10 +94,6 @@ impl JoltDAG {
         .context("Stage 2")?;
 
         drop(proofs);
-
-        if std::env::var("CO_JOLT2_STOP_VERIFY_AFTER_STAGE2").is_ok() {
-            return Ok(());
-        }
 
         // Stage 3:
         let stage3_instances: Vec<_> = std::iter::empty()
@@ -169,19 +145,6 @@ impl JoltDAG {
             ProofData::SumcheckProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 4"),
         };
-
-        #[cfg(not(feature = "rv64"))]
-        {
-            eprintln!("VERIFIER stage4: {} instances", stage4_instances_ref.len());
-            for (i, inst) in stage4_instances_ref.iter().enumerate() {
-                eprintln!(
-                    "  instance[{i}]: rounds={} degree={} input_claim={:?}",
-                    inst.num_rounds(),
-                    inst.degree(),
-                    inst.input_claim()
-                );
-            }
-        }
 
         let _r_stage4 = BatchedSumcheck::verify(
             stage4_proof,

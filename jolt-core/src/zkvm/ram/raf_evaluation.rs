@@ -175,11 +175,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
-
-        #[cfg(not(feature = "rv64"))]
-        eprintln!("RafEval::expected_output_claim: log_K={} start_addr={} unmap_eval={:?} ra_claim={:?} product={:?}",
-            self.log_K, self.start_address, unmap_eval, ra_claim, unmap_eval * ra_claim);
-
         unmap_eval * ra_claim
     }
 

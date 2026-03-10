@@ -61,7 +61,7 @@ impl<F: JoltField> SpartanDag<F> {
         let (final_eval, r) = proof.verify(
             F::zero(), // initial claim is 0
             num_rounds_x,
-            2, // degree 2 (eq is folded separately)
+            3, // degree 3: Az(x)*Bz(x)*Cz(x) with eq folded in
             &mut *sm.transcript.borrow_mut(),
         )?;
 
@@ -291,11 +291,15 @@ impl RamDag {
             .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .1;
         let start_address = sm.preprocessing.shared.ram.min_bytecode_address;
+        let ra_claim = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
+            .1;
         let raf = RafEvaluationSumcheck::new_verifier_from_parts(
             raf_claim,
             K.log_2(),
             sm.program_io.memory_layout.trusted_advice_start,
-            F::zero(), // ra_claim not yet known
+            ra_claim,
         );
         let rwc = RamReadWriteChecking::new_verifier::<ProofTranscript, PCS>(sm);
         let output = OutputSumcheck::new_verifier::<ProofTranscript, PCS>(sm);

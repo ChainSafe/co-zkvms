@@ -35,8 +35,10 @@ use mpc_net::rep3::quic::Rep3QuicNetCoordinator;
 use mpc_net::topology::MpcStarNetCoordinator;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
+use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::{
-    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -322,14 +324,17 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             "coordinator done"
         );
 
-        JoltRV64IMAC::verify(
-            &verifier_preprocessing,
-            proof,
-            io_device.clone(),
-            None,
-            None,
-        )
-        .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
+        {
+            let verifier_sm = VanillaStateManager::from_proof(
+                proof,
+                &verifier_preprocessing,
+                io_device.clone(),
+                ram_k,
+                proof_twist_sumcheck_switch_index(padded_len),
+            );
+            JoltDAG::verify::<F, jolt_core::transcripts::Blake2bTranscript, PCS>(verifier_sm)
+                .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
+        }
         info!(iter, "verification passed");
 
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -575,4 +580,20 @@ fn print_used_instructions(instruction_trace: &[Rep3Cycle]) {
         .sorted()
         .collect::<Vec<_>>();
     tracing::info!("opcodes_used: {:?}", opcodes_used);
+}
+
+fn proof_twist_sumcheck_switch_index(padded_len: usize) -> usize {
+    let num_chunks = rayon::current_num_threads()
+        .next_power_of_two()
+        .min(padded_len);
+    let chunk_size = if num_chunks > 0 {
+        padded_len / num_chunks
+    } else {
+        padded_len
+    };
+    if chunk_size > 0 {
+        chunk_size.trailing_zeros() as usize
+    } else {
+        0
+    }
 }
