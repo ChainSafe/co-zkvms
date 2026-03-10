@@ -15,9 +15,9 @@ use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFiel
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;

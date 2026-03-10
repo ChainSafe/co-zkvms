@@ -28,6 +28,7 @@ rv64 = [
     "tracer/rv64",
 ]
 challenge-254-bit = []
+test-utils = []
 
 [dependencies]
 ark-bn254.workspace = true
@@ -88,6 +89,7 @@ tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 serial_test.workspace = true
+tracer = { workspace = true, default-features = false, features = ["std", "test-utils"] }
 
 [lib]
 name = "jolt_core"

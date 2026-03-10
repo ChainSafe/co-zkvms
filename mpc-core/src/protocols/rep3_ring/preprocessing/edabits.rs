@@ -1993,10 +1993,16 @@ where
 {
     let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
     if num_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
+            num_wrap_masks,
+            io.main(),
+        )?);
     }
     if num_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(num_ring_edabits_u66, io)?);
+        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(
+            num_ring_edabits_u66,
+            io,
+        )?);
     }
     pool.save(dir)?;
     Ok(pool)
@@ -2418,10 +2424,16 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
     if deficit_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(deficit_wrap_masks, io.main())?);
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
+            deficit_wrap_masks,
+            io.main(),
+        )?);
     }
     if deficit_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(deficit_ring_edabits_u66, io)?);
+        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(
+            deficit_ring_edabits_u66,
+            io,
+        )?);
     }
     Ok(())
 }
@@ -3443,6 +3455,7 @@ mod tests {
     /// Test that lazy u16 edaBits work correctly when take() is called at
     /// non-zero cursor positions (regression test for word-alignment bug).
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn lazy_u16_edabits_b2a_with_cursor_offset() {
         const BATCH1: usize = 7; // odd number to misalign cursor
         const BATCH2: usize = 5;
@@ -3485,6 +3498,7 @@ mod tests {
     }
 
     /// Helper: run preprocess + B2A + bit-inject roundtrip.
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_roundtrip_impl() {
         use crate::protocols::rep3_ring::dabits;
 
@@ -3520,8 +3534,10 @@ mod tests {
                 || (),
                 move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
                       mut io_ctx| {
-                    let pool_dir = std::env::temp_dir()
-                        .join(format!("mpc-core-test-preproc-batched-{}", io_ctx.party_idx()));
+                    let pool_dir = std::env::temp_dir().join(format!(
+                        "mpc-core-test-preproc-batched-{}",
+                        io_ctx.party_idx()
+                    ));
                     let mut pool = preprocess_pool::<Fr, _>(
                         &pool_dir,
                         [0, 0, 0, NUM_U64, 0],
@@ -3556,6 +3572,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_pool_roundtrip() {
         use crate::protocols::rep3_ring::dabits;
 
@@ -3645,6 +3662,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_pool_small_chunks() {
         let _msg_guard = EnvVarGuard::set("PREPROC_MAX_MSG_MB", "1");
         let _fork_guard = EnvVarGuard::set("PREPROC_MIN_FORK_ELEMS", "1");
@@ -3658,6 +3676,7 @@ mod tests {
     /// 3. Extend the pool with EXTRA deficit items.
     /// 4. Consume the new items and verify B2A / bit-inject correctness.
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn extend_pool_batched_roundtrip() {
         use crate::protocols::rep3_ring::dabits;
 

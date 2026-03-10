@@ -6,9 +6,9 @@ use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {

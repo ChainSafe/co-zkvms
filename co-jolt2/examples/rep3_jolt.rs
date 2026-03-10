@@ -419,8 +419,12 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
-                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                        budget
+                            .wrap_masks
+                            .saturating_sub(pool.remaining_wrap_masks()),
+                        budget
+                            .ring_edabits_u66
+                            .saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
                     let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
@@ -575,8 +579,12 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
                 #[cfg(feature = "ring-msm")]
                 let (deficit_wm, deficit_re) = (
-                    budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                    budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                    budget
+                        .wrap_masks
+                        .saturating_sub(pool.remaining_wrap_masks()),
+                    budget
+                        .ring_edabits_u66
+                        .saturating_sub(pool.remaining_ring_edabits_u66()),
                 );
 
                 let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
@@ -619,12 +627,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 info!("no cached preprocessing ({e}); running preprocessing...");
                 #[cfg(not(feature = "ring-msm"))]
                 {
-                    edabits::preprocess_pool::<F, _>(
-                        &pool_dir,
-                        counts,
-                        num_dabits,
-                        &mut io_ctx,
-                    )?
+                    edabits::preprocess_pool::<F, _>(&pool_dir, counts, num_dabits, &mut io_ctx)?
                 }
                 #[cfg(feature = "ring-msm")]
                 {

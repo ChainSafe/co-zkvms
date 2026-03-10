@@ -9,9 +9,9 @@ use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use jolt_core::field::JoltField;
 
 pub mod booleanity;
 pub mod hamming_weight;

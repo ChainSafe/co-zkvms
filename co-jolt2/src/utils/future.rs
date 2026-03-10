@@ -1,5 +1,5 @@
-use jolt_core::field::JoltField;
 use itertools::Itertools;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::{
     additive::AdditiveShare,
     rep3::{

@@ -5,8 +5,8 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::ra_poly::Rep3RaPolynomial;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Per-level product tree functions (mirrors vanilla eval_inter{2,4,8,16})

@@ -41,7 +41,7 @@ fn main() {
     let polys_f = Rep3MultilinearPolynomial::generate_shares_from_coeffs(&coeffs_fr, &mut rng);
 
     // Generate ring-share polynomials (arith + bin, one per party)
-    use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
+    use jolt_common::constants::{ArithmeticWideInt, XlenInt};
     let all_arith: Vec<_> = values
         .iter()
         .map(|&v| {
@@ -95,50 +95,56 @@ fn main() {
     // Bench 2: batch_commit_rep3 (ring shares, MPC)
     // =========================================================================
     let setup2 = setup.clone();
-    let (durations_u64, _) =
-        run_rep3_local_test_with_coordinator(
-            0,
-            |pid| polys_u64[pid].clone(),
-            || (),
-            move |poly, mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
-                let total_coeffs = (WARMUP + ITERS) * N;
+    let (durations_u64, _) = run_rep3_local_test_with_coordinator(
+        0,
+        |pid| polys_u64[pid].clone(),
+        || (),
+        move |poly, mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+            let total_coeffs = (WARMUP + ITERS) * N;
 
-                // Measure preprocessing time
-                let preproc_start = Instant::now();
-                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-bench-{}", io_ctx.party_idx()));
-                let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, total_coeffs, total_coeffs, &mut io_ctx)?;
+            // Measure preprocessing time
+            let preproc_start = Instant::now();
+            let pool_dir =
+                std::env::temp_dir().join(format!("co-jolt2-bench-{}", io_ctx.party_idx()));
+            let mut preproc = edabits::preprocess_pool::<Fr, _>(
+                &pool_dir,
+                [0, 0, 0, 0, 0],
+                0,
+                total_coeffs,
+                total_coeffs,
+                &mut io_ctx,
+            )?;
 
-                let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
-                let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
-                preproc.set_dapoints(lazy_dp);
-                let preproc_elapsed = preproc_start.elapsed();
+            let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
+            let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+            preproc.set_dapoints(lazy_dp);
+            let preproc_elapsed = preproc_start.elapsed();
 
-                // Warmup
-                for _ in 0..WARMUP {
-                    let polys = vec![&poly];
-                    let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            // Warmup
+            for _ in 0..WARMUP {
+                let polys = vec![&poly];
+                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
                         Fr,
                         Blake2bTranscript,
                     >>::batch_commit_rep3(
                         &polys, &setup2, &mut io_ctx, &mut preproc
                     )?;
-                }
+            }
 
-                let start = Instant::now();
-                for _ in 0..ITERS {
-                    let polys = vec![&poly];
-                    let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
+            let start = Instant::now();
+            for _ in 0..ITERS {
+                let polys = vec![&poly];
+                let _ = <DoryCommitmentScheme as Rep3CommitmentScheme<
                         Fr,
                         Blake2bTranscript,
                     >>::batch_commit_rep3(
                         &polys, &setup2, &mut io_ctx, &mut preproc
                     )?;
-                }
-                Ok((start.elapsed(), preproc_elapsed))
-            },
-            |(), _net| Ok(()),
-        );
+            }
+            Ok((start.elapsed(), preproc_elapsed))
+        },
+        |(), _net| Ok(()),
+    );
     let (online_u64, preproc_u64) = durations_u64[0];
     let per_iter_u64 = online_u64 / ITERS as u32;
     let preproc_per_commit = preproc_u64 / (WARMUP + ITERS) as u32;

@@ -599,8 +599,7 @@ fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
         #[cfg(feature = "ring-msm")]
         Rep3SharedPoly::CompactRing(poly_ring) => {
             let nu = dory::vmv::compute_nu(poly_ring.get_num_vars(), sigma);
-            let rows =
-                compute_row_commitment_shares_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
+            let rows = compute_row_commitment_shares_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
             (poly_ring.get_num_vars(), rows)
         }
         #[cfg(not(feature = "ring-msm"))]
@@ -1238,17 +1237,17 @@ mod tests {
         )
         .unwrap();
 
-        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_commitment_shares(&[
-            &comm_0, &comm_1, &comm_2,
-        ]);
+        let reconstructed_commitment =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_commitment_shares(&[&comm_0, &comm_1, &comm_2]);
 
-        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
+        let reconstructed_hint =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
 
         assert_eq!(reconstructed_commitment, vanilla_commitment);
         assert_eq!(reconstructed_hint, vanilla_hint);
@@ -1325,17 +1324,17 @@ mod tests {
         let (comm_2, hint_2) =
             commit_local_rep3::<Blake2bTranscript>(&rep3_polys[2], &setup, false).unwrap();
 
-        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_commitment_shares(&[
-            &comm_0, &comm_1, &comm_2,
-        ]);
+        let reconstructed_commitment =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_commitment_shares(&[&comm_0, &comm_1, &comm_2]);
 
-        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
+        let reconstructed_hint =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_hint_shares(&[&hint_0, &hint_1, &hint_2]);
 
         assert_eq!(reconstructed_commitment, vanilla_commitment);
         assert_eq!(reconstructed_hint, vanilla_hint);
@@ -1461,7 +1460,7 @@ mod tests {
         vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
         // Share each value in both arithmetic (ArithmeticWideInt) and XOR (XlenInt) ring forms.
-        use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
+        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<_> = values
             .iter()
             .map(|&v| {
@@ -1525,15 +1524,17 @@ mod tests {
         let (c1, h1) = results[1].clone();
         let (c2, h2) = results[2].clone();
 
-        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_commitment_shares(&[&c0, &c1, &c2]);
+        let reconstructed_commitment =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_commitment_shares(&[&c0, &c1, &c2]);
 
-        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_hint_shares(&[&h0, &h1, &h2]);
+        let reconstructed_hint =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_hint_shares(&[&h0, &h1, &h2]);
 
         assert_eq!(reconstructed_commitment, vanilla_commitment);
         assert_eq!(reconstructed_hint, vanilla_hint);
@@ -1569,7 +1570,7 @@ mod tests {
         vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
         // Share shared values in both arithmetic and XOR ring forms.
-        use jolt2_common::constants::{ArithmeticWideInt, XlenInt};
+        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<Option<Vec<Rep3RingShare<ArithmeticWideInt>>>> = values
             .iter()
             .zip(is_public.iter())
@@ -1659,15 +1660,17 @@ mod tests {
         let (c1, h1) = results[1].clone();
         let (c2, h2) = results[2].clone();
 
-        let reconstructed_commitment = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_commitment_shares(&[&c0, &c1, &c2]);
+        let reconstructed_commitment =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_commitment_shares(&[&c0, &c1, &c2]);
 
-        let reconstructed_hint = <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CoordinatorCommitmentScheme<
-            Fr,
-            Blake2bTranscript,
-        >>::combine_hint_shares(&[&h0, &h1, &h2]);
+        let reconstructed_hint =
+            <DoryCommitmentScheme as co_jolt_coordinator::poly::commitment::Rep3CommitmentScheme<
+                Fr,
+                Blake2bTranscript,
+            >>::combine_hint_shares(&[&h0, &h1, &h2]);
 
         assert_eq!(reconstructed_commitment, vanilla_commitment);
         assert_eq!(reconstructed_hint, vanilla_hint);
@@ -1785,7 +1788,7 @@ mod tests {
 
                 // Offline: generate daPoints
                 let mut lazy_dapoints = rep3_ring::daPoint::random_dapoints(&q_all, &mut io_ctx)?;
-                let batch = lazy_dapoints.take_batch(q_all.len());
+                let batch = lazy_dapoints.take_batch(q_all.len())?;
 
                 let mut bits_all: Vec<Rep3RingShare<Bit>> = Vec::with_capacity(2 * m0_bin.len());
                 bits_all.extend(m0_bin.iter().copied());

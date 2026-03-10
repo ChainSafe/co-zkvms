@@ -5,9 +5,9 @@ use jolt_core::zkvm::ram::ra_virtual::RaSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
     fn degree(&self) -> usize {

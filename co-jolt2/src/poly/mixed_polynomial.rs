@@ -1,11 +1,11 @@
 use std::ops::Index;
 
-use jolt_core::field::JoltField;
 use crate::poly::Polynomial;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
-use mpc_core::protocols::rep3::PartyID;
 use jolt_core::utils::math::Math;
+use mpc_core::protocols::rep3::PartyID;
 
 #[derive(Debug, Clone)]
 pub struct MixedPolynomial<F: JoltField> {

@@ -17,11 +17,11 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::subprotocols::mles_product_sum::compute_mles_product_16_rep3;
+use jolt_core::field::JoltField;
 use std::sync::Arc;
 use tracing::trace_span;
 

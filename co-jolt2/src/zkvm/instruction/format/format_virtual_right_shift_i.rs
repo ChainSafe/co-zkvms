@@ -30,7 +30,10 @@ impl Rep3RegisterState for Rep3RegisterStateFormatVirtualI {
         let (old, new) = public_state.rd_values();
         Self {
             rs1: Rep3Operand::Public(public_state.rs1_value().into()),
-            rd: (Rep3Operand::Public(old.into()), Rep3Operand::Public(new.into())),
+            rd: (
+                Rep3Operand::Public(old.into()),
+                Rep3Operand::Public(new.into()),
+            ),
         }
     }
 

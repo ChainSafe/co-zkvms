@@ -3,9 +3,9 @@ use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use jolt_core::field::JoltField;
 
 use self::read_write_checking::Rep3RegistersReadWriteCheckingWorker;
 use self::val_evaluation::Rep3ValEvaluationWorker;

@@ -10,12 +10,12 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::spartan_interleaved_poly::Rep3SpartanInterleavedPolynomial;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::r1cs::inputs::{
     build_shared_mul_rows_and_map, compute_claimed_witness_evals_rep3, Rep3R1CSCycleInputs,
 };
+use jolt_core::field::JoltField;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;

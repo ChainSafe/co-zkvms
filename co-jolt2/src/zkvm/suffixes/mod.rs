@@ -15,10 +15,10 @@
 //! also operate in binary domain. Field conversion is deferred via `FutureRep3Ring`
 //! and batched by the caller using `fulfill_batched`.
 
-use jolt_core::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
 use crate::utils::types::Either;
 use jolt_common::constants::{LookupIndexInt, XLEN};
+use jolt_core::field::JoltField;
 use jolt_core::utils::interleave_bits;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;

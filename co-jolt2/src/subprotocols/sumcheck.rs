@@ -9,9 +9,9 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Sumcheck instance traits (per-instance interface)
@@ -65,7 +65,6 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>>;
 }
-
 
 /// Worker-side public sumcheck instance.
 ///

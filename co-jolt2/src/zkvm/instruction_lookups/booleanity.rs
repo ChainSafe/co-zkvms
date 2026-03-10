@@ -5,6 +5,7 @@ use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
+use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
@@ -12,13 +13,12 @@ use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
-use jolt_core::utils::math::Math;
 
-use jolt_core::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;

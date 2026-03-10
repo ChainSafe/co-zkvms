@@ -4,9 +4,9 @@ use jolt_core::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {

@@ -9,17 +9,17 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use jolt_core::poly::one_hot_polynomial::EqAddressState;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_core::utils::math::Math;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
 use rayon::prelude::*;
-use jolt_core::utils::math::Math;
 
-use jolt_core::field::JoltField;
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::utils::fwht::fwht_in_place;
+use jolt_core::field::JoltField;
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation

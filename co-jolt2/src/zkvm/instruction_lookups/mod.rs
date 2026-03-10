@@ -12,11 +12,11 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use jolt_core::field::JoltField;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use jolt_core::field::JoltField;
 
 use self::booleanity::Rep3BooleanitySumcheckWorker;
 use self::hamming_weight::Rep3HammingWeightSumcheckWorker;

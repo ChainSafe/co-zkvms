@@ -5,10 +5,10 @@ use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 
-use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::utils::types::Either;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CycleMeta {

@@ -2,11 +2,11 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use jolt_core::field::JoltField;
 pub use crate::subprotocols::sumcheck::{
     BatchedSumcheckWorkerInstance, PublicSumcheckInstanceWorker, Rep3SumcheckInstanceWorker,
 };
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Staged sumcheck pipeline traits (per-subsystem interface)

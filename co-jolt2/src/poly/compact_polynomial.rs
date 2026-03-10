@@ -1,7 +1,7 @@
 use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
 use allocative::Allocative;
 use jolt_common::constants::{ArithmeticWideInt, XlenInt};
-use jolt_core::{utils::math::Math};
+use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 /// Compact multilinear polynomial over u64 coefficients stored as `Rep3Operand`.
 ///

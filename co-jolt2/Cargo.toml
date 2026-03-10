@@ -95,7 +95,7 @@ std = [
     "ark-poly-commit/std",
 ]
 debug = []
-test-utils = ["rcgen", "mpc-core/test-utils"]
+test-utils = ["rcgen", "mpc-core/test-utils", "jolt-core/test-utils"]
 reuse-preproc = ["mpc-core/reuse-preproc"]
 tracy-mem = []
 rv32 = []

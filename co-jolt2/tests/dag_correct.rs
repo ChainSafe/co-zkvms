@@ -151,7 +151,8 @@ fn dag_correct() {
                 #[cfg(feature = "ring-msm")]
                 {
                     if budget.dapoints > 0 {
-                        let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
+                        let dory_num_columns =
+                            jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
                         let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
                             &preprocessing.generators,
                             budget.dapoints / 2,

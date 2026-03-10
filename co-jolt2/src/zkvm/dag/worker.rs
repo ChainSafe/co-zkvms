@@ -5,7 +5,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracing::info_span;
 
-use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
@@ -17,6 +16,7 @@ use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
@@ -218,13 +218,12 @@ impl Rep3JoltDagWorker {
             .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
             .collect();
 
-        let commit_results =
-            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
-                &ordered_polys,
-                generators,
-                io_ctx,
-                preproc,
-            )?;
+        let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
+            &ordered_polys,
+            generators,
+            io_ctx,
+            preproc,
+        )?;
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 
@@ -261,8 +260,7 @@ impl Rep3JoltDagWorker {
                         poly,
                         Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
                     ) {
-                        let mut field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                            Vec::with_capacity(n);
+                        let mut field_shares: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                         for t in 0..n {
                             let (l, r) = state
                                 .prover_state
@@ -277,8 +275,7 @@ impl Rep3JoltDagWorker {
                                 },
                             );
                         }
-                        witness_polys
-                            .insert(key, Rep3MultilinearPolynomial::from(field_shares));
+                        witness_polys.insert(key, Rep3MultilinearPolynomial::from(field_shares));
                     }
                 }
             }
