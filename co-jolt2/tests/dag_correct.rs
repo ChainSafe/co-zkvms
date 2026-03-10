@@ -128,7 +128,8 @@ fn dag_correct() {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
-                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-test-preproc-{}", io_ctx.party_idx()));
+                let pool_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!(".preprocessing/test/party_{}", io_ctx.party_idx()));
                 #[cfg(not(feature = "ring-msm"))]
                 let mut pool = edabits::preprocess_pool::<F, _>(
                     &pool_dir,
