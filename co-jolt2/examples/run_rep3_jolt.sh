@@ -40,6 +40,10 @@ JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 RAYON_THREADS=${RAYON_THREADS:-}
 # Optional: run multiple proofs in the same worker process (requires `reuse-preproc`).
 REPEAT_PROOFS=${REPEAT_PROOFS:-1}
+PREPROC_LANES_EFFECTIVE=${PREPROC_LANES:-8}
+NETWORK_FORKS_EFFECTIVE=${NETWORK_FORKS:-8}
+MPC_QUIC_CONN_LANES_EFFECTIVE=${MPC_QUIC_CONN_LANES:-$NETWORK_FORKS_EFFECTIVE}
+TRACE_SUFFIX="${NUM_ITERS}_${PREPROC_LANES_EFFECTIVE}x${MPC_QUIC_CONN_LANES_EFFECTIVE}L"
 
 mkdir -p "$ARTIFACT_DIR"
 mkdir -p "$TRACE_DIR"
@@ -84,11 +88,30 @@ if [ -n "${MALLOC_CONF_EFFECTIVE}" ]; then
 fi
 
 PROOF_ARGS=()
+COORD_PROOF_ARGS=()
 if [ -n "$RAYON_THREADS" ]; then
   PROOF_ARGS+=(--rayon-threads "$RAYON_THREADS")
+  COORD_PROOF_ARGS+=(--rayon-threads "$RAYON_THREADS")
 fi
+PROOF_ARGS+=(--network-forks "$NETWORK_FORKS_EFFECTIVE")
 if [ "$REPEAT_PROOFS" -gt 1 ]; then
   PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
+  COORD_PROOF_ARGS+=(--repeat-proofs "$REPEAT_PROOFS")
+fi
+
+TIME_CMD=()
+TIME_RSS_PATTERN="Maximum resident set size"
+TIME_RSS_UNIT="kB"
+if /usr/bin/time -v true >/dev/null 2>&1; then
+  TIME_CMD=(/usr/bin/time -v --)
+elif /usr/bin/time -l true >/dev/null 2>&1; then
+  TIME_CMD=(/usr/bin/time -l)
+  TIME_RSS_PATTERN="maximum resident set size"
+  TIME_RSS_UNIT="bytes"
+elif command -v gtime >/dev/null 2>&1 && gtime -v true >/dev/null 2>&1; then
+  TIME_CMD=(gtime -v --)
+else
+  echo "warning: no verbose time command found; Max RSS will not be reported" >&2
 fi
 
 # Build the example binary (release mode)
@@ -101,14 +124,16 @@ cd "$REPO_DIR/mpc-net"
 cargo build --bin gen_configs --release
 cd "$CO_JOLT2_DIR"
 
-# Generate network configs (1 worker per party)
+# Generate network configs (1 worker per party) — only if they don't exist yet.
 # Configs, certs, and keys all go into ARTIFACT_DIR.
 # The -c flag sets both where DER files are written AND the paths embedded in TOMLs.
-"$REPO_DIR/target/release/gen_configs" \
-  -n 1 \
-  -o "$ARTIFACT_DIR" \
-  -c "$ARTIFACT_DIR" \
-  -k "$ARTIFACT_DIR"
+if [ ! -f "$ARTIFACT_DIR/config_coordinator.toml" ]; then
+  ../target/release/gen_configs \
+    -n 1 \
+    -o "$ARTIFACT_DIR" \
+    -c "$ARTIFACT_DIR" \
+    -k "$ARTIFACT_DIR"
+fi
 
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
@@ -125,52 +150,104 @@ if [ "$PREPROC_ONLY" = "1" ]; then
 fi
 
 # Launch coordinator
-"$REPO_DIR/target/release/examples/rep3_jolt" \
+../target/release/examples/rep3_jolt \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
-  ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} &
+  ${COORD_PROOF_ARGS[@]+"${COORD_PROOF_ARGS[@]}"} &
+coordinator_pid=$!
 
+capture_pids=()
 if [ "$TRACY_CAPTURE" = "1" ]; then
+  # Prefer brew-installed tracy-capture (0.13.1, protocol 76) over any system one.
+  TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
+  echo "Using tracy-capture: $TRACY_CAPTURE_BIN"
   for p in 0 1 2; do
     capture_log="$TRACE_DIR/tracy-capture-worker${p}.log"
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
-      tracy-capture \
+      "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >"$capture_log" 2>&1 &
     else
-      tracy-capture \
+      "$TRACY_CAPTURE_BIN" \
         -f \
-        -o "$TRACE_DIR/worker${p}.tracy" \
+        -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
         -a 127.0.0.1 \
         -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     fi
+    capture_pids+=($!)
   done
 fi
 
 # Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.
 # Each runs in a subshell so we can capture /usr/bin/time -v stderr and extract Max RSS.
+worker_pids=()
 for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
-    TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
-      gtime -v -- "$REPO_DIR/target/release/examples/rep3_jolt" \
+    if [ ${#TIME_CMD[@]} -gt 0 ]; then
+      TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+        "${TIME_CMD[@]}" ../target/release/examples/rep3_jolt \
+          -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
+          -t "$TRACE_DIR" -n "$NUM_ITERS" \
+          ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
+          ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
+      maxrss_line=$(grep -i "$TIME_RSS_PATTERN" "$tmpfile" | tail -n 1 || true)
+      maxrss=$(printf '%s\n' "$maxrss_line" | grep -Eo '[0-9]+' | head -n 1 || true)
+      if [ -n "$maxrss" ]; then
+        echo "worker${p}: Max RSS = ${maxrss} ${TIME_RSS_UNIT}"
+      fi
+    else
+      TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+        ../target/release/examples/rep3_jolt \
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
         ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
-    maxrss=$(grep "Maximum resident set size" "$tmpfile" | awk '{print $NF}')
-    echo "worker${p}: Max RSS = ${maxrss} kB"
+    fi
     if [ "$JEMALLOC_PRESET" != "default" ]; then
       echo "worker${p}: JEMALLOC_PRESET=$JEMALLOC_PRESET"
     fi
     rm -f "$tmpfile"
   ) &
+  worker_pids+=($!)
 done
 
-wait
+cleanup_children() {
+  local pids=("$coordinator_pid")
+  if [ ${#worker_pids[@]} -gt 0 ]; then
+    pids+=("${worker_pids[@]}")
+  fi
+  if [ ${#capture_pids[@]} -gt 0 ]; then
+    pids+=("${capture_pids[@]}")
+  fi
+  kill "${pids[@]}" 2>/dev/null || true
+  wait "${pids[@]}" 2>/dev/null || true
+}
+
+trap cleanup_children EXIT
+
+for pid in "${worker_pids[@]}"; do
+  if ! wait "$pid"; then
+    cleanup_children
+    exit 1
+  fi
+done
+
+if ! wait "$coordinator_pid"; then
+  cleanup_children
+  exit 1
+fi
+
+if [ ${#capture_pids[@]} -gt 0 ]; then
+  for pid in "${capture_pids[@]}"; do
+    wait "$pid"
+  done
+fi
+
+trap - EXIT
 echo "Traces written to $TRACE_DIR"
 if [ -n "$PREPROC_DIR" ]; then
   echo "Preprocessing data in $PREPROC_DIR/{party_0,party_1,party_2}/"

@@ -17,23 +17,32 @@ use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
-use tracing::{info, info_span};
+use tracing::{info, info_span, trace_span, warn};
 
+use co_jolt_coordinator::zkvm::Rep3Jolt;
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::memory::start_jemalloc_monitor;
 use co_jolt2::utils::tracing::init_tracing_bench;
+use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
-use co_jolt2::zkvm::{Rep3Jolt, Rep3JoltWorker};
+use co_jolt2::zkvm::JoltArch;
+use co_jolt2::zkvm::Rep3JoltWorker;
 use jolt_core::host::Program;
+use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+use jolt_core::zkvm::ram::RAMPreprocessing;
+use mpc_net::rep3::quic::Rep3QuicNetCoordinator;
+use mpc_net::topology::MpcStarNetCoordinator;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
+use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::{
-    Jolt, JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
+    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
 };
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -73,6 +82,10 @@ struct Args {
     #[clap(long, default_value = "4")]
     rayon_threads: usize,
 
+    /// Number of preinitialized logical network forks to use.
+    #[clap(long, default_value = "2")]
+    network_forks: u32,
+
     /// Repeat the full proof pipeline N times in the same process.
     ///
     /// Requires `--features reuse-preproc` (or the pool will be consumed).
@@ -91,6 +104,54 @@ struct WorkerPayload {
     memory_init: Vec<(u64, u8)>,
     padded_len: usize,
     ram_k: usize,
+}
+
+/// Coordinator → worker message.
+///
+/// For `--preprocess-only`, we only need `trace_len` (to compute the preprocessing
+/// budget). Sending the full shared trace would dominate RSS and is unused.
+#[derive(Serialize, Deserialize)]
+enum CoordToWorkerMsg {
+    Full(WorkerPayload),
+    PreprocOnly(PreprocPayload),
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreprocPayload {
+    trace_len: usize,
+    edabit_counts: [usize; 5],
+    dabits: usize,
+}
+
+fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize) {
+    let elem = std::mem::size_of::<F>() as u64;
+    let warn_gb = std::env::var("PREPROC_WARN_GB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+    let warn_bytes = warn_gb * 1024 * 1024 * 1024;
+
+    let sizes = [
+        ("edabits_8.alpha2", counts[0] as u64 * 8 * elem),
+        ("edabits_16.alpha2", counts[1] as u64 * 16 * elem),
+        ("edabits_32.alpha2", counts[2] as u64 * 32 * elem),
+        ("edabits_64.alpha2", counts[3] as u64 * 64 * elem),
+        ("edabits_128.alpha2", counts[4] as u64 * 128 * elem),
+        // dabits.stored size depends on party; this is the smaller (P0) bound.
+        ("dabits.stored (P0)", num_dabits as u64 * elem),
+        ("dabits.stored (P2)", num_dabits as u64 * 2 * elem),
+    ];
+
+    for (name, bytes) in sizes {
+        if bytes >= warn_bytes {
+            warn!(
+                file = name,
+                bytes,
+                gb = (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                "large preprocessing artifact expected"
+            );
+        }
+    }
 }
 
 /// Spawn a daemon thread that polls RSS every `interval` and reports it as a Tracy plot.
@@ -209,35 +270,20 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     );
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
-    // Create coordinator network FIRST — workers connect to coordinator
-    // during their Rep3QuicMpcNetWorker::new(), so we must be listening.
     info!("creating coordinator network");
     let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
 
-    // Build guest program and prepare inputs
     let mut program = build_program();
     let inputs = build_inputs(args.num_iters);
     let (bytecode, memory_init, _) = program.decode();
 
-    // Trace to get vanilla trace and IO device
     info!("tracing guest program");
-    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
 
-    // Match vanilla Jolt::prove/verify, which normalizes trailing zero bytes in outputs.
-    io_device.outputs.truncate(
-        io_device
-            .outputs
-            .iter()
-            .rposition(|&b| b != 0)
-            .map_or(0, |pos| pos + 1),
-    );
-
-    // Pad trace
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
     info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
     vanilla_trace.resize(padded_len, Cycle::NoOp);
 
-    // Build shared preprocessing for ram_K computation
     let shared = JoltSharedPreprocessing {
         memory_layout: io_device.memory_layout.clone(),
         bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
@@ -246,18 +292,32 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let ram_k = compute_ram_k(&vanilla_trace, &shared);
     info!(ram_k, "computed ram_K");
 
-    // Generate shares
+    if args.preprocess_only.unwrap_or(false) {
+        let budget = compute_edabit_budget(padded_len);
+        let pp = PreprocPayload {
+            trace_len: padded_len,
+            edabit_counts: [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+            dabits: budget.dabits,
+        };
+        let msg = CoordToWorkerMsg::PreprocOnly(pp);
+        let payload = bincode::serialize(&msg).context("serializing PreprocOnly")?;
+        let worker_payloads = vec![payload; 3];
+        info!("preprocess-only: sending PreprocOnly to workers");
+        network
+            .send_requests_blocking(worker_payloads)
+            .context("sending PreprocOnly payloads")?;
+        use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+        network.sync_with_parties()?;
+        info!("preprocess-only: done");
+        return Ok(());
+    }
+
     info!("generating trace shares");
     let mut rng = test_rng();
     let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-    // Pad shared traces
-    // for (trace, _, _) in shares.iter_mut() {
-    //     trace.resize(padded_len, Rep3Cycle::NoOp);
-    // }
 
-    // Build preprocessing (needed for verifier preprocessing)
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             memory_init.clone(),
@@ -265,7 +325,6 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
-    // Send shares to workers
     let worker_payloads: Vec<Vec<u8>> = shares
         .into_iter()
         .map(|(trace, memory, program_io_share)| {
@@ -279,60 +338,36 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 padded_len,
                 ram_k,
             };
-            bincode::serialize(&payload)
+            let msg = CoordToWorkerMsg::Full(payload);
+            bincode::serialize(&msg)
         })
         .collect::<bincode::Result<Vec<_>>>()
         .context("serializing worker payloads")?;
 
-    if args.preprocess_only.unwrap_or(false) {
-        info!("preprocess-only: sending worker payload once and exiting");
-        network
-            .send_requests_blocking(worker_payloads)
-            .context("sending worker payloads")?;
-        return Ok(());
-    }
+    network
+        .send_requests_blocking(worker_payloads)
+        .context("sending worker payloads")?;
 
-    for iter in 0..args.repeat_proofs {
-        info!(
-            iter,
-            total = args.repeat_proofs,
-            "sending shares to workers"
-        );
-        network
-            .send_requests_blocking(worker_payloads.clone())
-            .context("sending worker payloads")?;
+    let _guard = (
+        DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len),
+        AllCommittedPolynomials::initialize(
+            compute_d_parameter(ram_k),
+            preprocessing.shared.bytecode.d,
+        ),
+    );
 
-        // Run coordinator prove
-        info!(iter, "starting coordinator prove");
-        let proof = <JoltRV64IMAC as Rep3Jolt<F, PCS, _>>::prove(
-            &verifier_preprocessing,
-            &preprocessing.generators,
-            io_device.clone(),
-            &mut network,
-            ram_k,
-            padded_len,
-        )?;
-
-        info!(
-            iter,
-            commitments = proof.commitments.len(),
-            "coordinator done"
-        );
-
-        JoltRV64IMAC::verify(
-            &verifier_preprocessing,
-            proof,
-            io_device.clone(),
-            None,
-            None,
-        )
-        .map_err(|e| eyre::eyre!("verification failed on iteration {iter}: {e:?}"))?;
-        info!(iter, "verification passed");
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    network.log_connection_stats(None);
+    let proof = <JoltArch as Rep3Jolt<F, PCS, _>>::prove(
+        &verifier_preprocessing,
+        &preprocessing.generators,
+        io_device,
+        &mut network,
+        ram_k,
+        padded_len,
+    )?;
+    info!(
+        proof_size = std::mem::size_of_val(&proof),
+        "coordinator proof complete"
+    );
 
     Ok(())
 }
@@ -357,11 +392,83 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         ));
     }
 
-    // Receive share from coordinator (includes bytecode + memory_init)
-    info!("receiving share from coordinator");
+    // Receive initial request from coordinator.
+    info!("receiving request from coordinator");
     let first_payload_bytes: Vec<u8> = network.receive_request()?;
-    let first_payload: WorkerPayload =
-        bincode::deserialize(&first_payload_bytes).context("deserializing worker payload")?;
+    let first_msg: CoordToWorkerMsg =
+        bincode::deserialize(&first_payload_bytes).context("deserializing coordinator message")?;
+
+    if let CoordToWorkerMsg::PreprocOnly(pp) = first_msg {
+        // Wrap network in IoContextPool (required for preprocessing network rounds).
+        let num_forks = args.network_forks;
+        let mut io_ctx = IoContextPool::init(network, num_forks)?;
+        let party_id = io_ctx.party_id();
+
+        let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
+        let counts = pp.edabit_counts;
+        let num_dabits = pp.dabits;
+        log_preproc_size_estimates(counts, num_dabits);
+
+        if let Some(ref base_dir) = args.preproc_dir {
+            let pool_dir = base_dir.join(format!("party_{}", my_id));
+            use mpc_core::protocols::rep3_ring::edabits;
+
+            let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
+                Ok(mut pool) => {
+                    let (rem_eda, rem_da) = pool.remaining_counts();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
+
+                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                        info!(
+                            "preprocess-only: extending pool: deficit edabits={:?}, dabits={}",
+                            deficit_counts, deficit_dabits
+                        );
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        match pool.save(&pool_dir) {
+                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
+                            Err(e) => tracing::warn!("failed to save extended pool: {e}"),
+                        }
+                    } else {
+                        info!("preprocess-only: reusing preprocessing from {:?}", pool_dir);
+                    }
+                    pool
+                }
+                Err(e) => {
+                    info!(
+                        "preprocess-only: no cached preprocessing ({e}); creating pool into {:?}",
+                        pool_dir
+                    );
+                    edabits::preprocess_pool_batched_into_dir::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        &mut io_ctx,
+                    )?
+                }
+            };
+
+            io_ctx.sync_with_parties()?;
+            io_ctx.sync_with_coordinator()?;
+            let _drop_span = trace_span!("drop_preprocessing_pool").entered();
+            drop(pool);
+            return Ok(());
+        }
+
+        return Err(eyre::eyre!(
+            "preprocess-only requires --preproc-dir so alpha2/stored data can be persisted without OOM"
+        ));
+    }
+
+    let CoordToWorkerMsg::Full(first_payload) = first_msg else {
+        unreachable!("handled PreprocOnly above");
+    };
 
     let WorkerPayload {
         trace: first_trace,
@@ -383,7 +490,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     // Build prover preprocessing
     info!("building preprocessing");
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode,
             io_device.memory_layout.clone(),
             memory_init,
@@ -400,7 +507,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
 
     // Wrap network in IoContextPool
-    let num_forks = rayon::current_num_threads() as u32;
+    let num_forks = args.network_forks;
 
     let mut io_ctx = IoContextPool::init(network, num_forks)?;
 
@@ -426,6 +533,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         use mpc_core::protocols::rep3_ring::edabits;
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
         let num_dabits = budget.dabits;
+        log_preproc_size_estimates(counts, num_dabits);
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
@@ -460,18 +568,12 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 }
                 Err(e) => {
                     info!("no cached preprocessing ({e}); running preprocessing...");
-                    let pool =
-                        edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?;
-                    match pool.save(&pool_dir) {
-                        Ok(()) => info!("saved preprocessing to {:?}", pool_dir),
-                        Err(save_err) => {
-                            tracing::warn!(
-                                "failed to save preprocessing to {:?}: {save_err}",
-                                pool_dir
-                            )
-                        }
-                    }
-                    pool
+                    edabits::preprocess_pool_batched_into_dir::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        &mut io_ctx,
+                    )?
                 }
             }
         } else {
@@ -496,6 +598,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     if args.preprocess_only.unwrap_or(false) {
         io_ctx.sync_with_parties()?;
+        let _drop_span = trace_span!("drop_preprocessing_pool").entered();
+        drop(preproc);
         return Ok(());
     }
 
@@ -510,8 +614,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             )
         } else {
             let payload_bytes: Vec<u8> = io_ctx.network().receive_request()?;
-            let payload: WorkerPayload =
-                bincode::deserialize(&payload_bytes).context("deserializing worker payload")?;
+            let msg: CoordToWorkerMsg = bincode::deserialize(&payload_bytes)
+                .context("deserializing coordinator message")?;
+            let CoordToWorkerMsg::Full(payload) = msg else {
+                return Err(eyre::eyre!("unexpected PreprocOnly message during proving"));
+            };
             (payload.trace, payload.memory, payload.program_io_share)
         };
 
@@ -524,7 +631,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         }
 
         info!(iter, total = args.repeat_proofs, "starting worker prove");
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, _>>::prove(
+        <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,
             io_device.clone(),
@@ -572,4 +679,20 @@ fn print_used_instructions(instruction_trace: &[Rep3Cycle]) {
         .sorted()
         .collect::<Vec<_>>();
     tracing::info!("opcodes_used: {:?}", opcodes_used);
+}
+
+fn proof_twist_sumcheck_switch_index(padded_len: usize) -> usize {
+    let num_chunks = rayon::current_num_threads()
+        .next_power_of_two()
+        .min(padded_len);
+    let chunk_size = if num_chunks > 0 {
+        padded_len / num_chunks
+    } else {
+        padded_len
+    };
+    if chunk_size > 0 {
+        chunk_size.trailing_zeros() as usize
+    } else {
+        0
+    }
 }

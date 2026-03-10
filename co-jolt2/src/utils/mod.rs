@@ -3,7 +3,7 @@ pub mod future_ring;
 pub mod fwht;
 pub mod instruction_utils;
 pub mod memory;
-pub(crate) mod send_ptr;
+pub mod send_ptr;
 pub mod tracing;
 pub mod types;
 
@@ -68,7 +68,7 @@ pub fn transpose<T>(matrix: Vec<Vec<T>>) -> Vec<Vec<T>> {
 /// Lagrange interpolation through 4 points (0, y0), (1, y1), (2, y2), (3, y3) at x.
 ///
 /// Denominators are constants: -6, 2, -2, 6. Their inverses are precomputed.
-pub(crate) fn lagrange_interp_4<F: JoltField>(
+pub fn lagrange_interp_4<F: JoltField>(
     y0: AdditiveShare<F>,
     y1: AdditiveShare<F>,
     y2: AdditiveShare<F>,

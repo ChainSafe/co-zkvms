@@ -1,0 +1,55 @@
+#[cfg(not(feature = "rv64"))]
+pub const XLEN: usize = 32;
+#[cfg(feature = "rv64")]
+pub const XLEN: usize = 64;
+
+/// Native register-width integer type
+#[cfg(not(feature = "rv64"))]
+pub type XlenInt = u32;
+#[cfg(feature = "rv64")]
+pub type XlenInt = u64;
+
+/// Lookup index type (interleave of two XlenInt values)
+#[cfg(not(feature = "rv64"))]
+pub type LookupIndexInt = u64;
+#[cfg(feature = "rv64")]
+pub type LookupIndexInt = u128;
+
+/// Wide integer for arithmetic operations (2x XlenInt)
+#[cfg(not(feature = "rv64"))]
+pub type ArithmeticWideInt = u64;
+#[cfg(feature = "rv64")]
+pub type ArithmeticWideInt = u128;
+
+/// Number of bytes in one XLEN-wide word (4 for rv32, 8 for rv64)
+pub const RAM_WORD_SIZE: u64 = (XLEN / 8) as u64;
+
+pub const RISCV_REGISTER_COUNT: u8 = 32;
+pub const VIRTUAL_REGISTER_COUNT: u8 = 96; //  see Section 6.1 of Jolt paper
+pub const VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT: u8 = 16; // Reserved virtual registers for virtual instructions
+pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; // must be a power of 2
+pub const BYTES_PER_INSTRUCTION: usize = 4;
+pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
+
+pub const RAM_START_ADDRESS: u64 = 0x80000000;
+
+// big enough to run Linux and xv6
+pub const EMULATOR_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128;
+
+pub const DEFAULT_MEMORY_SIZE: u64 = 32 * 1024 * 1024;
+
+pub const DEFAULT_STACK_SIZE: u64 = 4096;
+// 64 byte stack canary. 4 word protection for 32-bit and 2 word for 64-bit
+pub const STACK_CANARY_SIZE: u64 = 128;
+pub const DEFAULT_MAX_TRUSTED_ADVICE_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
+
+// Layout of the witness (where || denotes concatenation):
+//     trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
+// Layout of VM memory:
+//     peripheral devices || trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
+// Notably, we want to be able to map the VM memory address space to witness indices
+// using a constant shift, namely (RAM_WITNESS_OFFSET + RAM_START_ADDRESS)

@@ -49,13 +49,58 @@ pub(crate) enum BackingStore<F> {
         path: PathBuf,
         /// Number of `F` elements in the file.
         len: usize,
+        /// Next byte offset used for append writes.
+        append_offset: u64,
         _phantom: PhantomData<F>,
     },
     /// No data (P0/P1 where no stored elements exist).
     Empty,
 }
 
+pub(crate) struct FileBackedWriter<F> {
+    file: File,
+    len: usize,
+    _phantom: PhantomData<F>,
+}
+
+impl<F> Clone for FileBackedWriter<F> {
+    fn clone(&self) -> Self {
+        Self {
+            file: self.file.try_clone().expect("cloning file-backed writer"),
+            len: self.len,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<F> BackingStore<F> {
+    fn vec_from_bytes(bytes: &[u8]) -> io::Result<Vec<F>> {
+        const { assert_field_layout::<F>() };
+        let elem_size = Self::elem_size_bytes();
+        if bytes.len() % elem_size != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "raw payload length {} is not divisible by element size {}",
+                    bytes.len(),
+                    elem_size,
+                ),
+            ));
+        }
+        let elems = bytes.len() / elem_size;
+        if elems == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(elems);
+        unsafe { out.set_len(elems) };
+        let out_bytes =
+            unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+        out_bytes.copy_from_slice(bytes);
+        let out: Vec<F> = unsafe { std::mem::transmute(out) };
+        Ok(out)
+    }
+
     pub(crate) fn as_slice(&self) -> &[F] {
         match self {
             BackingStore::InMemory(v) => v.as_slice(),
@@ -245,6 +290,73 @@ impl<F> BackingStore<F> {
         }
     }
 
+    /// Create a file-backed store at `path` for incremental `extend()` appends.
+    ///
+    /// The file is created (or truncated if it exists) and opened read+write.
+    pub(crate) fn create_file_backed(path: &Path) -> io::Result<Self> {
+        Self::create_file_backed_sized(path, 0)
+    }
+
+    /// Create a file-backed store at `path` with space reserved for `capacity_elems`.
+    pub(crate) fn create_file_backed_sized(path: &Path, capacity_elems: usize) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        let reserved_bytes = capacity_elems.saturating_mul(Self::elem_size_bytes()) as u64;
+        file.set_len(reserved_bytes)?;
+        Ok(BackingStore::FileBacked {
+            file,
+            path: path.to_path_buf(),
+            len: capacity_elems,
+            append_offset: 0,
+            _phantom: PhantomData,
+        })
+    }
+
+    pub(crate) fn writer(&self) -> io::Result<Option<FileBackedWriter<F>>> {
+        match self {
+            BackingStore::FileBacked { file, len, .. } => Ok(Some(FileBackedWriter {
+                file: file.try_clone()?,
+                len: *len,
+                _phantom: PhantomData,
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    /// Pre-extend the file to hold `additional_elems` more elements and return
+    /// a writer covering the full new range.  Updates internal len/append_offset.
+    /// Returns `None` for non-file-backed stores.
+    pub(crate) fn pre_extended_writer(
+        &mut self,
+        additional_elems: usize,
+    ) -> io::Result<Option<FileBackedWriter<F>>> {
+        match self {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
+                let elem_size = Self::elem_size_bytes();
+                let new_len = *len + additional_elems;
+                let new_file_size = (new_len * elem_size) as u64;
+                file.set_len(new_file_size)?;
+                *append_offset = new_file_size;
+                *len = new_len;
+                Ok(Some(FileBackedWriter {
+                    file: file.try_clone()?,
+                    len: new_len,
+                    _phantom: PhantomData,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Write raw bytes to a file.  No-op for `Empty`.
     pub(crate) fn save_to_file(&self, path: &Path) -> io::Result<()> {
         match self {
@@ -292,6 +404,7 @@ impl<F> BackingStore<F> {
                 ),
             ));
         }
+
         let len = file_len / elem_size;
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!(
@@ -306,6 +419,7 @@ impl<F> BackingStore<F> {
             file,
             path: path.to_path_buf(),
             len,
+            append_offset: file_len as u64,
             _phantom: PhantomData,
         })
     }
@@ -322,7 +436,12 @@ impl<F> BackingStore<F> {
         }
         match self {
             BackingStore::InMemory(v) => v.extend_from_slice(additional),
-            BackingStore::FileBacked { file, len, .. } => {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
                 let bytes: &[u8] = unsafe {
                     std::slice::from_raw_parts(
                         additional.as_ptr() as *const u8,
@@ -331,17 +450,156 @@ impl<F> BackingStore<F> {
                 };
                 // Best-effort append; panic is fine here because preprocessing pools
                 // can't recover from persistence failure anyway.
-                file.seek(SeekFrom::End(0))
-                    .and_then(|_| file.write_all(bytes))
-                    .unwrap_or_else(|e| {
-                        panic!("BackingStore::extend file append failed: {e}");
-                    });
+                Self::file_write_all_at(file, *append_offset, bytes).unwrap_or_else(|e| {
+                    panic!("BackingStore::extend file append failed: {e}");
+                });
+                *append_offset += bytes.len() as u64;
                 *len += additional.len();
             }
             BackingStore::Empty => {
                 *self = BackingStore::InMemory(additional.to_vec());
             }
         }
+    }
+
+    /// Write `data` at the exact element offset `start_elem`.
+    ///
+    /// Unlike `extend()`, this does not depend on append state and is therefore
+    /// suitable for deterministic chunk writes into pre-sized file-backed stores.
+    pub(crate) fn write_at(&mut self, start_elem: usize, data: &[F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let end_elem = start_elem.saturating_add(data.len());
+        match self {
+            BackingStore::InMemory(v) => {
+                if end_elem > v.len() {
+                    v.resize(end_elem, data[0]);
+                }
+                v[start_elem..end_elem].copy_from_slice(data);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, len, .. } => {
+                if end_elem > *len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("BackingStore::write_at range end({end_elem}) exceeds len({len})"),
+                    ));
+                }
+                let (byte_offset, _) = Self::byte_range(start_elem, end_elem);
+                let bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        data.as_ptr() as *const u8,
+                        std::mem::size_of_val(data),
+                    )
+                };
+                Self::file_write_all_at(file, byte_offset, bytes)
+            }
+            BackingStore::Empty => {
+                if start_elem != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "BackingStore::write_at on Empty with non-zero offset {start_elem}"
+                        ),
+                    ));
+                }
+                *self = BackingStore::InMemory(data.to_vec());
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn write_bytes_at(&mut self, start_elem: usize, bytes: &[u8]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        const { assert_field_layout::<F>() };
+        let elem_size = Self::elem_size_bytes();
+        if bytes.len() % elem_size != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "BackingStore::write_bytes_at byte length {} is not divisible by element size {}",
+                    bytes.len(),
+                    elem_size,
+                ),
+            ));
+        }
+
+        let elems = bytes.len() / elem_size;
+        let end_elem = start_elem.saturating_add(elems);
+        match self {
+            BackingStore::InMemory(v) => {
+                let decoded = Self::vec_from_bytes(bytes)?;
+                if end_elem > v.len() {
+                    v.resize_with(end_elem, || decoded[0]);
+                }
+                v[start_elem..end_elem].copy_from_slice(&decoded);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, len, .. } => {
+                if end_elem > *len {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "BackingStore::write_bytes_at range end({end_elem}) exceeds len({len})"
+                        ),
+                    ));
+                }
+                let (byte_offset, _) = Self::byte_range(start_elem, end_elem);
+                Self::file_write_all_at(file, byte_offset, bytes)
+            }
+            BackingStore::Empty => {
+                if start_elem != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "BackingStore::write_bytes_at on Empty with non-zero offset {start_elem}"
+                        ),
+                    ));
+                }
+                *self = BackingStore::InMemory(Self::vec_from_bytes(bytes)?);
+                Ok(())
+            }
+        }
+    }
+
+    /// Write interleaved `[left[i], right[i]]` pairs starting at pair index `start_pair`.
+    pub(crate) fn write_interleaved_at(
+        &mut self,
+        start_pair: usize,
+        left: &[F],
+        right: &[F],
+    ) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if left.len() != right.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "BackingStore::write_interleaved_at length mismatch: left={} right={}",
+                    left.len(),
+                    right.len()
+                ),
+            ));
+        }
+        if left.is_empty() {
+            return Ok(());
+        }
+        let mut interleaved = Vec::with_capacity(left.len() * 2);
+        for i in 0..left.len() {
+            interleaved.push(left[i]);
+            interleaved.push(right[i]);
+        }
+        self.write_at(start_pair.saturating_mul(2), &interleaved)
     }
 
     /// Consume a range and reclaim backing storage in non-reuse mode.
@@ -489,6 +747,160 @@ impl<F> BackingStore<F> {
                 );
             }
         }
+    }
+}
+
+impl<F> FileBackedWriter<F> {
+    pub(crate) fn write_at(&self, start_elem: usize, data: &[F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let end_elem = start_elem.saturating_add(data.len());
+        if end_elem > self.len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "FileBackedWriter::write_at range end({end_elem}) exceeds len({})",
+                    self.len
+                ),
+            ));
+        }
+        let (byte_offset, _) = BackingStore::<F>::byte_range(start_elem, end_elem);
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+        };
+        BackingStore::<F>::file_write_all_at(&self.file, byte_offset, bytes)
+    }
+
+    pub(crate) fn write_interleaved_at(
+        &self,
+        start_pair: usize,
+        left: &[F],
+        right: &[F],
+    ) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        if left.len() != right.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "FileBackedWriter::write_interleaved_at length mismatch: left={} right={}",
+                    left.len(),
+                    right.len()
+                ),
+            ));
+        }
+        if left.is_empty() {
+            return Ok(());
+        }
+        let mut interleaved = Vec::with_capacity(left.len() * 2);
+        for i in 0..left.len() {
+            interleaved.push(left[i]);
+            interleaved.push(right[i]);
+        }
+        self.write_at(start_pair.saturating_mul(2), &interleaved)
+    }
+
+    pub(crate) fn write_bytes_at(&self, start_elem: usize, bytes: &[u8]) -> io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        const { assert_field_layout::<F>() };
+        let elem_size = BackingStore::<F>::elem_size_bytes();
+        if bytes.len() % elem_size != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "FileBackedWriter::write_bytes_at byte length {} is not divisible by element size {}",
+                    bytes.len(),
+                    elem_size,
+                ),
+            ));
+        }
+        let elems = bytes.len() / elem_size;
+        let end_elem = start_elem.saturating_add(elems);
+        if end_elem > self.len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "FileBackedWriter::write_bytes_at range end({end_elem}) exceeds len({})",
+                    self.len
+                ),
+            ));
+        }
+        let (byte_offset, _) = BackingStore::<F>::byte_range(start_elem, end_elem);
+        BackingStore::<F>::file_write_all_at(&self.file, byte_offset, bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackingStore;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{}_{}", name, nanos))
+    }
+
+    #[test]
+    fn write_at_file_backed_correct() {
+        let path = temp_path("backing_store_write_at");
+        let mut store = BackingStore::<u64>::create_file_backed_sized(&path, 8).unwrap();
+        store.write_at(0, &[10, 11, 12]).unwrap();
+        store.write_at(3, &[20, 21, 22, 23, 24]).unwrap();
+
+        let loaded = BackingStore::<u64>::load_from_file(&path).unwrap();
+        #[cfg(feature = "reuse-preproc")]
+        let data = loaded.read_reuse(0, 8).unwrap();
+        #[cfg(not(feature = "reuse-preproc"))]
+        let data = loaded.read_consume(0, 8).unwrap();
+        assert_eq!(data, vec![10, 11, 12, 20, 21, 22, 23, 24]);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_interleaved_at_file_backed_correct() {
+        let path = temp_path("backing_store_write_interleaved");
+        let mut store = BackingStore::<u64>::create_file_backed_sized(&path, 6).unwrap();
+        store.write_interleaved_at(0, &[1, 2], &[11, 12]).unwrap();
+        store.write_interleaved_at(2, &[3], &[13]).unwrap();
+
+        let loaded = BackingStore::<u64>::load_from_file(&path).unwrap();
+        #[cfg(feature = "reuse-preproc")]
+        let data = loaded.read_reuse(0, 6).unwrap();
+        #[cfg(not(feature = "reuse-preproc"))]
+        let data = loaded.read_consume(0, 6).unwrap();
+        assert_eq!(data, vec![1, 11, 2, 12, 3, 13]);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_bytes_at_file_backed_correct() {
+        let path = temp_path("backing_store_write_bytes_at");
+        let mut store = BackingStore::<u64>::create_file_backed_sized(&path, 4).unwrap();
+        let src = [7u64, 8, 9, 10];
+        let bytes = unsafe {
+            std::slice::from_raw_parts(src.as_ptr() as *const u8, std::mem::size_of_val(&src))
+        };
+        store.write_bytes_at(0, bytes).unwrap();
+
+        let loaded = BackingStore::<u64>::load_from_file(&path).unwrap();
+        #[cfg(feature = "reuse-preproc")]
+        let data = loaded.read_reuse(0, 4).unwrap();
+        #[cfg(not(feature = "reuse-preproc"))]
+        let data = loaded.read_consume(0, 4).unwrap();
+        assert_eq!(data, src);
+
+        let _ = std::fs::remove_file(path);
     }
 }
 

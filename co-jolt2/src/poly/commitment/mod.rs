@@ -72,17 +72,6 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         Ok(Self::batch_commit_rep3(polys, setup, commit_to_public))
     }
 
-    fn coordinate_prove<Network>(
-        setup: &Self::ProverSetup,
-        transcript: &mut ProofTranscript,
-        network: &mut Network,
-        opening_point: &[<F as jolt_core::field::JoltField>::Challenge],
-        claimed_opening: &F,
-        commitment: &Self::Commitment,
-    ) -> eyre::Result<Self::Proof>
-    where
-        Network: Rep3NetworkCoordinator;
-
     fn prove_rep3<Network>(
         poly: &Rep3MultilinearPolynomial<F>,
         setup: &Self::ProverSetup,
@@ -92,14 +81,6 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
     ) -> eyre::Result<()>
     where
         Network: Rep3NetworkWorker;
-
-    fn combine_commitment_shares(
-        commitments: &[&MaybeShared<Self::Commitment>],
-    ) -> Self::Commitment;
-
-    fn combine_hint_shares(
-        hints: &[&MaybeShared<Self::OpeningProofHint>],
-    ) -> Self::OpeningProofHint;
 
     /// Homomorphically combine per-polynomial hint shares using public RLC coefficients.
     ///

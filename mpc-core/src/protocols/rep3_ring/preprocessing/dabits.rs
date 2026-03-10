@@ -93,6 +93,26 @@ impl<F: PrimeField> LazyDaBits<F> {
         stored: Vec<F>,
         party_id: PartyID,
     ) -> Self {
+        Self::new_with_store(
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            total,
+            backing_store::BackingStore::from_vec(stored),
+            party_id,
+        )
+    }
+
+    pub(crate) fn new_with_store(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        total: usize,
+        stored: backing_store::BackingStore<F>,
+        party_id: PartyID,
+    ) -> Self {
         Self {
             seed1,
             pos1,
@@ -104,7 +124,7 @@ impl<F: PrimeField> LazyDaBits<F> {
             party_id,
             total,
             cursor: 0,
-            stored: backing_store::BackingStore::from_vec(stored),
+            stored,
             meta_path: None,
         }
     }
@@ -337,28 +357,7 @@ impl<F: PrimeField> LazyDaBits<F> {
 
         let stored = if meta.total > 0 && party_id != PartyID::ID1 {
             let data_path = dir.join("dabits.stored");
-            let bs = backing_store::BackingStore::load_from_file(&data_path)?;
-            // Validate stored data length matches meta.total.
-            // P0 stores 1 field element per daBit, P2 stores 2.
-            let expected = match party_id {
-                PartyID::ID0 => meta.total,
-                PartyID::ID2 => meta.total * 2,
-                _ => 0,
-            };
-            if bs.len() < expected {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "dabits.stored: expected at least {} elements, got {} (total={}, cursor={}, party={:?})",
-                        expected,
-                        bs.len(),
-                        meta.total,
-                        meta.cursor,
-                        party_id,
-                    ),
-                ));
-            }
-            bs
+            backing_store::BackingStore::load_from_file(&data_path)?
         } else {
             backing_store::BackingStore::Empty
         };

@@ -52,9 +52,9 @@ tokio = { version = "1.34.0", features = [
     "macros",
 ] }
 # Jolt dependencies (path deps to examples/jolt fork)
-jolt-core.workspace = true
-jolt2-common.workspace = true
-tracer.workspace = true
+jolt-core = { workspace = true, features = ["host"] }
+jolt2-common = { workspace = true, package = "jolt-common" }
+tracer = { workspace = true }
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
@@ -71,6 +71,7 @@ tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_support
 
 [dev-dependencies]
 co-jolt2 = { path = ".", features = ["test-utils"] }
+co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 rcgen = "0.13"
 
 [build-dependencies]

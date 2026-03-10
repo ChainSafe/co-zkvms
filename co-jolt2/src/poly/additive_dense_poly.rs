@@ -8,7 +8,7 @@ use mpc_core::protocols::additive::AdditiveShare;
 /// This avoids the `mul_vec` reshare cost — the FWHT pointwise product
 /// `Rep3 * Rep3 → Additive` is computed locally with zero communication.
 #[derive(Clone, Debug)]
-pub(crate) struct AdditiveDensePoly<F: JoltField> {
+pub struct AdditiveDensePoly<F: JoltField> {
     coeffs: Vec<AdditiveShare<F>>,
     /// After first bind, subsequent binds work on bound_coeffs.
     bound: Vec<AdditiveShare<F>>,
@@ -18,7 +18,7 @@ pub(crate) struct AdditiveDensePoly<F: JoltField> {
 }
 
 impl<F: JoltField> AdditiveDensePoly<F> {
-    pub(crate) fn new(coeffs: Vec<AdditiveShare<F>>) -> Self {
+    pub fn new(coeffs: Vec<AdditiveShare<F>>) -> Self {
         let len = coeffs.len();
         Self {
             coeffs,
@@ -40,7 +40,7 @@ impl<F: JoltField> AdditiveDensePoly<F> {
         self.current_len
     }
 
-    pub(crate) fn get_coeff(&self, index: usize) -> AdditiveShare<F> {
+    pub fn get_coeff(&self, index: usize) -> AdditiveShare<F> {
         if self.is_bound {
             self.bound[index]
         } else {
