@@ -55,9 +55,9 @@ tracy-client = { version = "0.18", default-features = false, features = ["enable
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
 libc = "0.2"
 
+[features]
+rv64 = ["co-jolt2/rv64"]
+
 [dev-dependencies]
 co-jolt2 = { path = "../co-jolt2", features = ["test-utils"] }
 rcgen = "0.13"
-
-[[example]]
-name = "rep3_jolt_coordinator"

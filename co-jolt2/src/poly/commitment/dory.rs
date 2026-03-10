@@ -9,6 +9,7 @@ use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
+use dory::Polynomial;
 use dory::{DoryProofBuilder, ProofBuilder};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
@@ -63,7 +64,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript>
             Rep3MultilinearPolynomial::Public(poly) => {
                 if commit_to_public {
                     let _span = tracing::trace_span!("commit_public").entered();
-                    let (c, hint) = <Self as CommitmentScheme>::commit(poly, setup);
+                    let (c, hint) = commit_public_fast(poly, setup);
                     (
                         MaybeShared::Public(Some(c)),
                         MaybeShared::Public(Some(hint)),
@@ -625,6 +626,52 @@ fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
     let local = coeffs_ref.iter().map(|s| s.a).collect::<Vec<Fr>>();
     let global_offset = poly.global_chunk_range.map(|(s, _)| s).unwrap_or(0);
     (global_offset, local)
+}
+
+fn commit_public_fast(
+    poly: &jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<Fr>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> (DoryCommitment, Vec<JoltG1Wrapper>) {
+    let sigma = DoryGlobals::get_num_columns().log_2();
+    let num_columns = 1usize << sigma;
+
+    let num_vars = poly.get_num_vars();
+    let nu = dory::vmv::compute_nu(num_vars, sigma);
+    let num_rows_target = 1usize << nu;
+
+    // Tier 1: row commitments (no pairing yet).
+    let mut row_commitments: Vec<JoltG1Wrapper> =
+        poly.commit_rows::<JoltMsmG1>(&setup.core.g1_vec[..num_columns], num_columns);
+    row_commitments.resize(num_rows_target, JoltGroupWrapper(G1Projective::zero()));
+
+    // Tier 2: combine rows with cached prepared G2 coefficients when available.
+    let row_commitments_proj: &[G1Projective] = unsafe {
+        std::slice::from_raw_parts(
+            row_commitments.as_ptr() as *const G1Projective,
+            row_commitments.len(),
+        )
+    };
+    let row_commitments_aff = G1Projective::normalize_batch(row_commitments_proj);
+
+    let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
+        let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
+        let num_chunks = rayon::current_num_threads();
+        let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
+        let ml_result = row_commitments_aff
+            .par_chunks(chunk_size)
+            .zip(g2_entries.par_chunks(chunk_size))
+            .map(|(g1_chunk, g2_chunk)| bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk))
+            .product();
+        Bn254::final_exponentiation(MillerLoopOutput(ml_result))
+            .expect("final exponentiation should not fail")
+    } else {
+        // Fallback: prepare G2 affines on the fly (slower and typically higher-churn).
+        let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
+        let g2_aff = G2Projective::normalize_batch(g2_proj);
+        Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
+    };
+
+    (DoryCommitment(commitment_share.into()), row_commitments)
 }
 
 #[tracing::instrument(skip_all, name = "dense::commit_rows", level = "trace")]

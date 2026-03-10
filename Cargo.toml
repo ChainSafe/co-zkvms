@@ -11,6 +11,14 @@ members = [
     "mpc-types",
     "snarks-core",
 ]
+default-members = [
+    "co-jolt2",
+    "co-jolt-coordinator",
+    "mpc-net",
+    "mpc-core",
+    "mpc-types",
+    "snarks-core",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -66,7 +66,7 @@ fn dag_correct() {
         ram: jolt_core::zkvm::ram::RAMPreprocessing::preprocess(memory_init.clone()),
     };
     let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltRV64IMAC as Rep3JoltWorker<F, PCS, FS>>::preprocess(
+        <JoltArch as Rep3JoltWorker<F, PCS, FS>>::preprocess(
             bytecode,
             io_device.memory_layout.clone(),
             memory_init,

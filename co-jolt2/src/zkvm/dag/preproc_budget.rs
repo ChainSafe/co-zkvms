@@ -36,29 +36,38 @@ impl std::fmt::Debug for PreprocessingBudget {
     }
 }
 
-/// Compute the EdaBit budget needed for the given number of non-noop cycles.
+/// Compute the EdaBit budget needed for the padded trace.
 ///
-/// Pass the un-padded trace length (upper bound on real non-NoOp cycles).
-/// NoOp padding cycles produce `None` in `instruction_ra` / `masked_indices_c`
-/// and are excluded from `non_noop_cycles` in ReadRaf, so the budget only needs
-/// to cover real instruction cycles.
+/// Pass the **padded** trace length (`trace.len()`), which is always a power of 2.
+/// This must be the padded length because witness-gen consumers (rd_inc, ram_inc)
+/// operate on the full padded trace, not just non-NoOp cycles.
 ///
-/// Two consumers:
-/// 1. **Suffix eval** (per-table): each cycle belongs to exactly one table.
-///    For that table, each B2A suffix consumes 1 edaBit of the ring type given
-///    by `suffix_edabit_ring_bits`. The worst case per ring bucket is
-///    `max_over_tables(count_of_B2A_suffixes_in_bucket) × n`.
-/// 2. **Operand Q**: `n` edaBits of type T (identity) + `2n` of T::Half
-///    (left + right) per phase.
+/// Three consumer groups:
+/// 1. **Suffix eval** (per-table, per-phase): each non-NoOp cycle belongs to
+///    exactly one table.  Worst case per ring bucket:
+///    `max_over_tables(B2A_suffix_count_in_bucket) × n`.
+/// 2. **Operand Q** (per-phase): `n` edaBits of type T (identity) + `2n` of
+///    T::Half (left + right).  Overestimates because identity and interleaved
+///    cycles are disjoint, but the split is unknown at budget time.
+/// 3. **Witness gen**: `5n` XlenInt (sparse operand cast, worst case) +
+///    `4n` XlenInt (rd_inc + ram_inc, each `2n`).
 ///
-/// Phase ring types: suffix_len = (7 - phase) * 16
-///   Phase 0-2: T=u128, T::Half=u64
-///   Phase 3-4: T=u64,  T::Half=u32
-///   Phase 5:   T=u32,  T::Half=u16
-///   Phase 6:   T=u16,  T::Half=u8
-///   Phase 7:   suffix_len=0, no B2A needed
-pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
-    let n = non_noop_cycles;
+/// Phase ring types: suffix_len = (7 - phase) * LOG_M
+///
+///   rv32 (LOG_M=8):
+///     Phase 0-2 (suffix 56,48,40): T=u64,  T::Half=u32
+///     Phase 3-4 (suffix 32,24):    T=u32,  T::Half=u16
+///     Phase 5-6 (suffix 16, 8):    T=u16,  T::Half=u8
+///     Phase 7   (suffix  0):       skip
+///
+///   rv64 (LOG_M=16):
+///     Phase 0-2 (suffix 112,96,80): T=u128, T::Half=u64
+///     Phase 3-4 (suffix 64,48):     T=u64,  T::Half=u32
+///     Phase 5   (suffix 32):        T=u32,  T::Half=u16
+///     Phase 6   (suffix 16):        T=u16,  T::Half=u8
+///     Phase 7   (suffix  0):        skip
+pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
+    let n = trace_len;
     let mut budget = PreprocessingBudget::default();
 
     // daBit budget: per cycle, sum BitInject suffixes across all phases.
@@ -139,9 +148,10 @@ pub fn compute_edabit_budget(non_noop_cycles: usize) -> PreprocessingBudget {
     }
 
     // Witness generation: binary→field B2A for operand columns and inc polynomials.
-    // - Sparse operand cast (5 columns × n, worst case): 5n u64 EdaBits
-    // - rd_inc/ram_inc (2 pre + 2 post × n): 4n u64 EdaBits
-    budget.u64 += 9 * n;
+    // All three consumers use XlenInt (u32 for rv32, u64 for rv64):
+    // - Sparse operand cast (5 columns × n, worst case): 5n EdaBits
+    // - rd_inc/ram_inc (2 pre + 2 post × n): 4n EdaBits
+    add_to_budget(&mut budget, XLEN, 9 * n);
 
     budget
 }

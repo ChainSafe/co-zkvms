@@ -105,26 +105,6 @@ pub fn reshare_vec<F: PrimeField, N: Rep3Network>(
         .collect())
 }
 
-/// Performs a reshare on all shares in the vector.
-pub async fn reshare_vec_async<F: PrimeField, N: Rep3Network>(
-    local_a: Vec<F>,
-    io_context: &mut IoContext<N>,
-) -> IoResult<Vec<FieldShare<F>>> {
-    let local_b = io_context
-        .network
-        .reshare_many_async(local_a.clone())
-        .await?;
-    if local_b.len() != local_a.len() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "During execution of reshare_vec: Invalid number of elements received",
-        ));
-    }
-    Ok(izip!(local_a, local_b)
-        .map(|(a, b)| FieldShare::new(a, b))
-        .collect())
-}
-
 /// Performs multiplication of a shared value and a public value.
 pub fn mul_public<F: PrimeField>(shared: FieldShare<F>, public: F) -> FieldShare<F> {
     shared * public
