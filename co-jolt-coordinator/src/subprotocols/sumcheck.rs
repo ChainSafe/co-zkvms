@@ -8,14 +8,9 @@ use jolt_core::transcripts::{AppendToTranscript, Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use co_jolt2::field::JoltField;
+use crate::field::JoltField;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
-
-pub use co_jolt2::subprotocols::sumcheck::{
-    BatchedSumcheckWorkerInstance, HybridBatchedSumcheckWorker, PublicSumcheckInstanceWorker,
-    Rep3BatchedSumcheckWorker, Rep3SumcheckInstanceWorker,
-};
 
 pub trait Rep3SumcheckInstance<F: JoltField, T: Transcript> {
     fn degree(&self) -> usize;

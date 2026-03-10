@@ -1,4 +1,4 @@
-use jolt2_common::constants::{LookupIndexInt, XlenInt, XLEN};
+use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::zkvm::instruction::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;

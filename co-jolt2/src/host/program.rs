@@ -139,7 +139,7 @@ fn share_cycle(
                 [op, op, op]
             } else {
                 let s = rep3_ring::binary::generate_shares_rep3(
-                    v as jolt2_common::constants::XlenInt,
+                    v as jolt_common::constants::XlenInt,
                     rng,
                 );
                 [

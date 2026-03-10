@@ -1,4 +1,4 @@
-use jolt2_common::jolt_device::MemoryLayout;
+use jolt_common::jolt_device::MemoryLayout;
 use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 use tracer::JoltDevice;

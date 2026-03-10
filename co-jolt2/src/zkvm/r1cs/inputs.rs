@@ -83,7 +83,7 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let imm = if row.flag(CircuitFlags::Branch) {
             row.imm() as i32 as i128
         } else {
-            row.imm() as jolt2_common::constants::XlenInt as i128
+            row.imm() as jolt_common::constants::XlenInt as i128
         };
         #[cfg(feature = "rv64")]
         let imm = row.imm();
@@ -261,7 +261,7 @@ where
                     let imm_val = if row.flag(CircuitFlags::Branch) {
                         F::from_i128(row.imm() as i32 as i128)
                     } else {
-                        F::from_i128(row.imm() as jolt2_common::constants::XlenInt as i128)
+                        F::from_i128(row.imm() as jolt_common::constants::XlenInt as i128)
                     };
                     #[cfg(feature = "rv64")]
                     let imm_val = F::from_i128(row.imm());

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use co_jolt2::field::JoltField;
+use crate::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
@@ -8,7 +8,6 @@ use tracer::JoltDevice;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-pub use co_jolt2::zkvm::dag::state_manager::{ProverStateWorker, StateManagerWorker};
 pub use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys, Proofs};
 
 pub struct StateManager<

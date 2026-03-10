@@ -33,6 +33,7 @@ use std::borrow::Borrow;
 // Re-export vanilla Jolt Dory types (wrappers, globals, commitment scheme, proof types, ...)
 pub use jolt_core::poly::commitment::dory::*;
 
+
 use super::Rep3CommitmentScheme;
 
 type DoryTranscriptRef<'a, T> = JoltToDoryTranscriptRef<'a, Fr, T>;

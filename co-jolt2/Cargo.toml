@@ -53,7 +53,7 @@ tokio = { version = "1.34.0", features = [
 ] }
 # Jolt dependencies (path deps to examples/jolt fork)
 jolt-core = { workspace = true, features = ["host"] }
-jolt2-common = { workspace = true, package = "jolt-common" }
+jolt-common.workspace = true
 tracer = { workspace = true }
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
@@ -62,6 +62,7 @@ serde_json = "1.0.130"
 bincode = "1.3.3"
 dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 
+co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 mpc-core = { path = "../mpc-core" }
 snarks-core = { path = "../snarks-core" }
 mpc-net = { path = "../mpc-net" }
@@ -75,7 +76,7 @@ co-jolt-coordinator = { path = "../co-jolt-coordinator" }
 rcgen = "0.13"
 
 [build-dependencies]
-jolt2-common.workspace = true
+jolt-common.workspace = true
 
 [[example]]
 name = "rep3_jolt"
@@ -99,5 +100,5 @@ test-utils = ["rcgen", "mpc-core/test-utils"]
 reuse-preproc = ["mpc-core/reuse-preproc"]
 tracy-mem = []
 rv32 = []
-rv64 = ["jolt-core/rv64", "jolt2-common/rv64", "tracer/rv64"]
+rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
 jemalloc-stats = ["dep:tikv-jemalloc-ctl"]

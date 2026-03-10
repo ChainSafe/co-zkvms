@@ -5,21 +5,12 @@ use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::witness::VirtualPolynomial;
-use mpc_core::protocols::additive::AdditiveShare;
-use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
 use crate::field::JoltField;
-use crate::poly::mixed_polynomial::MixedPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::poly::Polynomial;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
-use crate::subprotocols::sumcheck::{Rep3SumcheckInstance, Rep3SumcheckInstanceWorker};
-use crate::utils::types::Rep3Value;
+use crate::subprotocols::sumcheck::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::StateManager;
-
-use jolt_core::poly::multilinear_polynomial::BindingOrder;
 
 // ---------------------------------------------------------------------------
 // Coordinator

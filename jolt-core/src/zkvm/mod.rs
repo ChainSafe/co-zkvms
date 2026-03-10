@@ -238,6 +238,9 @@ where
 
 }
 
+pub struct JoltRV32IM;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
+
 pub struct JoltRV64IMAC;
 impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {}
 pub type RV64IMACJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;

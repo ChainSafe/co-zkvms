@@ -1,31 +1,17 @@
 use eyre::Context;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
-use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
-
-const LOG_K: usize = D * LOG_K_CHUNK;
+use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
-};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use rayon::prelude::*;
-use co_jolt2::zkvm::instruction_lookups::ra_virtual::Rep3InstructionRaSumcheckWorker;
+use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 use crate::field::JoltField;
-use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::opening_proof::{Rep3OpeningAccumulator, Rep3OpeningAccumulatorWorker};
-use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
-use crate::subprotocols::mles_product_sum::compute_mles_product_16_rep3;
+use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
-use std::sync::Arc;
-use tracing::trace_span;
 
 // ---------------------------------------------------------------------------
 // Coordinator
@@ -148,56 +134,6 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3Instruction
 // Dedicated stage 4 proving loops
 // ---------------------------------------------------------------------------
 
-/// Worker-side stage 4 proving loop for the RA virtualization sumcheck.
-///
-/// This runs a single-instance sumcheck with `io_ctx` access for resharing.
-pub fn prove_worker<F, N>(
-    worker: &mut Rep3InstructionRaSumcheckWorker<F>,
-    accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
-    io_ctx: &mut IoContextPool<N>,
-) -> eyre::Result<Vec<F::Challenge>>
-where
-    F: JoltField,
-    N: Rep3NetworkWorker,
-{
-    let party_id = io_ctx.party_id();
-    let num_rounds = worker.num_rounds_inner();
-    let degree = worker.degree_inner();
-
-    let mut claim: AdditiveShare<F> =
-        additive::promote_to_trivial_share(worker.input_claim_public(), party_id);
-    let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
-
-    for round in 0..num_rounds {
-        let msg = worker.compute_prover_message_share(round, claim, io_ctx)?;
-
-        let r_j: F::Challenge = io_ctx
-            .network()
-            .exchange(msg.clone())
-            .context("exchange RA round evals")?;
-        r_sumcheck.push(r_j);
-
-        worker.bind_inner(r_j);
-
-        // Update claim: reconstruct UniPoly from {0,1,...,degree} and evaluate at r_j
-        claim = evaluate_univariate_at_share::<F>(degree, claim, &msg, r_j)?;
-    }
-
-    // Cache openings and send claims to coordinator.
-    let opening_point = worker.normalize_opening_point_inner(&r_sumcheck);
-    let rep3_claims = worker.cache_openings_worker_inner(accumulator, opening_point);
-    let additive_claims: Vec<AdditiveShare<F>> = rep3_claims
-        .into_iter()
-        .map(Rep3PrimeFieldShare::into_additive)
-        .collect();
-    io_ctx
-        .network()
-        .send_response(vec![additive_claims])
-        .context("send RA opening claims")?;
-
-    Ok(r_sumcheck)
-}
-
 /// Coordinator-side stage 4 proving loop for the RA virtualization sumcheck.
 pub fn prove_coordinator<F, ProofTranscript, N>(
     coord: &Rep3InstructionRaSumcheck<F>,
@@ -297,28 +233,4 @@ where
         result.push(claims);
     }
     Ok(result)
-}
-
-/// Evaluate a degree-d univariate polynomial (given by round-message evals at {0,2,...,d})
-/// combined with the claim-derived eval at 1, at challenge point x.
-fn evaluate_univariate_at_share<F: JoltField>(
-    degree: usize,
-    previous_claim: AdditiveShare<F>,
-    msg_evals: &[AdditiveShare<F>],
-    x: F::Challenge,
-) -> eyre::Result<AdditiveShare<F>> {
-    eyre::ensure!(degree >= 1, "sumcheck degree must be >= 1");
-    eyre::ensure!(
-        msg_evals.len() >= degree,
-        "msg evals length must be >= degree"
-    );
-
-    let mut full_evals: Vec<AdditiveShare<F>> = Vec::with_capacity(degree + 1);
-    full_evals.push(msg_evals[0]);
-    full_evals.push(previous_claim - msg_evals[0]);
-    full_evals.extend((2..=degree).map(|k| msg_evals[k - 1]));
-
-    let evals_as_fe: Vec<F> = AdditiveShare::into_fe_vec(full_evals);
-    let poly = UniPoly::<F>::from_evals(&evals_as_fe);
-    Ok(AdditiveShare::from_fe(poly.evaluate(&x)))
 }

@@ -1,4 +1,4 @@
-use jolt2_common::constants::{LookupIndexInt, XlenInt};
+use jolt_common::constants::{LookupIndexInt, XlenInt};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;

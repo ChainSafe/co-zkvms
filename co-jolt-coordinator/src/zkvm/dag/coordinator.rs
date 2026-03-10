@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use co_jolt2::field::JoltField;
-use co_jolt2::poly::commitment::Rep3CommitmentScheme;
-use co_jolt2::utils::types::MaybeShared;
+use crate::field::JoltField;
+use crate::poly::commitment::Rep3CommitmentScheme;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::ReducedOpeningProof;
@@ -12,8 +11,7 @@ use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-
-use crate::poly::commitment::Rep3CoordinatorCommitmentScheme;
+use mpc_core::MaybeShared;
 use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
 use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
@@ -36,8 +34,7 @@ impl Rep3JoltDag {
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>
-            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
+            + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // --- Receive trace_length from workers ---
@@ -191,8 +188,7 @@ impl Rep3JoltDag {
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>
-            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
+            + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // Receive commitment shares from all 3 parties
@@ -213,7 +209,7 @@ impl Rep3JoltDag {
                     .iter()
                     .map(|party_shares| &party_shares[i])
                     .collect();
-                <PCS as Rep3CoordinatorCommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares)
+                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares)
             })
             .collect();
 
@@ -234,8 +230,7 @@ impl Rep3JoltDag {
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>
-            + Rep3CoordinatorCommitmentScheme<F, ProofTranscript>,
+            + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         let commitments: Vec<Option<PCS::Commitment>> = network.receive_responses()?;

@@ -1,4 +1,4 @@
-use jolt2_common::constants::REGISTER_COUNT;
+use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{

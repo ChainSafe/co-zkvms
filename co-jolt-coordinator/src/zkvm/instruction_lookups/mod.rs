@@ -1,18 +1,14 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 
 use crate::field::JoltField;
-use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
 
@@ -25,24 +21,6 @@ pub mod booleanity;
 pub mod hamming_weight;
 pub mod ra_virtual;
 pub mod read_raf_checking;
-
-// ---------------------------------------------------------------------------
-// compute_ra_evals
-// ---------------------------------------------------------------------------
-
-/// MPC version of vanilla `compute_ra_evals`. Computes eq-weighted histogram
-/// of lookup index chunks using the RandOHV representation from witness gen.
-///
-/// For each chunk `i`, computes `G[i][k] = Σ_j eq(r_cycle, j) * [chunk_i(index_j) == k]`
-/// as a secret-shared vector.
-///
-/// No MPC communication — all operations are `public * shared`.
-fn compute_ra_evals<F: JoltField>(
-    one_hot_polys: &[Rep3OneHotPolynomial<F>; D],
-    eq_r_cycle: &[F],
-) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
-    crate::poly::one_hot_polynomial::compute_g_from_masked_indices_many(one_hot_polys, eq_r_cycle)
-}
 
 // ---------------------------------------------------------------------------
 // Coordinator

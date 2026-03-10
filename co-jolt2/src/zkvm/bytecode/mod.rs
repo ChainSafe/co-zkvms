@@ -21,20 +21,7 @@ pub mod read_raf_checking;
 // Worker
 // ---------------------------------------------------------------------------
 
-/// Init data for Bytecode stage4 instances, broadcast by coordinator.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BytecodeStage4Init<F: JoltField> {
-    // ReadRaf
-    pub read_raf_gamma: F,
-    pub rv_claim: F,
-    pub val_polys: [Vec<F>; 3],
-    pub r_cycles: [Vec<F::Challenge>; 3],
-    // Booleanity
-    pub bool_gamma_powers: Vec<F>,
-    pub bool_r_address: Vec<F::Challenge>,
-    // HammingWeight
-    pub hw_gamma_powers: Vec<F>,
-}
+pub use co_jolt_coordinator::zkvm::bytecode::BytecodeStage4Init;
 
 pub struct Rep3BytecodeDagWorker<F: JoltField> {
     stage4: Option<BytecodeStage4Init<F>>,

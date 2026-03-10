@@ -21,8 +21,7 @@ use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
 use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC};
 
-pub struct JoltRV32IM;
-impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
+pub use jolt_core::zkvm::JoltRV32IM;
 
 #[cfg(not(feature = "rv64"))]
 pub type JoltArch = JoltRV32IM;
@@ -42,7 +41,7 @@ where
 {
     fn preprocess(
         bytecode: Vec<tracer::instruction::Instruction>,
-        memory_layout: jolt2_common::jolt_device::MemoryLayout,
+        memory_layout: jolt_common::jolt_device::MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS>;
@@ -66,7 +65,7 @@ where
 impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
     fn preprocess(
         bytecode: Vec<tracer::instruction::Instruction>,
-        memory_layout: jolt2_common::jolt_device::MemoryLayout,
+        memory_layout: jolt_common::jolt_device::MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<Fr, DoryCommitmentScheme> {
