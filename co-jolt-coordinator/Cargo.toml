@@ -61,6 +61,3 @@ rv64 = ["co-jolt2/rv64"]
 [dev-dependencies]
 co-jolt2 = { path = "../co-jolt2", features = ["test-utils"] }
 rcgen = "0.13"
-
-[[example]]
-name = "rep3_jolt_coordinator"

@@ -327,6 +327,36 @@ impl<F> BackingStore<F> {
         }
     }
 
+    /// Pre-extend the file to hold `additional_elems` more elements and return
+    /// a writer covering the full new range.  Updates internal len/append_offset.
+    /// Returns `None` for non-file-backed stores.
+    pub(crate) fn pre_extended_writer(
+        &mut self,
+        additional_elems: usize,
+    ) -> io::Result<Option<FileBackedWriter<F>>> {
+        match self {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
+                let elem_size = Self::elem_size_bytes();
+                let new_len = *len + additional_elems;
+                let new_file_size = (new_len * elem_size) as u64;
+                file.set_len(new_file_size)?;
+                *append_offset = new_file_size;
+                *len = new_len;
+                Ok(Some(FileBackedWriter {
+                    file: file.try_clone()?,
+                    len: new_len,
+                    _phantom: PhantomData,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Write raw bytes to a file.  No-op for `Empty`.
     pub(crate) fn save_to_file(&self, path: &Path) -> io::Result<()> {
         match self {
@@ -374,6 +404,7 @@ impl<F> BackingStore<F> {
                 ),
             ));
         }
+
         let len = file_len / elem_size;
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!(
@@ -455,9 +486,7 @@ impl<F> BackingStore<F> {
                 if end_elem > *len {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        format!(
-                            "BackingStore::write_at range end({end_elem}) exceeds len({len})"
-                        ),
+                        format!("BackingStore::write_at range end({end_elem}) exceeds len({len})"),
                     ));
                 }
                 let (byte_offset, _) = Self::byte_range(start_elem, end_elem);
@@ -473,7 +502,9 @@ impl<F> BackingStore<F> {
                 if start_elem != 0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        format!("BackingStore::write_at on Empty with non-zero offset {start_elem}"),
+                        format!(
+                            "BackingStore::write_at on Empty with non-zero offset {start_elem}"
+                        ),
                     ));
                 }
                 *self = BackingStore::InMemory(data.to_vec());
@@ -731,7 +762,10 @@ impl<F> FileBackedWriter<F> {
         if end_elem > self.len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("FileBackedWriter::write_at range end({end_elem}) exceeds len({})", self.len),
+                format!(
+                    "FileBackedWriter::write_at range end({end_elem}) exceeds len({})",
+                    self.len
+                ),
             ));
         }
         let (byte_offset, _) = BackingStore::<F>::byte_range(start_elem, end_elem);

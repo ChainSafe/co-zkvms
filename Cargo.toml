@@ -2,10 +2,11 @@
 resolver = "2"
 members = [
     "co-jolt2",
-    # Guest crates must be cross-compiled for RISC-V; they fail host cargo check
-    # because the jolt::provable macro emits host-only code gated on cfg(not(feature = "guest")).
-    # "co-jolt2/examples/sha2-chain/guest",
-    # "co-jolt2/examples/fibonacci/guest",
+    # Guest crates are cross-compiled for RISC-V by Program::build().
+    # They are workspace members so `-p <guest>` resolves, but excluded from
+    # default-members so `cargo check` / `cargo build` at the root skips them.
+    "co-jolt2/examples/sha2-chain/guest",
+    "co-jolt2/examples/fibonacci/guest",
     "co-jolt-coordinator",
     # "co-jolt",
     # "co-noir-spartan/co-spartan",
@@ -24,6 +25,14 @@ members = [
     # "co-jolt/examples/sha2-chain/guest",
     # "co-jolt/examples/sha3-chain",
     # "co-jolt/examples/sha3-chain/guest",
+]
+default-members = [
+    "co-jolt2",
+    "co-jolt-coordinator",
+    "mpc-net",
+    "mpc-core",
+    "mpc-types",
+    "snarks-core",
 ]
 
 [workspace.package]
@@ -106,10 +115,10 @@ mpc-types = { path = "./mpc-types" }
 anyhow = "1.0.93"
 argh = "0.1.12"
 
-jolt-core = { path = "/Users/timofey/repos/examples/jolt/jolt-core" }
-jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "common" }
-tracer = { path = "/Users/timofey/repos/examples/jolt/tracer" }
-jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
+jolt-core = { path = "/home/ubuntu/jolt/jolt-core" }
+jolt2-common = { path = "/home/ubuntu/jolt/common", package = "common" }
+tracer = { path = "/home/ubuntu/jolt/tracer" }
+jolt = { path = "/home/ubuntu/jolt/jolt-sdk", package = "jolt-sdk" }
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }

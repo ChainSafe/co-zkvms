@@ -19,7 +19,10 @@ use jolt_core::ark_bn254::Fr;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
-use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV32IM, JoltRV64IMAC};
+use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC};
+
+pub struct JoltRV32IM;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
 
 #[cfg(not(feature = "rv64"))]
 pub type JoltArch = JoltRV32IM;

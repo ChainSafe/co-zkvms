@@ -113,11 +113,6 @@ fi
 # Build the example binary (release mode)
 # Note: Guest ELF is auto-compiled by Program::build() on first run
 cargo build --example rep3_jolt --release --features "$FEATURES"
-if [ "$RV64" = "1" ]; then
-  cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release --features rv64
-else
-  cargo build -p co-jolt-coordinator --example rep3_jolt_coordinator --release
-fi
 
 # Build gen_configs
 cd ../mpc-net
@@ -150,7 +145,7 @@ if [ "$PREPROC_ONLY" = "1" ]; then
 fi
 
 # Launch coordinator
-../target/release/examples/rep3_jolt_coordinator \
+../target/release/examples/rep3_jolt \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
@@ -161,8 +156,9 @@ capture_pids=()
 if [ "$TRACY_CAPTURE" = "1" ]; then
   # Prefer brew-installed tracy-capture (0.13.1, protocol 76) over any system one.
   TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
+  echo "Using tracy-capture: $TRACY_CAPTURE_BIN"
   for p in 0 1 2; do
-    capture_log="$TRACE_DIR/tracy/tracy-capture-worker${p}.log"
+    capture_log="$TRACE_DIR/tracy-capture-worker${p}.log"
     if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
       "$TRACY_CAPTURE_BIN" \
         -f \
