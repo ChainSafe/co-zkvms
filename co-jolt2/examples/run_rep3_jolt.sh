@@ -187,13 +187,14 @@ worker_pids=()
 for p in 0 1 2; do
   (
     tmpfile=$(mktemp)
+    rc=0
     if [ ${#TIME_CMD[@]} -gt 0 ]; then
       TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
         "${TIME_CMD[@]}" ../target/release/examples/rep3_jolt \
           -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
           -t "$TRACE_DIR" -n "$NUM_ITERS" \
           ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
-          ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
+          ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile" || rc=$?
       maxrss_line=$(grep -i "$TIME_RSS_PATTERN" "$tmpfile" | tail -n 1 || true)
       maxrss=$(printf '%s\n' "$maxrss_line" | grep -Eo '[0-9]+' | head -n 1 || true)
       if [ -n "$maxrss" ]; then
@@ -205,12 +206,18 @@ for p in 0 1 2; do
         -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
         -t "$TRACE_DIR" -n "$NUM_ITERS" \
         ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
-        ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile"
+        ${PROOF_ARGS[@]+"${PROOF_ARGS[@]}"} 2>"$tmpfile" || rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+      echo "=== worker${p} FAILED (exit $rc) ===" >&2
+      cat "$tmpfile" >&2
+      echo "=== end worker${p} stderr ===" >&2
     fi
     if [ "$JEMALLOC_PRESET" != "default" ]; then
       echo "worker${p}: JEMALLOC_PRESET=$JEMALLOC_PRESET"
     fi
     rm -f "$tmpfile"
+    exit "$rc"
   ) &
   worker_pids+=($!)
 done

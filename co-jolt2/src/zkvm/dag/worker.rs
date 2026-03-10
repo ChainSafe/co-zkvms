@@ -19,14 +19,14 @@ use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
+use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
 use rand::distributions::{Distribution, Standard};
 
 /// Worker side of the MPC DAG prover.
@@ -70,7 +70,12 @@ impl Rep3JoltDagWorker {
         );
 
         // --- Commit untrusted advice (must use the same DoryGlobals T) ---
-        Self::commit_untrusted_advice::<F, PCS>(&mut state, padded_trace_length)?;
+        Self::commit_untrusted_advice::<F, PCS, ProofTranscript, N>(
+            &mut state,
+            padded_trace_length,
+            &mut io_ctx,
+            preproc,
+        )?;
 
         let (opening_hints, polynomials_map, instruction_one_hot_polys) =
             Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
@@ -81,7 +86,7 @@ impl Rep3JoltDagWorker {
             )?;
 
         // --- Compute trusted advice polynomial (after witness commit, matching vanilla) ---
-        Self::compute_trusted_advice_poly::<F, PCS>(&mut state);
+        Self::compute_trusted_advice_poly::<F, PCS, N>(&mut state, &mut io_ctx)?;
 
         // Stage 1 (Spartan outer sumcheck)
         let (outer_sumcheck_r, claimed_witness_evals) =
@@ -226,8 +231,7 @@ impl Rep3JoltDagWorker {
         // Send commitment shares to coordinator
         io_ctx.network().send_response(commitment_shares)?;
 
-        // Send untrusted advice commitment to coordinator (all workers computed
-        // the same public commitment; coordinator verifies consistency).
+        // Send untrusted advice commitment share to coordinator.
         io_ctx
             .network()
             .send_response(state.untrusted_advice_commitment.clone())?;
@@ -293,19 +297,37 @@ impl Rep3JoltDagWorker {
         Ok((hint_map, polynomials_map, instruction_one_hot_polys))
     }
 
-    /// Commit the untrusted advice polynomial (if non-empty).
-    ///
-    /// Mirrors vanilla `JoltDAG::commit_untrusted_advice`: packs advice bytes
-    /// into u64 words, builds a `MultilinearPolynomial`, commits with standard
-    /// `PCS::commit` (advice is public data, not secret-shared), and stores the
-    /// commitment + polynomial on state.
-    fn commit_untrusted_advice<F, PCS>(
-        state: &mut StateManagerWorker<'_, F, PCS>,
-        padded_trace_length: usize,
-    ) -> eyre::Result<()>
+    fn shared_advice_polynomial<F, PCS, N>(
+        advice: &[mpc_core::protocols::rep3_ring::Rep3RingShare<u8>],
+        max_size: usize,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<Rep3MultilinearPolynomial<F>>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
+        N: Rep3NetworkWorker,
+    {
+        let mut coeffs = vec![Rep3PrimeFieldShare::zero_share(); max_size];
+        let words = crate::host::jolt_device::Rep3ProgramIOInput::pack_advice_words(advice);
+        let field_words = binary_ring_to_field_many(&words, io_ctx.main())?;
+        for (i, share) in field_words.into_iter().enumerate() {
+            coeffs[i + 1] = share;
+        }
+        Ok(Rep3MultilinearPolynomial::from_shared_coeffs(coeffs))
+    }
+
+    /// Commit the untrusted advice polynomial (if non-empty) using Rep3 shares.
+    fn commit_untrusted_advice<F, PCS, ProofTranscript, N>(
+        state: &mut StateManagerWorker<'_, F, PCS>,
+        padded_trace_length: usize,
+        io_ctx: &mut IoContextPool<N>,
+        preproc: &mut PreprocessingPool<F>,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        ProofTranscript: Transcript,
+        N: Rep3NetworkWorker,
     {
         if state.program_io.untrusted_advice.is_empty() {
             return Ok(());
@@ -318,57 +340,46 @@ impl Rep3JoltDagWorker {
              current PCS generators/DoryGlobals are built for padded_trace_length"
         );
 
-        let mut initial_memory_state = vec![0u64; max_size];
-        let mut index = 1;
-        for chunk in state.program_io.untrusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            initial_memory_state[index] = u64::from_le_bytes(word);
-            index += 1;
-        }
-
-        let poly = MultilinearPolynomial::from(initial_memory_state);
-        let (commitment, _hint) = PCS::commit(&poly, &state.prover_state.preprocessing.generators);
+        let poly = Self::shared_advice_polynomial::<F, PCS, N>(
+            &state.program_io.untrusted_advice,
+            max_size,
+            io_ctx,
+        )?;
+        let (commitment, _hint) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::commit_rep3(
+            &poly,
+            &state.prover_state.preprocessing.generators,
+            false,
+            io_ctx,
+            preproc,
+        )?;
 
         state.untrusted_advice_commitment = Some(commitment);
-        state.prover_state.untrusted_advice_polynomial =
-            Some(Rep3MultilinearPolynomial::Public(poly));
+        state.prover_state.untrusted_advice_polynomial = Some(poly);
 
         Ok(())
     }
 
-    /// Compute the trusted advice polynomial (if non-empty).
-    ///
-    /// Mirrors vanilla `JoltDAG::compute_trusted_advice_poly`: packs advice
-    /// bytes into u64 words, builds a `MultilinearPolynomial`, and stores it
-    /// on prover state. No commitment is computed here — the trusted advice
-    /// commitment comes from an external source.
-    fn compute_trusted_advice_poly<F, PCS>(state: &mut StateManagerWorker<'_, F, PCS>)
+    /// Compute the trusted advice polynomial (if non-empty) from Rep3 shares.
+    fn compute_trusted_advice_poly<F, PCS, N>(
+        state: &mut StateManagerWorker<'_, F, PCS>,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<()>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
+        N: Rep3NetworkWorker,
     {
         if state.program_io.trusted_advice.is_empty() {
-            return;
+            return Ok(());
         }
 
         let max_size = state.program_io.memory_layout.max_trusted_advice_size as usize / 8;
-
-        let mut initial_memory_state = vec![0u64; max_size];
-        let mut index = 1;
-        for chunk in state.program_io.trusted_advice.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            initial_memory_state[index] = u64::from_le_bytes(word);
-            index += 1;
-        }
-
-        let poly = MultilinearPolynomial::from(initial_memory_state);
-        state.prover_state.trusted_advice_polynomial =
-            Some(Rep3MultilinearPolynomial::Public(poly));
+        let poly = Self::shared_advice_polynomial::<F, PCS, N>(
+            &state.program_io.trusted_advice,
+            max_size,
+            io_ctx,
+        )?;
+        state.prover_state.trusted_advice_polynomial = Some(poly);
+        Ok(())
     }
 }

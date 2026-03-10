@@ -94,7 +94,6 @@ struct WorkerPayload {
     trace: Vec<Rep3Cycle>,
     memory: Rep3Memory,
     program_io_share: Rep3ProgramIOInput,
-    io_device: JoltDevice,
     bytecode: Vec<tracer::instruction::Instruction>,
     memory_init: Vec<(u64, u8)>,
     padded_len: usize,
@@ -327,7 +326,6 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 trace,
                 memory,
                 program_io_share,
-                io_device: io_device.clone(),
                 bytecode: bytecode.clone(),
                 memory_init: memory_init.clone(),
                 padded_len,
@@ -403,6 +401,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let counts = pp.edabit_counts;
         let num_dabits = pp.dabits;
         log_preproc_size_estimates(counts, num_dabits);
+        #[cfg(feature = "ring-msm")]
+        let budget = {
+            use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
+            compute_edabit_budget(pp.trace_len)
+        };
 
         if let Some(ref base_dir) = args.preproc_dir {
             let pool_dir = base_dir.join(format!("party_{}", my_id));
@@ -414,16 +417,35 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     let deficit_counts: [usize; 5] =
                         std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    #[cfg(feature = "ring-msm")]
+                    let (deficit_wm, deficit_re) = (
+                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
+                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                    );
 
-                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    #[cfg(feature = "ring-msm")]
+                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+
+                    if need_extend {
                         info!(
                             "preprocess-only: extending pool: deficit edabits={:?}, dabits={}",
                             deficit_counts, deficit_dabits
                         );
+                        #[cfg(not(feature = "ring-msm"))]
                         edabits::extend_pool_batched(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        #[cfg(feature = "ring-msm")]
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            deficit_wm,
+                            deficit_re,
                             &mut io_ctx,
                         )?;
                         match pool.save(&pool_dir) {
@@ -440,12 +462,26 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         "preprocess-only: no cached preprocessing ({e}); creating pool into {:?}",
                         pool_dir
                     );
-                    edabits::preprocess_pool_batched_into_dir::<F, _>(
-                        &pool_dir,
-                        counts,
-                        num_dabits,
-                        &mut io_ctx,
-                    )?
+                    #[cfg(not(feature = "ring-msm"))]
+                    {
+                        edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            num_dabits,
+                            &mut io_ctx,
+                        )?
+                    }
+                    #[cfg(feature = "ring-msm")]
+                    {
+                        edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            num_dabits,
+                            budget.wrap_masks,
+                            budget.ring_edabits_u66,
+                            &mut io_ctx,
+                        )?
+                    }
                 }
             };
 
@@ -469,7 +505,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         trace: first_trace,
         memory: first_memory,
         program_io_share: first_program_io_share,
-        io_device,
         bytecode,
         memory_init,
         padded_len,
@@ -487,7 +522,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let preprocessing: JoltProverPreprocessing<F, PCS> =
         <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode,
-            io_device.memory_layout.clone(),
+            first_program_io_share
+                .as_ref()
+                .expect("missing first program_io_share")
+                .memory_layout
+                .clone(),
             memory_init,
             padded_len,
         );
@@ -539,16 +578,35 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     let deficit_counts: [usize; 5] =
                         std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    #[cfg(feature = "ring-msm")]
+                    let (deficit_wm, deficit_re) = (
+                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
+                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                    );
 
-                    if deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0 {
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    #[cfg(feature = "ring-msm")]
+                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+
+                    if need_extend {
                         info!(
                             "extending pool: deficit edabits={:?}, dabits={}",
                             deficit_counts, deficit_dabits
                         );
+                        #[cfg(not(feature = "ring-msm"))]
                         edabits::extend_pool_batched(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            &mut io_ctx,
+                        )?;
+                        #[cfg(feature = "ring-msm")]
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            deficit_wm,
+                            deficit_re,
                             &mut io_ctx,
                         )?;
                         match pool.save(&pool_dir) {
@@ -564,20 +622,54 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 }
                 Err(e) => {
                     info!("no cached preprocessing ({e}); running preprocessing...");
-                    edabits::preprocess_pool_batched_into_dir::<F, _>(
-                        &pool_dir,
-                        counts,
-                        num_dabits,
-                        &mut io_ctx,
-                    )?
+                    #[cfg(not(feature = "ring-msm"))]
+                    {
+                        edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            num_dabits,
+                            &mut io_ctx,
+                        )?
+                    }
+                    #[cfg(feature = "ring-msm")]
+                    {
+                        edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            num_dabits,
+                            budget.wrap_masks,
+                            budget.ring_edabits_u66,
+                            &mut io_ctx,
+                        )?
+                    }
                 }
             }
         } else {
-            edabits::preprocess_pool_batched::<F, _>(counts, num_dabits, &mut io_ctx)?
+            let tmp = std::env::temp_dir().join(format!("co-jolt2-preproc-{}", io_ctx.party_idx()));
+            #[cfg(not(feature = "ring-msm"))]
+            {
+                edabits::preprocess_pool::<F, _>(
+                    &tmp,
+                    counts,
+                    num_dabits,
+                    &mut io_ctx,
+                )?
+            }
+            #[cfg(feature = "ring-msm")]
+            {
+                edabits::preprocess_pool::<F, _>(
+                    &tmp,
+                    counts,
+                    num_dabits,
+                    budget.wrap_masks,
+                    budget.ring_edabits_u66,
+                    &mut io_ctx,
+                )?
+            }
         }
     };
 
-    // Ring MSM preprocessing (daPoints, wrap masks, ring edaBits)
+    // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)
     #[cfg(feature = "ring-msm")]
     {
         if budget.dapoints > 0 {
@@ -591,19 +683,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 &mut io_ctx,
             )?;
             preproc.set_dapoints(lazy_dp);
-        }
-        if budget.wrap_masks > 0 {
-            let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
-                budget.wrap_masks,
-                io_ctx.main(),
-            )?;
-            preproc.set_wrap_masks(wm);
-        }
-        if budget.ring_edabits_u66 > 0 {
-            let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
-                mpc_core::protocols::rep3_ring::ring::u66::U66, _,
-            >(budget.ring_edabits_u66, &mut io_ctx)?;
-            preproc.set_ring_edabits_u66(eb);
         }
     }
     drop(_span);
@@ -646,11 +725,10 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,
-            io_device.clone(),
+            program_io_share,
             memory,
             &mut io_ctx,
             ram_k,
-            Some(program_io_share),
             &mut preproc,
         )?;
 

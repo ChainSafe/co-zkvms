@@ -8,7 +8,7 @@ use crate::zkvm::instruction::Rep3Cycle;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::zkvm::JoltProverPreprocessing;
 use mpc_core::protocols::rep3::PartyID;
-use tracer::JoltDevice;
+use mpc_core::MaybeShared;
 
 // Re-export vanilla DAG types
 pub use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys, Proofs};
@@ -30,11 +30,10 @@ pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>
 pub struct StateManagerWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub party_id: PartyID,
     pub commitments: Vec<PCS::Commitment>,
-    pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub untrusted_advice_commitment: Option<MaybeShared<PCS::Commitment>>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
-    pub program_io: JoltDevice,
-    pub advice_shares: Option<Rep3ProgramIOInput>,
+    pub program_io: Rep3ProgramIOInput,
     pub prover_state: ProverStateWorker<'a, F, PCS>,
     pub accumulator: Rep3OpeningAccumulatorWorker<F>,
 }
@@ -47,11 +46,10 @@ where
     pub fn new(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: Vec<Rep3Cycle>,
-        program_io: JoltDevice,
+        program_io: Rep3ProgramIOInput,
         final_memory_state: Rep3Memory,
         party_id: PartyID,
         ram_K: usize,
-        advice_shares: Option<Rep3ProgramIOInput>,
     ) -> Self {
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
@@ -69,7 +67,6 @@ where
             ram_K,
             twist_sumcheck_switch_index,
             program_io,
-            advice_shares,
             prover_state: ProverStateWorker {
                 preprocessing,
                 trace: Some(trace),
@@ -87,7 +84,7 @@ where
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
         &[Rep3Cycle],
-        &JoltDevice,
+        &Rep3ProgramIOInput,
         &Rep3Memory,
     ) {
         (

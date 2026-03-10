@@ -143,8 +143,8 @@ impl<F: PrimeField> LazyDaBits<F> {
     }
 
     /// Drain `n` daBit tuples from the pool.
-    pub fn take_batch(&mut self, n: usize) -> DaBitBatch<F> {
-        assert!(
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<DaBitBatch<F>> {
+        eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyDaBits: need {n}, have {}",
             self.total - self.cursor
@@ -201,11 +201,11 @@ impl<F: PrimeField> LazyDaBits<F> {
             self.cursor += n;
             self.persist_cursor();
             self.stored.consume(store_base, store_base + 2 * n);
-            return DaBitBatch {
+            return Ok(DaBitBatch {
                 gammas: vec![false; n],
                 thetas,
                 v_shares,
-            };
+            });
         }
 
         // P0 and P1: regenerate from seeds.
@@ -268,11 +268,11 @@ impl<F: PrimeField> LazyDaBits<F> {
                 self.cursor += n;
                 self.persist_cursor();
                 self.stored.consume(cursor_base, cursor_base + n);
-                DaBitBatch {
+                Ok(DaBitBatch {
                     gammas,
                     thetas: vec![false; n],
                     v_shares,
-                }
+                })
             }
             PartyID::ID1 => {
                 // seed1 = P1↔P2, seed2 = P1↔P0 (same stream as P0's seed1)
@@ -301,11 +301,11 @@ impl<F: PrimeField> LazyDaBits<F> {
                     .collect();
 
                 self.cursor += n;
-                DaBitBatch {
+                Ok(DaBitBatch {
                     gammas: vec![false; n],
                     thetas,
                     v_shares,
-                }
+                })
             }
             PartyID::ID2 => unreachable!(), // handled above
         }

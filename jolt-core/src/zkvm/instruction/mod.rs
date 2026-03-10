@@ -343,3 +343,6 @@ pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
+
+#[cfg(test)]
+pub mod test;

@@ -91,8 +91,8 @@ impl<C: CurveGroup> LazyDaPoints<C> {
     }
 
     /// Drain `n` daPoint tuples as a `DaPointsBatch`.
-    pub fn take_batch(&mut self, n: usize) -> DaPointsBatch<C> {
-        assert!(
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<DaPointsBatch<C>> {
+        eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyDaPoints: need {n}, have {} (cursor={}, total={})",
             self.remaining(),
@@ -101,10 +101,10 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         );
 
         if n == 0 {
-            return DaPointsBatch {
+            return Ok(DaPointsBatch {
                 gammas: Vec::new(),
                 alphas: Vec::new(),
-            };
+            });
         }
 
         let start = self.cursor;
@@ -126,7 +126,7 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         };
 
         self.cursor += n;
-        DaPointsBatch { gammas, alphas }
+        Ok(DaPointsBatch { gammas, alphas })
     }
 }
 

@@ -49,11 +49,10 @@ where
     fn prove<N: Rep3NetworkWorker>(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: Vec<Rep3Cycle>,
-        program_io: JoltDevice,
+        program_io: crate::host::jolt_device::Rep3ProgramIOInput,
         final_memory_state: Rep3Memory,
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
-        advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
         preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()>;
 }
@@ -81,11 +80,10 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
     fn prove<N: Rep3NetworkWorker>(
         preprocessing: &JoltProverPreprocessing<Fr, DoryCommitmentScheme>,
         trace: Vec<Rep3Cycle>,
-        program_io: JoltDevice,
+        program_io: crate::host::jolt_device::Rep3ProgramIOInput,
         final_memory_state: Rep3Memory,
         io_ctx: &mut IoContextPool<N>,
         ram_K: usize,
-        advice_shares: Option<crate::host::jolt_device::Rep3ProgramIOInput>,
         preproc: &mut PreprocessingPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
@@ -96,7 +94,6 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
             final_memory_state,
             party_id,
             ram_K,
-            advice_shares,
         );
         Rep3JoltDagWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
             state, io_ctx, preproc,
@@ -221,8 +218,7 @@ mod tests {
             |party_idx| {
                 let (trace, memory, advice) = shares[party_idx].clone();
                 let preprocessing = Arc::clone(&preprocessing_arc);
-                let io_device = (*io_device_arc).clone();
-                (trace, memory, preprocessing, io_device, ram_K, advice)
+                (trace, memory, preprocessing, ram_K, advice)
             },
             || {
                 let verifier_preprocessing = verifier_preprocessing.clone();
@@ -237,7 +233,7 @@ mod tests {
                 )
             },
             move |input, mut io_ctx| {
-                let (mut trace, memory, preprocessing, io_device, ram_K, advice) = input;
+                let (mut trace, memory, preprocessing, ram_K, advice) = input;
 
                 let party = io_ctx.party_id();
                 let _span = info_span!("populate_operands_casts", ?party).entered();
@@ -249,13 +245,25 @@ mod tests {
                     use crate::zkvm::dag::preproc_budget::compute_edabit_budget;
                     use mpc_core::protocols::rep3_ring::edabits;
                     let budget = compute_edabit_budget(trace.len());
+                    let pool_dir = std::env::temp_dir().join(format!("co-jolt2-preproc-{}", io_ctx.party_idx()));
+                    #[cfg(not(feature = "ring-msm"))]
                     let mut pool = edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
                         [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                         budget.dabits,
                         &mut io_ctx,
                     )?;
+                    #[cfg(feature = "ring-msm")]
+                    let mut pool = edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
+                        [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                        budget.dabits,
+                        budget.wrap_masks,
+                        budget.ring_edabits_u66,
+                        &mut io_ctx,
+                    )?;
 
-                    // Ring MSM preprocessing: daPoints, wrap masks, ring edaBits (offline)
+                    // Ring MSM preprocessing: daPoints (depend on SRS, not in pool workflow)
                     #[cfg(feature = "ring-msm")]
                     {
                         if budget.dapoints > 0 {
@@ -267,21 +275,6 @@ mod tests {
                             let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                             pool.set_dapoints(lazy_dp);
                         }
-                        if budget.wrap_masks > 0 {
-                            let wm =
-                                mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
-                                    budget.wrap_masks,
-                                    io_ctx.main(),
-                                )?;
-                            pool.set_wrap_masks(wm);
-                        }
-                        if budget.ring_edabits_u66 > 0 {
-                            let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
-                                mpc_core::protocols::rep3_ring::ring::u66::U66,
-                                _,
-                            >(budget.ring_edabits_u66, &mut io_ctx)?;
-                            pool.set_ring_edabits_u66(eb);
-                        }
                     }
                     pool
                 };
@@ -289,11 +282,10 @@ mod tests {
                 <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
                     &preprocessing,
                     trace,
-                    io_device,
+                    advice,
                     memory,
                     &mut io_ctx,
                     ram_K,
-                    Some(advice),
                     &mut preproc,
                 )?;
                 Ok(())

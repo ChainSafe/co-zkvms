@@ -191,7 +191,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
 
         // BitInject — single-bit → field via daBits
         if !self.bitinject.is_empty() {
-            let dabits = pool.take_dabits(self.bitinject.len());
+            let dabits = pool.take_dabits(self.bitinject.len())?;
             let _span =
                 tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
             let fields = dabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
@@ -222,7 +222,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let end = (off + b2a_outer_chunk).min(total);
                         let chunk_len = end - off;
 
-                        let batch = pool.take_edabits::<$ring>(chunk_len);
+                        let batch = pool.take_edabits::<$ring>(chunk_len)?;
                         let _span =
                             tracing::info_span!("ring_to_field_b2a_many", n = chunk_len).entered();
 

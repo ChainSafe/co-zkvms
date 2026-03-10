@@ -39,7 +39,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualPow2IW> 
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
         (
             Rep3Operand::Public(0),
-            Rep3Operand::Public(self.instruction.operands.imm),
+            Rep3Operand::Public(self.instruction.operands.imm.into()),
         )
     }
 

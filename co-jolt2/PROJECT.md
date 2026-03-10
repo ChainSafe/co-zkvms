@@ -17,8 +17,8 @@ The previous version: `../co-jolt` (refered to as "v1"). It implements LEGACY Jo
 - Summary of Jolt codebase wrt. Witness `/Users/timofey/repos/examples/jolt/Instructions.md`
 - Summary of `co-jolt` (v1) and `mpc-types` crates wrt. MPC types and core methods `../co-jolt/MpcTypes.md`
 - Implementation docs:
-  - Rep3 Dory commitment scheme `co-jolt2/docs/DORY.md`
-  - Rep3 Polynomials `co-jolt2/docs/POLY.md`
+  - Rep3 Dory commitment scheme `co-jolt2/docs/dory.md`
+  - Rep3 Polynomials `co-jolt2/docs/poly.md`
 
 
 ## Rules

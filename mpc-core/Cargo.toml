@@ -53,3 +53,4 @@ parallel = [
 ]
 test-utils = ["std", "color-eyre"]
 reuse-preproc = []
+ring-msm = []

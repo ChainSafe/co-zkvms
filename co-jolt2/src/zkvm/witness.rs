@@ -104,7 +104,7 @@ where
             targets.push((job.col, job.row));
         }
 
-        let batch = preproc.take_edabits::<XlenInt>(n);
+        let batch = preproc.take_edabits::<XlenInt>(n)?;
         let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
             edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &batch, ctx)
         })?;
@@ -980,7 +980,7 @@ where
                     combined.extend_from_slice(&rd_pre[off..end]);
                     combined.extend_from_slice(&rd_post[off..end]);
 
-                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len);
+                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
                         edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
                             &combined,
@@ -1033,7 +1033,7 @@ where
                     combined.extend_from_slice(&ram_pre[off..end]);
                     combined.extend_from_slice(&ram_post[off..end]);
 
-                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len);
+                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
                         edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
                             &combined,
@@ -1202,7 +1202,6 @@ mod tests {
 
         // 6. Run MPC witness generation on 3 parties
         let preprocessing_arc = Arc::new(preprocessing);
-        let io_device_arc = Arc::new(io_device);
         let base_port: u16 = 14200;
 
         info!("launching 3-party MPC witness generation");
@@ -1211,20 +1210,19 @@ mod tests {
                 base_port,
                 4,
                 |party_idx| {
-                    let (trace, memory, _io) = shares[party_idx].clone();
+                    let (trace, memory, program_io) = shares[party_idx].clone();
                     let preprocessing = Arc::clone(&preprocessing_arc);
-                    let io_device = Arc::clone(&io_device_arc);
                     (
                         trace,
                         memory,
-                        io_device,
+                        program_io,
                         preprocessing,
                         ram_K,
                         all_polys.clone(),
                     )
                 },
                 |input, mut io_ctx| {
-                    let (mut trace, memory, io_device, preprocessing, ram_k, polys) = input;
+                    let (mut trace, memory, program_io, preprocessing, ram_k, polys) = input;
                     let party = io_ctx.party_id();
 
                     info!(?party, "populate_operands_casts start");
@@ -1251,21 +1249,33 @@ mod tests {
                     let budget =
                         crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
                     let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+                    let pool_dir = std::env::temp_dir().join(format!("co-jolt2-witness-preproc-{}", io_ctx.party_idx()));
+                    #[cfg(not(feature = "ring-msm"))]
                     let mut preproc =
-                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool_batched::<F, _>(
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
                             counts,
                             budget.dabits,
+                            &mut io_ctx,
+                        )?;
+                    #[cfg(feature = "ring-msm")]
+                    let mut preproc =
+                        mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            budget.dabits,
+                            0,
+                            0,
                             &mut io_ctx,
                         )?;
 
                     let mut state = StateManagerWorker::new(
                         &preprocessing,
                         trace,
-                        (*io_device).clone(),
+                        program_io,
                         memory,
                         io_ctx.party_id(),
                         ram_k,
-                        None,
                     );
 
                     info!(?party, "generate_witness_batch_rep3 start");

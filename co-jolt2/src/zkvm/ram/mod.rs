@@ -87,8 +87,7 @@ pub fn build_initial_memory_state(
 /// `binary_ring_to_field_many` (one MPC round).
 pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWorker>(
     ram_preprocessing: &jolt_core::zkvm::ram::RAMPreprocessing,
-    program_io: &tracer::JoltDevice,
-    advice: &Rep3ProgramIOInput,
+    program_io: &Rep3ProgramIOInput,
     party_id: PartyID,
     K: usize,
     io_ctx: &mut IoContextPool<N>,
@@ -110,12 +109,8 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     // Pack and convert trusted advice (SHARED)
     let trusted_advice_start =
         remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
-    if !advice.trusted_advice.is_empty() {
-        let trusted_words: Vec<Rep3RingShare<u64>> = advice
-            .trusted_advice
-            .chunks(ws)
-            .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
-            .collect();
+    if !program_io.trusted_advice.is_empty() {
+        let trusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.trusted_advice);
         let trusted_field: Vec<Rep3PrimeFieldShare<F>> =
             binary_ring_to_field_many(&trusted_words, io_ctx.main())?;
         for (i, share) in trusted_field.into_iter().enumerate() {
@@ -126,12 +121,8 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     // Pack and convert untrusted advice (SHARED)
     let untrusted_advice_start =
         remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
-    if !advice.untrusted_advice.is_empty() {
-        let untrusted_words: Vec<Rep3RingShare<u64>> = advice
-            .untrusted_advice
-            .chunks(ws)
-            .map(|chunk| Rep3RingShare::<u64>::from_le_bytes(chunk))
-            .collect();
+    if !program_io.untrusted_advice.is_empty() {
+        let untrusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.untrusted_advice);
         let untrusted_field: Vec<Rep3PrimeFieldShare<F>> =
             binary_ring_to_field_many(&untrusted_words, io_ctx.main())?;
         for (i, share) in untrusted_field.into_iter().enumerate() {
@@ -185,14 +176,9 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         let ws = RAM_WORD_SIZE as usize;
 
         // --- Build initial_memory_state with shared advice ---
-        let advice = sm
-            .advice_shares
-            .as_ref()
-            .expect("advice_shares must be set on StateManagerWorker for RAM");
         let initial_memory_state = build_initial_memory_state_shared(
             ram_preprocessing,
             &sm.program_io,
-            advice,
             party_id,
             K,
             io_ctx,
@@ -228,7 +214,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // Trusted advice (SHARED) — reuse already-converted initial memory shares.
         let trusted_advice_start =
             remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
-        let trusted_words_len = advice.trusted_advice.len().div_ceil(ws);
+        let trusted_words_len = sm.program_io.trusted_advice.len().div_ceil(ws);
         for i in 0..trusted_words_len {
             final_memory_mixed[trusted_advice_start + i] =
                 Rep3Value::Shared(initial_memory_state[trusted_advice_start + i]);
@@ -237,7 +223,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // Untrusted advice (SHARED) — reuse already-converted initial memory shares.
         let untrusted_advice_start =
             remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
-        let untrusted_words_len = advice.untrusted_advice.len().div_ceil(ws);
+        let untrusted_words_len = sm.program_io.untrusted_advice.len().div_ceil(ws);
         for i in 0..untrusted_words_len {
             final_memory_mixed[untrusted_advice_start + i] =
                 Rep3Value::Shared(initial_memory_state[untrusted_advice_start + i]);
