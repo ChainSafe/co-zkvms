@@ -2233,7 +2233,7 @@ where
         for lr_chunk in lr.chunks(chunk_size) {
             let _c =
                 trace_span!("q_polys_b2a_chunk", kind = "lr", chunk_len = lr_chunk.len()).entered();
-            let lr_batch = pool.take_edabits::<T::Half>(lr_chunk.len());
+            let lr_batch = pool.take_edabits::<T::Half>(lr_chunk.len())?;
             let out = edabits::ring_to_field_b2a_many::<T::Half, F, _>(
                 lr_chunk,
                 &lr_batch,
@@ -2262,7 +2262,7 @@ where
                 .iter()
                 .map(|b| downcast::<LookupIndexInt, T>(*b))
                 .collect();
-            let id_batch = pool.take_edabits::<T>(id_shares.len());
+            let id_batch = pool.take_edabits::<T>(id_shares.len())?;
             let out =
                 edabits::ring_to_field_b2a_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;
             out_all.extend(out);

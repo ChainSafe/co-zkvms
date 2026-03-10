@@ -94,8 +94,8 @@ impl LazyWrapMasks {
 
     /// Drain `n` wrap masks. Binary shares regenerated from seeds;
     /// arithmetic shares sliced from backing store.
-    pub fn take_batch(&mut self, n: usize) -> WrapMaskBatch {
-        assert!(
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<WrapMaskBatch> {
+        eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyWrapMasks: need {n}, have {} (cursor={}, total={})",
             self.remaining(),
@@ -104,11 +104,11 @@ impl LazyWrapMasks {
         );
 
         if n == 0 {
-            return WrapMaskBatch {
+            return Ok(WrapMaskBatch {
                 r0_bin: Vec::new(),
                 r1_bin: Vec::new(),
                 mask_arith: Vec::new(),
-            };
+            });
         }
 
         let cursor_base = self.cursor;
@@ -168,11 +168,11 @@ impl LazyWrapMasks {
         self.persist_cursor();
         self.mask_arith_flat.consume(flat_start, flat_end);
 
-        WrapMaskBatch {
+        Ok(WrapMaskBatch {
             r0_bin,
             r1_bin,
             mask_arith,
-        }
+        })
     }
 
     pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {

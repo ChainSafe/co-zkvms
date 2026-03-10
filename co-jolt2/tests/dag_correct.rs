@@ -87,7 +87,6 @@ fn dag_correct() {
 
     let preprocessing_arc_for_workers = Arc::clone(&preprocessing_arc);
     let verifier_preprocessing_arc_for_coord = Arc::clone(&verifier_preprocessing_arc);
-    let io_device_arc_for_workers = Arc::clone(&io_device_arc);
     let io_device_arc_for_coord = Arc::clone(&io_device_arc);
 
     let (_worker_out, rep3_proof) = run_rep3_local_test_with_coordinator(
@@ -95,13 +94,11 @@ fn dag_correct() {
         {
             let shares_arc = Arc::clone(&shares_arc);
             let preprocessing_arc = Arc::clone(&preprocessing_arc_for_workers);
-            let io_device_arc = Arc::clone(&io_device_arc_for_workers);
             move |party_idx| {
                 let (trace, memory, advice_shares) = shares_arc[party_idx].clone();
                 (
                     trace,
                     memory,
-                    Arc::clone(&io_device_arc),
                     Arc::clone(&preprocessing_arc),
                     ram_K,
                     advice_shares,
@@ -122,8 +119,7 @@ fn dag_correct() {
             }
         },
         move |input, io_ctx| {
-            let (trace, final_memory_state, program_io, preprocessing, ram_K, advice_shares) =
-                input;
+            let (trace, final_memory_state, preprocessing, ram_K, advice_shares) = input;
             let mut io_ctx = io_ctx;
             let party_id = io_ctx.party_id();
 
@@ -132,13 +128,25 @@ fn dag_correct() {
                 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
                 use mpc_core::protocols::rep3_ring::edabits;
                 let budget = compute_edabit_budget(trace.len());
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-test-preproc-{}", io_ctx.party_idx()));
+                #[cfg(not(feature = "ring-msm"))]
                 let mut pool = edabits::preprocess_pool::<F, _>(
+                    &pool_dir,
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
                     &mut io_ctx,
                 )?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = edabits::preprocess_pool::<F, _>(
+                    &pool_dir,
+                    [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
+                    budget.dabits,
+                    budget.wrap_masks,
+                    budget.ring_edabits_u66,
+                    &mut io_ctx,
+                )?;
 
-                // Ring MSM preprocessing (daPoints, wrap masks, ring edaBits)
+                // Ring MSM preprocessing (daPoints — depend on SRS, not in pool workflow)
                 #[cfg(feature = "ring-msm")]
                 {
                     if budget.dapoints > 0 {
@@ -151,19 +159,6 @@ fn dag_correct() {
                         let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                         pool.set_dapoints(lazy_dp);
                     }
-                    if budget.wrap_masks > 0 {
-                        let wm = mpc_core::protocols::rep3_ring::wrap_mask::generate_wrap_masks_lazy(
-                            budget.wrap_masks,
-                            io_ctx.main(),
-                        )?;
-                        pool.set_wrap_masks(wm);
-                    }
-                    if budget.ring_edabits_u66 > 0 {
-                        let eb = mpc_core::protocols::rep3_ring::edabits::random_edabits_ring_lazy::<
-                            mpc_core::protocols::rep3_ring::ring::u66::U66, _,
-                        >(budget.ring_edabits_u66, &mut io_ctx)?;
-                        pool.set_ring_edabits_u66(eb);
-                    }
                 }
                 pool
             };
@@ -171,11 +166,10 @@ fn dag_correct() {
             let state = StateManagerWorker::new(
                 &preprocessing,
                 trace,
-                (*program_io).clone(),
+                advice_shares,
                 final_memory_state,
                 party_id,
                 ram_K,
-                Some(advice_shares),
             );
             Rep3JoltDagWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, &mut preproc)
         },

@@ -923,7 +923,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
             .collect();
 
         // Ring B2A via edaBits Π₂ — 2 rounds
-        let ring_edabits = preproc.take_ring_edabits_u66(num_shared);
+        let ring_edabits = preproc.take_ring_edabits_u66(num_shared)?;
         let val_arith: Vec<Rep3RingShare<U66>> =
             rep3_ring::edabits::ring_b2a_many(&bin_ext, &ring_edabits, &mut io)?;
         let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext
@@ -933,7 +933,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
             .collect();
 
         // Extract m bits via DaBit mask+open (1 round)
-        let wrap_masks = preproc.take_wrap_masks(num_shared);
+        let wrap_masks = preproc.take_wrap_masks(num_shared)?;
         let (m0, m1) = rep3_ring::wrap_mask::extract_wrap_m2_from_diff_u66_many(
             &diff_u66,
             &wrap_masks,
@@ -1001,7 +1001,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
         // Take daPoints for ALL positions in the segment (matching the offline
         // precompute_dapoint_qs order: all m0/q0 first, then all m1/q1),
         // then select only the shared-position entries for the dot product.
-        let batch = preproc.take_dapoints(2 * seg_len);
+        let batch = preproc.take_dapoints(2 * seg_len)?;
         let mut bits_all: Vec<Rep3RingShare<Bit>> = Vec::new();
         let mut q_all: Vec<G1Projective> = Vec::new();
         let mut dp_selected: Vec<usize> = Vec::new();
@@ -1508,21 +1508,14 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
                 let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, &mut io_ctx)?;
 
-                // daPoints for Dory wrap correction (offline preprocessing)
+                // daPoints for Dory wrap correction (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
                 let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
-
-                // Wrap masks for DaBit-based wrap-m extraction (offline)
-                let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(len, io_ctx.main())?;
-                preproc.set_wrap_masks(wm);
-
-                // Ring edaBits (U66) for ring-domain B2A (offline)
-                let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(len, &mut io_ctx)?;
-                preproc.set_ring_edabits_u66(ring_eb);
 
                 let polys = vec![&poly];
                 let out = <DoryCommitmentScheme as Rep3CommitmentScheme<
@@ -1642,19 +1635,14 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
                 let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, &mut io_ctx)?;
 
-                // daPoints for ALL positions (matching precompute_dapoint_qs order)
+                // daPoints (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
                 let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
-
-                let wm = rep3_ring::wrap_mask::generate_wrap_masks_lazy(len, io_ctx.main())?;
-                preproc.set_wrap_masks(wm);
-
-                let ring_eb = edabits::random_edabits_ring_lazy::<U66, _>(len, &mut io_ctx)?;
-                preproc.set_ring_edabits_u66(ring_eb);
 
                 let polys = vec![&poly];
                 let out = <DoryCommitmentScheme as Rep3CommitmentScheme<

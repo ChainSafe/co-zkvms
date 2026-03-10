@@ -86,6 +86,9 @@ inferno = { workspace = true, optional = true }
 memory-stats.workspace = true
 tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
 
+[dev-dependencies]
+serial_test.workspace = true
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"

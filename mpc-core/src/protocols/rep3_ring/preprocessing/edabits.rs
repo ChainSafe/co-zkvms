@@ -277,8 +277,8 @@ where
     /// Drain `n` edaBits as a flat `EdaBitsBatch` with zero per-edaBit allocations.
     ///
     /// Two allocations total: `gammas` (len n) + `alphas_flat` (len n*K).
-    pub fn take_batch(&mut self, n: usize) -> EdaBitsBatch<T, F> {
-        assert!(
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<EdaBitsBatch<T, F>> {
+        eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyEdaBits<u{}>: need {n}, have {} (cursor={}, total={})",
             T::K,
@@ -288,10 +288,10 @@ where
         );
 
         if n == 0 {
-            return EdaBitsBatch {
+            return Ok(EdaBitsBatch {
                 gammas: Vec::new(),
                 alphas_flat: Vec::new(),
-            };
+            });
         }
 
         let t_bytes = std::mem::size_of::<T>();
@@ -328,10 +328,10 @@ where
             self.cursor += n;
             self.persist_cursor();
             self.alpha2_flat.consume(flat_start, flat_end);
-            return EdaBitsBatch {
+            return Ok(EdaBitsBatch {
                 gammas,
                 alphas_flat,
-            };
+            });
         }
 
         // P0/P1: regenerate from RNG seeds.
@@ -414,10 +414,10 @@ where
             .collect();
 
         self.cursor += n;
-        EdaBitsBatch {
+        Ok(EdaBitsBatch {
             gammas,
             alphas_flat,
-        }
+        })
     }
 }
 
@@ -635,32 +635,13 @@ where
     ))
 }
 
-/// Sequential preprocessing: generate all edaBits + daBits with natural TCP
-/// pipelining. Each `random_edabits_lazy` call sends α₂ immediately after
-/// computing it, so P2 starts receiving while P0 computes the next type.
-#[tracing::instrument(skip_all, name = "preprocess_pool")]
-pub fn preprocess_pool<F: PrimeField, N: Rep3NetworkWorker>(
-    counts: [usize; 5], // [u8, u16, u32, u64, u128]
-    num_dabits: usize,
-    io: &mut IoContextPool<N>,
-) -> eyre::Result<PreprocessingPool<F>> {
-    let e0 = random_edabits_lazy::<u8, F, _>(counts[0], io)?;
-    let e1 = random_edabits_lazy::<u16, F, _>(counts[1], io)?;
-    let e2 = random_edabits_lazy::<u32, F, _>(counts[2], io)?;
-    let e3 = random_edabits_lazy::<u64, F, _>(counts[3], io)?;
-    let e4 = random_edabits_lazy::<u128, F, _>(counts[4], io)?;
-    let party_id = io.party_id();
-    let d = super::dabits::random_dabits_lazy::<F, _>(num_dabits, io)?;
-    Ok(PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d))
-}
-
-/// Batched preprocessing: generate all edaBits + daBits in **2 network rounds**
+/// Batched preprocessing (in-memory): generate all edaBits + daBits in **2 network rounds**
 /// instead of 7 sequential rounds (5 edaBit + 2 daBit).
 ///
 /// Round 1: P0→P2 sends all edaBit α₂ + daBit α₂; P1→P2 sends daBit s₁₂.
 /// Round 2: P2→P0 sends daBit s₂₀.
 #[tracing::instrument(skip_all, name = "preprocess_pool_batched")]
-pub fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
+fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
     io: &mut IoContextPool<N>,
@@ -1483,8 +1464,8 @@ fn read_file_backed_range<F: PrimeField + Copy>(
 /// This is intended for large-trace benchmark harnesses. It avoids allocating
 /// monolithic `Vec<F>` buffers for all α₂ values at once, and for P2 it writes
 /// α₂/stored data directly to file-backed stores under `dir`.
-#[tracing::instrument(skip_all, name = "preprocess_pool_batched_into_dir")]
-pub fn preprocess_pool_batched_into_dir<F, N>(
+#[tracing::instrument(skip_all, name = "preprocess_pool")]
+fn preprocess_pool_base<F, N>(
     dir: &Path,
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
@@ -2309,6 +2290,46 @@ where
     }
 }
 
+/// File-backed preprocessing: generate all edaBits + daBits into `dir`.
+#[cfg(not(feature = "ring-msm"))]
+pub fn preprocess_pool<F, N>(
+    dir: &Path,
+    counts: [usize; 5],
+    num_dabits: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<PreprocessingPool<F>>
+where
+    F: PrimeField + Copy,
+    N: Rep3NetworkWorker + Rep3RawFieldTransport,
+{
+    preprocess_pool_base(dir, counts, num_dabits, io)
+}
+
+/// File-backed preprocessing: generate edaBits + daBits + wrap masks + ring edaBits into `dir`.
+#[cfg(feature = "ring-msm")]
+pub fn preprocess_pool<F, N>(
+    dir: &Path,
+    counts: [usize; 5],
+    num_dabits: usize,
+    num_wrap_masks: usize,
+    num_ring_edabits_u66: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<PreprocessingPool<F>>
+where
+    F: PrimeField + Copy,
+    N: Rep3NetworkWorker + Rep3RawFieldTransport,
+{
+    let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
+    if num_wrap_masks > 0 {
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
+    }
+    if num_ring_edabits_u66 > 0 {
+        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(num_ring_edabits_u66, io)?);
+    }
+    pool.save(dir)?;
+    Ok(pool)
+}
+
 /// Extend an existing preprocessing pool with additional items.
 ///
 /// For each edaBit type and daBits where `deficit > 0`, generates additional
@@ -2318,7 +2339,7 @@ where
 /// **Communication:** P0→P2 (combined alpha2 for deficit items), P1→P2 (daBit s₁₂),
 /// P2→P0 (daBit s₂₀).
 #[tracing::instrument(skip_all, name = "extend_pool_batched")]
-pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
+fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
@@ -2702,6 +2723,37 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     Ok(())
 }
 
+/// Extend an existing pool with additional edaBits + daBits.
+#[cfg(not(feature = "ring-msm"))]
+pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
+    pool: &mut PreprocessingPool<F>,
+    deficit_counts: [usize; 5],
+    deficit_dabits: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<()> {
+    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)
+}
+
+/// Extend an existing pool with additional edaBits + daBits + wrap masks + ring edaBits.
+#[cfg(feature = "ring-msm")]
+pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
+    pool: &mut PreprocessingPool<F>,
+    deficit_counts: [usize; 5],
+    deficit_dabits: usize,
+    deficit_wrap_masks: usize,
+    deficit_ring_edabits_u66: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<()> {
+    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    if deficit_wrap_masks > 0 {
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(deficit_wrap_masks, io.main())?);
+    }
+    if deficit_ring_edabits_u66 > 0 {
+        pool.set_ring_edabits_u66(random_edabits_ring_lazy::<U66, _>(deficit_ring_edabits_u66, io)?);
+    }
+    Ok(())
+}
+
 /// Convert an arithmetic ring share `[x]` over `Z_{2^K}` into an arithmetic
 /// field share `[x]` over `Fp`, using a masked opening.
 ///
@@ -2956,8 +3008,8 @@ where
     }
 
     /// Drain `n` ring edaBits. P0/P1 regenerate from seeds; P2 slices from store.
-    pub fn take_batch(&mut self, n: usize) -> EdaBitsRingBatch<T> {
-        assert!(
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<EdaBitsRingBatch<T>> {
+        eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyEdaBitsRing<u{}>: need {n}, have {} (cursor={}, total={})",
             T::K,
@@ -2967,10 +3019,10 @@ where
         );
 
         if n == 0 {
-            return EdaBitsRingBatch {
+            return Ok(EdaBitsRingBatch {
                 gammas: Vec::new(),
                 alphas_flat: Vec::new(),
-            };
+            });
         }
 
         let t_bytes = std::mem::size_of::<T>();
@@ -2987,10 +3039,10 @@ where
             self.cursor += n;
             self.persist_cursor();
             self.alpha2_flat.consume(flat_start, flat_end);
-            return EdaBitsRingBatch {
+            return Ok(EdaBitsRingBatch {
                 gammas,
                 alphas_flat,
-            };
+            });
         }
 
         // P0/P1: regenerate from RNG seeds.
@@ -3068,10 +3120,10 @@ where
             .collect();
 
         self.cursor += n;
-        EdaBitsRingBatch {
+        Ok(EdaBitsRingBatch {
             gammas,
             alphas_flat,
-        }
+        })
     }
 }
 
@@ -3328,225 +3380,7 @@ where
 // EdaBitsPool: pre-generated edaBits/daBits for batched conversions
 // ---------------------------------------------------------------------------
 
-/// A pool of pre-generated edaBits, daBits, and daPoints for batched conversions.
-///
-/// EdaBits are stored lazily via [`LazyEdaBits`] (O(1) storage for P0/P1).
-/// DaBits are stored via [`LazyDaBits`] (Cheng23 Π₁ partial-lazy).
-/// DaPoints are stored via [`LazyDaPoints`] (scalar-mul-free bit × public point).
-pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G1Projective> {
-    edabits_u8: LazyEdaBits<u8, F>,
-    edabits_u16: LazyEdaBits<u16, F>,
-    edabits_u32: LazyEdaBits<u32, F>,
-    edabits_u64: LazyEdaBits<u64, F>,
-    edabits_u128: LazyEdaBits<u128, F>,
-    dabits: LazyDaBits<F>,
-    dapoints: super::daPoint::LazyDaPoints<C>,
-    wrap_masks: super::wrap_mask::LazyWrapMasks,
-    ring_edabits_u66: LazyEdaBitsRing<U66>,
-}
-
-impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
-    /// Create an empty pool.
-    pub fn empty(party_id: PartyID) -> Self {
-        Self {
-            edabits_u8: LazyEdaBits::empty(party_id),
-            edabits_u16: LazyEdaBits::empty(party_id),
-            edabits_u32: LazyEdaBits::empty(party_id),
-            edabits_u64: LazyEdaBits::empty(party_id),
-            edabits_u128: LazyEdaBits::empty(party_id),
-            dabits: LazyDaBits::empty(party_id),
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
-            wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
-            ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
-        }
-    }
-
-    /// Create a pool from lazy edaBits sources and lazy daBits.
-    pub fn new(
-        party_id: PartyID,
-        edabits_u8: LazyEdaBits<u8, F>,
-        edabits_u16: LazyEdaBits<u16, F>,
-        edabits_u32: LazyEdaBits<u32, F>,
-        edabits_u64: LazyEdaBits<u64, F>,
-        edabits_u128: LazyEdaBits<u128, F>,
-        dabits: LazyDaBits<F>,
-    ) -> Self {
-        Self {
-            edabits_u8,
-            edabits_u16,
-            edabits_u32,
-            edabits_u64,
-            edabits_u128,
-            dabits,
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
-            wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
-            ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
-        }
-    }
-
-    /// Inject pre-generated daPoints into this pool.
-    pub fn set_dapoints(&mut self, dp: super::daPoint::LazyDaPoints<C>) {
-        self.dapoints = dp;
-    }
-
-    /// Drain `n` daPoint tuples from the lazy source.
-    pub fn take_dapoints(&mut self, n: usize) -> super::daPoint::DaPointsBatch<C> {
-        self.dapoints.take_batch(n)
-    }
-
-    pub fn remaining_dapoints(&self) -> usize {
-        self.dapoints.remaining()
-    }
-
-    /// Inject pre-generated lazy wrap masks into this pool.
-    pub fn set_wrap_masks(&mut self, wm: super::wrap_mask::LazyWrapMasks) {
-        self.wrap_masks = wm;
-    }
-
-    /// Drain `n` wrap masks from the lazy source.
-    pub fn take_wrap_masks(&mut self, n: usize) -> super::wrap_mask::WrapMaskBatch {
-        self.wrap_masks.take_batch(n)
-    }
-
-    /// Inject pre-generated lazy ring edaBits (U66) into this pool.
-    pub fn set_ring_edabits_u66(&mut self, eb: LazyEdaBitsRing<U66>) {
-        self.ring_edabits_u66 = eb;
-    }
-
-    /// Drain `n` ring edaBits (U66) from the lazy source.
-    pub fn take_ring_edabits_u66(&mut self, n: usize) -> EdaBitsRingBatch<U66> {
-        self.ring_edabits_u66.take_batch(n)
-    }
-
-    /// Drain `n` daBit tuples (Cheng23 Π₁) from the lazy source.
-    #[tracing::instrument(skip(self))]
-    pub fn take_dabits(&mut self, n: usize) -> DaBitBatch<F> {
-        self.dabits.take_batch(n)
-    }
-
-    pub fn remaining_dabits(&self) -> usize {
-        self.dabits.remaining()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.edabits_u8.remaining() == 0
-            && self.edabits_u16.remaining() == 0
-            && self.edabits_u32.remaining() == 0
-            && self.edabits_u64.remaining() == 0
-            && self.edabits_u128.remaining() == 0
-            && self.dabits.remaining() == 0
-            && self.dapoints.remaining() == 0
-    }
-
-    /// Return remaining counts for each edaBit ring type and daBits.
-    pub fn remaining_counts(&self) -> ([usize; 5], usize) {
-        (
-            [
-                self.edabits_u8.remaining(),
-                self.edabits_u16.remaining(),
-                self.edabits_u32.remaining(),
-                self.edabits_u64.remaining(),
-                self.edabits_u128.remaining(),
-            ],
-            self.dabits.remaining(),
-        )
-    }
-
-    /// Reset all internal cursors to 0 in `reuse-preproc` mode.
-    ///
-    /// This makes the pool re-usable across multiple proof iterations in a single process.
-    /// Not safe for production use (re-using preprocessing randomness breaks security),
-    /// hence gated behind `reuse-preproc`.
-    #[cfg(feature = "reuse-preproc")]
-    pub fn reset_cursors_for_reuse(&mut self) {
-        self.edabits_u8.reset_cursor_for_reuse();
-        self.edabits_u16.reset_cursor_for_reuse();
-        self.edabits_u32.reset_cursor_for_reuse();
-        self.edabits_u64.reset_cursor_for_reuse();
-        self.edabits_u128.reset_cursor_for_reuse();
-        self.dabits.reset_cursor_for_reuse();
-    }
-
-    /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
-    ///
-    /// Panics if `T` is not one of u8, u16, u32, u64, u128.
-    #[tracing::instrument(skip(self))]
-    pub fn take_edabits<T: IntRing2k>(&mut self, n: usize) -> EdaBitsBatch<T, F>
-    where
-        Standard: Distribution<T>,
-    {
-        use std::any::TypeId;
-        // Safety: We transmute between EdaBitsBatch<concrete, F> and EdaBitsBatch<T, F>
-        // only when TypeId confirms T == concrete. The struct layout is
-        // identical for the same concrete type, so the transmute is a no-op.
-        let tid = TypeId::of::<T>();
-        if tid == TypeId::of::<u8>() {
-            let v = self.edabits_u8.take_batch(n);
-            // SAFETY: T == u8 confirmed by TypeId check.
-            unsafe { std::mem::transmute::<EdaBitsBatch<u8, F>, EdaBitsBatch<T, F>>(v) }
-        } else if tid == TypeId::of::<u16>() {
-            let v = self.edabits_u16.take_batch(n);
-            unsafe { std::mem::transmute::<EdaBitsBatch<u16, F>, EdaBitsBatch<T, F>>(v) }
-        } else if tid == TypeId::of::<u32>() {
-            let v = self.edabits_u32.take_batch(n);
-            unsafe { std::mem::transmute::<EdaBitsBatch<u32, F>, EdaBitsBatch<T, F>>(v) }
-        } else if tid == TypeId::of::<u64>() {
-            let v = self.edabits_u64.take_batch(n);
-            unsafe { std::mem::transmute::<EdaBitsBatch<u64, F>, EdaBitsBatch<T, F>>(v) }
-        } else if tid == TypeId::of::<u128>() {
-            let v = self.edabits_u128.take_batch(n);
-            unsafe { std::mem::transmute::<EdaBitsBatch<u128, F>, EdaBitsBatch<T, F>>(v) }
-        } else {
-            panic!("EdaBitsPool::take_edabits: unsupported ring type");
-        }
-    }
-
-    /// Write all lazy sources to `dir` concurrently.
-    ///
-    /// All 6 data+meta pairs are written in parallel via `thread::scope`.
-    /// Each save writes the large data file first (page-cache, no fsync), then
-    /// fsyncs the tiny 117-byte meta file as the durability barrier.
-    #[tracing::instrument(skip_all, name = "Preprocessing::save")]
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
-        std::thread::scope(|s| -> std::io::Result<()> {
-            let h0 = s.spawn(|| self.edabits_u8.save(dir));
-            let h1 = s.spawn(|| self.edabits_u16.save(dir));
-            let h2 = s.spawn(|| self.edabits_u32.save(dir));
-            let h3 = s.spawn(|| self.edabits_u64.save(dir));
-            let h4 = s.spawn(|| self.edabits_u128.save(dir));
-            let h5 = s.spawn(|| self.dabits.save(dir));
-            let h6 = s.spawn(|| self.wrap_masks.save(dir));
-            let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
-            h0.join().unwrap()?;
-            h1.join().unwrap()?;
-            h2.join().unwrap()?;
-            h3.join().unwrap()?;
-            h4.join().unwrap()?;
-            h5.join().unwrap()?;
-            h6.join().unwrap()?;
-            h7.join().unwrap()?;
-            std::result::Result::Ok(())
-        })
-    }
-
-    /// Load all lazy sources from `dir`.
-    ///
-    /// Note: daPoints are NOT persisted — they are regenerated via
-    /// `set_dapoints()` after loading, since they depend on the SRS.
-    pub fn load(dir: &std::path::Path, party_id: PartyID) -> std::io::Result<Self> {
-        std::result::Result::Ok(Self {
-            edabits_u8: LazyEdaBits::<u8, F>::load(dir, party_id)?,
-            edabits_u16: LazyEdaBits::<u16, F>::load(dir, party_id)?,
-            edabits_u32: LazyEdaBits::<u32, F>::load(dir, party_id)?,
-            edabits_u64: LazyEdaBits::<u64, F>::load(dir, party_id)?,
-            edabits_u128: LazyEdaBits::<u128, F>::load(dir, party_id)?,
-            dabits: LazyDaBits::<F>::load(dir, party_id)?,
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
-            wrap_masks: super::wrap_mask::LazyWrapMasks::load(dir, party_id)?,
-            ring_edabits_u66: LazyEdaBitsRing::<U66>::load(dir, party_id)?,
-        })
-    }
-}
+pub use super::pool::PreprocessingPool;
 
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
@@ -3978,8 +3812,8 @@ mod tests {
         );
     }
 
-    /// Helper: run preprocess + B2A + bit-inject roundtrip with a given pool builder.
-    fn preprocess_roundtrip_impl(use_batched: bool) {
+    /// Helper: run preprocess + B2A + bit-inject roundtrip.
+    fn preprocess_roundtrip_impl() {
         use crate::protocols::rep3_ring::dabits;
 
         const NUM_U64: usize = 8;
@@ -4014,22 +3848,18 @@ mod tests {
                 || (),
                 move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
                       mut io_ctx| {
-                    let mut pool = if use_batched {
-                        preprocess_pool_batched::<Fr, _>(
-                            [0, 0, 0, NUM_U64, 0],
-                            NUM_DABITS,
-                            &mut io_ctx,
-                        )?
-                    } else {
-                        preprocess_pool::<Fr, _>([0, 0, 0, NUM_U64, 0], NUM_DABITS, &mut io_ctx)?
-                    };
+                    let mut pool = preprocess_pool_batched::<Fr, _>(
+                        [0, 0, 0, NUM_U64, 0],
+                        NUM_DABITS,
+                        &mut io_ctx,
+                    )?;
 
                     // B2A via edaBits
-                    let batch = pool.take_edabits::<u64>(NUM_U64);
+                    let batch = pool.take_edabits::<u64>(NUM_U64)?;
                     let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
 
                     // Bit inject via daBits
-                    let dbatch = pool.take_dabits(NUM_DABITS);
+                    let dbatch = pool.take_dabits(NUM_DABITS)?;
                     let inj =
                         dabits::bit_inject_field_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
 
@@ -4051,17 +3881,12 @@ mod tests {
     }
 
     #[test]
-    fn preprocess_pool_roundtrip() {
-        preprocess_roundtrip_impl(false);
-    }
-
-    #[test]
     fn preprocess_pool_batched_roundtrip() {
-        preprocess_roundtrip_impl(true);
+        preprocess_roundtrip_impl();
     }
 
     #[test]
-    fn preprocess_pool_batched_into_dir_roundtrip() {
+    fn preprocess_pool_roundtrip() {
         use crate::protocols::rep3_ring::dabits;
 
         const NUM_U64: usize = 8;
@@ -4105,7 +3930,7 @@ mod tests {
                         base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
                     std::fs::create_dir_all(&pool_dir)?;
 
-                    let mut pool = preprocess_pool_batched_into_dir::<Fr, _>(
+                    let mut pool = preprocess_pool::<Fr, _>(
                         &pool_dir,
                         [0, 0, 0, NUM_U64, 0],
                         NUM_DABITS,
@@ -4117,10 +3942,10 @@ mod tests {
                     // Ensure the returned pool and the loaded pool expose the same remaining counts.
                     assert_eq!(pool.remaining_counts(), loaded.remaining_counts());
 
-                    let batch = loaded.take_edabits::<u64>(NUM_U64);
+                    let batch = loaded.take_edabits::<u64>(NUM_U64)?;
                     let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
 
-                    let dbatch = loaded.take_dabits(NUM_DABITS);
+                    let dbatch = loaded.take_dabits(NUM_DABITS)?;
                     let inj =
                         dabits::bit_inject_field_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
 
@@ -4150,10 +3975,10 @@ mod tests {
     }
 
     #[test]
-    fn preprocess_pool_batched_into_dir_small_chunks() {
+    fn preprocess_pool_small_chunks() {
         let _msg_guard = EnvVarGuard::set("PREPROC_MAX_MSG_MB", "1");
         let _fork_guard = EnvVarGuard::set("PREPROC_MIN_FORK_ELEMS", "1");
-        preprocess_pool_batched_into_dir_roundtrip();
+        preprocess_pool_roundtrip();
     }
 
     /// Test that extend_pool_batched produces correct results.
@@ -4239,9 +4064,9 @@ mod tests {
                         INITIAL_DABITS,
                         &mut io_ctx,
                     )?;
-                    let batch = pool.take_edabits::<u64>(INITIAL_U64);
+                    let batch = pool.take_edabits::<u64>(INITIAL_U64)?;
                     let _ = ring_to_field_b2a_many::<u64, Fr, _>(&init_x, &batch, io_ctx.main())?;
-                    let dbatch = pool.take_dabits(INITIAL_DABITS);
+                    let dbatch = pool.take_dabits(INITIAL_DABITS)?;
                     let _ =
                         dabits::bit_inject_field_many::<Fr, _>(&init_b, &dbatch, io_ctx.main())?;
 
@@ -4250,9 +4075,9 @@ mod tests {
                     extend_pool_batched(&mut pool, deficit_counts, EXTRA_DABITS, &mut io_ctx)?;
 
                     // Phase 3: consume extension items and verify.
-                    let batch2 = pool.take_edabits::<u64>(EXTRA_U64);
+                    let batch2 = pool.take_edabits::<u64>(EXTRA_U64)?;
                     let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&ext_x, &batch2, io_ctx.main())?;
-                    let dbatch2 = pool.take_dabits(EXTRA_DABITS);
+                    let dbatch2 = pool.take_dabits(EXTRA_DABITS)?;
                     let inj =
                         dabits::bit_inject_field_many::<Fr, _>(&ext_b, &dbatch2, io_ctx.main())?;
 

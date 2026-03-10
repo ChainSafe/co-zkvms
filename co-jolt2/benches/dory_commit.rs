@@ -105,20 +105,13 @@ fn main() {
 
                 // Measure preprocessing time
                 let preproc_start = Instant::now();
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-bench-{}", io_ctx.party_idx()));
                 let mut preproc =
-                    edabits::preprocess_pool::<Fr, _>([0, 0, 0, 0, 0], 0, &mut io_ctx)?;
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, total_coeffs, total_coeffs, &mut io_ctx)?;
 
                 let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
                 let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
-
-                let wm =
-                    rep3_ring::wrap_mask::generate_wrap_masks_lazy(total_coeffs, io_ctx.main())?;
-                preproc.set_wrap_masks(wm);
-
-                let ring_eb =
-                    edabits::random_edabits_ring_lazy::<U66, _>(total_coeffs, &mut io_ctx)?;
-                preproc.set_ring_edabits_u66(ring_eb);
                 let preproc_elapsed = preproc_start.elapsed();
 
                 // Warmup
