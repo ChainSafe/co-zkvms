@@ -3,7 +3,6 @@ use crate::guest;
 use crate::host::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
-use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
@@ -146,6 +145,8 @@ impl Program {
                 "opt-level=z".to_string(),
                 "--cfg".to_string(),
                 "getrandom_backend=\"custom\"".to_string(),
+                "--cfg".to_string(),
+                "feature=\"guest\"".to_string(),
             ]);
 
             #[cfg(feature = "rv64")]
@@ -159,12 +160,7 @@ impl Program {
 
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
 
-            if self.std {
-                envs.push((
-                    "RUSTUP_TOOLCHAIN",
-                    format!("{channel}-jolt-{TOOLCHAIN_VERSION}"),
-                ));
-            }
+            // Standard toolchain from rust-toolchain.toml is used; no custom RUSTUP_TOOLCHAIN needed.
 
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
@@ -205,13 +201,16 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
+            // Find the guest's Cargo.toml by searching the workspace tree.
+            let manifest_path = find_guest_manifest(&self.guest)
+                .unwrap_or_else(|| panic!("could not find Cargo.toml for guest '{}'", self.guest));
+            let manifest_str = manifest_path.to_string_lossy().to_string();
+
             let args = [
                 "build",
                 "--release",
-                "--features",
-                "guest",
-                "-p",
-                &self.guest,
+                "--manifest-path",
+                &manifest_str,
                 "--target-dir",
                 &target,
                 "--target",
@@ -380,6 +379,50 @@ impl Program {
     fn linker_path(&self) -> String {
         format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
     }
+}
+
+/// Search the workspace tree for a `Cargo.toml` whose `[package] name` matches `guest_name`.
+fn find_guest_manifest(guest_name: &str) -> Option<PathBuf> {
+    use std::process::Command;
+    // Get workspace root via `cargo locate-project --workspace`
+    let output = Command::new("cargo")
+        .args(["locate-project", "--workspace", "--message-format=plain"])
+        .output()
+        .ok()?;
+    let workspace_cargo = String::from_utf8(output.stdout).ok()?;
+    let workspace_root = PathBuf::from(workspace_cargo.trim())
+        .parent()?
+        .to_path_buf();
+
+    // Walk subdirectories looking for Cargo.toml with matching package name
+    fn walk(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(contents) = fs::read_to_string(&cargo_toml) {
+                let needle = format!("name = \"{}\"", name);
+                if contents.contains(&needle) {
+                    return Some(cargo_toml);
+                }
+            }
+        }
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let fname = path.file_name().unwrap_or_default().to_string_lossy();
+                    if fname.starts_with('.') || fname == "target" {
+                        continue;
+                    }
+                    if let Some(found) = walk(&path, name) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    walk(&workspace_root, guest_name)
 }
 
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {

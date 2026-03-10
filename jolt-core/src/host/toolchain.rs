@@ -20,36 +20,14 @@ const DELAY_BASE_MS: u64 = 500;
 #[cfg(not(target_arch = "wasm32"))]
 /// Installs the toolchain if it is not already
 pub fn install_toolchain() -> Result<()> {
-    if !has_toolchain() {
-        let client = Client::builder().user_agent("Mozilla/5.0").build()?;
-        let rt = Runtime::new()?;
-
-        for channel in ["stable", "nightly"] {
-            let toolchain_url = toolchain_url(channel);
-            rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
-                download_toolchain(&client, &toolchain_url)
-            }))?;
-            unpack_toolchain(channel)?;
-            remove_archive()?;
-            link_toolchain(channel)?;
-            write_tag_file()?;
-            tracing::info!(
-                "\"{channel}-jolt-{TOOLCHAIN_VERSION}\" toolchain installed successfully at {:?}",
-                jolt_dir()
-            );
-        }
-    }
+    // No-op: custom toolchain downloads from a16z/rust are no longer available.
+    // We now rely on a standard Rust toolchain (1.94+) configured via rust-toolchain.toml.
     Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
-    std::process::Command::new("rustup")
-        .args(["target", "add", "riscv64imac-unknown-none-elf"])
-        .output()?;
-    std::process::Command::new("rustup")
-        .args(["target", "add", "riscv64imac-unknown-none-elf"])
-        .output()?;
+    // Targets are configured in rust-toolchain.toml and installed automatically by rustup.
     Ok(())
 }
 

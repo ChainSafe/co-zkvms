@@ -7,7 +7,6 @@
 #![allow(clippy::from_over_into)]
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::too_long_first_doc_paragraph)]
-#![feature(trait_alias)]
 
 pub mod field;
 pub mod host;
