@@ -97,6 +97,10 @@ fn main() -> eyre::Result<()> {
     let file = format!("trace_worker-{}_{}CPU.json", my_id, num_cpus::get());
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .ok();
+
     // Start TLS listener for user connections
     let user_listen_addr = config
         .user_listen_addr

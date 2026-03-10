@@ -172,7 +172,7 @@ impl Rep3QuicMpcNetWorker {
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
-        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, chan_coordinator, transport_lanes) =
+        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, mut chan_coordinator, transport_lanes) =
             RUNTIME.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
@@ -216,6 +216,23 @@ impl Rep3QuicMpcNetWorker {
                 transport_lanes,
             ))
         })?;
+
+        // If coordinator uses TLS protocol, connect via TlsCoordinatorClient
+        #[cfg(feature = "tls")]
+        if chan_coordinator.is_none() {
+            if let Some(ref coord) = config.coordinator {
+                if coord.protocol == crate::config::CoordinatorProtocol::Tls {
+                    tracing::info!("connecting to coordinator via TLS");
+                    let tls_client = crate::rep3::tls::coordinator::TlsCoordinatorClient::connect(
+                        &coord.dns_name,
+                        config.my_id,
+                        config.worker,
+                    )?;
+                    chan_coordinator = Some(ChannelHandle::manage_tls_coordinator(tls_client));
+                }
+            }
+        }
+
         Ok(Self {
             id,
             net_handler: Arc::new(MpcNetworkHandlerWrapper::new(
@@ -727,15 +744,8 @@ impl MpcNetworkHandlerWorker {
                     Some(conn)
                 }
                 crate::config::CoordinatorProtocol::Tls => {
-                    // TEE mode: coordinator has an ephemeral TLS identity inside an enclave.
-                    // Workers connect via raw TLS through the host proxy.
-                    // TODO(Phase 4): integrate TlsCoordinatorClient into the channel abstraction.
-                    // For now, the TLS coordinator client (rep3::tls::coordinator) is
-                    // available but not yet wired into the QUIC worker's channel system.
-                    tracing::warn!(
-                        "TLS coordinator protocol selected but not yet integrated into QUIC worker channels. \
-                         Use TlsCoordinatorClient directly for TEE mode."
-                    );
+                    // TLS coordinator connection is handled in Rep3QuicMpcNetWorker::new()
+                    // via ChannelHandle::manage_tls_coordinator.
                     None
                 }
             }

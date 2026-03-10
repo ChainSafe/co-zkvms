@@ -30,3 +30,5 @@ target/
 papers/
 
 .zed/settings.json
+
+co-jolt2/.tee-artifacts/

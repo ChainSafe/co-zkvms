@@ -104,6 +104,37 @@ impl TlsCoordinatorClient {
         self.stream.read_exact(&mut buf)?;
         Ok(buf)
     }
+
+    /// Try to receive a message with a timeout.
+    ///
+    /// Sets a short read timeout on the TCP socket. If the length prefix
+    /// can be read within that window, commits to reading the full body
+    /// (with no timeout). Returns `Ok(None)` on timeout.
+    ///
+    /// Safe because TLS records deliver complete plaintext chunks — the
+    /// 4-byte length prefix either arrives fully or not at all.
+    pub fn try_recv(&mut self, timeout: std::time::Duration) -> io::Result<Option<Vec<u8>>> {
+        self.stream.sock.set_read_timeout(Some(timeout))?;
+        let mut len_buf = [0u8; 4];
+        match self.stream.read_exact(&mut len_buf) {
+            Ok(_) => {
+                // Got length prefix — read body without timeout
+                self.stream.sock.set_read_timeout(None)?;
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                self.stream.read_exact(&mut buf)?;
+                Ok(Some(buf))
+            }
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                self.stream.sock.set_read_timeout(None)?;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Certificate verifier that accepts any server certificate.

@@ -17,7 +17,7 @@ required-features = ["aws_nitro"]
 
 [dependencies]
 mpc-core = { path = "../mpc-core" }
-mpc-net = { path = "../mpc-net" }
+mpc-net = { path = "../mpc-net", features = ["tls"] }
 mpc-types = { path = "../mpc-types" }
 
 jolt-core.workspace = true
@@ -39,6 +39,9 @@ dory.workspace = true
 rand.workspace = true
 num-traits.workspace = true
 strum = "0.26.3"
+
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
 
 # Transport / E2EE
 rcgen = "0.13"

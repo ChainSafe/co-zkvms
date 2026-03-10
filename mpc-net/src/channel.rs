@@ -696,6 +696,83 @@ impl ChannelHandle<Bytes, BytesMut> {
     ) -> ChannelHandle<Bytes, BytesMut> {
         Self::manage_bytes_quic_impl(chan, quic_bulk_write_chunk_bytes(), false)
     }
+
+    /// Create a `ChannelHandle` that bridges a synchronous TLS coordinator
+    /// client to the async channel interface used by the QUIC worker.
+    ///
+    /// Uses the `TlsCoordinatorClient`'s 4-byte length-prefixed send/recv,
+    /// matching the `TcpTlsCoordinator`'s wire format.
+    ///
+    /// A single I/O thread alternates between processing writes and
+    /// attempting reads with a short timeout, preventing deadlocks when
+    /// the coordinator needs data from the worker before it can respond.
+    #[cfg(feature = "tls")]
+    pub fn manage_tls_coordinator(
+        tls_client: crate::rep3::tls::coordinator::TlsCoordinatorClient,
+    ) -> ChannelHandle<Bytes, BytesMut> {
+        let (write_send, mut write_recv) = mpsc::channel::<WriteJob<Bytes>>(8192);
+        let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(8192);
+
+        std::thread::Builder::new()
+            .name("tls-coord-io".into())
+            .spawn(move || {
+                let mut client = tls_client;
+
+                // Drain and process all pending write jobs
+                let drain_writes =
+                    |client: &mut crate::rep3::tls::coordinator::TlsCoordinatorClient,
+                     write_recv: &mut mpsc::Receiver<WriteJob<Bytes>>| {
+                        while let Ok(wj) = write_recv.try_recv() {
+                            let result = client.send(&wj.data);
+                            let _ = wj.ret.send(result);
+                        }
+                    };
+
+                loop {
+                    // Process any pending writes first
+                    drain_writes(&mut client, &mut write_recv);
+
+                    // Check for a read job (non-blocking)
+                    match read_recv.try_recv() {
+                        Ok(rj) => {
+                            // Wait for data, processing writes between attempts
+                            loop {
+                                match client
+                                    .try_recv(Duration::from_millis(5))
+                                {
+                                    Ok(Some(data)) => {
+                                        let _ =
+                                            rj.ret.send(Ok(BytesMut::from(&data[..])));
+                                        break;
+                                    }
+                                    Ok(None) => {
+                                        // Timeout — process writes then retry
+                                        drain_writes(&mut client, &mut write_recv);
+                                    }
+                                    Err(e) => {
+                                        let _ = rj.ret.send(Err(e));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(mpsc::error::TryRecvError::Empty) => {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(mpsc::error::TryRecvError::Disconnected) => break,
+                    }
+                }
+            })
+            .expect("spawn tls-coord-io");
+
+        ChannelHandle {
+            write_job_queue: write_send,
+            read_job_queue: read_send,
+            write_byte_budget: None,
+            write_byte_budget_max: 0,
+            write_len_fn: None,
+        }
+    }
 }
 
 impl BulkBytesChannelHandle {

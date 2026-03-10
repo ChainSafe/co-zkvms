@@ -1,7 +1,9 @@
 use color_eyre::{eyre::Context, Result};
-use mpc_net::config::NetworkConfig;
+use mpc_net::config::{CoordinatorProtocol, NetworkConfig};
 use rcgen::CertifiedKey;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::Parser;
 
@@ -25,20 +27,61 @@ struct CliArgs {
     /// The number of workers to generate configs for
     #[clap(short, long)]
     num_workers: usize,
+
+    /// Base port for user-facing TLS listener on workers (port = base + party_id).
+    /// When set, each worker config gets a `user_listen_addr`.
+    #[clap(long)]
+    user_listen_base_port: Option<u16>,
+
+    /// Coordinator protocol: quic or tls (default: quic).
+    /// Use "tls" for emulated-TEE mode.
+    #[clap(long, default_value = "quic")]
+    coordinator_protocol: String,
 }
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
+    let coordinator_protocol = match args.coordinator_protocol.as_str() {
+        "quic" => CoordinatorProtocol::Quic,
+        "tls" => CoordinatorProtocol::Tls,
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "unknown coordinator protocol: {other} (expected 'quic' or 'tls')"
+            ))
+        }
+    };
+
     let data_dir = args
         .cert_dir
         .to_str()
         .expect("cert_dir must be valid UTF-8");
-    let (workers, coordinator) =
+    let (mut workers, mut coordinator) =
         NetworkConfig::generate_worker_configs_with_dir(args.num_workers, data_dir);
 
-    for (id, config) in workers {
-        let toml = toml::to_string_pretty(&config).context("serializing config")?;
+    // Apply user_listen_addr to worker configs
+    if let Some(base_port) = args.user_listen_base_port {
+        for (id, config) in workers.iter_mut() {
+            let party_id = usize::from(id.party_id()) as u16;
+            config.user_listen_addr = Some(SocketAddr::new(
+                IpAddr::from_str("0.0.0.0").unwrap(),
+                base_port + party_id,
+            ));
+        }
+    }
+
+    // Apply coordinator protocol
+    if let Some(ref mut coord) = coordinator.coordinator {
+        coord.protocol = coordinator_protocol;
+    }
+    for (_, config) in workers.iter_mut() {
+        if let Some(ref mut coord) = config.coordinator {
+            coord.protocol = coordinator_protocol;
+        }
+    }
+
+    for (id, config) in &workers {
+        let toml = toml::to_string_pretty(config).context("serializing config")?;
         std::fs::write(
             args.out_dir.join(format!(
                 "config_worker{}_{}.toml",

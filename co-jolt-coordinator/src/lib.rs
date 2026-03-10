@@ -9,6 +9,7 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
 pub mod poly;
+pub mod proving;
 pub mod subprotocols;
 pub mod transport;
 pub mod types;

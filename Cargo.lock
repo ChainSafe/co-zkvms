@@ -724,6 +724,7 @@ dependencies = [
  "ark-std",
  "aws-nitro-enclaves-nsm-api",
  "bincode",
+ "clap",
  "co-jolt2",
  "dory",
  "eyre",
@@ -741,6 +742,7 @@ dependencies = [
  "rustls",
  "serde",
  "strum",
+ "toml 0.8.23",
  "tracing",
  "vsock",
 ]
@@ -2527,6 +2529,7 @@ dependencies = [
  "dashmap 5.5.3",
  "eyre",
  "futures",
+ "libc",
  "mpc-types",
  "mpi",
  "once_cell",
