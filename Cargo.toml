@@ -4,25 +4,12 @@ members = [
     "co-jolt2",
     "co-jolt-coordinator",
     "jolt-core",
-    "co-jolt2/examples/sha2-chain/guest",
-    "co-jolt2/examples/fibonacci/guest",
-    # "co-jolt",
-    # "co-noir-spartan/co-spartan",
-    # "co-noir-spartan/co-noir",
-    # "co-noir-spartan/spartan",
-    # "co-noir-spartan/noir-r1cs",
+    "jolt-tracer",
+    "jolt-common",
     "mpc-net",
     "mpc-core",
     "mpc-types",
     "snarks-core",
-    # "co-jolt/examples/fibonacci",
-    # "co-jolt/examples/fibonacci/guest",
-    # "co-jolt/examples/sha3-ex",
-    # "co-jolt/examples/sha3-ex/guest",
-    # "co-jolt/examples/sha2-chain",
-    # "co-jolt/examples/sha2-chain/guest",
-    # "co-jolt/examples/sha3-chain",
-    # "co-jolt/examples/sha3-chain/guest",
 ]
 
 [workspace.package]
@@ -136,12 +123,15 @@ target-lexicon = "0.12.14"
 reqwest = { version = "0.12.3", features = ["json", "blocking"] }
 indicatif = "0.17.8"
 tokio = { version = "1.38.0" }
-common = { path = "/Users/timofey/repos/examples/jolt/common", default-features = false }
+common = { path = "./jolt-common", package = "jolt-common", default-features = false }
+fnv = { version = "1.0.7", default-features = false }
+object = { version = "0.36.7", features = ["build_core", "elf"], default-features = false }
+addr2line = "0.25.1"
 
 jolt-core = { path = "./jolt-core" }
-jolt2-common = { path = "/Users/timofey/repos/examples/jolt/common", package = "common" }
-tracer = { path = "/Users/timofey/repos/examples/jolt/tracer" }
-jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
+tracer = { path = "./jolt-tracer", package = "jolt-tracer" }
+jolt2-common = { path = "./jolt-common", package = "jolt-common" }
+# jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
 
 [patch.crates-io]
 ark-poly-commit = { git = "https://github.com/nulltea/poly-commit" }

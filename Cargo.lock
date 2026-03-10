@@ -788,11 +788,12 @@ dependencies = [
  "clap",
  "co-jolt2",
  "color-eyre",
- "common",
  "dory",
  "eyre",
  "itertools 0.12.1",
+ "jolt-common",
  "jolt-core",
+ "jolt-tracer",
  "libc",
  "mpc-core",
  "mpc-net",
@@ -809,7 +810,6 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
- "tracer",
  "tracing",
  "tracing-chrome",
  "tracing-forest",
@@ -835,12 +835,13 @@ dependencies = [
  "co-jolt-coordinator",
  "co-jolt2",
  "color-eyre",
- "common",
  "dory",
  "enum_dispatch",
  "eyre",
  "itertools 0.12.1",
+ "jolt-common",
  "jolt-core",
+ "jolt-tracer",
  "libc",
  "mpc-core",
  "mpc-net",
@@ -864,7 +865,6 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
- "tracer",
  "tracing",
  "tracing-chrome",
  "tracing-forest",
@@ -1514,13 +1514,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "fibonacci-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-sdk",
-]
 
 [[package]]
 name = "find-msvc-tools"
@@ -2251,6 +2244,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-common"
+version = "0.2.0"
+dependencies = [
+ "ark-serialize",
+ "derive_more",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "syn 1.0.109",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
@@ -2267,7 +2274,6 @@ dependencies = [
  "blake2 0.10.6",
  "chrono",
  "clap",
- "common",
  "derive_more",
  "dirs",
  "dory",
@@ -2276,10 +2282,12 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.12.1",
+ "jolt-common",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "jolt-platform",
+ "jolt-tracer",
  "lazy_static",
  "memory-stats",
  "num",
@@ -2302,7 +2310,6 @@ dependencies = [
  "target-lexicon",
  "thiserror 2.0.18",
  "tokio",
- "tracer",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber 0.3.22",
@@ -2354,23 +2361,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-sdk"
-version = "0.1.0"
+name = "jolt-tracer"
+version = "0.2.0"
 dependencies = [
+ "addr2line",
+ "ark-serialize",
+ "clap",
+ "derive_more",
+ "fnv",
+ "itertools 0.12.1",
+ "jolt-common",
  "jolt-platform",
- "jolt-sdk-macros",
+ "lazy_static",
+ "object 0.36.7",
+ "paste",
  "postcard",
+ "rand 0.8.5",
  "serde",
-]
-
-[[package]]
-name = "jolt-sdk-macros"
-version = "0.1.0"
-dependencies = [
- "common",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "tracing",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
@@ -3784,14 +3796,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "sha2-chain-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-sdk",
- "sha2",
 ]
 
 [[package]]

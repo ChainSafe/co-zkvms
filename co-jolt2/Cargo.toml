@@ -53,8 +53,8 @@ tokio = { version = "1.34.0", features = [
 ] }
 # Jolt dependencies (path deps to examples/jolt fork)
 jolt-core = { workspace = true, features = ["host"] }
-jolt2-common.workspace = true
-tracer.workspace = true
+jolt2-common = { workspace = true, package = "jolt-common" }
+tracer = { workspace = true }
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }

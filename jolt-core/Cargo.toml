@@ -69,7 +69,7 @@ reqwest = { workspace = true, optional = true }
 dirs = { workspace = true, optional = true }
 eyre.workspace = true
 indicatif = { workspace = true, optional = true }
-common.workspace = true
+common = { workspace = true }
 tracer = { workspace = true, default-features = false, features = ["std"] }
 bincode.workspace = true
 tokio = { workspace = true, optional = true }
