@@ -74,10 +74,12 @@ impl VsockTlsCoordinator {
                 }
             }
 
-            // Read party_id from worker
+            // Read party_id and worker_id from worker
             let mut id_buf = [0u8; 4];
             tls_stream.read_exact(&mut id_buf)?;
             let party_id = u32::from_be_bytes(id_buf) as usize;
+            let mut _worker_id_buf = [0u8; 4];
+            tls_stream.read_exact(&mut _worker_id_buf)?;
 
             if party_id >= NUM_PARTIES {
                 return Err(eyre!("invalid party_id {party_id} from connection {i}"));

@@ -1,5 +1,5 @@
 use color_eyre::{eyre::Context, Result};
-use mpc_net::config::{CoordinatorProtocol, NetworkConfig};
+use mpc_net::config::{Address, CoordinatorProtocol, NetworkConfig};
 use rcgen::CertifiedKey;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -34,9 +34,12 @@ struct CliArgs {
     user_listen_base_port: Option<u16>,
 
     /// Coordinator protocol: quic or tls (default: quic).
-    /// Use "tls" for emulated-TEE mode.
     #[clap(long, default_value = "quic")]
     coordinator_protocol: String,
+
+    /// Override coordinator address in worker configs (default: localhost:20000).
+    #[clap(long)]
+    coordinator_addr: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -77,6 +80,18 @@ fn main() -> Result<()> {
     for (_, config) in workers.iter_mut() {
         if let Some(ref mut coord) = config.coordinator {
             coord.protocol = coordinator_protocol;
+        }
+    }
+
+    // Override coordinator address if specified
+    if let Some(ref addr) = args.coordinator_addr {
+        let parsed: Address = addr.parse().map_err(|e| {
+            color_eyre::eyre::eyre!("parsing --coordinator-addr '{addr}': {e}")
+        })?;
+        for (_, config) in workers.iter_mut() {
+            if let Some(ref mut coord) = config.coordinator {
+                coord.dns_name = parsed.clone();
+            }
         }
     }
 

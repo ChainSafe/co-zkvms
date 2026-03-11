@@ -1,0 +1,10 @@
+target/
+.git/
+*.log
+co-jolt2/.artifacts/
+co-jolt2/.traces/
+co-jolt2/.preprocessing/
+co-jolt-coordinator/enclave/nitro-enclaves-simulation/
+# SRS files at repo root (only staged .srs/ is used by Dockerfile.eif)
+dory_urs_*.urs
+co-jolt2/dory_urs_*.urs
