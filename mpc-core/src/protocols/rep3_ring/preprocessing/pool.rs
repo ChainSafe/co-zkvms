@@ -3,6 +3,7 @@ use std::path::Path;
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
 use super::edabits::{EdaBitsBatch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
+use super::rand_ohv::{LazyRandOhvs, RandOhvBatch, generate_rand_ohvs_lazy};
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
@@ -38,6 +39,7 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     pub(crate) edabits_u64: LazyEdaBits<u64, F>,
     pub(crate) edabits_u128: LazyEdaBits<u128, F>,
     pub(crate) dabits: LazyDaBits<F>,
+    pub(crate) rand_ohvs_u8_k4: LazyRandOhvs<F>,
     #[cfg(feature = "ring-msm")]
     pub(crate) dapoints: super::daPoint::LazyDaPoints<C>,
     #[cfg(feature = "ring-msm")]
@@ -60,6 +62,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             edabits_u64: LazyEdaBits::empty(party_id),
             edabits_u128: LazyEdaBits::empty(party_id),
             dabits: LazyDaBits::empty(party_id),
+            rand_ohvs_u8_k4: LazyRandOhvs::empty(party_id),
             ring_edabits_u64: LazyEdaBitsRing::empty(party_id),
             ring_edabits_u128: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
@@ -82,6 +85,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         edabits_u64: LazyEdaBits<u64, F>,
         edabits_u128: LazyEdaBits<u128, F>,
         dabits: LazyDaBits<F>,
+        rand_ohvs_u8_k4: LazyRandOhvs<F>,
     ) -> Self {
         Self {
             edabits_u8,
@@ -90,6 +94,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             edabits_u64,
             edabits_u128,
             dabits,
+            rand_ohvs_u8_k4,
             ring_edabits_u64: LazyEdaBitsRing::empty(party_id),
             ring_edabits_u128: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
@@ -211,6 +216,15 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.dabits.remaining()
     }
 
+    #[tracing::instrument(skip(self))]
+    pub fn take_rand_ohvs_u8_k4(&mut self, n: usize) -> eyre::Result<RandOhvBatch<F>> {
+        self.rand_ohvs_u8_k4.take_batch(n)
+    }
+
+    pub fn remaining_rand_ohvs_u8_k4(&self) -> usize {
+        self.rand_ohvs_u8_k4.remaining()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.edabits_u8.remaining() == 0
             && self.edabits_u16.remaining() == 0
@@ -218,6 +232,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             && self.edabits_u64.remaining() == 0
             && self.edabits_u128.remaining() == 0
             && self.dabits.remaining() == 0
+            && self.rand_ohvs_u8_k4.remaining() == 0
     }
 
     /// Return remaining counts for each edaBit ring type and daBits.
@@ -247,6 +262,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.edabits_u64.reset_cursor_for_reuse();
         self.edabits_u128.reset_cursor_for_reuse();
         self.dabits.reset_cursor_for_reuse();
+        self.rand_ohvs_u8_k4.reset_cursor_for_reuse();
         self.ring_edabits_u64.reset_cursor_for_reuse();
         self.ring_edabits_u128.reset_cursor_for_reuse();
     }
@@ -300,24 +316,26 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             let h3 = s.spawn(|| self.edabits_u64.save(dir));
             let h4 = s.spawn(|| self.edabits_u128.save(dir));
             let h5 = s.spawn(|| self.dabits.save(dir));
+            let h6 = s.spawn(|| self.rand_ohvs_u8_k4.save(dir));
             let h_r64 = s.spawn(|| self.ring_edabits_u64.save(dir));
             let h_r128 = s.spawn(|| self.ring_edabits_u128.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h6 = s.spawn(|| self.wrap_masks.save(dir));
+            let h7 = s.spawn(|| self.wrap_masks.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
+            let h8 = s.spawn(|| self.ring_edabits_u66.save(dir));
             h0.join().unwrap()?;
             h1.join().unwrap()?;
             h2.join().unwrap()?;
             h3.join().unwrap()?;
             h4.join().unwrap()?;
             h5.join().unwrap()?;
+            h6.join().unwrap()?;
             h_r64.join().unwrap()?;
             h_r128.join().unwrap()?;
             #[cfg(feature = "ring-msm")]
-            h6.join().unwrap()?;
-            #[cfg(feature = "ring-msm")]
             h7.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
+            h8.join().unwrap()?;
             std::result::Result::Ok(())
         })
     }
@@ -334,6 +352,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             edabits_u64: LazyEdaBits::<u64, F>::load(dir, party_id)?,
             edabits_u128: LazyEdaBits::<u128, F>::load(dir, party_id)?,
             dabits: LazyDaBits::<F>::load(dir, party_id)?,
+            rand_ohvs_u8_k4: LazyRandOhvs::<F>::load(dir, party_id)?,
             ring_edabits_u64: LazyEdaBitsRing::<u64>::load(dir, party_id)?,
             ring_edabits_u128: LazyEdaBitsRing::<u128>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
@@ -361,6 +380,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
 fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
+    num_rand_ohvs_u8_k4: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<PreprocessingPool<F>> {
     use super::dabits;
@@ -502,6 +522,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
             Ok(PreprocessingPool::new(
                 party_id,
                 e0,
@@ -510,6 +531,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 e3,
                 e4,
                 dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, s20, party_id),
+                rand_ohvs_u8_k4,
             ))
         }
         PartyID::ID1 => {
@@ -555,6 +577,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
             Ok(PreprocessingPool::new(
                 party_id,
                 e0,
@@ -563,6 +586,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 e3,
                 e4,
                 dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id),
+                rand_ohvs_u8_k4,
             ))
         }
         PartyID::ID2 => {
@@ -667,6 +691,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], a4, party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
             Ok(PreprocessingPool::new(
                 party_id,
                 e0,
@@ -675,6 +700,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 e3,
                 e4,
                 dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, dabit_stored, party_id),
+                rand_ohvs_u8_k4,
             ))
         }
     }
@@ -1186,6 +1212,7 @@ fn preprocess_pool_base<F, N>(
     dir: &Path,
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
+    num_rand_ohvs_u8_k4: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<PreprocessingPool<F>>
 where
@@ -1659,7 +1686,8 @@ where
 
             let d =
                 LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
+            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d, rand_ohvs_u8_k4);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1729,7 +1757,8 @@ where
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
+            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d, rand_ohvs_u8_k4);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1998,7 +2027,8 @@ where
             let d =
                 LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let rand_ohvs_u8_k4 = generate_rand_ohvs_lazy(num_rand_ohvs_u8_k4, io.main())?;
+            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d, rand_ohvs_u8_k4);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -2018,6 +2048,7 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
+    deficit_rand_ohvs_u8_k4: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     use super::dabits;
@@ -2395,6 +2426,22 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
         }
     }
 
+    if deficit_rand_ohvs_u8_k4 > 0 {
+        let mut ext = generate_rand_ohvs_lazy(deficit_rand_ohvs_u8_k4, io.main())?;
+        let batch = ext.take_batch(deficit_rand_ohvs_u8_k4)?;
+        let r_a_ext: Vec<_> = batch.r_shares.iter().map(|s| s.a.0).collect();
+        let r_b_ext: Vec<_> = batch.r_shares.iter().map(|s| s.b.0).collect();
+        let e_a_ext: Vec<_> = batch.e_fields_flat.iter().map(|s| s.a).collect();
+        let e_b_ext: Vec<_> = batch.e_fields_flat.iter().map(|s| s.b).collect();
+        pool.rand_ohvs_u8_k4.apply_extension(
+            deficit_rand_ohvs_u8_k4,
+            r_a_ext,
+            r_b_ext,
+            e_a_ext,
+            e_b_ext,
+        );
+    }
+
     Ok(())
 }
 
@@ -2408,6 +2455,7 @@ pub fn preprocess_pool<F, N>(
     dir: &Path,
     counts: [usize; 5],
     num_dabits: usize,
+    num_rand_ohvs_u8_k4: usize,
     num_ring_edabits_u64: usize,
     num_ring_edabits_u128: usize,
     io: &mut IoContextPool<N>,
@@ -2416,7 +2464,7 @@ where
     F: PrimeField + Copy,
     N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
-    let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
+    let mut pool = preprocess_pool_base(dir, counts, num_dabits, num_rand_ohvs_u8_k4, io)?;
     if num_ring_edabits_u64 > 0 {
         pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
             num_ring_edabits_u64,
@@ -2439,6 +2487,7 @@ pub fn preprocess_pool<F, N>(
     dir: &Path,
     counts: [usize; 5],
     num_dabits: usize,
+    num_rand_ohvs_u8_k4: usize,
     num_wrap_masks: usize,
     num_ring_edabits_u66: usize,
     num_ring_edabits_u64: usize,
@@ -2449,7 +2498,7 @@ where
     F: PrimeField + Copy,
     N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
-    let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
+    let mut pool = preprocess_pool_base(dir, counts, num_dabits, num_rand_ohvs_u8_k4, io)?;
     if num_wrap_masks > 0 {
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
             num_wrap_masks,
@@ -2484,11 +2533,12 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
+    deficit_rand_ohvs_u8_k4: usize,
     deficit_ring_edabits_u64: usize,
     deficit_ring_edabits_u128: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
-    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, deficit_rand_ohvs_u8_k4, io)?;
     if deficit_ring_edabits_u64 > 0 {
         pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
             deficit_ring_edabits_u64,
@@ -2510,13 +2560,20 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
+    deficit_rand_ohvs_u8_k4: usize,
     deficit_wrap_masks: usize,
     deficit_ring_edabits_u66: usize,
     deficit_ring_edabits_u64: usize,
     deficit_ring_edabits_u128: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
-    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    extend_pool_batched_base(
+        pool,
+        deficit_counts,
+        deficit_dabits,
+        deficit_rand_ohvs_u8_k4,
+        io,
+    )?;
     if deficit_wrap_masks > 0 {
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
             deficit_wrap_masks,

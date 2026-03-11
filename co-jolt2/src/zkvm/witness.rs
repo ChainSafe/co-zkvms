@@ -928,8 +928,12 @@ where
             CommittedPolynomial::InstructionRa(i) => {
                 if *i < instruction_lookups::D {
                     let indices = std::mem::take(&mut batch.instruction_ra[*i]);
-                    let one_hot =
-                        Rep3OneHotPolynomial::<F>::from_indices(indices, instruction_lookups::K_CHUNK, io_ctx.main())?;
+                    let one_hot = Rep3OneHotPolynomial::<F>::from_indices(
+                        indices,
+                        instruction_lookups::K_CHUNK,
+                        io_ctx.main(),
+                        preproc,
+                    )?;
                     results.insert(*poly, Rep3MultilinearPolynomial::shared_one_hot(one_hot));
                 }
             }

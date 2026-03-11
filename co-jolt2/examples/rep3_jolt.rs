@@ -113,11 +113,16 @@ struct PreprocPayload {
     trace_len: usize,
     edabit_counts: [usize; 5],
     dabits: usize,
+    rand_ohvs_u8_k4: usize,
 }
 
-fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize) {
+fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize, num_rand_ohvs_u8_k4: usize) {
     let elem = std::mem::size_of::<F>() as u64;
-    let warn_gb = std::env::var("PREPROC_WARN_GB").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(10);
+    let ring_elem = std::mem::size_of::<u8>() as u64;
+    let warn_gb = std::env::var("PREPROC_WARN_GB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
     let warn_bytes = warn_gb * 1024 * 1024 * 1024;
 
     let sizes = [
@@ -129,6 +134,16 @@ fn log_preproc_size_estimates(counts: [usize; 5], num_dabits: usize) {
         // dabits.stored size depends on party; this is the smaller (P0) bound.
         ("dabits.stored (P0)", num_dabits as u64 * elem),
         ("dabits.stored (P2)", num_dabits as u64 * 2 * elem),
+        ("rand_ohv_u8_k4.r_a", num_rand_ohvs_u8_k4 as u64 * ring_elem),
+        ("rand_ohv_u8_k4.r_b", num_rand_ohvs_u8_k4 as u64 * ring_elem),
+        (
+            "rand_ohv_u8_k4.e_a",
+            num_rand_ohvs_u8_k4 as u64 * 16 * elem,
+        ),
+        (
+            "rand_ohv_u8_k4.e_b",
+            num_rand_ohvs_u8_k4 as u64 * 16 * elem,
+        ),
     ];
 
     for (name, bytes) in sizes {
@@ -280,6 +295,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             trace_len: padded_len,
             edabit_counts: [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
             dabits: budget.dabits,
+            rand_ohvs_u8_k4: budget.rand_ohvs_u8_k4,
         };
         let msg = CoordToWorkerMsg::PreprocOnly(pp);
         let payload = bincode::serialize(&msg).context("serializing PreprocOnly")?;
@@ -370,7 +386,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
         let counts = pp.edabit_counts;
         let num_dabits = pp.dabits;
-        log_preproc_size_estimates(counts, num_dabits);
+        let num_rand_ohvs_u8_k4 = pp.rand_ohvs_u8_k4;
+        log_preproc_size_estimates(counts, num_dabits, num_rand_ohvs_u8_k4);
         #[cfg(feature = "ring-msm")]
         let budget = {
             use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
@@ -384,15 +401,21 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
                     let (rem_eda, rem_da) = pool.remaining_counts();
-                    let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let rem_rand_ohvs = pool.remaining_rand_ohvs_u8_k4();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    let deficit_rand_ohvs =
+                        num_rand_ohvs_u8_k4.saturating_sub(rem_rand_ohvs);
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                         budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
-                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                        || deficit_dabits > 0
+                        || deficit_rand_ohvs > 0;
                     #[cfg(feature = "ring-msm")]
                     let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -406,6 +429,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             0,
                             0,
                             &mut io_ctx,
@@ -415,6 +439,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             deficit_wm,
                             deficit_re,
                             0,
@@ -438,6 +463,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             0,
                             0,
                             &mut io_ctx,
@@ -449,6 +475,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             budget.wrap_masks,
                             budget.ring_edabits_u66,
                             0,
@@ -533,14 +560,19 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         use mpc_core::protocols::rep3_ring::edabits;
         let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
         let num_dabits = budget.dabits;
-        log_preproc_size_estimates(counts, num_dabits);
+        let num_rand_ohvs_u8_k4 = budget.rand_ohvs_u8_k4;
+        log_preproc_size_estimates(counts, num_dabits, num_rand_ohvs_u8_k4);
 
         let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
         match edabits::PreprocessingPool::load(&pool_dir, party_id) {
             Ok(mut pool) => {
                 let (rem_eda, rem_da) = pool.remaining_counts();
-                let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                let rem_rand_ohvs = pool.remaining_rand_ohvs_u8_k4();
+                let deficit_counts: [usize; 5] =
+                    std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                let deficit_rand_ohvs =
+                    num_rand_ohvs_u8_k4.saturating_sub(rem_rand_ohvs);
                 let deficit_re64 = budget
                     .ring_edabits_u64
                     .saturating_sub(pool.remaining_ring_edabits_u64());
@@ -553,8 +585,11 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                 );
 
-                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
-                    || deficit_re64 > 0 || deficit_re128 > 0;
+                let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                    || deficit_dabits > 0
+                    || deficit_rand_ohvs > 0
+                    || deficit_re64 > 0
+                    || deficit_re128 > 0;
                 #[cfg(feature = "ring-msm")]
                 let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -565,6 +600,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &mut pool,
                         deficit_counts,
                         deficit_dabits,
+                        deficit_rand_ohvs,
                         deficit_re64,
                         deficit_re128,
                         &mut io_ctx,
@@ -574,6 +610,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &mut pool,
                         deficit_counts,
                         deficit_dabits,
+                        deficit_rand_ohvs,
                         deficit_wm,
                         deficit_re,
                         deficit_re64,
@@ -599,6 +636,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &pool_dir,
                         counts,
                         num_dabits,
+                        num_rand_ohvs_u8_k4,
                         budget.ring_edabits_u64,
                         budget.ring_edabits_u128,
                         &mut io_ctx,
@@ -610,6 +648,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &pool_dir,
                         counts,
                         num_dabits,
+                        num_rand_ohvs_u8_k4,
                         budget.wrap_masks,
                         budget.ring_edabits_u66,
                         budget.ring_edabits_u64,
@@ -680,6 +719,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         )?;
 
         let (rem_eda, rem_da) = preproc.remaining_counts();
+        let rem_rand_ohvs = preproc.remaining_rand_ohvs_u8_k4();
         info!(
             iter,
             u8 = rem_eda[0],
@@ -688,6 +728,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             u64 = rem_eda[3],
             u128 = rem_eda[4],
             dabits = rem_da,
+            rand_ohvs_u8_k4 = rem_rand_ohvs,
             "remaining preprocessing"
         );
 

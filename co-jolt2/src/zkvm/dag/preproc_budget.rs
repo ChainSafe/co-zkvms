@@ -1,6 +1,6 @@
 use crate::zkvm::suffixes::suffix_edabit_ring_bits;
 use jolt_common::constants::XLEN;
-use jolt_core::zkvm::instruction_lookups::{LOG_M, PHASES};
+use jolt_core::zkvm::instruction_lookups::{D, LOG_M, PHASES};
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use jolt_core::zkvm::lookup_table::LookupTables;
 use strum::IntoEnumIterator;
@@ -17,6 +17,8 @@ pub struct PreprocessingBudget {
     pub u128: usize,
     /// daBits for BitInject (single-bit → field) suffix conversions.
     pub dabits: usize,
+    /// Preprocessed RandOHV masks for instruction chunk one-hot polynomials.
+    pub rand_ohvs_u8_k4: usize,
     /// daPoints for Dory U64Scalars wrap correction (2 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub dapoints: usize,
@@ -37,8 +39,14 @@ impl std::fmt::Debug for PreprocessingBudget {
         write!(
             f,
             "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
-            self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
+            self.u8,
+            self.u16,
+            self.u32,
+            self.u64,
+            self.u128,
+            self.dabits
         )?;
+        write!(f, "; RandOHVs(u8,k4): {}", self.rand_ohvs_u8_k4)?;
         if self.ring_edabits_u64 > 0 || self.ring_edabits_u128 > 0 {
             write!(
                 f,
@@ -95,6 +103,7 @@ impl std::fmt::Debug for PreprocessingBudget {
 pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     let n = trace_len;
     let mut budget = PreprocessingBudget::default();
+    budget.rand_ohvs_u8_k4 = D * rand_ohv_rotation_count();
 
     // daBit budget: per cycle, sum BitInject suffixes across all phases.
     // Each cycle belongs to exactly one table, so budget = max_over_tables × n.
@@ -197,6 +206,18 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     }
 
     budget
+}
+
+pub fn rand_ohv_rotation_count() -> usize {
+    match std::env::var("CO_JOLT_RAND_OHV_ROTATIONS") {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(v @ (1 | 2 | 4 | 8 | 16)) => v,
+            _ => panic!(
+                "invalid CO_JOLT_RAND_OHV_ROTATIONS={raw}; expected one of 1,2,4,8,16"
+            ),
+        },
+        Err(_) => 16,
+    }
 }
 
 /// Returns true if this suffix produces a BitInject result (consuming 1 daBit)
