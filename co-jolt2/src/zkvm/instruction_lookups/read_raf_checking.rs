@@ -19,7 +19,9 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::expanding_table::ExpandingTable;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
-use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK, LOG_M, M};
+use jolt_core::zkvm::instruction_lookups::{
+    CHUNKS_PER_PHASE, D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES,
+};
 use jolt_core::zkvm::lookup_table::prefixes::{PrefixCheckpoint, PrefixEval, Prefixes};
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use jolt_core::zkvm::lookup_table::LookupTables;
@@ -42,8 +44,6 @@ use tracing::{info_span, trace_span};
 use crate::poly::additive_dense_poly::AdditiveDensePoly;
 use crate::utils::lagrange_interp_4;
 
-const LOG_K: usize = XLEN * 2;
-const PHASES: usize = 8;
 const DEGREE: usize = 3;
 
 fn fwht_unmask_rep3_to_additive<F: JoltField>(
@@ -277,7 +277,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             "eq_r_cycle_public length mismatch: expected {num_cycles}, got {}",
             eq_r_cycle_public.len()
         );
-        eyre::ensure!(PHASES * 2 == D, "expected PHASES*2 == D");
+        eyre::ensure!(
+            D % PHASES == 0 && CHUNKS_PER_PHASE * PHASES == D,
+            "D={D} must be divisible by PHASES={PHASES}"
+        );
         eyre::ensure!(
             lookup_indices.len() == num_cycles,
             "lookup_indices length mismatch: expected {num_cycles}, got {}",
@@ -434,59 +437,76 @@ impl<F: JoltField> ReadRafProverState<F> {
             }
         }
 
-        let hi = 2 * phase;
-        let lo = 2 * phase + 1;
-        eyre::ensure!(lo < D, "phase pair out of range: ({hi}, {lo})");
-        eyre::ensure!(
-            self.one_hot_polys[hi].masked_indices_c.len() == self.c16.len(),
-            "one_hot_polys[{hi}].masked_indices_c length mismatch"
-        );
-        eyre::ensure!(
-            self.one_hot_polys[lo].masked_indices_c.len() == self.c16.len(),
-            "one_hot_polys[{lo}].masked_indices_c length mismatch"
-        );
-        eyre::ensure!(
-            self.one_hot_polys[hi].rand_ohv_e_field.len() == K_CHUNK,
-            "one_hot_polys[{hi}].rand_ohv_e_field must have length {K_CHUNK}"
-        );
-        eyre::ensure!(
-            self.one_hot_polys[lo].rand_ohv_e_field.len() == K_CHUNK,
-            "one_hot_polys[{lo}].rand_ohv_e_field must have length {K_CHUNK}"
-        );
+        let chunk_base = CHUNKS_PER_PHASE * phase;
+        for i in 0..CHUNKS_PER_PHASE {
+            let idx = chunk_base + i;
+            eyre::ensure!(idx < D, "phase chunk out of range: {idx}");
+            eyre::ensure!(
+                self.one_hot_polys[idx].masked_indices_c.len() == self.c16.len(),
+                "one_hot_polys[{idx}].masked_indices_c length mismatch"
+            );
+            eyre::ensure!(
+                self.one_hot_polys[idx].rand_ohv_e_field.len() == K_CHUNK,
+                "one_hot_polys[{idx}].rand_ohv_e_field must have length {K_CHUNK}"
+            );
+        }
         let _ehat_span = tracing::info_span!("prefix_tensor_prod").entered();
 
-        // derive c16
+        // derive c16 by combining CHUNKS_PER_PHASE nibbles
         for j in 0..self.c16.len() {
-            let c_hi = self.one_hot_polys[hi].masked_indices_c[j];
-            let c_lo = self.one_hot_polys[lo].masked_indices_c[j];
-            self.c16[j] = match (c_hi, c_lo) {
-                (Some(h), Some(l)) => Some(((h as u16) << LOG_K_CHUNK) | (l as u16)),
-                _ => None,
-            };
+            let mut val: u16 = 0;
+            let mut valid = true;
+            for i in 0..CHUNKS_PER_PHASE {
+                match self.one_hot_polys[chunk_base + i].masked_indices_c[j] {
+                    Some(c) => val |= (c as u16) << (LOG_K_CHUNK * (CHUNKS_PER_PHASE - 1 - i)),
+                    None => {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+            self.c16[j] = if valid { Some(val) } else { None };
         }
 
-        // compute Ehat16 via tensor product
+        // compute Ehat_M via tree tensor product of CHUNKS_PER_PHASE one-hot polynomials
         let ehat16_prev = self.ehat16.take();
 
-        let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
-            self.one_hot_polys[hi].rand_ohv_e_field.as_ref().clone();
-        let mut ehat8_lo: Vec<Rep3PrimeFieldShare<F>> =
-            self.one_hot_polys[lo].rand_ohv_e_field.as_ref().clone();
-        fwht_rep3_in_place(&mut ehat8_hi);
-        fwht_rep3_in_place(&mut ehat8_lo);
+        let mut level: Vec<Vec<Rep3PrimeFieldShare<F>>> = (0..CHUNKS_PER_PHASE)
+            .map(|i| {
+                let mut e: Vec<Rep3PrimeFieldShare<F>> = self.one_hot_polys[chunk_base + i]
+                    .rand_ohv_e_field
+                    .as_ref()
+                    .clone();
+                fwht_rep3_in_place(&mut e);
+                e
+            })
+            .collect();
 
-        // Tensor product: Ehat_M[(a<<LOG_K_CHUNK)|b] = Ehat_K_hi[a] * Ehat_K_lo[b]
-        let mut a_expanded = Vec::with_capacity(M);
-        let mut b_expanded = Vec::with_capacity(M);
-        for a_idx in 0..K_CHUNK {
-            for b_idx in 0..K_CHUNK {
-                a_expanded.push(ehat8_hi[a_idx]);
-                b_expanded.push(ehat8_lo[b_idx]);
+        // Tree reduction: log2(CHUNKS_PER_PHASE) sequential mul_vec rounds
+        while level.len() > 1 {
+            let mut next = Vec::with_capacity((level.len() + 1) / 2);
+            for pair in level.chunks(2) {
+                let left = &pair[0];
+                let right = &pair[1];
+                let product_len = left.len() * right.len();
+                let mut a_expanded = Vec::with_capacity(product_len);
+                let mut b_expanded = Vec::with_capacity(product_len);
+                for a_idx in 0..left.len() {
+                    for b_idx in 0..right.len() {
+                        a_expanded.push(left[a_idx]);
+                        b_expanded.push(right[b_idx]);
+                    }
+                }
+                next.push(rep3_arith::mul_vec(
+                    &a_expanded,
+                    &b_expanded,
+                    io_ctx.main(),
+                )?);
             }
+            level = next;
         }
 
-        let ehat16 = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx.main())?;
-        self.ehat16 = Some(ehat16);
+        self.ehat16 = Some(level.into_iter().next().unwrap());
         drop(_ehat_span);
 
         // -- Condensation (phase > 0): u_evals *= eq_shifted[c16_prev] --
@@ -498,13 +518,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                 phase * LOG_M,
                 self.r.len()
             );
-            let prev_hi = 2 * (phase - 1);
-            let prev_lo = 2 * (phase - 1) + 1;
+            let prev_chunk_base = CHUNKS_PER_PHASE * (phase - 1);
 
-            // Use cached ehat16 from the previous phase (avoids a 65536-element mul_vec)
+            // Use cached ehat16 from the previous phase (avoids an M-element mul_vec)
             let ehat16_prev = ehat16_prev.expect("ehat16_prev must exist for phase > 0");
 
-            // Build public EQ table from the 16 challenges of the previous phase
+            // Build public EQ table from the LOG_M challenges of the previous phase
             let prev_start = (phase - 1) * LOG_M;
             let prev_challenges: Vec<F> = self.r[prev_start..prev_start + LOG_M]
                 .iter()
@@ -515,15 +534,19 @@ impl<F: JoltField> ReadRafProverState<F> {
             // Shift into masked domain: eq_shifted[c] = eq16[c XOR r16_prev]
             let eq_shifted = shift_eq_table_with_mask(&eq16, &ehat16_prev);
 
-            // c16_prev for each cycle
+            // c16_prev for each cycle: combine CHUNKS_PER_PHASE nibbles from previous phase
             let c16_prev: Vec<Option<u16>> = (0..self.c16.len())
                 .map(|j| {
-                    let c_hi = self.one_hot_polys[prev_hi].masked_indices_c[j];
-                    let c_lo = self.one_hot_polys[prev_lo].masked_indices_c[j];
-                    match (c_hi, c_lo) {
-                        (Some(h), Some(l)) => Some(((h as u16) << LOG_K_CHUNK) | (l as u16)),
-                        _ => None,
+                    let mut val: u16 = 0;
+                    for i in 0..CHUNKS_PER_PHASE {
+                        match self.one_hot_polys[prev_chunk_base + i].masked_indices_c[j] {
+                            Some(c) => {
+                                val |= (c as u16) << (LOG_K_CHUNK * (CHUNKS_PER_PHASE - 1 - i))
+                            }
+                            None => return None,
+                        }
                     }
+                    Some(val)
                 })
                 .collect();
 
@@ -1300,7 +1323,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
 
         // Build ra polynomial from ra_acc for the log_T rounds.
-        // By this point, all 8 cache_phase calls have run, so ra_acc is Some(vec).
+        // By this point, all PHASES cache_phase calls have run, so ra_acc is Some(vec).
         let ra_vec = self
             .ra_acc
             .take()
