@@ -2,18 +2,19 @@ use ark_ec::pairing::Pairing as ArkPairing;
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{One, Zero};
+use dory::{DoryProofBuilder, ProofBuilder};
+use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::commitment::dory::{
     DoryCommitment, DoryCommitmentScheme, DoryProofData, JoltFieldWrapper, JoltG1Wrapper,
     JoltG2Wrapper, JoltGTBn254, JoltGTWrapper, JoltGroupWrapper, JoltToDoryTranscriptRef,
 };
-use mpc_core::MaybeShared;
-use dory::{DoryProofBuilder, ProofBuilder};
-use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-use jolt_core::jolt_optimizations;
-use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
+use mpc_core::MaybeShared;
+use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use rayon::prelude::*;
 
@@ -27,6 +28,19 @@ type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
     JoltFieldWrapper<Fr>,
     DoryTranscriptRef<'a, T>,
 >;
+type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>);
+type DoryFirstReducePublicMsg = (
+    Option<Fq12>,
+    Option<Fq12>,
+    Option<G1Affine>,
+    Option<G2Affine>,
+);
+type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
+type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
+type DorySecondReduceShareMsg = (
+    ((Fq12, Fq12), (G2Affine, G2Affine)),
+    DorySecondReducePublicMsg,
+);
 
 impl<ProofTranscript> Rep3CommitmentScheme<Fr, ProofTranscript> for DoryCommitmentScheme
 where
@@ -55,9 +69,6 @@ where
         let nu = dory::vmv::compute_nu(num_vars, sigma);
 
         let g1_all = setup_g1_projective(setup);
-        let g2_all = setup_g2_projective(setup);
-        let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << nu)]);
-        let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << nu)]);
 
         let rows_len = init_msgs[0].1.len();
         let mut row_commitments = vec![G1Projective::zero(); rows_len];
@@ -84,19 +95,13 @@ where
         let mut builder: DoryProofBuilderRef<'_, ProofTranscript> =
             DoryProofBuilder::new(dory_transcript);
 
-        let vmv_shares: Vec<(Fq12, Fq12)> = network.receive_responses()?;
-        let mut c = Fq12::one();
-        let mut d2 = Fq12::one();
-        for (cs, d2s) in vmv_shares {
-            c *= cs;
-            d2 *= d2s;
-        }
+        let vmv_shares: Vec<DoryVmvShareMsg> = network.receive_responses()?;
+        let ((c, d2), e1) = combine_vmv_shares(&vmv_shares)?;
 
-        let e1 = msm_g1(&row_commitments, &l_vec);
         let vmv_message = dory::messages::VMVMessage::<JoltG1Wrapper, JoltGTBn254> {
             c: JoltGTWrapper::<Bn254>(c),
             d2: JoltGTWrapper::<Bn254>(d2),
-            e1: JoltGroupWrapper(e1),
+            e1: JoltGroupWrapper(e1.into_group()),
         };
         builder = builder.append_vmv_message(vmv_message);
 
@@ -108,34 +113,9 @@ where
         while curr_nu > 0 {
             let n2 = 1usize << (curr_nu - 1);
 
-            let d2_lr_shares: Vec<(Fq12, Fq12)> = network.receive_responses()?;
-            let mut d2_left = Fq12::one();
-            let mut d2_right = Fq12::one();
-            for (l, r) in d2_lr_shares {
-                d2_left *= l;
-                d2_right *= r;
-            }
-
-            let g2_prime_aff = &g2_affine_all[..n2];
-            let ((d1_left, d1_right), (e1_beta, e2_beta)) = {
-                let (v1_l, v1_r) = v1_pub.split_at(n2);
-                let g1_aff_nu = &g1_affine_all[..(1 << curr_nu)];
-                let g2_aff_nu = &g2_affine_all[..(1 << curr_nu)];
-                rayon::join(
-                    || {
-                        rayon::join(
-                            || multi_pairing_g2_affine(v1_l, g2_prime_aff),
-                            || multi_pairing_g2_affine(v1_r, g2_prime_aff),
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || msm_g1_affine(g1_aff_nu, &s2),
-                            || msm_g2_affine(g2_aff_nu, &s1),
-                        )
-                    },
-                )
-            };
+            let first_msgs: Vec<DoryFirstReduceShareMsg> = network.receive_responses()?;
+            let ((d2_left, d2_right), (d1_left, d1_right, e1_beta, e2_beta)) =
+                combine_first_reduce_shares(&first_msgs)?;
 
             let first_msg =
                 dory::messages::FirstReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
@@ -143,8 +123,8 @@ where
                     d1_right: JoltGTWrapper::<Bn254>(d1_right),
                     d2_left: JoltGTWrapper::<Bn254>(d2_left),
                     d2_right: JoltGTWrapper::<Bn254>(d2_right),
-                    e1_beta: JoltGroupWrapper(e1_beta),
-                    e2_beta: JoltGroupWrapper(e2_beta),
+                    e1_beta: JoltGroupWrapper(e1_beta.into_group()),
+                    e2_beta: JoltGroupWrapper(e2_beta.into_group()),
                 };
 
             let (beta_chal, b2) = builder.append_first_reduce_message(first_msg);
@@ -159,29 +139,16 @@ where
                 beta,
             );
 
-            let second_msgs: Vec<((Fq12, Fq12), (G2Affine, G2Affine))> =
-                network.receive_responses()?;
-            let mut c_plus = Fq12::one();
-            let mut c_minus = Fq12::one();
-            let mut e2_plus = G2Projective::zero();
-            let mut e2_minus = G2Projective::zero();
-            for ((cp, cm), (e2p, e2m)) in second_msgs {
-                c_plus *= cp;
-                c_minus *= cm;
-                e2_plus += e2p.into_group();
-                e2_minus += e2m.into_group();
-            }
-
-            let (s2_l, s2_r) = s2.split_at(n2);
-            let (v1_l, v1_r) = v1_pub.split_at(n2);
-            let (e1_plus, e1_minus) = rayon::join(|| msm_g1(v1_l, s2_r), || msm_g1(v1_r, s2_l));
+            let second_msgs: Vec<DorySecondReduceShareMsg> = network.receive_responses()?;
+            let ((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)) =
+                combine_second_reduce_shares(&second_msgs)?;
 
             let second_msg =
                 dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
                     c_plus: JoltGTWrapper::<Bn254>(c_plus),
                     c_minus: JoltGTWrapper::<Bn254>(c_minus),
-                    e1_plus: JoltGroupWrapper(e1_plus),
-                    e1_minus: JoltGroupWrapper(e1_minus),
+                    e1_plus: JoltGroupWrapper(e1_plus.into_group()),
+                    e1_minus: JoltGroupWrapper(e1_minus.into_group()),
                     e2_plus: JoltGroupWrapper(e2_plus),
                     e2_minus: JoltGroupWrapper(e2_minus),
                 };
@@ -197,6 +164,7 @@ where
             v1_pub.truncate(n2);
 
             let (s1_l, s1_r) = s1.split_at(n2);
+            let (s2_l, s2_r) = s2.split_at(n2);
             let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
                 .into_par_iter()
                 .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
@@ -296,6 +264,94 @@ where
             _ => unreachable!(),
         }
     }
+}
+
+fn take_owned_public_term<T: Clone>(
+    values: &[Option<T>],
+    owner: PartyID,
+    label: &str,
+) -> eyre::Result<T> {
+    let owner_idx = usize::from(owner);
+    eyre::ensure!(
+        values.get(owner_idx).and_then(|v| v.as_ref()).is_some(),
+        "{label}: owner {owner_idx} did not provide the public term"
+    );
+    debug_assert!(
+        values
+            .iter()
+            .enumerate()
+            .all(|(idx, value)| idx == owner_idx || value.is_none())
+    );
+    Ok(values[owner_idx].clone().unwrap())
+}
+
+fn combine_vmv_shares(msgs: &[DoryVmvShareMsg]) -> eyre::Result<((Fq12, Fq12), G1Affine)> {
+    let mut c = Fq12::one();
+    let mut d2 = Fq12::one();
+    let mut e1_vals = Vec::with_capacity(msgs.len());
+    for ((cs, d2s), e1) in msgs {
+        c *= *cs;
+        d2 *= *d2s;
+        e1_vals.push(*e1);
+    }
+    let e1 = take_owned_public_term(&e1_vals, PartyID::ID0, "vmv.e1")?;
+    Ok(((c, d2), e1))
+}
+
+fn combine_first_reduce_shares(
+    msgs: &[DoryFirstReduceShareMsg],
+) -> eyre::Result<((Fq12, Fq12), (Fq12, Fq12, G1Affine, G2Affine))> {
+    let mut d2_left = Fq12::one();
+    let mut d2_right = Fq12::one();
+    let mut d1_left_vals = Vec::with_capacity(msgs.len());
+    let mut d1_right_vals = Vec::with_capacity(msgs.len());
+    let mut e1_beta_vals = Vec::with_capacity(msgs.len());
+    let mut e2_beta_vals = Vec::with_capacity(msgs.len());
+
+    for ((d2l, d2r), (d1_left, d1_right, e1_beta, e2_beta)) in msgs {
+        d2_left *= *d2l;
+        d2_right *= *d2r;
+        d1_left_vals.push(*d1_left);
+        d1_right_vals.push(*d1_right);
+        e1_beta_vals.push(*e1_beta);
+        e2_beta_vals.push(*e2_beta);
+    }
+
+    let d1_left = take_owned_public_term(&d1_left_vals, PartyID::ID0, "first.d1_left")?;
+    let d1_right = take_owned_public_term(&d1_right_vals, PartyID::ID1, "first.d1_right")?;
+    let e1_beta = take_owned_public_term(&e1_beta_vals, PartyID::ID2, "first.e1_beta")?;
+    let e2_beta = take_owned_public_term(&e2_beta_vals, PartyID::ID2, "first.e2_beta")?;
+
+    Ok(((d2_left, d2_right), (d1_left, d1_right, e1_beta, e2_beta)))
+}
+
+fn combine_second_reduce_shares(
+    msgs: &[DorySecondReduceShareMsg],
+) -> eyre::Result<(
+    (Fq12, Fq12),
+    (G2Projective, G2Projective),
+    (G1Affine, G1Affine),
+)> {
+    let mut c_plus = Fq12::one();
+    let mut c_minus = Fq12::one();
+    let mut e2_plus = G2Projective::zero();
+    let mut e2_minus = G2Projective::zero();
+    let mut e1_plus_vals = Vec::with_capacity(msgs.len());
+    let mut e1_minus_vals = Vec::with_capacity(msgs.len());
+
+    for (((cp, cm), (e2p, e2m)), (e1_plus, e1_minus)) in msgs {
+        c_plus *= *cp;
+        c_minus *= *cm;
+        e2_plus += e2p.into_group();
+        e2_minus += e2m.into_group();
+        e1_plus_vals.push(*e1_plus);
+        e1_minus_vals.push(*e1_minus);
+    }
+
+    let e1_plus = take_owned_public_term(&e1_plus_vals, PartyID::ID0, "second.e1_plus")?;
+    let e1_minus = take_owned_public_term(&e1_minus_vals, PartyID::ID1, "second.e1_minus")?;
+
+    Ok(((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)))
 }
 
 // =============================================================================
