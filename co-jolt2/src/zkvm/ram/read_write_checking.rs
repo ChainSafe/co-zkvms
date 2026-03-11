@@ -1,8 +1,6 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
-};
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
@@ -15,10 +13,10 @@ use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFiel
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;
@@ -70,26 +68,17 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         // Clone is cheap (Rep3DensePolynomial is Arc-backed); we avoid lifetime plumbing here.
         let inc_cycle = sm.prover_state.cycle_witness.ram_inc_ref().clone();
 
-        let r_prime = sm
-            .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            )
-            .0;
+        let r_prime =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter).0;
 
         // Compute ram_addresses (PUBLIC)
-        let ram_addresses: Vec<Option<u64>> = cycle_witness
-            .meta()
-            .par_iter()
-            .map(|m| remap_address(m.ram_addr, memory_layout))
-            .collect();
+        let ram_addresses: Vec<Option<u64>> =
+            cycle_witness.meta().par_iter().map(|m| remap_address(m.ram_addr, memory_layout)).collect();
 
         // Compute checkpoints (val at each chunk start) without materializing per-chunk deltas.
         //
         // val_checkpoints[chunk][k] = initial_memory_state[k] + Σ_{j in cycles < chunk_start} inc(j) * [addr(j)==k]
-        let mut val_checkpoints: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); K * num_chunks];
+        let mut val_checkpoints: Vec<Rep3PrimeFieldShare<F>> = vec![Rep3PrimeFieldShare::zero_share(); K * num_chunks];
         val_checkpoints[..K].copy_from_slice(initial_memory_state);
 
         let mut running: Vec<Rep3PrimeFieldShare<F>> = initial_memory_state.to_vec();
@@ -109,24 +98,23 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         A[0] = F::one();
 
         // Build I data structure
-        let I: Vec<Vec<(usize, usize, Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>> =
-            ram_addresses
-                .par_chunks(chunk_size)
-                .enumerate()
-                .map(|(chunk_index, addr_chunk)| {
-                    let mut j = chunk_index * chunk_size;
-                    addr_chunk
-                        .iter()
-                        .map(|addr| {
-                            let k = addr.unwrap_or(0) as usize;
-                            let inc_val = inc_cycle.get_bound_coeff(j);
-                            let entry = (j, k, Rep3PrimeFieldShare::zero_share(), inc_val);
-                            j += 1;
-                            entry
-                        })
-                        .collect()
-                })
-                .collect();
+        let I: Vec<Vec<(usize, usize, Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>)>> = ram_addresses
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, addr_chunk)| {
+                let mut j = chunk_index * chunk_size;
+                addr_chunk
+                    .iter()
+                    .map(|addr| {
+                        let k = addr.unwrap_or(0) as usize;
+                        let inc_val = inc_cycle.get_bound_coeff(j);
+                        let entry = (j, k, Rep3PrimeFieldShare::zero_share(), inc_val);
+                        j += 1;
+                        entry
+                    })
+                    .collect()
+            })
+            .collect();
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
@@ -134,10 +122,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
             .into_par_iter()
             .map(|_| DataBuffers {
                 val_j_0: vec![Rep3PrimeFieldShare::zero_share(); K],
-                val_j_r: [
-                    vec![Rep3PrimeFieldShare::zero_share(); K],
-                    vec![Rep3PrimeFieldShare::zero_share(); K],
-                ],
+                val_j_r: [vec![Rep3PrimeFieldShare::zero_share(); K], vec![Rep3PrimeFieldShare::zero_share(); K]],
                 ra: [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)],
                 dirty_indices: Vec::with_capacity(K),
             })
@@ -183,15 +168,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
 
         let prover_state = ReadWriteCheckingProverState::initialize(initial_memory_state, K, sm);
 
-        Self {
-            party_id,
-            K,
-            T,
-            gamma,
-            sumcheck_switch_index: sm.twist_sumcheck_switch_index,
-            prover_state,
-            input_claim,
-        }
+        Self { party_id, K, T, gamma, sumcheck_switch_index: sm.twist_sumcheck_switch_index, prover_state, input_claim }
     }
 
     fn phase1_compute_prover_message(
@@ -221,129 +198,99 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [Rep3Value::zero_share(); 2];
 
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        ra,
-                        dirty_indices,
-                    } = buffers;
+                    let DataBuffers { val_j_0, val_j_r, ra, dirty_indices } = buffers;
                     val_j_0.copy_from_slice(checkpoint);
 
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0;
+                    I_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2).for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0;
 
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
-                                if let Some(k) = ram_addresses[j] {
-                                    let k = k as usize;
-                                    if ra[0][k].is_zero() {
-                                        dirty_indices.push(k);
-                                    }
-                                    ra[0][k] += A[j_bound];
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let j_bound = j % (1 << round);
+                            if let Some(k) = ram_addresses[j] {
+                                let k = k as usize;
+                                if ra[0][k].is_zero() {
+                                    dirty_indices.push(k);
                                 }
+                                ra[0][k] += A[j_bound];
                             }
+                        }
 
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
-                                if let Some(k) = ram_addresses[j] {
-                                    let k = k as usize;
-                                    if ra[0][k].is_zero() && ra[1][k].is_zero() {
-                                        dirty_indices.push(k);
-                                    }
-                                    ra[1][k] += A[j_bound];
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let j_bound = j % (1 << round);
+                            if let Some(k) = ram_addresses[j] {
+                                let k = k as usize;
+                                if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                    dirty_indices.push(k);
                                 }
+                                ra[1][k] += A[j_bound];
                             }
+                        }
 
-                            for &k in dirty_indices.iter() {
-                                val_j_r[0][k] = val_j_0[k];
+                        for &k in dirty_indices.iter() {
+                            val_j_r[0][k] = val_j_0[k];
+                        }
+                        let mut inc_iter = inc_chunk.iter().peekable();
+                        loop {
+                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                            debug_assert_eq!(*row, j_prime);
+                            val_j_r[0][*col] += *inc_lt;
+                            val_j_0[*col] += *inc;
+                            if inc_iter.peek().unwrap().0 != j_prime {
+                                break;
                             }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col] += *inc_lt;
-                                val_j_0[*col] += *inc;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
+                        }
+                        for &k in dirty_indices.iter() {
+                            val_j_r[1][k] = val_j_0[k];
+                        }
+                        for entry in inc_iter {
+                            let (row, col, inc_lt, inc) = *entry;
+                            debug_assert_eq!(row, j_prime + 1);
+                            val_j_r[1][col] += inc_lt;
+                            val_j_0[col] += inc;
+                        }
+
+                        let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
+                        let inc_cycle_evals = {
+                            let inc_0 = inc_cycle.get_bound_coeff(j_prime);
+                            let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                            [inc_0, inc_1 - inc_0]
+                        };
+
+                        let mut inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        for k in dirty_indices.drain(..) {
+                            if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                let ra_0 = ra[0][k]; // PUBLIC
+                                let ra_slope = ra[1][k] - ra_0;
+                                let val_0 = val_j_r[0][k]; // SHARED
+                                let val_slope = val_j_r[1][k] - val_0;
+
+                                // ra(PUB) * (val(SHARED) + gamma * (inc(SHARED) + val(SHARED)))
+                                inner[0] += rep3_arith::mul_public(
+                                    val_0 + rep3_arith::mul_public(inc_cycle_evals[0] + val_0, gamma),
+                                    ra_0,
+                                );
+                                inner[1] += rep3_arith::mul_public(
+                                    val_slope + rep3_arith::mul_public(inc_cycle_evals[1] + val_slope, gamma),
+                                    ra_slope,
+                                );
+
+                                ra[0][k] = F::zero();
+                                ra[1][k] = F::zero();
                             }
-                            for &k in dirty_indices.iter() {
-                                val_j_r[1][k] = val_j_0[k];
-                            }
-                            for entry in inc_iter {
-                                let (row, col, inc_lt, inc) = *entry;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] += inc;
-                            }
+                            val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
+                            val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
+                        }
 
-                            let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
-                            let inc_cycle_evals = {
-                                let inc_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                [inc_0, inc_1 - inc_0]
-                            };
-
-                            let mut inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            for k in dirty_indices.drain(..) {
-                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                    let ra_0 = ra[0][k]; // PUBLIC
-                                    let ra_slope = ra[1][k] - ra_0;
-                                    let val_0 = val_j_r[0][k]; // SHARED
-                                    let val_slope = val_j_r[1][k] - val_0;
-
-                                    // ra(PUB) * (val(SHARED) + gamma * (inc(SHARED) + val(SHARED)))
-                                    inner[0] += rep3_arith::mul_public(
-                                        val_0
-                                            + rep3_arith::mul_public(
-                                                inc_cycle_evals[0] + val_0,
-                                                gamma,
-                                            ),
-                                        ra_0,
-                                    );
-                                    inner[1] += rep3_arith::mul_public(
-                                        val_slope
-                                            + rep3_arith::mul_public(
-                                                inc_cycle_evals[1] + val_slope,
-                                                gamma,
-                                            ),
-                                        ra_slope,
-                                    );
-
-                                    ra[0][k] = F::zero();
-                                    ra[1][k] = F::zero();
-                                }
-                                val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
-                                val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
-                            }
-
-                            evals[0] = evals[0].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(
-                                    inner[0],
-                                    eq_r_prime_eval,
-                                )),
-                                party_id,
-                            );
-                            evals[1] = evals[1].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(
-                                    inner[1],
-                                    eq_r_prime_eval,
-                                )),
-                                party_id,
-                            );
-                        });
+                        evals[0] = evals[0]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(inner[0], eq_r_prime_eval)), party_id);
+                        evals[1] = evals[1]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(inner[1], eq_r_prime_eval)), party_id);
+                    });
                     evals
                 })
                 .reduce(
                     || [Rep3Value::zero_share(); 2],
-                    |running, new| {
-                        [
-                            running[0].add(&new[0], party_id),
-                            running[1].add(&new[1], party_id),
-                        ]
-                    },
+                    |running, new| [running[0].add(&new[0], party_id), running[1].add(&new[1], party_id)],
                 )
         } else {
             // E_in not fully bound
@@ -358,152 +305,120 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
                     let mut evals_for_current_E_out = [Rep3Value::zero_share(); 2];
                     let mut x_out_prev: Option<usize> = None;
 
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        ra,
-                        dirty_indices,
-                    } = buffers;
+                    let DataBuffers { val_j_0, val_j_r, ra, dirty_indices } = buffers;
                     val_j_0.copy_from_slice(checkpoint);
 
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0;
+                    I_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2).for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0;
 
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
-                                if let Some(k) = ram_addresses[j] {
-                                    let k = k as usize;
-                                    if ra[0][k].is_zero() {
-                                        dirty_indices.push(k);
-                                    }
-                                    ra[0][k] += A[j_bound];
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let j_bound = j % (1 << round);
+                            if let Some(k) = ram_addresses[j] {
+                                let k = k as usize;
+                                if ra[0][k].is_zero() {
+                                    dirty_indices.push(k);
                                 }
+                                ra[0][k] += A[j_bound];
                             }
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
-                                if let Some(k) = ram_addresses[j] {
-                                    let k = k as usize;
-                                    if ra[0][k].is_zero() && ra[1][k].is_zero() {
-                                        dirty_indices.push(k);
-                                    }
-                                    ra[1][k] += A[j_bound];
+                        }
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let j_bound = j % (1 << round);
+                            if let Some(k) = ram_addresses[j] {
+                                let k = k as usize;
+                                if ra[0][k].is_zero() && ra[1][k].is_zero() {
+                                    dirty_indices.push(k);
                                 }
+                                ra[1][k] += A[j_bound];
                             }
+                        }
 
-                            for &k in dirty_indices.iter() {
-                                val_j_r[0][k] = val_j_0[k];
+                        for &k in dirty_indices.iter() {
+                            val_j_r[0][k] = val_j_0[k];
+                        }
+                        let mut inc_iter = inc_chunk.iter().peekable();
+                        loop {
+                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                            debug_assert_eq!(*row, j_prime);
+                            val_j_r[0][*col] += *inc_lt;
+                            val_j_0[*col] += *inc;
+                            if inc_iter.peek().unwrap().0 != j_prime {
+                                break;
                             }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col] += *inc_lt;
-                                val_j_0[*col] += *inc;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
+                        }
+                        for &k in dirty_indices.iter() {
+                            val_j_r[1][k] = val_j_0[k];
+                        }
+                        for entry in inc_iter {
+                            let (row, col, inc_lt, inc) = *entry;
+                            debug_assert_eq!(row, j_prime + 1);
+                            val_j_r[1][col] += inc_lt;
+                            val_j_0[col] += inc;
+                        }
+
+                        let x_in = (j_prime / 2) & x_bitmask;
+                        let x_out = (j_prime / 2) >> num_x_in_bits;
+                        let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+
+                        let inc_cycle_evals = {
+                            let inc_0 = inc_cycle.get_bound_coeff(j_prime);
+                            let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                            [inc_0, inc_1 - inc_0]
+                        };
+
+                        match x_out_prev {
+                            None => {
+                                x_out_prev = Some(x_out);
                             }
-                            for &k in dirty_indices.iter() {
-                                val_j_r[1][k] = val_j_0[k];
+                            Some(x) if x_out != x => {
+                                x_out_prev = Some(x_out);
+                                let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                evals[0] = evals[0].add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
+                                evals[1] = evals[1].add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
+                                evals_for_current_E_out = [Rep3Value::zero_share(); 2];
                             }
-                            for entry in inc_iter {
-                                let (row, col, inc_lt, inc) = *entry;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col] += inc_lt;
-                                val_j_0[col] += inc;
+                            _ => (),
+                        }
+
+                        let mut inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        for k in dirty_indices.drain(..) {
+                            if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
+                                let ra_0 = ra[0][k];
+                                let ra_slope = ra[1][k] - ra_0;
+                                let val_0 = val_j_r[0][k];
+                                let val_slope = val_j_r[1][k] - val_0;
+
+                                inner[0] += rep3_arith::mul_public(
+                                    val_0 + rep3_arith::mul_public(inc_cycle_evals[0] + val_0, gamma),
+                                    ra_0,
+                                );
+                                inner[1] += rep3_arith::mul_public(
+                                    val_slope + rep3_arith::mul_public(inc_cycle_evals[1] + val_slope, gamma),
+                                    ra_slope,
+                                );
+
+                                ra[0][k] = F::zero();
+                                ra[1][k] = F::zero();
                             }
+                            val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
+                            val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
+                        }
 
-                            let x_in = (j_prime / 2) & x_bitmask;
-                            let x_out = (j_prime / 2) >> num_x_in_bits;
-                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
-
-                            let inc_cycle_evals = {
-                                let inc_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                [inc_0, inc_1 - inc_0]
-                            };
-
-                            match x_out_prev {
-                                None => {
-                                    x_out_prev = Some(x_out);
-                                }
-                                Some(x) if x_out != x => {
-                                    x_out_prev = Some(x_out);
-                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                                    evals[0] = evals[0].add(
-                                        &evals_for_current_E_out[0].mul_public(E_out_eval),
-                                        party_id,
-                                    );
-                                    evals[1] = evals[1].add(
-                                        &evals_for_current_E_out[1].mul_public(E_out_eval),
-                                        party_id,
-                                    );
-                                    evals_for_current_E_out = [Rep3Value::zero_share(); 2];
-                                }
-                                _ => (),
-                            }
-
-                            let mut inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            for k in dirty_indices.drain(..) {
-                                if !ra[0][k].is_zero() || !ra[1][k].is_zero() {
-                                    let ra_0 = ra[0][k];
-                                    let ra_slope = ra[1][k] - ra_0;
-                                    let val_0 = val_j_r[0][k];
-                                    let val_slope = val_j_r[1][k] - val_0;
-
-                                    inner[0] += rep3_arith::mul_public(
-                                        val_0
-                                            + rep3_arith::mul_public(
-                                                inc_cycle_evals[0] + val_0,
-                                                gamma,
-                                            ),
-                                        ra_0,
-                                    );
-                                    inner[1] += rep3_arith::mul_public(
-                                        val_slope
-                                            + rep3_arith::mul_public(
-                                                inc_cycle_evals[1] + val_slope,
-                                                gamma,
-                                            ),
-                                        ra_slope,
-                                    );
-
-                                    ra[0][k] = F::zero();
-                                    ra[1][k] = F::zero();
-                                }
-                                val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
-                                val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
-                            }
-
-                            evals_for_current_E_out[0] = evals_for_current_E_out[0].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(inner[0], E_in_eval)),
-                                party_id,
-                            );
-                            evals_for_current_E_out[1] = evals_for_current_E_out[1].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(inner[1], E_in_eval)),
-                                party_id,
-                            );
-                        });
+                        evals_for_current_E_out[0] = evals_for_current_E_out[0]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(inner[0], E_in_eval)), party_id);
+                        evals_for_current_E_out[1] = evals_for_current_E_out[1]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(inner[1], E_in_eval)), party_id);
+                    });
 
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] = evals[0]
-                            .add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
-                        evals[1] = evals[1]
-                            .add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
+                        evals[0] = evals[0].add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
+                        evals[1] = evals[1].add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
                     }
                     evals
                 })
                 .reduce(
                     || [Rep3Value::zero_share(); 2],
-                    |running, new| {
-                        [
-                            running[0].add(&new[0], party_id),
-                            running[1].add(&new[1], party_id),
-                        ]
-                    },
+                    |running, new| [running[0].add(&new[0], party_id), running[1].add(&new[1], party_id)],
                 )
         };
 
@@ -528,22 +443,19 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
         let evals: [AdditiveShare<F>; DEGREE] = (0..eq_r_prime.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let eq_evals: [F; DEGREE] =
-                    eq_r_prime.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let eq_evals: [F; DEGREE] = eq_r_prime.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
                 let inc_evals = inc_cycle.sumcheck_evals(j, DEGREE, BindingOrder::HighToLow);
 
                 let mut inner = [Rep3PrimeFieldShare::<F>::zero_share(); DEGREE];
                 for k in 0..K {
                     let index = j * K + k;
-                    let ra_evals: [F; DEGREE] =
-                        ra.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
+                    let ra_evals: [F; DEGREE] = ra.sumcheck_evals_array::<DEGREE>(index, BindingOrder::HighToLow);
                     let val_evals = val.sumcheck_evals(index, DEGREE, BindingOrder::HighToLow);
 
                     for d in 0..DEGREE {
                         // ra(PUB) * (val(SHARED) + gamma * (inc(SHARED) + val(SHARED)))
                         inner[d] += rep3_arith::mul_public(
-                            val_evals[d]
-                                + rep3_arith::mul_public(inc_evals[d] + val_evals[d], gamma),
+                            val_evals[d] + rep3_arith::mul_public(inc_evals[d] + val_evals[d], gamma),
                             ra_evals[d],
                         );
                     }
@@ -557,13 +469,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             );
 
         evals.to_vec()
@@ -580,8 +486,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
         let evals: [AdditiveShare<F>; DEGREE] = (0..ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let ra_evals: [F; DEGREE] =
-                    ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let ra_evals: [F; DEGREE] = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
                 let val_evals = val.sumcheck_evals(k, DEGREE, BindingOrder::HighToLow);
 
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE];
@@ -596,13 +501,7 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             );
 
         evals.iter().map(|e| *e * eq_r_prime_eval).collect()
@@ -642,55 +541,41 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
         ps.inc_cycle.bind(r_j.into(), BindingOrder::LowToHigh);
 
         let (A_left, A_right) = ps.A.split_at_mut(1 << round);
-        A_left
-            .par_iter_mut()
-            .zip(A_right.par_iter_mut())
-            .for_each(|(x, y)| {
-                *y = *x * r_j;
-                *x -= *y;
-            });
+        A_left.par_iter_mut().zip(A_right.par_iter_mut()).for_each(|(x, y)| {
+            *y = *x * r_j;
+            *x -= *y;
+        });
 
         if round == ps.chunk_size.log_2() - 1 {
             let num_chunks = ps.ram_addresses.len() / ps.chunk_size;
 
             // Materialize ra (PUBLIC)
             let mut ra_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            ra_evals
-                .par_chunks_mut(K)
-                .enumerate()
-                .for_each(|(ci, chunk)| {
-                    for (jb, addr) in ps.ram_addresses[ci * ps.chunk_size..(ci + 1) * ps.chunk_size]
-                        .iter()
-                        .enumerate()
-                    {
-                        if let Some(k) = addr {
-                            chunk[*k as usize] += ps.A[jb];
-                        }
+            ra_evals.par_chunks_mut(K).enumerate().for_each(|(ci, chunk)| {
+                for (jb, addr) in ps.ram_addresses[ci * ps.chunk_size..(ci + 1) * ps.chunk_size].iter().enumerate() {
+                    if let Some(k) = addr {
+                        chunk[*k as usize] += ps.A[jb];
                     }
-                });
+                }
+            });
             ps.ra = Some(MultilinearPolynomial::from(ra_evals));
 
             // Materialize val (SHARED)
             let mut val_evals = std::mem::take(&mut ps.val_checkpoints);
-            val_evals
-                .par_chunks_mut(K)
-                .zip(ps.I.par_iter_mut())
-                .enumerate()
-                .for_each(|(ci, (val_chunk, I_chunk))| {
-                    for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
-                        debug_assert_eq!(*j, ci);
-                        val_chunk[*k] += *inc_lt;
-                    }
-                });
+            val_evals.par_chunks_mut(K).zip(ps.I.par_iter_mut()).enumerate().for_each(|(ci, (val_chunk, I_chunk))| {
+                for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
+                    debug_assert_eq!(*j, ci);
+                    val_chunk[*k] += *inc_lt;
+                }
+            });
             ps.val = Some(Rep3DensePolynomial::new(val_evals));
 
             // Materialize eq_r_prime (PUBLIC)
-            let eq_evals: Vec<F> = EqPolynomial::<F>::evals(
-                &ps.gruens_eq_r_prime.w[..ps.gruens_eq_r_prime.current_index],
-            )
-            .par_iter()
-            .map(|x| *x * ps.gruens_eq_r_prime.current_scalar)
-            .collect();
+            let eq_evals: Vec<F> =
+                EqPolynomial::<F>::evals(&ps.gruens_eq_r_prime.w[..ps.gruens_eq_r_prime.current_index])
+                    .par_iter()
+                    .map(|x| *x * ps.gruens_eq_r_prime.current_scalar)
+                    .collect();
             ps.eq_r_prime = Some(MultilinearPolynomial::from(eq_evals));
         }
     }
@@ -699,36 +584,21 @@ impl<F: JoltField> Rep3RamReadWriteCheckingWorker<F> {
         let ps = &mut self.prover_state;
         let ra = ps.ra.as_mut().unwrap();
         let eq = ps.eq_r_prime.as_mut().unwrap();
-        [ra, eq]
-            .into_par_iter()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
+        [ra, eq].into_par_iter().for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
         rayon::join(
-            || {
-                ps.val
-                    .as_mut()
-                    .unwrap()
-                    .bind(r_j.into(), BindingOrder::HighToLow)
-            },
+            || ps.val.as_mut().unwrap().bind(r_j.into(), BindingOrder::HighToLow),
             || ps.inc_cycle.bind(r_j.into(), BindingOrder::HighToLow),
         );
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
         let ps = &mut self.prover_state;
-        ps.ra
-            .as_mut()
-            .unwrap()
-            .bind_parallel(r_j, BindingOrder::HighToLow);
-        ps.val
-            .as_mut()
-            .unwrap()
-            .bind(r_j.into(), BindingOrder::HighToLow);
+        ps.ra.as_mut().unwrap().bind_parallel(r_j, BindingOrder::HighToLow);
+        ps.val.as_mut().unwrap().bind(r_j.into(), BindingOrder::HighToLow);
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3RamReadWriteCheckingWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RamReadWriteCheckingWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -785,10 +655,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         }
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let log_T = self.T.log_2();
         let mut r_cycle = opening_point[self.sumcheck_switch_index..log_T].to_vec();
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
@@ -829,11 +696,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             &[inc_claim],
         );
 
-        vec![
-            val_claim,
-            rep3_arith::promote_to_trivial_share(self.party_id, ra_claim),
-            inc_claim,
-        ]
+        vec![val_claim, rep3_arith::promote_to_trivial_share(self.party_id, ra_claim), inc_claim]
     }
 }
 

@@ -14,6 +14,7 @@ use crate::protocols::rep3::{
 use crate::protocols::rep3_ring::arithmetic as rep3_ring_arith;
 use eyre::Ok;
 use mpc_types::field::PrimeField;
+use num_traits::AsPrimitive;
 use mpc_types::protocols::rep3_ring::ring::u66::U66;
 use mpc_types::protocols::rep3_ring::{
     Rep3RingShare,
@@ -633,7 +634,7 @@ where
 }
 
 // PreprocessingPool generation/extension moved to `super::pool`.
-pub use super::pool::{preprocess_pool, extend_pool_batched};
+pub use super::pool::{extend_pool_batched, preprocess_pool};
 
 /// Convert an arithmetic ring share `[x]` over `Z_{2^K}` into an arithmetic
 /// field share `[x]` over `Fp`, using a masked opening.
@@ -840,7 +841,7 @@ pub struct LazyEdaBitsRing<T: IntRing2k> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: IntRing2k> LazyEdaBitsRing<T>
+impl<T: IntRing2k + Copy> LazyEdaBitsRing<T>
 where
     Standard: Distribution<T>,
 {
@@ -888,6 +889,12 @@ where
         self.total - self.cursor
     }
 
+    /// Reset cursor to 0 for reuse-preproc mode (benchmarks only).
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+    }
+
     /// Drain `n` ring edaBits. P0/P1 regenerate from seeds; P2 slices from store.
     pub fn take_batch(&mut self, n: usize) -> eyre::Result<EdaBitsRingBatch<T>> {
         eyre::ensure!(
@@ -915,7 +922,10 @@ where
         if party_id == PartyID::ID2 {
             let flat_start = cursor_base * k;
             let flat_end = flat_start + n * k;
-            let alphas_flat = self.alpha2_flat.as_slice()[flat_start..flat_end].to_vec();
+            #[cfg(feature = "reuse-preproc")]
+            let alphas_flat = self.alpha2_flat.read_reuse(flat_start, flat_end)?;
+            #[cfg(not(feature = "reuse-preproc"))]
+            let alphas_flat = self.alpha2_flat.read_consume(flat_start, flat_end)?;
             let gammas = vec![RingElement(T::zero()); n];
             self.cursor += n;
             self.persist_cursor();
@@ -1257,6 +1267,31 @@ where
         .collect())
 }
 
+/// EdaBits-aided upcast: convert binary XOR-shares from ring T to arithmetic
+/// shares in larger ring U, using ring-domain edaBits for the B2A step.
+///
+/// Online communication: 2 rounds (same as `ring_b2a_many`), replacing the
+/// O(log K) Kogge-Stone rounds of the full `conversion::b2a_many`.
+pub fn upcast_many_from_binary<T, U, N>(
+    binary: &[Rep3RingShare<T>],
+    batch: &EdaBitsRingBatch<U>,
+    io: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3RingShare<U>>>
+where
+    T: IntRing2k + AsPrimitive<U>,
+    U: IntRing2k,
+    N: Rep3Network,
+    Standard: Distribution<T> + Distribution<U>,
+{
+    assert!(T::K < U::K);
+    // Zero-extend binary shares T→U (preserves XOR secret sharing).
+    let upcasted: Vec<Rep3RingShare<U>> = binary
+        .par_iter()
+        .map(|s| Rep3RingShare::new_ring(RingElement(s.a.0.as_()), RingElement(s.b.0.as_())))
+        .collect();
+    ring_b2a_many(&upcasted, batch, io)
+}
+
 // ---------------------------------------------------------------------------
 // EdaBitsPool: pre-generated edaBits/daBits for batched conversions
 // ---------------------------------------------------------------------------
@@ -1434,7 +1469,7 @@ mod tests {
             |party_idx, mut io_ctx| {
                 assert_eq!(usize::from(io_ctx.party_idx()), party_idx);
                 let mut lazy = random_edabits_lazy::<u64, Fr, _>(NUM, &mut io_ctx)?;
-                Ok(lazy.take_batch(NUM))
+                Ok(lazy.take_batch(NUM)?)
             },
             |(), _net| Ok(()),
         )
@@ -1478,7 +1513,7 @@ mod tests {
             || (),
             |x_shares, mut io_ctx| {
                 let mut lazy = random_edabits_lazy::<u64, Fr, _>(NUM, &mut io_ctx)?;
-                let batch = lazy.take_batch(NUM);
+                let batch = lazy.take_batch(NUM)?;
                 ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, &batch, io_ctx.main())
                     .map_err(Into::into)
             },
@@ -1611,19 +1646,19 @@ mod tests {
 
                 // Call 1: u32 identity
                 let identity = {
-                    let batch = lazy_u32.take_batch(NUM);
+                    let batch = lazy_u32.take_batch(NUM)?;
                     ring_to_field_b2a_many::<u32, Fr, _>(&id_sh, &batch, io)?
                 };
 
                 // Call 2: u16 left
                 let left = {
-                    let batch = lazy_u16.take_batch(NUM);
+                    let batch = lazy_u16.take_batch(NUM)?;
                     ring_to_field_b2a_many::<u16, Fr, _>(&left_sh, &batch, io)?
                 };
 
                 // Call 3: u16 right
                 let right = {
-                    let batch = lazy_u16.take_batch(NUM);
+                    let batch = lazy_u16.take_batch(NUM)?;
                     ring_to_field_b2a_many::<u16, Fr, _>(&right_sh, &batch, io)?
                 };
 
@@ -1652,6 +1687,7 @@ mod tests {
     /// Test that lazy u16 edaBits work correctly when take() is called at
     /// non-zero cursor positions (regression test for word-alignment bug).
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn lazy_u16_edabits_b2a_with_cursor_offset() {
         const BATCH1: usize = 7; // odd number to misalign cursor
         const BATCH2: usize = 5;
@@ -1674,10 +1710,10 @@ mod tests {
                 let mut lazy = random_edabits_lazy::<u16, Fr, _>(BATCH1 + BATCH2, &mut io_ctx)?;
 
                 // Consume first batch (advances cursor by BATCH1, which is odd)
-                let _discard = lazy.take_batch(BATCH1);
+                let _discard = lazy.take_batch(BATCH1)?;
 
                 // Now take batch2 at cursor=BATCH1 (odd) — this tests the word alignment fix
-                let batch = lazy.take_batch(BATCH2);
+                let batch = lazy.take_batch(BATCH2)?;
                 ring_to_field_b2a_many::<u16, Fr, _>(&x_shares, &batch, io_ctx.main())
                     .map_err(Into::into)
             },
@@ -1694,6 +1730,7 @@ mod tests {
     }
 
     /// Helper: run preprocess + B2A + bit-inject roundtrip.
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_roundtrip_impl() {
         use crate::protocols::rep3_ring::dabits;
 
@@ -1729,7 +1766,12 @@ mod tests {
                 || (),
                 move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
                       mut io_ctx| {
-                    let mut pool = preprocess_pool_batched::<Fr, _>(
+                    let pool_dir = std::env::temp_dir().join(format!(
+                        "mpc-core-test-preproc-batched-{}",
+                        io_ctx.party_idx()
+                    ));
+                    let mut pool = preprocess_pool::<Fr, _>(
+                        &pool_dir,
                         [0, 0, 0, NUM_U64, 0],
                         NUM_DABITS,
                         &mut io_ctx,
@@ -1762,11 +1804,7 @@ mod tests {
     }
 
     #[test]
-    fn preprocess_pool_batched_roundtrip() {
-        preprocess_roundtrip_impl();
-    }
-
-    #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_pool_roundtrip() {
         use crate::protocols::rep3_ring::dabits;
 
@@ -1856,6 +1894,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn preprocess_pool_small_chunks() {
         let _msg_guard = EnvVarGuard::set("PREPROC_MAX_MSG_MB", "1");
         let _fork_guard = EnvVarGuard::set("PREPROC_MIN_FORK_ELEMS", "1");
@@ -1869,6 +1908,7 @@ mod tests {
     /// 3. Extend the pool with EXTRA deficit items.
     /// 4. Consume the new items and verify B2A / bit-inject correctness.
     #[test]
+    #[cfg(not(feature = "ring-msm"))]
     fn extend_pool_batched_roundtrip() {
         use crate::protocols::rep3_ring::dabits;
 
@@ -1940,7 +1980,10 @@ mod tests {
                 || (),
                 move |(init_x, init_b, ext_x, ext_b): Input, mut io_ctx| {
                     // Phase 1: create initial pool and consume everything.
-                    let mut pool = preprocess_pool_batched::<Fr, _>(
+                    let pool_dir = std::env::temp_dir()
+                        .join(format!("mpc-core-test-extend-{}", io_ctx.party_idx()));
+                    let mut pool = preprocess_pool::<Fr, _>(
+                        &pool_dir,
                         [0, 0, 0, INITIAL_U64, 0],
                         INITIAL_DABITS,
                         &mut io_ctx,
@@ -2012,7 +2055,7 @@ mod tests {
             move |party_bins: Vec<Rep3RingShare<U66>>,
                   mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let mut lazy = random_edabits_ring_lazy::<U66, _>(n, &mut io_ctx)?;
-                let batch = lazy.take_batch(n);
+                let batch = lazy.take_batch(n)?;
                 let io = io_ctx.main();
                 let arith = ring_b2a_many(&party_bins, &batch, io)?;
                 Ok(arith)

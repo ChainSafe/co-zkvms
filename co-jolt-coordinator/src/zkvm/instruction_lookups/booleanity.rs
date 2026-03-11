@@ -5,8 +5,8 @@ use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
+use jolt_core::field::JoltField;
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 

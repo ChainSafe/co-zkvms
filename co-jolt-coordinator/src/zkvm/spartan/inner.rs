@@ -6,8 +6,8 @@ use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
+use jolt_core::field::JoltField;
 
 use crate::subprotocols::sumcheck::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::StateManager;

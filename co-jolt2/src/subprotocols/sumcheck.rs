@@ -9,9 +9,9 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Sumcheck instance traits (per-instance interface)
@@ -52,10 +52,7 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
     );
 
     /// Normalize the low-to-high sumcheck opening point to big-endian form.
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F>;
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
     /// After the sumcheck completes, cache polynomial openings in the accumulator and
     /// return the claim shares that were appended (in a stable, deterministic order).
@@ -65,7 +62,6 @@ pub trait Rep3SumcheckInstanceWorker<F: JoltField, N: Rep3NetworkWorker>: Send {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>>;
 }
-
 
 /// Worker-side public sumcheck instance.
 ///
@@ -82,21 +78,13 @@ pub trait PublicSumcheckInstanceWorker<F: JoltField>: Send {
     /// Compute public round evaluations at points {0, 2, 3, ..., max_degree}.
     ///
     /// Returns a vector of length `max_degree`.
-    fn compute_prover_message_public(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-        max_degree: usize,
-    ) -> Vec<F>;
+    fn compute_prover_message_public(&mut self, round: usize, previous_claim: F, max_degree: usize) -> Vec<F>;
 
     /// Bind the sumcheck variable for this round to challenge `r_j`.
     fn bind(&mut self, r_j: F::Challenge, round: usize);
 
     /// Normalize the low-to-high sumcheck opening point to big-endian form.
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F>;
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
     /// Cache polynomial openings into the worker accumulator and return the PUBLIC
     /// claims appended (stable order).
@@ -150,20 +138,14 @@ impl Rep3BatchedSumcheckWorker {
         F: JoltField,
         N: Rep3NetworkWorker,
     {
-        eyre::ensure!(
-            !instances.is_empty(),
-            "Batched sumcheck requires >= 1 instance"
-        );
+        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
 
         let party_id = io_ctx.party_id();
 
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();
 
-        let batching_coeffs: Vec<F> = io_ctx
-            .network()
-            .receive_request()
-            .context("receive batching coeffs")?;
+        let batching_coeffs: Vec<F> = io_ctx.network().receive_request().context("receive batching coeffs")?;
         eyre::ensure!(
             batching_coeffs.len() == instances.len(),
             "batching coeffs len mismatch: expected {}, got {}",
@@ -181,17 +163,11 @@ impl Rep3BatchedSumcheckWorker {
             .map(|instance| {
                 let padding = max_num_rounds - instance.num_rounds();
                 match instance.input_claim() {
-                    Rep3Value::Public(f) => {
-                        additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
+                    Rep3Value::Public(f) => additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id),
+                    Rep3Value::Shared(share) => {
+                        Rep3PrimeFieldShare::new(share.a.mul_pow_2(padding), share.b.mul_pow_2(padding)).into_additive()
                     }
-                    Rep3Value::Shared(share) => Rep3PrimeFieldShare::new(
-                        share.a.mul_pow_2(padding),
-                        share.b.mul_pow_2(padding),
-                    )
-                    .into_additive(),
-                    Rep3Value::Additive(a) => {
-                        AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
-                    }
+                    Rep3Value::Additive(a) => AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding)),
                 }
             })
             .collect();
@@ -202,8 +178,7 @@ impl Rep3BatchedSumcheckWorker {
             let remaining_rounds = max_num_rounds - round;
 
             let mut batched_evals = vec![AdditiveShare::<F>::zero(); max_degree];
-            let mut active_round_msgs: Vec<Option<Vec<AdditiveShare<F>>>> =
-                vec![None; instances.len()];
+            let mut active_round_msgs: Vec<Option<Vec<AdditiveShare<F>>>> = vec![None; instances.len()];
 
             for (i, instance) in instances.iter_mut().enumerate() {
                 let num_rounds = instance.num_rounds();
@@ -222,12 +197,7 @@ impl Rep3BatchedSumcheckWorker {
                 let offset = max_num_rounds - num_rounds;
                 let local_round = round - offset;
 
-                let msg = instance.compute_prover_message_share(
-                    local_round,
-                    individual_claims[i],
-                    max_degree,
-                    io_ctx,
-                );
+                let msg = instance.compute_prover_message_share(local_round, individual_claims[i], max_degree, io_ctx);
                 eyre::ensure!(
                     msg.len() == max_degree,
                     "instance message len mismatch: expected {max_degree}, got {}",
@@ -240,10 +210,7 @@ impl Rep3BatchedSumcheckWorker {
                 }
             }
 
-            let r_j: F::Challenge = io_ctx
-                .network()
-                .exchange(batched_evals)
-                .context("exchange round evals")?;
+            let r_j: F::Challenge = io_ctx.network().exchange(batched_evals).context("exchange round evals")?;
             r_sumcheck.push(r_j);
 
             for (i, instance) in instances.iter_mut().enumerate() {
@@ -256,39 +223,24 @@ impl Rep3BatchedSumcheckWorker {
 
                 instance.bind(r_j, local_round, io_ctx, preproc);
 
-                let msg = active_round_msgs[i]
-                    .take()
-                    .unwrap_or_else(|| unreachable!("active msg missing"));
+                let msg = active_round_msgs[i].take().unwrap_or_else(|| unreachable!("active msg missing"));
 
-                individual_claims[i] = evaluate_univariate_at_share::<F>(
-                    instance.degree(),
-                    individual_claims[i],
-                    &msg,
-                    r_j,
-                )?;
+                individual_claims[i] =
+                    evaluate_univariate_at_share::<F>(instance.degree(), individual_claims[i], &msg, r_j)?;
             }
         }
 
         // Cache openings and send opening-claim shares to coordinator.
-        let mut opening_claims_by_instance: Vec<Vec<AdditiveShare<F>>> =
-            Vec::with_capacity(instances.len());
+        let mut opening_claims_by_instance: Vec<Vec<AdditiveShare<F>>> = Vec::with_capacity(instances.len());
         for instance in instances.iter_mut() {
             let num_rounds = instance.num_rounds();
             let r_slice = &r_sumcheck[max_num_rounds - num_rounds..];
             let opening_point = instance.normalize_opening_point(r_slice);
             let rep3_claims = instance.cache_openings_worker(accumulator, opening_point);
-            opening_claims_by_instance.push(
-                rep3_claims
-                    .into_iter()
-                    .map(Rep3PrimeFieldShare::into_additive)
-                    .collect(),
-            );
+            opening_claims_by_instance.push(rep3_claims.into_iter().map(Rep3PrimeFieldShare::into_additive).collect());
         }
 
-        io_ctx
-            .network()
-            .send_response(opening_claims_by_instance)
-            .context("send opening claim shares")?;
+        io_ctx.network().send_response(opening_claims_by_instance).context("send opening claim shares")?;
 
         Ok(r_sumcheck)
     }
@@ -311,10 +263,7 @@ impl HybridBatchedSumcheckWorker {
         F: JoltField,
         N: Rep3NetworkWorker,
     {
-        eyre::ensure!(
-            !instances.is_empty(),
-            "Batched sumcheck requires >= 1 instance"
-        );
+        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
 
         let party_id = io_ctx.party_id();
         let is_public_worker = party_id == mpc_core::protocols::rep3::PartyID::ID0;
@@ -322,10 +271,7 @@ impl HybridBatchedSumcheckWorker {
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();
 
-        let batching_coeffs: Vec<F> = io_ctx
-            .network()
-            .receive_request()
-            .context("receive batching coeffs")?;
+        let batching_coeffs: Vec<F> = io_ctx.network().receive_request().context("receive batching coeffs")?;
         eyre::ensure!(
             batching_coeffs.len() == instances.len(),
             "batching coeffs len mismatch: expected {}, got {}",
@@ -342,17 +288,12 @@ impl HybridBatchedSumcheckWorker {
                 BatchedSumcheckWorkerInstance::Secret(s) => {
                     let padding = max_num_rounds - s.num_rounds();
                     let claim = match s.input_claim() {
-                        Rep3Value::Public(f) => {
-                            additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id)
+                        Rep3Value::Public(f) => additive::promote_to_trivial_share(f.mul_pow_2(padding), party_id),
+                        Rep3Value::Shared(share) => {
+                            Rep3PrimeFieldShare::new(share.a.mul_pow_2(padding), share.b.mul_pow_2(padding))
+                                .into_additive()
                         }
-                        Rep3Value::Shared(share) => Rep3PrimeFieldShare::new(
-                            share.a.mul_pow_2(padding),
-                            share.b.mul_pow_2(padding),
-                        )
-                        .into_additive(),
-                        Rep3Value::Additive(a) => {
-                            AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding))
-                        }
+                        Rep3Value::Additive(a) => AdditiveShare::from_fe(a.into_fe().mul_pow_2(padding)),
                     };
                     secret_claims.push(Some(claim));
                     public_claims.push(None);
@@ -360,9 +301,7 @@ impl HybridBatchedSumcheckWorker {
                 BatchedSumcheckWorkerInstance::Public(s) => {
                     secret_claims.push(None);
                     if is_public_worker {
-                        let scaled = s
-                            .input_claim_public()
-                            .mul_pow_2(max_num_rounds - s.num_rounds());
+                        let scaled = s.input_claim_public().mul_pow_2(max_num_rounds - s.num_rounds());
                         public_claims.push(Some(scaled));
                     } else {
                         public_claims.push(None);
@@ -377,14 +316,9 @@ impl HybridBatchedSumcheckWorker {
             let remaining_rounds = max_num_rounds - round;
 
             let mut batched_secret_evals = vec![AdditiveShare::<F>::zero(); max_degree];
-            let mut batched_public_evals = if is_public_worker {
-                Some(vec![F::zero(); max_degree])
-            } else {
-                None
-            };
+            let mut batched_public_evals = if is_public_worker { Some(vec![F::zero(); max_degree]) } else { None };
 
-            let mut active_secret_msgs: Vec<Option<Vec<AdditiveShare<F>>>> =
-                vec![None; instances.len()];
+            let mut active_secret_msgs: Vec<Option<Vec<AdditiveShare<F>>>> = vec![None; instances.len()];
             let mut active_public_msgs: Vec<Option<Vec<F>>> = vec![None; instances.len()];
 
             for (i, instance) in instances.iter_mut().enumerate() {
@@ -421,8 +355,7 @@ impl HybridBatchedSumcheckWorker {
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
                         let prev = secret_claims[i].unwrap();
-                        let msg =
-                            s.compute_prover_message_share(local_round, prev, max_degree, io_ctx);
+                        let msg = s.compute_prover_message_share(local_round, prev, max_degree, io_ctx);
                         eyre::ensure!(
                             msg.len() == max_degree,
                             "instance message len mismatch: expected {max_degree}, got {}",
@@ -456,10 +389,7 @@ impl HybridBatchedSumcheckWorker {
 
             let r_j: F::Challenge = io_ctx
                 .network()
-                .exchange::<HybridRoundMsg<F>, F::Challenge>((
-                    batched_secret_evals,
-                    batched_public_evals,
-                ))
+                .exchange::<HybridRoundMsg<F>, F::Challenge>((batched_secret_evals, batched_public_evals))
                 .context("exchange round evals")?;
             r_sumcheck.push(r_j);
 
@@ -474,30 +404,18 @@ impl HybridBatchedSumcheckWorker {
                 match instance {
                     BatchedSumcheckWorkerInstance::Secret(s) => {
                         s.bind(r_j, local_round, io_ctx, preproc);
-                        let msg = active_secret_msgs[i]
-                            .take()
-                            .unwrap_or_else(|| unreachable!("active msg missing"));
-                        secret_claims[i] = Some(evaluate_univariate_at_share::<F>(
-                            s.degree(),
-                            secret_claims[i].unwrap(),
-                            &msg,
-                            r_j,
-                        )?);
+                        let msg = active_secret_msgs[i].take().unwrap_or_else(|| unreachable!("active msg missing"));
+                        secret_claims[i] =
+                            Some(evaluate_univariate_at_share::<F>(s.degree(), secret_claims[i].unwrap(), &msg, r_j)?);
                     }
                     BatchedSumcheckWorkerInstance::Public(p) => {
                         if !is_public_worker {
                             continue;
                         }
                         p.bind(r_j, local_round);
-                        let msg = active_public_msgs[i]
-                            .take()
-                            .unwrap_or_else(|| unreachable!("active msg missing"));
-                        public_claims[i] = Some(evaluate_univariate_at_public::<F>(
-                            p.degree(),
-                            public_claims[i].unwrap(),
-                            &msg,
-                            r_j,
-                        ));
+                        let msg = active_public_msgs[i].take().unwrap_or_else(|| unreachable!("active msg missing"));
+                        public_claims[i] =
+                            Some(evaluate_univariate_at_public::<F>(p.degree(), public_claims[i].unwrap(), &msg, r_j));
                     }
                 }
             }
@@ -512,13 +430,8 @@ impl HybridBatchedSumcheckWorker {
                 BatchedSumcheckWorkerInstance::Secret(s) => {
                     let opening_point = s.normalize_opening_point(r_slice);
                     let rep3_claims = s.cache_openings_worker(accumulator, opening_point);
-                    openings_by_instance.push((
-                        rep3_claims
-                            .into_iter()
-                            .map(Rep3PrimeFieldShare::into_additive)
-                            .collect(),
-                        None,
-                    ));
+                    openings_by_instance
+                        .push((rep3_claims.into_iter().map(Rep3PrimeFieldShare::into_additive).collect(), None));
                 }
                 BatchedSumcheckWorkerInstance::Public(p) => {
                     let opening_point = p.normalize_opening_point(r_slice);
@@ -532,10 +445,7 @@ impl HybridBatchedSumcheckWorker {
             }
         }
 
-        io_ctx
-            .network()
-            .send_response(openings_by_instance)
-            .context("send opening claims")?;
+        io_ctx.network().send_response(openings_by_instance).context("send opening claims")?;
 
         Ok(r_sumcheck)
     }
@@ -564,10 +474,7 @@ pub(crate) fn evaluate_univariate_at_share<F: JoltField>(
     x: F::Challenge,
 ) -> eyre::Result<AdditiveShare<F>> {
     eyre::ensure!(degree >= 1, "sumcheck degree must be >= 1");
-    eyre::ensure!(
-        msg_evals.len() >= degree,
-        "msg evals length must be >= degree (need points up to {degree})"
-    );
+    eyre::ensure!(msg_evals.len() >= degree, "msg evals length must be >= degree (need points up to {degree})");
 
     // Nodes are consecutive x = 0..degree:
     // - y(0) = msg_evals[0]

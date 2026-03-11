@@ -399,7 +399,7 @@ mod tests {
              mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let io = io_ctx.main();
                 let mut lazy_masks = generate_wrap_masks_lazy(n, io)?;
-                let masks = lazy_masks.take_batch(n);
+                let masks = lazy_masks.take_batch(n)?;
                 let (m0_bin, m1_bin) =
                     extract_wrap_m2_from_diff_u66_many(&party_diffs, &masks, io)?;
                 Ok((m0_bin, m1_bin))

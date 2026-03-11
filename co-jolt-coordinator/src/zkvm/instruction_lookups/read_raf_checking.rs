@@ -1,7 +1,7 @@
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use jolt_common::constants::XLEN;
+use jolt_core::field::JoltField;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;

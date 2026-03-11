@@ -312,6 +312,7 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 #[cfg(feature = "rv64")]
 pub mod virtual_change_divisor_w;
+pub mod virtual_lw;
 pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_muli;
@@ -330,12 +331,11 @@ pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 #[cfg(feature = "rv64")]
 pub mod virtual_sign_extend_word;
-pub mod virtual_lw;
-pub mod virtual_sw;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_sw;
 pub mod virtual_xor_rot;
 #[cfg(feature = "rv64")]
 pub mod virtual_xor_rotw;

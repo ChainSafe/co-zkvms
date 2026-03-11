@@ -50,8 +50,10 @@ vsock = { version = "0.5", optional = true }
 aws-nitro-enclaves-nsm-api = { version = "0.4", optional = true }
 
 [features]
+default = ["zk"]
 rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
 aws_nitro = ["dep:vsock", "dep:aws-nitro-enclaves-nsm-api"]
+zk = ["jolt-core/zk"]
 
 [dev-dependencies]
 co-jolt2 = { path = "../co-jolt2", features = ["test-utils"] }

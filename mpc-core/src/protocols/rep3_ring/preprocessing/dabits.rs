@@ -765,7 +765,7 @@ mod tests {
             |x_shares: Vec<Rep3RingShare<RingBit>>, mut io_ctx| {
                 let n = x_shares.len();
                 let mut lazy = random_dabits_lazy::<Fr, _>(n, &mut io_ctx)?;
-                let batch = lazy.take_batch(n);
+                let batch = lazy.take_batch(n)?;
                 bit_inject_field_many::<Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(): (), _net| Ok(()),

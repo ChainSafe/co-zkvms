@@ -5,11 +5,20 @@ pub mod hamming_weight;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 
-const LOG_K: usize = XLEN * 2;
-const PHASES: usize = 8;
+pub const LOG_K: usize = XLEN * 2;
+
+#[cfg(all(feature = "rv64", feature = "fewer-phases"))]
+compile_error!("fewer-phases is only supported for rv32; cannot combine with rv64");
+
+#[cfg(not(feature = "fewer-phases"))]
+pub const PHASES: usize = 8;
+#[cfg(feature = "fewer-phases")]
+pub const PHASES: usize = 4;
+
 pub const LOG_M: usize = LOG_K / PHASES;
 pub const M: usize = 1 << LOG_M;
 pub const D: usize = 16;
+pub const CHUNKS_PER_PHASE: usize = D / PHASES;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 

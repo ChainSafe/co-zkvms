@@ -35,7 +35,7 @@ ark-ff = { version = "0.5.0", features = ["parallel", "asm"] }
 ark-bls12-381 = { version = "^0.5.0", default-features = false, features = [
     "curve",
 ] }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = [
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false, features = [
     "curve",
 ] }
 ark-serialize = { version = "0.5.0", default-features = false }
@@ -102,10 +102,10 @@ strum = { version = "0.26.3", default-features = false }
 strum_macros = "0.26.4"
 
 # Dependencies for local jolt-core
-ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false }
 ark-serialize-derive = { version = "0.5.0"}
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { git = "https://github.com/markosg04/dory", rev = "2743c039955ae4543d27169651b81a12ecf4774e" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+dory = { package = "dory-pcs", path = "./vendor/dory-pcs", features = ["backends", "cache", "disk-persistence"] }
 # jolt-platform = { path = "/Users/timofey/repos/examples/jolt/jolt-platform", default-features = false }
 # jolt-inlines-sha2 = { path = "/Users/timofey/repos/examples/jolt/jolt-inlines/sha2", default-features = false }
 # jolt-inlines-keccak256 = { path = "/Users/timofey/repos/examples/jolt/jolt-inlines/keccak256", default-features = false }
@@ -140,10 +140,10 @@ jolt-common = { path = "./jolt-common", package = "jolt-common" }
 # jolt = { path = "/Users/timofey/repos/examples/jolt/jolt-sdk", package = "jolt-sdk" }
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
 # ark-bls12-381 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 

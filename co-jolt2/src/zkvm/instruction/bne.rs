@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BNE> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "BNE::output", level = "trace")]
@@ -13,7 +10,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BNE> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<u64>>) = steps
             .iter()
@@ -25,12 +22,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BNE> {
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::eq_many(&a, &b, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(x, out)| {
-                *out = FutureRep3Ring::bit_inject_to_field(!x);
-            });
+        rep3_ring::arithmetic::eq_many(&a, &b, io_ctx)?.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureRep3Ring::bit_inject_to_field(!x);
+        });
         Ok(())
     }
 }

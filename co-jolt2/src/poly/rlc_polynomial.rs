@@ -67,38 +67,19 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                             Rep3MultilinearPolynomial::Public(poly) => {
                                 if i < poly.original_len() {
                                     let term = match poly {
-                                        MultilinearPolynomial::U8Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::U16Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::U32Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::U64Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::I64Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::U128Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::I128Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::S128Scalars(p) => {
-                                            p.coeffs[i].field_mul(coeff)
-                                        }
-                                        MultilinearPolynomial::LargeScalars(p) => {
-                                            p.evals_ref()[i] * coeff
-                                        }
+                                        MultilinearPolynomial::U8Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::U16Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::U32Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::U64Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::I64Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::U128Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::I128Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::S128Scalars(p) => p.coeffs[i].field_mul(coeff),
+                                        MultilinearPolynomial::LargeScalars(p) => p.evals_ref()[i] * coeff,
                                         _ => unreachable!("Unexpected public polynomial variant"),
                                     };
 
-                                    acc +=
-                                        Rep3PrimeFieldShare::promote_from_trivial(&term, party_id);
+                                    acc += Rep3PrimeFieldShare::promote_from_trivial(&term, party_id);
                                 }
                             }
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(p)) => {
@@ -146,6 +127,17 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
         result
     }
 
+    pub fn get_num_vars(&self) -> usize {
+        let dense_num_vars = self.dense_rlc.len().next_power_of_two().trailing_zeros() as usize;
+        let one_hot_num_vars = self
+            .one_hot_rlc
+            .iter()
+            .map(|(_, poly)| poly.get_num_vars())
+            .max()
+            .unwrap_or(0);
+        dense_num_vars.max(one_hot_num_vars)
+    }
+
     #[tracing::instrument(skip_all, name = "RlcPoly::commit_rows")]
     pub fn commit_rows<G>(&self, bases: &[G::Affine]) -> eyre::Result<Vec<G>>
     where
@@ -157,22 +149,20 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
         let mut row_commitments = vec![G::zero(); num_rows];
 
         // Dense part: MSM against this party's additive share `a`.
-        row_commitments.par_iter_mut().enumerate().try_for_each(
-            |(row_idx, commitment)| -> eyre::Result<()> {
-                let start = row_idx * row_len;
-                if start >= self.dense_rlc.len() {
-                    return Ok(());
-                }
-                let end = (start + row_len).min(self.dense_rlc.len());
-                let dense_row = &self.dense_rlc[start..end];
+        row_commitments.par_iter_mut().enumerate().try_for_each(|(row_idx, commitment)| -> eyre::Result<()> {
+            let start = row_idx * row_len;
+            if start >= self.dense_rlc.len() {
+                return Ok(());
+            }
+            let end = (start + row_len).min(self.dense_rlc.len());
+            let dense_row = &self.dense_rlc[start..end];
 
-                let scalars: Vec<F> = dense_row.iter().map(|s| s.a).collect();
-                let msm_result: G = G::msm_field_elements(&bases[..scalars.len()], &scalars)
-                    .map_err(|e| eyre::eyre!("msm_field_elements failed: {e:?}"))?;
-                *commitment += msm_result;
-                Ok(())
-            },
-        )?;
+            let scalars: Vec<F> = dense_row.iter().map(|s| s.a).collect();
+            let msm_result: G = G::msm_field_elements(&bases[..scalars.len()], &scalars)
+                .map_err(|e| eyre::eyre!("msm_field_elements failed: {e:?}"))?;
+            *commitment += msm_result;
+            Ok(())
+        })?;
 
         // One-hot part: compute one-hot row commitment shares and scale-add by coefficient.
         for (coeff, poly) in self.one_hot_rlc.iter() {
@@ -183,11 +173,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                 Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)) => {
                     // Public one-hot: ID0 holds the full vanilla commitment, others hold zero.
                     if self.party_id == PartyID::ID0 {
-                        one_hot
-                            .commit_rows::<G>(bases)
-                            .into_iter()
-                            .map(|w| w.0)
-                            .collect()
+                        one_hot.commit_rows::<G>(bases).into_iter().map(|w| w.0).collect()
                     } else {
                         vec![]
                     }
@@ -222,13 +208,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
         let mut v_vec: Vec<F> = (0..num_columns)
             .into_par_iter()
             .map(|col| {
-                self.dense_rlc
-                    .iter()
-                    .skip(col)
-                    .step_by(num_columns)
-                    .zip(l_vec.iter())
-                    .map(|(s, l)| s.a * *l)
-                    .sum()
+                self.dense_rlc.iter().skip(col).step_by(num_columns).zip(l_vec.iter()).map(|(s, l)| s.a * *l).sum()
             })
             .collect();
 
@@ -261,10 +241,7 @@ mod tests {
     use jolt_core::ark_bn254::{Fr, G1Affine, G1Projective};
     use jolt_core::poly::dense_mlpoly::DensePolynomial;
 
-    fn share_poly_rep3<F: JoltField>(
-        coeffs: &[F],
-        rng: &mut impl rand::Rng,
-    ) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
+    fn share_poly_rep3<F: JoltField>(coeffs: &[F], rng: &mut impl rand::Rng) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
         let mut party_coeffs: [Vec<Rep3PrimeFieldShare<F>>; 3] =
             std::array::from_fn(|_| Vec::with_capacity(coeffs.len()));
 
@@ -291,15 +268,13 @@ mod tests {
         let public_coeffs = (0..t).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
         let shared_plain = (0..t).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
 
-        let public_poly = Arc::new(Rep3MultilinearPolynomial::public(
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(public_coeffs.clone())),
-        ));
+        let public_poly = Arc::new(Rep3MultilinearPolynomial::public(MultilinearPolynomial::LargeScalars(
+            DensePolynomial::new(public_coeffs.clone()),
+        )));
 
         let shared_party_coeffs = share_poly_rep3(&shared_plain, &mut rng);
         let shared_polys: [Arc<Rep3MultilinearPolynomial<Fr>>; 3] = std::array::from_fn(|pid| {
-            Arc::new(Rep3MultilinearPolynomial::from_shared_coeffs(
-                shared_party_coeffs[pid].clone(),
-            ))
+            Arc::new(Rep3MultilinearPolynomial::from_shared_coeffs(shared_party_coeffs[pid].clone()))
         });
 
         let rlc0 = Rep3RLCPolynomial::linear_combination(
@@ -318,17 +293,10 @@ mod tests {
             PartyID::ID2,
         );
 
-        let reconstructed = mpc_core::protocols::rep3::combine_field_elements::<Fr>(
-            &rlc0.dense_rlc,
-            &rlc1.dense_rlc,
-            &rlc2.dense_rlc,
-        );
+        let reconstructed =
+            mpc_core::protocols::rep3::combine_field_elements::<Fr>(&rlc0.dense_rlc, &rlc1.dense_rlc, &rlc2.dense_rlc);
 
-        let expected = public_coeffs
-            .iter()
-            .zip(shared_plain.iter())
-            .map(|(&p, &s)| a * p + b * s)
-            .collect::<Vec<_>>();
+        let expected = public_coeffs.iter().zip(shared_plain.iter()).map(|(&p, &s)| a * p + b * s).collect::<Vec<_>>();
 
         assert_eq!(reconstructed, expected);
     }
@@ -354,9 +322,7 @@ mod tests {
             },
         });
 
-        let bases_proj = (0..row_len)
-            .map(|_| G1Projective::rand(&mut rng))
-            .collect::<Vec<_>>();
+        let bases_proj = (0..row_len).map(|_| G1Projective::rand(&mut rng)).collect::<Vec<_>>();
         let bases: Vec<G1Affine> = bases_proj.iter().map(|p| p.into_affine()).collect();
 
         let rows0 = rlc_party[0].commit_rows::<G1Projective>(&bases).unwrap();
@@ -370,8 +336,8 @@ mod tests {
 
         let mut expected = vec![G1Projective::zero(); num_rows];
         for (row_idx, dense_row) in dense_plain.chunks(row_len).enumerate() {
-            let msm = G1Projective::msm_field_elements(&bases[..dense_row.len()], dense_row)
-                .expect("msm_field_elements");
+            let msm =
+                G1Projective::msm_field_elements(&bases[..dense_row.len()], dense_row).expect("msm_field_elements");
             expected[row_idx] += msm;
         }
 

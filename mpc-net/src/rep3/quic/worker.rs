@@ -58,7 +58,10 @@ impl QuicForkTopology {
             Some("stream-pool") => Self::StreamPool,
             Some("conn-pool") | None => Self::ConnectionPool,
             Some(other) => {
-                tracing::warn!(topology = other, "unknown MPC_QUIC_TOPOLOGY, using conn-pool");
+                tracing::warn!(
+                    topology = other,
+                    "unknown MPC_QUIC_TOPOLOGY, using conn-pool"
+                );
                 Self::ConnectionPool
             }
         }
@@ -172,8 +175,15 @@ impl Rep3QuicMpcNetWorker {
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
-        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, mut chan_coordinator, transport_lanes) =
-            RUNTIME.block_on(async {
+        let (
+            net_handler,
+            chan_next,
+            chan_prev,
+            chan_next_bulk,
+            chan_prev_bulk,
+            mut chan_coordinator,
+            transport_lanes,
+        ) = RUNTIME.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
                 .get_coordinator_byte_channel()
@@ -347,11 +357,7 @@ impl Rep3QuicMpcNetWorker {
         self.net_handler.runtime.block_on(chan.recv_bytes())
     }
 
-    pub fn recv_bytes_bulk_into(
-        &mut self,
-        from: PartyID,
-        dst: &mut [u8],
-    ) -> std::io::Result<()> {
+    pub fn recv_bytes_bulk_into(&mut self, from: PartyID, dst: &mut [u8]) -> std::io::Result<()> {
         let chan = self.bulk_chan(from)?;
         self.net_handler.runtime.block_on(chan.recv_into(dst))
     }
@@ -446,7 +452,8 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .parties_connections
             .iter()
             .map(|(_, conns)| {
-                conns.iter()
+                conns
+                    .iter()
                     .map(|conn| conn.stats().udp_tx.bytes as u64)
                     .sum::<u64>()
             })
@@ -457,7 +464,8 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .parties_connections
             .iter()
             .map(|(_, conns)| {
-                conns.iter()
+                conns
+                    .iter()
                     .map(|conn| conn.stats().udp_rx.bytes as u64)
                     .sum::<u64>()
             })
@@ -678,7 +686,10 @@ impl MpcNetworkHandlerWorker {
             let mut ep = None;
             for attempt in 0..10 {
                 match quinn::Endpoint::server(server_config.clone(), our_socket_addr) {
-                    Ok(e) => { ep = Some(e); break; }
+                    Ok(e) => {
+                        ep = Some(e);
+                        break;
+                    }
                     Err(e) => {
                         if attempt < 9 {
                             tracing::warn!(
@@ -698,12 +709,17 @@ impl MpcNetworkHandlerWorker {
         let coordinator_connection = if let Some(coordinator) = config.coordinator {
             match coordinator.protocol {
                 crate::config::CoordinatorProtocol::Quic => {
-                    tracing::trace!("my id: {:?}, connecting to coordinator via QUIC", config.my_id);
+                    tracing::trace!(
+                        "my id: {:?}, connecting to coordinator via QUIC",
+                        config.my_id
+                    );
 
                     let addresses: Vec<SocketAddr> = coordinator
                         .dns_name
                         .to_socket_addrs()
-                        .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
+                        .with_context(|| {
+                            format!("while resolving DNS name for {}", coordinator.dns_name)
+                        })?
                         .collect();
                     if addresses.is_empty() {
                         return Err(eyre::eyre!(
@@ -713,8 +729,12 @@ impl MpcNetworkHandlerWorker {
                     }
                     let party_addr = addresses[0];
                     let local_client_socket: SocketAddr = match party_addr {
-                        SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
-                        SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
+                        SocketAddr::V4(_) => {
+                            "0.0.0.0:0".parse().expect("hardcoded IP address is valid")
+                        }
+                        SocketAddr::V6(_) => {
+                            "[::]:0".parse().expect("hardcoded IP address is valid")
+                        }
                     };
                     let endpoint = quinn::Endpoint::client(local_client_socket)
                         .with_context(|| format!("creating client endpoint to coordinator"))?;
@@ -768,7 +788,11 @@ impl MpcNetworkHandlerWorker {
             })
             .collect();
 
-        for party in config.parties.iter().filter(|party| party.id < config.my_id) {
+        for party in config
+            .parties
+            .iter()
+            .filter(|party| party.id < config.my_id)
+        {
             tracing::trace!(
                 "my id: {:?}, connecting to party: {:?} with {} lanes",
                 config.my_id,
@@ -794,7 +818,10 @@ impl MpcNetworkHandlerWorker {
                     SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
                 };
                 let endpoint = quinn::Endpoint::client(local_client_socket).with_context(|| {
-                    format!("creating client endpoint to party {} lane {}", party.id, lane_idx)
+                    format!(
+                        "creating client endpoint to party {} lane {}",
+                        party.id, lane_idx
+                    )
                 })?;
                 let conn = endpoint
                     .connect_with(client_config.clone(), party_addr, &party.dns_name.hostname)
@@ -806,7 +833,10 @@ impl MpcNetworkHandlerWorker {
                     })?
                     .await
                     .with_context(|| {
-                        format!("connecting as a client to party {} lane {}", party.id, lane_idx)
+                        format!(
+                            "connecting as a client to party {} lane {}",
+                            party.id, lane_idx
+                        )
                     })?;
                 let mut uni = conn.open_uni().await?;
                 uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
@@ -851,8 +881,8 @@ impl MpcNetworkHandlerWorker {
                         conn.remote_address(),
                     );
                     let mut uni = conn.accept_uni().await?;
-                    let other_party_id = usize::try_from(uni.read_u32().await?)
-                        .expect("u32 fits into usize");
+                    let other_party_id =
+                        usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
                     let lane_idx =
                         usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
                     ensure!(
@@ -861,7 +891,9 @@ impl MpcNetworkHandlerWorker {
                     );
                     let slots = parties_connections_slots
                         .get_mut(&other_party_id)
-                        .ok_or_else(|| eyre::eyre!("unexpected connection from party {other_party_id}"))?;
+                        .ok_or_else(|| {
+                            eyre::eyre!("unexpected connection from party {other_party_id}")
+                        })?;
                     ensure!(
                         slots[lane_idx].is_none(),
                         "duplicate connection for party {other_party_id} lane {lane_idx}"
@@ -888,7 +920,9 @@ impl MpcNetworkHandlerWorker {
                     .into_iter()
                     .enumerate()
                     .map(|(lane_idx, conn)| {
-                        conn.ok_or_else(|| eyre::eyre!("missing connection for party {party_id} lane {lane_idx}"))
+                        conn.ok_or_else(|| {
+                            eyre::eyre!("missing connection for party {party_id} lane {lane_idx}")
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, Report>((party_id, conns))
@@ -1087,7 +1121,10 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
                 }
                 .await;
                 if let Err(e) = res {
-                    tracing::trace!(party = id, "shutdown handshake failed (peer may have exited): {e}");
+                    tracing::trace!(
+                        party = id,
+                        "shutdown handshake failed (peer may have exited): {e}"
+                    );
                 }
             }
         }
@@ -1099,7 +1136,9 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
             }
             .await;
             if let Err(e) = res {
-                tracing::trace!("coordinator shutdown handshake failed (coordinator may have exited): {e}");
+                tracing::trace!(
+                    "coordinator shutdown handshake failed (coordinator may have exited): {e}"
+                );
             }
         }
 
@@ -1114,11 +1153,8 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
         }
 
         for endpoint in self.endpoints.iter() {
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                endpoint.wait_idle(),
-            )
-            .await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.wait_idle()).await;
             endpoint.close(VarInt::from_u32(0), &[]);
         }
         Ok(())

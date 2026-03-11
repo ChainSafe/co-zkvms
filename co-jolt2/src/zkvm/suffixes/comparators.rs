@@ -6,10 +6,10 @@
 
 use super::future::{B2ABucketExtend, SuffixFutureBatch};
 use super::{to_u32_share, MixedBatch, Uninterleavable};
-use jolt_core::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
 use crate::utils::types::Either;
 use jolt_common::constants::XLEN;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
@@ -58,14 +58,14 @@ where
 
         // Extract y as public constant or shared value
         let y_val: Either<RingElement<T::Half>, Rep3RingShare<T::Half>> = match right {
-            MixedBatch::Public(y_pubs) => Either::Public(RingElement(
-                T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
-            )),
+            MixedBatch::Public(y_pubs) => {
+                Either::Public(RingElement(T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!())))
+            }
             MixedBatch::Shared(ys) => Either::Shared(ys[i]),
             MixedBatch::Mixed(mixed) => match &mixed[i] {
-                Either::Public(yp) => Either::Public(RingElement(
-                    T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
-                )),
+                Either::Public(yp) => {
+                    Either::Public(RingElement(T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!())))
+                }
                 Either::Shared(y) => Either::Shared(*y),
             },
         };
@@ -152,17 +152,13 @@ where
             let i = orig(j);
             match right {
                 MixedBatch::Public(y_pubs) => {
-                    let mask = RingElement(
-                        T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
-                    );
+                    let mask = RingElement(T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()));
                     rep3_ring::binary::xor_public(x, &mask, party_id)
                 }
                 MixedBatch::Shared(ys) => *x ^ ys[i],
                 MixedBatch::Mixed(mixed) => match &mixed[i] {
                     Either::Public(yp) => {
-                        let mask = RingElement(
-                            T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
-                        );
+                        let mask = RingElement(T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()));
                         rep3_ring::binary::xor_public(x, &mask, party_id)
                     }
                     Either::Shared(y) => *x ^ *y,
@@ -257,17 +253,11 @@ where
     let indices_iter = (0..n).map(|j| base + orig(j));
     let ys = right.as_shared();
     let quotient_bits = suffix_len / 2;
-    let all_ones_val: u128 = if quotient_bits >= T::Half::K {
-        (1u128 << T::Half::K) - 1
-    } else {
-        (1u128 << quotient_bits) - 1
-    };
-    let all_ones_mask =
-        RingElement(T::Half::try_from(all_ones_val).unwrap_or_else(|_| unreachable!()));
-    let q_xor: Vec<Rep3RingShare<T::Half>> = ys
-        .iter()
-        .map(|q| rep3_ring::binary::xor_public(q, &all_ones_mask, party_id))
-        .collect();
+    let all_ones_val: u128 =
+        if quotient_bits >= T::Half::K { (1u128 << T::Half::K) - 1 } else { (1u128 << quotient_bits) - 1 };
+    let all_ones_mask = RingElement(T::Half::try_from(all_ones_val).unwrap_or_else(|_| unreachable!()));
+    let q_xor: Vec<Rep3RingShare<T::Half>> =
+        ys.iter().map(|q| rep3_ring::binary::xor_public(q, &all_ones_mask, party_id)).collect();
     // Batch both is_zero_many calls into one (halves rounds)
     let split = xs.len();
     let mut combined = Vec::with_capacity(split + q_xor.len());
@@ -302,17 +292,10 @@ where
     let indices_iter = (0..n).map(|j| base + orig(j));
     let ys = right.as_shared();
     let y_len = suffix_len / 2;
-    let all_ones_val: u128 = if y_len >= T::Half::K {
-        (1u128 << T::Half::K) - 1
-    } else {
-        (1u128 << y_len) - 1
-    };
-    let all_ones_mask =
-        RingElement(T::Half::try_from(all_ones_val).unwrap_or_else(|_| unreachable!()));
-    let y_xor: Vec<Rep3RingShare<T::Half>> = ys
-        .iter()
-        .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
-        .collect();
+    let all_ones_val: u128 = if y_len >= T::Half::K { (1u128 << T::Half::K) - 1 } else { (1u128 << y_len) - 1 };
+    let all_ones_mask = RingElement(T::Half::try_from(all_ones_val).unwrap_or_else(|_| unreachable!()));
+    let y_xor: Vec<Rep3RingShare<T::Half>> =
+        ys.iter().map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id)).collect();
     // Batch both is_zero_many calls into one (halves rounds)
     let split = y_xor.len();
     let mut combined = Vec::with_capacity(split + xs.len());
@@ -348,15 +331,9 @@ where
     let xs32: Vec<Rep3RingShare<u32>> = xs.iter().map(|x| to_u32_share(*x)).collect();
     let ys32: Vec<Rep3RingShare<u32>> = ys.iter().map(|y| to_u32_share(*y)).collect();
     let y_len = (suffix_len / 2).min(XLEN / 2);
-    let all_ones_mask = RingElement(if y_len >= 32 {
-        u32::MAX
-    } else {
-        (1u32 << y_len) - 1
-    });
-    let y_xor: Vec<Rep3RingShare<u32>> = ys32
-        .iter()
-        .map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id))
-        .collect();
+    let all_ones_mask = RingElement(if y_len >= 32 { u32::MAX } else { (1u32 << y_len) - 1 });
+    let y_xor: Vec<Rep3RingShare<u32>> =
+        ys32.iter().map(|y| rep3_ring::binary::xor_public(y, &all_ones_mask, party_id)).collect();
     // Batch both is_zero_many calls into one (halves rounds)
     let split = y_xor.len();
     let mut combined = Vec::with_capacity(split + xs32.len());

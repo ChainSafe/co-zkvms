@@ -6,9 +6,9 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::{self, arithmetic as rep3_arith};
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::{unsafe_allocate_zero_share_vec, Rep3DensePolynomial};
 use crate::utils::fwht::fwht_in_place;
+use jolt_core::field::JoltField;
 
 /// Rep3 version of vanilla Jolt's `RaPolynomial`.
 ///
@@ -25,10 +25,7 @@ pub enum Rep3RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'stati
 
 impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3RaPolynomial<I, F> {
     pub fn new(lookup_indices: Arc<Vec<Option<I>>>, table: Vec<Rep3PrimeFieldShare<F>>) -> Self {
-        Self::Round1(Rep3RaPolynomialRound1 {
-            shifted_table: table,
-            masked_lookup_indices: lookup_indices,
-        })
+        Self::Round1(Rep3RaPolynomialRound1 { shifted_table: table, masked_lookup_indices: lookup_indices })
     }
 
     #[inline]
@@ -53,12 +50,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3
     }
 
     #[inline]
-    pub fn sumcheck_evals(
-        &self,
-        index: usize,
-        degree: usize,
-        order: BindingOrder,
-    ) -> Vec<Rep3PrimeFieldShare<F>> {
+    pub fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<Rep3PrimeFieldShare<F>> {
         assert!(degree > 0);
         assert!(index < self.len() / 2);
 
@@ -111,17 +103,12 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct Rep3RaPolynomialRound1<
-    I: Into<usize> + Copy + Default + Send + Sync + 'static,
-    F: JoltField,
-> {
+pub struct Rep3RaPolynomialRound1<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> {
     shifted_table: Vec<Rep3PrimeFieldShare<F>>,
     masked_lookup_indices: Arc<Vec<Option<I>>>,
 }
 
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
-    Rep3RaPolynomialRound1<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3RaPolynomialRound1<I, F> {
     fn len(&self) -> usize {
         self.masked_lookup_indices.len()
     }
@@ -135,20 +122,12 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         let k = shifted.len();
         let mut f_0 = unsafe_allocate_zero_share_vec::<F>(k);
         let mut f_1 = unsafe_allocate_zero_share_vec::<F>(k);
-        f_0.par_iter_mut()
-            .zip_eq(f_1.par_iter_mut())
-            .zip_eq(shifted.par_iter())
-            .for_each(|((o0, o1), &v)| {
-                *o0 = v * eq_0_r0;
-                *o1 = v * eq_1_r0;
-            });
+        f_0.par_iter_mut().zip_eq(f_1.par_iter_mut()).zip_eq(shifted.par_iter()).for_each(|((o0, o1), &v)| {
+            *o0 = v * eq_0_r0;
+            *o1 = v * eq_1_r0;
+        });
 
-        Rep3RaPolynomialRound2 {
-            f_0,
-            f_1,
-            masked_lookup_indices: self.masked_lookup_indices,
-            binding_order,
-        }
+        Rep3RaPolynomialRound2 { f_0, f_1, masked_lookup_indices: self.masked_lookup_indices, binding_order }
     }
 
     #[inline]
@@ -156,26 +135,19 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         self.masked_lookup_indices
             .get(j)
             .expect("j out of bounds")
-            .map_or(Rep3PrimeFieldShare::zero_share(), |i| {
-                self.shifted_table[i.into()]
-            })
+            .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.shifted_table[i.into()])
     }
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct Rep3RaPolynomialRound2<
-    I: Into<usize> + Copy + Default + Send + Sync + 'static,
-    F: JoltField,
-> {
+pub struct Rep3RaPolynomialRound2<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> {
     f_0: Vec<Rep3PrimeFieldShare<F>>,
     f_1: Vec<Rep3PrimeFieldShare<F>>,
     masked_lookup_indices: Arc<Vec<Option<I>>>,
     binding_order: BindingOrder,
 }
 
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
-    Rep3RaPolynomialRound2<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3RaPolynomialRound2<I, F> {
     fn len(&self) -> usize {
         self.masked_lookup_indices.len() / 2
     }
@@ -195,18 +167,10 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         let mut f_10 = unsafe_allocate_zero_share_vec::<F>(k);
         let mut f_11 = unsafe_allocate_zero_share_vec::<F>(k);
 
-        f_00.par_iter_mut()
-            .zip_eq(f0.par_iter())
-            .for_each(|(dst, &src)| *dst = src * eq_0_r1);
-        f_01.par_iter_mut()
-            .zip_eq(f0.par_iter())
-            .for_each(|(dst, &src)| *dst = src * eq_1_r1);
-        f_10.par_iter_mut()
-            .zip_eq(f1.par_iter())
-            .for_each(|(dst, &src)| *dst = src * eq_0_r1);
-        f_11.par_iter_mut()
-            .zip_eq(f1.par_iter())
-            .for_each(|(dst, &src)| *dst = src * eq_1_r1);
+        f_00.par_iter_mut().zip_eq(f0.par_iter()).for_each(|(dst, &src)| *dst = src * eq_0_r1);
+        f_01.par_iter_mut().zip_eq(f0.par_iter()).for_each(|(dst, &src)| *dst = src * eq_1_r1);
+        f_10.par_iter_mut().zip_eq(f1.par_iter()).for_each(|(dst, &src)| *dst = src * eq_0_r1);
+        f_11.par_iter_mut().zip_eq(f1.par_iter()).for_each(|(dst, &src)| *dst = src * eq_1_r1);
 
         Rep3RaPolynomialRound3 {
             f_00,
@@ -223,15 +187,15 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         let mid = self.masked_lookup_indices.len() / 2;
         match self.binding_order {
             BindingOrder::HighToLow => {
-                let h_0 = self.masked_lookup_indices[j]
-                    .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_0[i.into()]);
+                let h_0 =
+                    self.masked_lookup_indices[j].map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_0[i.into()]);
                 let h_1 = self.masked_lookup_indices[mid + j]
                     .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_1[i.into()]);
                 h_0 + h_1
             }
             BindingOrder::LowToHigh => {
-                let h_0 = self.masked_lookup_indices[2 * j]
-                    .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_0[i.into()]);
+                let h_0 =
+                    self.masked_lookup_indices[2 * j].map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_0[i.into()]);
                 let h_1 = self.masked_lookup_indices[2 * j + 1]
                     .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_1[i.into()]);
                 h_0 + h_1
@@ -241,10 +205,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct Rep3RaPolynomialRound3<
-    I: Into<usize> + Copy + Default + Send + Sync + 'static,
-    F: JoltField,
-> {
+pub struct Rep3RaPolynomialRound3<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> {
     f_00: Vec<Rep3PrimeFieldShare<F>>,
     f_01: Vec<Rep3PrimeFieldShare<F>>,
     f_10: Vec<Rep3PrimeFieldShare<F>>,
@@ -253,9 +214,7 @@ pub struct Rep3RaPolynomialRound3<
     binding_order: BindingOrder,
 }
 
-impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
-    Rep3RaPolynomialRound3<I, F>
-{
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3RaPolynomialRound3<I, F> {
     fn len(&self) -> usize {
         self.masked_lookup_indices.len() / 4
     }
@@ -290,54 +249,49 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
 
         match self.binding_order {
             BindingOrder::HighToLow => {
-                res.par_chunks_mut(chunk_size).enumerate().for_each(
-                    |(chunk_index, evals_chunk)| {
-                        for (j, eval) in (chunk_index * chunk_size..).zip(evals_chunk.iter_mut()) {
-                            let h_000 = lookup_indices[j]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_000[i.into()]);
-                            let h_001 = lookup_indices[j + n]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_001[i.into()]);
-                            let h_010 = lookup_indices[j + n * 2]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_010[i.into()]);
-                            let h_011 = lookup_indices[j + n * 3]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_011[i.into()]);
-                            let h_100 = lookup_indices[j + n * 4]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_100[i.into()]);
-                            let h_101 = lookup_indices[j + n * 5]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_101[i.into()]);
-                            let h_110 = lookup_indices[j + n * 6]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_110[i.into()]);
-                            let h_111 = lookup_indices[j + n * 7]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_111[i.into()]);
-                            *eval = h_000 + h_010 + h_100 + h_110 + h_001 + h_011 + h_101 + h_111;
-                        }
-                    },
-                );
+                res.par_chunks_mut(chunk_size).enumerate().for_each(|(chunk_index, evals_chunk)| {
+                    for (j, eval) in (chunk_index * chunk_size..).zip(evals_chunk.iter_mut()) {
+                        let h_000 = lookup_indices[j].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_000[i.into()]);
+                        let h_001 =
+                            lookup_indices[j + n].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_001[i.into()]);
+                        let h_010 =
+                            lookup_indices[j + n * 2].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_010[i.into()]);
+                        let h_011 =
+                            lookup_indices[j + n * 3].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_011[i.into()]);
+                        let h_100 =
+                            lookup_indices[j + n * 4].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_100[i.into()]);
+                        let h_101 =
+                            lookup_indices[j + n * 5].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_101[i.into()]);
+                        let h_110 =
+                            lookup_indices[j + n * 6].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_110[i.into()]);
+                        let h_111 =
+                            lookup_indices[j + n * 7].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_111[i.into()]);
+                        *eval = h_000 + h_010 + h_100 + h_110 + h_001 + h_011 + h_101 + h_111;
+                    }
+                });
             }
             BindingOrder::LowToHigh => {
-                res.par_chunks_mut(chunk_size).enumerate().for_each(
-                    |(chunk_index, evals_chunk)| {
-                        for (j, eval) in (chunk_index * chunk_size..).zip(evals_chunk.iter_mut()) {
-                            let h_000 = lookup_indices[8 * j]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_000[i.into()]);
-                            let h_100 = lookup_indices[8 * j + 1]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_100[i.into()]);
-                            let h_010 = lookup_indices[8 * j + 2]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_010[i.into()]);
-                            let h_110 = lookup_indices[8 * j + 3]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_110[i.into()]);
-                            let h_001 = lookup_indices[8 * j + 4]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_001[i.into()]);
-                            let h_101 = lookup_indices[8 * j + 5]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_101[i.into()]);
-                            let h_011 = lookup_indices[8 * j + 6]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_011[i.into()]);
-                            let h_111 = lookup_indices[8 * j + 7]
-                                .map_or(Rep3PrimeFieldShare::zero_share(), |i| f_111[i.into()]);
-                            *eval = h_000 + h_010 + h_100 + h_110 + h_001 + h_011 + h_101 + h_111;
-                        }
-                    },
-                );
+                res.par_chunks_mut(chunk_size).enumerate().for_each(|(chunk_index, evals_chunk)| {
+                    for (j, eval) in (chunk_index * chunk_size..).zip(evals_chunk.iter_mut()) {
+                        let h_000 =
+                            lookup_indices[8 * j].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_000[i.into()]);
+                        let h_100 =
+                            lookup_indices[8 * j + 1].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_100[i.into()]);
+                        let h_010 =
+                            lookup_indices[8 * j + 2].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_010[i.into()]);
+                        let h_110 =
+                            lookup_indices[8 * j + 3].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_110[i.into()]);
+                        let h_001 =
+                            lookup_indices[8 * j + 4].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_001[i.into()]);
+                        let h_101 =
+                            lookup_indices[8 * j + 5].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_101[i.into()]);
+                        let h_011 =
+                            lookup_indices[8 * j + 6].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_011[i.into()]);
+                        let h_111 =
+                            lookup_indices[8 * j + 7].map_or(Rep3PrimeFieldShare::zero_share(), |i| f_111[i.into()]);
+                        *eval = h_000 + h_010 + h_100 + h_110 + h_001 + h_011 + h_101 + h_111;
+                    }
+                });
             }
         }
 
@@ -349,8 +303,8 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
         match self.binding_order {
             BindingOrder::HighToLow => {
                 let n = self.masked_lookup_indices.len() / 4;
-                let h_00 = self.masked_lookup_indices[j]
-                    .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_00[i.into()]);
+                let h_00 =
+                    self.masked_lookup_indices[j].map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_00[i.into()]);
                 let h_01 = self.masked_lookup_indices[j + n]
                     .map_or(Rep3PrimeFieldShare::zero_share(), |i| self.f_01[i.into()]);
                 let h_10 = self.masked_lookup_indices[j + n * 2]
@@ -401,12 +355,9 @@ pub fn shifted_table_from_rand_ohv<F: JoltField>(
     let mut u_hat: Vec<F> = eq_u.to_vec();
     fwht_in_place(&mut u_hat);
 
-    e_hat
-        .par_iter_mut()
-        .zip_eq(u_hat.par_iter())
-        .for_each(|(e, &u)| {
-            *e = rep3::arithmetic::mul_public(*e, u);
-        });
+    e_hat.par_iter_mut().zip_eq(u_hat.par_iter()).for_each(|(e, &u)| {
+        *e = rep3::arithmetic::mul_public(*e, u);
+    });
 
     fwht_in_place(&mut e_hat);
 
@@ -428,10 +379,7 @@ mod tests {
     use num_traits::{One, Zero};
     use rand::RngCore;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(
-        val: F,
-        rng: &mut R,
-    ) -> [Rep3PrimeFieldShare<F>; 3] {
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
         let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3(val, rng);
         shares.try_into().expect("rep3 share count")
     }
@@ -459,33 +407,18 @@ mod tests {
 
         let r_mask: u8 = (rng.next_u32() as u8) & 0xff;
         let mut k_plain: Vec<Option<u8>> = (0..t)
-            .map(|_| {
-                if (rng.next_u32() & 3) == 0 {
-                    None
-                } else {
-                    Some((rng.next_u32() as u8) & 0xff)
-                }
-            })
+            .map(|_| if (rng.next_u32() & 3) == 0 { None } else { Some((rng.next_u32() as u8) & 0xff) })
             .collect();
         if k_plain.iter().all(|x| x.is_none()) {
             k_plain[0] = Some(7);
         }
 
-        let masked_indices_c: Arc<Vec<Option<u8>>> = Arc::new(
-            k_plain
-                .iter()
-                .map(|opt| opt.map(|kj| kj ^ r_mask))
-                .collect(),
-        );
+        let masked_indices_c: Arc<Vec<Option<u8>>> =
+            Arc::new(k_plain.iter().map(|opt| opt.map(|kj| kj ^ r_mask)).collect());
 
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(k));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(k));
         for i in 0..k {
-            let bit = if i as u8 == r_mask {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let bit = if i as u8 == r_mask { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, &mut rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
@@ -498,8 +431,7 @@ mod tests {
         });
 
         for (j, opt_k) in k_plain.iter().enumerate() {
-            let shares: [Rep3PrimeFieldShare<F>; 3] =
-                std::array::from_fn(|pid| ra_party[pid].get_bound_coeff(j));
+            let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| ra_party[pid].get_bound_coeff(j));
             let got = combine_field_element(shares[0], shares[1], shares[2]);
             let want = opt_k.map(|kk| eq_u[kk as usize]).unwrap_or(F::zero());
             assert_eq!(got, want, "j {j}");
@@ -517,33 +449,18 @@ mod tests {
         let eq_u: Vec<F> = (0..k).map(|_| F::rand(&mut rng)).collect();
         let r_mask: u8 = (rng.next_u32() as u8) & 0xff;
         let mut k_plain: Vec<Option<u8>> = (0..t)
-            .map(|_| {
-                if (rng.next_u32() & 3) == 0 {
-                    None
-                } else {
-                    Some((rng.next_u32() as u8) & 0xff)
-                }
-            })
+            .map(|_| if (rng.next_u32() & 3) == 0 { None } else { Some((rng.next_u32() as u8) & 0xff) })
             .collect();
         if k_plain.iter().all(|x| x.is_none()) {
             k_plain[0] = Some(7);
         }
 
-        let masked_indices_c: Arc<Vec<Option<u8>>> = Arc::new(
-            k_plain
-                .iter()
-                .map(|opt| opt.map(|kj| kj ^ r_mask))
-                .collect(),
-        );
+        let masked_indices_c: Arc<Vec<Option<u8>>> =
+            Arc::new(k_plain.iter().map(|opt| opt.map(|kj| kj ^ r_mask)).collect());
 
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(k));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(k));
         for i in 0..k {
-            let bit = if i as u8 == r_mask {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let bit = if i as u8 == r_mask { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, &mut rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
@@ -555,10 +472,8 @@ mod tests {
             Rep3RaPolynomial::new(masked_indices_c.clone(), table_shifted)
         });
 
-        let mut plain: Vec<F> = k_plain
-            .iter()
-            .map(|opt| opt.map(|kk| eq_u[kk as usize]).unwrap_or(F::zero()))
-            .collect();
+        let mut plain: Vec<F> =
+            k_plain.iter().map(|opt| opt.map(|kk| eq_u[kk as usize]).unwrap_or(F::zero())).collect();
 
         for round in 0..3 {
             let r = <F as jolt_core::field::JoltField>::Challenge::random(&mut rng);
@@ -569,8 +484,7 @@ mod tests {
             }
 
             for j in 0..plain.len() {
-                let shares: [Rep3PrimeFieldShare<F>; 3] =
-                    std::array::from_fn(|pid| ra_party[pid].get_bound_coeff(j));
+                let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| ra_party[pid].get_bound_coeff(j));
                 let got = combine_field_element(shares[0], shares[1], shares[2]);
                 assert_eq!(got, plain[j], "round {round} j {j}");
             }
@@ -588,33 +502,18 @@ mod tests {
         let eq_u: Vec<F> = (0..k).map(|_| F::rand(&mut rng)).collect();
         let r_mask: u8 = (rng.next_u32() as u8) & 0xff;
         let mut k_plain: Vec<Option<u8>> = (0..t)
-            .map(|_| {
-                if (rng.next_u32() & 3) == 0 {
-                    None
-                } else {
-                    Some((rng.next_u32() as u8) & 0xff)
-                }
-            })
+            .map(|_| if (rng.next_u32() & 3) == 0 { None } else { Some((rng.next_u32() as u8) & 0xff) })
             .collect();
         if k_plain.iter().all(|x| x.is_none()) {
             k_plain[0] = Some(7);
         }
 
-        let masked_indices_c: Arc<Vec<Option<u8>>> = Arc::new(
-            k_plain
-                .iter()
-                .map(|opt| opt.map(|kj| kj ^ r_mask))
-                .collect(),
-        );
+        let masked_indices_c: Arc<Vec<Option<u8>>> =
+            Arc::new(k_plain.iter().map(|opt| opt.map(|kj| kj ^ r_mask)).collect());
 
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(k));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(k));
         for i in 0..k {
-            let bit = if i as u8 == r_mask {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let bit = if i as u8 == r_mask { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, &mut rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
@@ -626,10 +525,7 @@ mod tests {
             Rep3RaPolynomial::new(masked_indices_c.clone(), table_shifted)
         });
 
-        let plain: Vec<F> = k_plain
-            .iter()
-            .map(|opt| opt.map(|kk| eq_u[kk as usize]).unwrap_or(F::zero()))
-            .collect();
+        let plain: Vec<F> = k_plain.iter().map(|opt| opt.map(|kk| eq_u[kk as usize]).unwrap_or(F::zero())).collect();
 
         let degree = 3usize;
         let order = BindingOrder::HighToLow;
@@ -650,8 +546,7 @@ mod tests {
         let evals_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
             std::array::from_fn(|pid| ra_party[pid].sumcheck_evals(index, degree, order));
         for i in 0..degree {
-            let got =
-                combine_field_element(evals_party[0][i], evals_party[1][i], evals_party[2][i]);
+            let got = combine_field_element(evals_party[0][i], evals_party[1][i], evals_party[2][i]);
             assert_eq!(got, expected[i], "eval {i}");
         }
     }

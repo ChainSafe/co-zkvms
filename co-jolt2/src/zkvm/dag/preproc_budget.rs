@@ -1,11 +1,9 @@
 use crate::zkvm::suffixes::suffix_edabit_ring_bits;
 use jolt_common::constants::XLEN;
-use jolt_core::zkvm::instruction_lookups::LOG_M;
+use jolt_core::zkvm::instruction_lookups::{LOG_M, PHASES};
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use jolt_core::zkvm::lookup_table::LookupTables;
 use strum::IntoEnumIterator;
-
-const PHASES: usize = 8;
 
 /// Per-ring-type EdaBit counts and daBit count needed for the ReadRaf sumcheck.
 ///
@@ -25,6 +23,10 @@ pub struct PreprocessingBudget {
     /// Wrap masks for DaBit-based wrap-m extraction (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub wrap_masks: usize,
+    /// Ring edaBits (u64) for ring-domain upcast B2A (populate_operands_casts).
+    pub ring_edabits_u64: usize,
+    /// Ring edaBits (u128) for ring-domain upcast B2A (rv64 only).
+    pub ring_edabits_u128: usize,
     /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub ring_edabits_u66: usize,
@@ -37,6 +39,9 @@ impl std::fmt::Debug for PreprocessingBudget {
             "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
             self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
         )?;
+        if self.ring_edabits_u64 > 0 || self.ring_edabits_u128 > 0 {
+            write!(f, "; ringEdaBits: u64={}, u128={}", self.ring_edabits_u64, self.ring_edabits_u128)?;
+        }
         #[cfg(feature = "ring-msm")]
         write!(
             f,
@@ -63,15 +68,21 @@ impl std::fmt::Debug for PreprocessingBudget {
 /// 3. **Witness gen**: `5n` XlenInt (sparse operand cast, worst case) +
 ///    `4n` XlenInt (rd_inc + ram_inc, each `2n`).
 ///
-/// Phase ring types: suffix_len = (7 - phase) * LOG_M
+/// Phase ring types: suffix_len = (PHASES - 1 - phase) * LOG_M
 ///
-///   rv32 (LOG_M=8):
+///   rv32 default (PHASES=8, LOG_M=8):
 ///     Phase 0-2 (suffix 56,48,40): T=u64,  T::Half=u32
 ///     Phase 3-4 (suffix 32,24):    T=u32,  T::Half=u16
 ///     Phase 5-6 (suffix 16, 8):    T=u16,  T::Half=u8
 ///     Phase 7   (suffix  0):       skip
 ///
-///   rv64 (LOG_M=16):
+///   rv32 fewer-phases (PHASES=4, LOG_M=16):
+///     Phase 0 (suffix 48): T=u64,  T::Half=u32
+///     Phase 1 (suffix 32): T=u32,  T::Half=u16
+///     Phase 2 (suffix 16): T=u16,  T::Half=u8
+///     Phase 3 (suffix  0): skip
+///
+///   rv64 (PHASES=8, LOG_M=16):
 ///     Phase 0-2 (suffix 112,96,80): T=u128, T::Half=u64
 ///     Phase 3-4 (suffix 64,48):     T=u64,  T::Half=u32
 ///     Phase 5   (suffix 32):        T=u32,  T::Half=u16
@@ -165,6 +176,10 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     // - Sparse operand cast (5 columns × n, worst case): 5n EdaBits
     // - rd_inc/ram_inc (2 pre + 2 post × n): 4n EdaBits
     add_to_budget(&mut budget, XLEN, 9 * n);
+
+    // Lookup output fulfill: CastToField + CastToFieldB2A futures use XlenInt ring.
+    // Worst case: all n cycles emit CastToField or CastToFieldB2A.
+    add_to_budget(&mut budget, XLEN, n);
 
     budget
 }

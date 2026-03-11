@@ -63,6 +63,9 @@ Shared by design:
 - Ring-to-field conversion is a security boundary; secret values stay shared across it.
 - Public/shared classification at trace sharing must match later proving assumptions.
 - Values are public because the verifier model knows them, not because a helper API is easier to call on public data.
+- Additive field shares are valid internal results of shared-by-shared MPC work, but they are not fresh replicated shares.
+  - If later code reshapes them back into Rep3 state or reuses them across another non-linear MPC step, the additive value must already have been produced under the standard masked-additive discipline from `mpc-core`.
+  - This rule is separate from masked-index openings such as `open(k XOR r)`.
 
 ### Design choices
 

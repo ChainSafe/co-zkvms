@@ -13,6 +13,7 @@ pub mod guest;
 #[cfg(feature = "host")]
 pub mod host;
 
+pub mod curve;
 pub mod field;
 pub mod msm;
 pub mod poly;

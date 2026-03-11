@@ -1,6 +1,7 @@
 pub mod format;
 pub mod types;
 
+use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 pub use types::rep3_operand::{Rep3Operand, PUBLIC_ZERO};
 pub use types::rep3_ram::{Rep3RAMAccess, Rep3RAMRead, Rep3RAMWrite, REP3_RAM_NOOP};
 
@@ -8,39 +9,12 @@ use jolt_common::constants::XLEN;
 pub use jolt_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt};
 use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
+use mpc_core::protocols::rep3_ring::preprocessing::edabits;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
-
-/// Zero-extend a binary-domain share to u64 (the lookup output ring).
-/// Unlike `downcast`, this handles both T=u64 (no-op) and T=u32→u64 (zero-extend).
-/// Safe for binary (XOR-domain) shares because `as` extension preserves XOR secret sharing.
-pub fn binary_to_output<T>(share: Rep3RingShare<T>) -> Rep3RingShare<u64>
-where
-    T: mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k + num_traits::AsPrimitive<u64>,
-{
-    Rep3RingShare::new_ring(RingElement(share.a.0.as_()), RingElement(share.b.0.as_()))
-}
-pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
-    shares: &[Rep3RingShare<u64>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    #[cfg(not(feature = "rv64"))]
-    {
-        let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            &truncated, io_ctx,
-        )?)
-    }
-    #[cfg(feature = "rv64")]
-    {
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            shares, io_ctx,
-        )?)
-    }
-}
 
 pub use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 pub use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -50,18 +24,17 @@ use tracer::instruction::format::NormalizedOperands;
 use tracer::instruction::{Cycle, Instruction, RAMAccess, RISCVCycle, RISCVInstruction};
 
 use self::format::{Rep3InstructionFormat, Rep3RegisterState};
-use jolt_core::field::JoltField;
 use crate::utils::future_ring::FutureRep3Ring;
 pub use crate::utils::instruction_utils::bit_to_ring32;
 pub use crate::utils::instruction_utils::bit_to_ring64;
 use crate::utils::instruction_utils::{interleave_bits_shared, operand_to_binary_wide};
+use jolt_core::field::JoltField;
 use rayon::prelude::*;
 
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
 
 /// Shorthand: the Rep3RegisterState type for an instruction T
-pub type Rep3RegState<T> =
-    <<T as RISCVInstruction>::Format as Rep3InstructionFormat>::Rep3RegisterState;
+pub type Rep3RegState<T> = <<T as RISCVInstruction>::Format as Rep3InstructionFormat>::Rep3RegisterState;
 
 /// Rep3 version of RISCVCycle.
 /// Register state type derived from instruction's Format (same pattern as vanilla).
@@ -88,17 +61,11 @@ where
     /// Build from vanilla RISCVCycle using pre-generated binary shares.
     /// `shares` must yield operands in the same order as `shared_operands_mut`:
     /// register state operands first, then RAM operands.
-    pub fn from_cycle_shared(
-        cycle: &RISCVCycle<T>,
-        shares: &mut impl Iterator<Item = Rep3Operand>,
-    ) -> Self {
+    pub fn from_cycle_shared(cycle: &RISCVCycle<T>, shares: &mut impl Iterator<Item = Rep3Operand>) -> Self {
         Self {
             instruction: cycle.instruction,
             register_state: Rep3RegState::<T>::from_shared(&cycle.register_state, shares),
-            ram_access: Rep3RAMAccess::from_shared(
-                Into::<RAMAccess>::into(cycle.ram_access),
-                shares,
-            ),
+            ram_access: Rep3RAMAccess::from_shared(Into::<RAMAccess>::into(cycle.ram_access), shares),
             advice: None,
         }
     }
@@ -136,10 +103,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
     /// - Mul-index: Pending(RingMulA2B(a, b)) — needs batch mul + A2B.
     ///
     /// Default: computes interleave from binary operands (Ready, no comms).
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = self.to_instruction_inputs();
         let left = operand_to_binary_wide(&left, party_id);
         let right = operand_to_binary_wide(&right, party_id);
@@ -150,7 +114,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()>;
 }
 
@@ -243,13 +207,9 @@ use tracer::instruction::virtual_srai::VirtualSRAI;
 use tracer::instruction::virtual_srl::VirtualSRL;
 use tracer::instruction::virtual_srli::VirtualSRLI;
 use tracer::instruction::virtual_sw::VirtualSW;
-use tracer::instruction::virtual_xor_rot::{
-    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
-};
+use tracer::instruction::virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 #[cfg(feature = "rv64")]
-use tracer::instruction::virtual_xor_rotw::{
-    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
-};
+use tracer::instruction::virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 #[cfg(feature = "rv64")]
 use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
@@ -525,7 +485,7 @@ macro_rules! impl_rep3_lookup_query {
                 &self,
                 steps: &[&impl Rep3LookupQuery<XLEN>],
                 io_ctx: &mut IoContext<N>,
-                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
             ) -> eyre::Result<()> {
                 match self {
                     Rep3Cycle::NoOp => {
@@ -584,26 +544,27 @@ impl_rep3_lookup_query! {
 }
 
 /// Populate arithmetic representations for all shared operands across the trace
-/// in a single batched `upcast_many_from_binary` call.
+/// in a single batched `upcast_many_from_binary` call using ring-domain edaBits.
 ///
 /// Mirrors v1's `Rep3JoltInstructionSet::populate_operands_casts`:
 /// 1. Collect all `Shared { arithmetic: None }` operands and their binary shares
-/// 2. Single batched `upcast_many_from_binary`
+/// 2. Network parallel `upcast_many_from_binary`
 /// 3. Write arithmetic shares back
 #[tracing::instrument(skip_all, name = "populate_operands_casts")]
-pub fn populate_operands_casts<N: Rep3Network>(
+pub fn populate_operands_casts<F, N>(
     trace: &mut [Rep3Cycle],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<()> {
+    io_ctx: &mut IoContextPool<N>,
+    _preproc: &mut PreprocessingPool<F>,
+) -> eyre::Result<()>
+where
+    F: jolt_core::field::JoltField,
+    N: Rep3NetworkWorker,
+{
     let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {
-            Rep3Operand::Shared {
-                arithmetic: None,
-                binary,
-                ..
-            } => Some((*binary, op)),
+            Rep3Operand::Shared { arithmetic: None, binary, .. } => Some((*binary, op)),
             _ => None,
         })
         .unzip();
@@ -612,25 +573,18 @@ pub fn populate_operands_casts<N: Rep3Network>(
         return Ok(());
     }
 
-    let arithmetic = upcast_many_from_binary(&binary, io_ctx)?;
+    let arithmetic = io_ctx.par_chunks(binary, None, |chunk, io_ctx| upcast_many_from_binary(&chunk, io_ctx))?;
 
-    operands
-        .into_par_iter()
-        .zip(arithmetic)
-        .for_each(|(operand, arith)| match operand {
-            Rep3Operand::Shared {
-                arithmetic: None,
-                binary,
-                public,
-            } => {
-                *operand = Rep3Operand::Shared {
-                    binary: std::mem::take(binary),
-                    arithmetic: Some(arith),
-                    public: std::mem::take(public),
-                };
-            }
-            _ => panic!("Expected shared operand"),
-        });
+    operands.into_par_iter().zip(arithmetic).for_each(|(operand, arith)| match operand {
+        Rep3Operand::Shared { arithmetic: None, binary, public } => {
+            *operand = Rep3Operand::Shared {
+                binary: std::mem::take(binary),
+                arithmetic: Some(arith),
+                public: std::mem::take(public),
+            };
+        }
+        _ => panic!("Expected shared operand"),
+    });
 
     Ok(())
 }

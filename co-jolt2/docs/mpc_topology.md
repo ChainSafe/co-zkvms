@@ -48,6 +48,9 @@ This design prevents workers from independently deriving challenges from local v
 - Worker send/receive order is protocol state; changing it changes the proof.
 - Only verifier-known or intentionally declassified values may become public coordinator inputs.
 - Any worker value sent in the clear must be justified by an explicit open boundary.
+- Additive worker messages and additive-to-Rep3 resharing are different boundaries.
+  - If a local additive value is turned back into replicated state, the masking obligation sits at the site that created that additive value.
+  - If an additive value is only sent as a protocol message to the coordinator, it should be audited as an intentional additive output, not as a missing-reshare-mask site.
 
 ### Design choices
 

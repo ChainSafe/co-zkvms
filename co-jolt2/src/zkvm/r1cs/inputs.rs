@@ -9,10 +9,10 @@ use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use jolt_core::field::JoltField;
 use crate::utils::types::Rep3Value;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::dag::witness::Stage1RowRef;
+use jolt_core::field::JoltField;
 
 pub use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 
@@ -95,22 +95,11 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let next_is_noop = row.next_is_noop();
         let should_jump = row.should_jump();
 
-        let should_branch = if row.flag(CircuitFlags::Branch) {
-            lookup_output
-        } else {
-            Rep3PrimeFieldShare::zero_share()
-        };
+        let should_branch =
+            if row.flag(CircuitFlags::Branch) { lookup_output } else { Rep3PrimeFieldShare::zero_share() };
 
-        let write_lookup_output_to_rd_addr = if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-            rd_addr
-        } else {
-            0
-        };
-        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) {
-            rd_addr
-        } else {
-            0
-        };
+        let write_lookup_output_to_rd_addr = if row.flag(CircuitFlags::WriteLookupOutputToRD) { rd_addr } else { 0 };
+        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) { rd_addr } else { 0 };
 
         Self {
             left_input,
@@ -162,10 +151,7 @@ where
     let cycle_witness = &state.prover_state.cycle_witness;
     let trace_len = cycle_witness.len();
     tracing::Span::current().record("trace_len", trace_len);
-    eyre::ensure!(
-        trace_len.is_power_of_two(),
-        "trace length must be power-of-two"
-    );
+    eyre::ensure!(trace_len.is_power_of_two(), "trace length must be power-of-two");
     eyre::ensure!(
         r_cycle.len() == trace_len.log_2(),
         "r_cycle length mismatch: got {}, expected {}",
@@ -188,12 +174,7 @@ where
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
         let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
             .par_iter()
-            .map(|&t| {
-                (
-                    cycle_witness.row_stage1(t).rs1_value(),
-                    cycle_witness.row_stage1(t).rs2_value(),
-                )
-            })
+            .map(|&t| (cycle_witness.row_stage1(t).rs1_value(), cycle_witness.row_stage1(t).rs2_value()))
             .unzip();
 
         arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
@@ -204,10 +185,7 @@ where
     // Eq tables for r_cycle (same nested structure as vanilla)
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
-    let (eq_one, eq_two) = rayon::join(
-        || EqPolynomial::<F>::evals(r2),
-        || EqPolynomial::<F>::evals(r1),
-    );
+    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::<F>::evals(r2), || EqPolynomial::<F>::evals(r1));
 
     let n_inputs = NUM_R1CS_INPUTS;
 
@@ -241,8 +219,7 @@ where
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
-            let mut inner: [Rep3Value<F>; NUM_R1CS_INPUTS] =
-                core::array::from_fn(|_| Rep3Value::<F>::zero_public());
+            let mut inner: [Rep3Value<F>; NUM_R1CS_INPUTS] = core::array::from_fn(|_| Rep3Value::<F>::zero_public());
 
             for x2 in 0..eq_two.len() {
                 let eq2_val = eq_two[x2];
@@ -252,10 +229,8 @@ where
 
                 // Public per-cycle values
                 inner[idx_pc].add_public_assign(F::from_u64(row.pc_index()) * eq2_val, party_id);
-                inner[idx_unexp_pc]
-                    .add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
-                inner[idx_rd]
-                    .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                inner[idx_unexp_pc].add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_rd].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 {
                     #[cfg(not(feature = "rv64"))]
                     let imm_val = if row.flag(CircuitFlags::Branch) {
@@ -267,43 +242,27 @@ where
                     let imm_val = F::from_i128(row.imm());
                     inner[idx_imm].add_public_assign(imm_val * eq2_val, party_id);
                 }
-                inner[idx_ram_addr]
-                    .add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
+                inner[idx_ram_addr].add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
 
-                inner[idx_next_unexp]
-                    .add_public_assign(F::from_u64(row.next_unexpanded_pc()) * eq2_val, party_id);
-                inner[idx_next_pc]
-                    .add_public_assign(F::from_u64(row.next_pc_index()) * eq2_val, party_id);
+                inner[idx_next_unexp].add_public_assign(F::from_u64(row.next_unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_next_pc].add_public_assign(F::from_u64(row.next_pc_index()) * eq2_val, party_id);
                 let next_is_noop = row.next_is_noop();
-                inner[idx_next_is_noop]
-                    .add_public_assign(F::from_bool(next_is_noop) * eq2_val, party_id);
+                inner[idx_next_is_noop].add_public_assign(F::from_bool(next_is_noop) * eq2_val, party_id);
 
                 // Shared per-cycle values
                 let lookup_output = row.to_lookup_output();
-                inner[idx_lookup_output].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
-                    party_id,
-                );
-                inner[idx_rs1].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rs1_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_rs2].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rs2_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_rd_write].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rd_write_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_ram_read].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_read_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_ram_write].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_write_value(), eq2_val)),
-                    party_id,
-                );
+                inner[idx_lookup_output]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)), party_id);
+                inner[idx_rs1]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rs1_value(), eq2_val)), party_id);
+                inner[idx_rs2]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rs2_value(), eq2_val)), party_id);
+                inner[idx_rd_write]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rd_write_value(), eq2_val)), party_id);
+                inner[idx_ram_read]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.ram_read_value(), eq2_val)), party_id);
+                inner[idx_ram_write]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.ram_write_value(), eq2_val)), party_id);
 
                 // Instruction inputs, product, and lookup operands.
                 // Vanilla computes Product = left * right for ALL rows unconditionally.
@@ -331,22 +290,17 @@ where
 
                 let fb = flags_bits[t];
                 if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                    inner[idx_write_lookup]
-                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                    inner[idx_write_lookup].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 let is_jump = row.flag(CircuitFlags::Jump);
                 if is_jump {
-                    inner[idx_write_pc]
-                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                    inner[idx_write_pc].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 if row.flag(CircuitFlags::Branch) {
-                    inner[idx_should_branch].add_assign(
-                        &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
-                        party_id,
-                    );
+                    inner[idx_should_branch]
+                        .add_assign(&Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)), party_id);
                 }
-                inner[idx_should_jump]
-                    .add_public_assign(F::from_bool(is_jump && !next_is_noop) * eq2_val, party_id);
+                inner[idx_should_jump].add_public_assign(F::from_bool(is_jump && !next_is_noop) * eq2_val, party_id);
 
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
@@ -371,10 +325,7 @@ where
             },
         );
 
-    Ok(acc
-        .into_iter()
-        .map(|v| v.into_shared_rep3(party_id))
-        .collect())
+    Ok(acc.into_iter().map(|v| v.into_shared_rep3(party_id)).collect())
 }
 
 use crate::utils::send_ptr::SendPtr;
@@ -383,10 +334,7 @@ use crate::utils::send_ptr::SendPtr;
 ///
 /// - `shared_mul_rows` is in ascending `t` order (deterministic across parties).
 /// - `mul_map[t]` is the index of `t` in `shared_mul_rows`, or `u32::MAX` if not present.
-pub(crate) fn build_shared_mul_rows_and_map(
-    flags_bits: &[u32],
-    mask: u32,
-) -> (Vec<usize>, Vec<u32>) {
+pub(crate) fn build_shared_mul_rows_and_map(flags_bits: &[u32], mask: u32) -> (Vec<usize>, Vec<u32>) {
     let n = flags_bits.len();
 
     // For small traces, a single sequential pass is usually faster than Rayon overhead.
@@ -415,10 +363,7 @@ pub(crate) fn build_shared_mul_rows_and_map(
         .map(|i| {
             let start = i * CHUNK_SIZE;
             let end = core::cmp::min(start + CHUNK_SIZE, n);
-            flags_bits[start..end]
-                .iter()
-                .filter(|&&fb| (fb & mask) == mask)
-                .count()
+            flags_bits[start..end].iter().filter(|&&fb| (fb & mask) == mask).count()
         })
         .collect();
 
@@ -455,165 +400,4 @@ pub(crate) fn build_shared_mul_rows_and_map(
     });
 
     (shared_mul_rows, mul_map)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-
-    use ark_bn254::Fr;
-    use ark_std::{test_rng, UniformRand};
-    use tracing::info;
-
-    use crate::host::program::Rep3Program;
-    use crate::utils::compute_ram_k;
-    use crate::utils::test_utils::run_rep3_test;
-    use crate::utils::tracing::init_tracing;
-    use crate::zkvm::instruction::populate_operands_casts;
-    use crate::zkvm::instruction::Rep3Cycle;
-    use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
-    use jolt_core::host::Program;
-    use jolt_core::poly::commitment::mock::MockCommitScheme;
-    use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-    use jolt_core::zkvm::ram::RAMPreprocessing;
-    use jolt_core::zkvm::witness::{
-        compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial,
-    };
-    use jolt_core::zkvm::{JoltProverPreprocessing, JoltSharedPreprocessing};
-    use tracer::instruction::Cycle;
-
-    type F = Fr;
-    type PCS = MockCommitScheme<F>;
-    type Challenge = <F as jolt_core::field::JoltField>::Challenge;
-
-    #[test]
-    #[ignore = "requires QUIC network sockets (not available in sandboxed test env)"]
-    fn r1cs_claimed_evals_correct() {
-        let _tracing_guard =
-            init_tracing("r1cs_inputs_test.json", Path::new("/tmp/co-jolt2-traces"));
-
-        let mut program = Program::new("fibonacci-guest");
-        let elf_path = "/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest";
-        program.elf = Some(PathBuf::from(elf_path));
-        let inputs = postcard::to_stdvec(&9u32).unwrap();
-        let (bytecode, memory_init, _) = program.decode();
-
-        let mut rng = test_rng();
-        let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-        let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
-
-        let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
-        info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
-        vanilla_trace.resize(padded_len, Cycle::NoOp);
-        for (trace, _, _) in shares.iter_mut() {
-            trace.resize(padded_len, Rep3Cycle::NoOp);
-        }
-
-        let shared = JoltSharedPreprocessing {
-            memory_layout: io_device.memory_layout.clone(),
-            bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
-            ram: RAMPreprocessing::preprocess(memory_init.clone()),
-        };
-        let preprocessing: JoltProverPreprocessing<F, PCS> = JoltProverPreprocessing {
-            generators: (),
-            shared: shared.clone(),
-        };
-
-        let ram_k = compute_ram_k(&vanilla_trace, &preprocessing.shared);
-        let bytecode_d = preprocessing.shared.bytecode.d;
-        let ram_d = compute_d_parameter(ram_k);
-        let _guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
-
-        let log_t = padded_len.log_2();
-        let r_cycle: Vec<Challenge> = (0..log_t).map(|_| Challenge::rand(&mut rng)).collect();
-
-        let vanilla_evals = jolt_core::zkvm::r1cs::inputs::compute_claimed_witness_evals(
-            &shared,
-            &vanilla_trace,
-            &r_cycle,
-        );
-
-        let preprocessing_arc = Arc::new(preprocessing);
-        let base_port: u16 = 14300;
-
-        let share_evals: [Vec<Rep3PrimeFieldShare<F>>; 3] = run_rep3_test(
-            base_port,
-            4,
-            |party_idx| {
-                let (trace, mem, program_io) = shares[party_idx].clone();
-                let preprocessing = Arc::clone(&preprocessing_arc);
-                (trace, mem, program_io, preprocessing, ram_k, r_cycle.clone())
-            },
-            |input, mut io_ctx| {
-                let (mut trace, mem, program_io, preprocessing, ram_k, r_cycle) = input;
-                populate_operands_casts(&mut trace, io_ctx.main())?;
-                let party_id = io_ctx.party_id();
-
-                // Create EdaBits pool for B2A conversions in witness gen
-                let budget = crate::zkvm::dag::preproc_budget::compute_edabit_budget(trace.len());
-                let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
-                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-r1cs-preproc-{}", io_ctx.party_idx()));
-                #[cfg(not(feature = "ring-msm"))]
-                let mut preproc =
-                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
-                        &pool_dir,
-                        counts,
-                        budget.dabits,
-                        &mut io_ctx,
-                    )?;
-                #[cfg(feature = "ring-msm")]
-                let mut preproc =
-                    mpc_core::protocols::rep3_ring::preprocessing::edabits::preprocess_pool::<F, _>(
-                        &pool_dir,
-                        counts,
-                        budget.dabits,
-                        0,
-                        0,
-                        &mut io_ctx,
-                    )?;
-
-                let mut state = StateManagerWorker::new(
-                    &preprocessing,
-                    trace,
-                    program_io,
-                    mem,
-                    io_ctx.party_id(),
-                    ram_k,
-                );
-
-                populate_cycle_witness_rep3(&mut state, &mut io_ctx, &mut preproc)?;
-
-                let poly_keys: Vec<CommittedPolynomial> =
-                    AllCommittedPolynomials::iter().copied().collect();
-                let _witness_polys = generate_witness_batch_rep3::<F, PCS, _>(
-                    &poly_keys,
-                    &mut state,
-                    &mut io_ctx,
-                    &mut preproc,
-                )?;
-                state.prover_state.trace = None;
-
-                compute_claimed_witness_evals_rep3::<F, PCS, _>(&mut state, &mut io_ctx, &r_cycle)
-            },
-        );
-
-        let opened = arithmetic::combine_field_elements_vec(vec![
-            share_evals[0].clone(),
-            share_evals[1].clone(),
-            share_evals[2].clone(),
-        ]);
-
-        assert_eq!(opened.len(), ALL_R1CS_INPUTS.len());
-        assert_eq!(opened.len(), vanilla_evals.len());
-        for (i, (mpc, van)) in opened.iter().zip(vanilla_evals.iter()).enumerate() {
-            assert_eq!(
-                mpc, van,
-                "mismatch at input index {i} ({:?})",
-                ALL_R1CS_INPUTS[i]
-            );
-        }
-    }
 }

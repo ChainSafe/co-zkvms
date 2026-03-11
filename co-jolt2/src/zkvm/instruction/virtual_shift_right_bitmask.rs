@@ -7,10 +7,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         (self.register_state.rs1_operand(), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -21,7 +18,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Shift amount is public, compute bitmask directly.
         // Vanilla formula (XLEN=64): ones = (1u128 << (64-shift)) - 1; mask = (ones << shift) as u64
@@ -35,9 +32,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
                 let ones = (1u128 << (XLEN as u128 - shift as u128)) - 1;
                 (ones << shift as u128) as u64
             };
-            *out = FutureRep3Ring::Ready(
-                rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into(),
-            );
+            *out = FutureRep3Ring::Ready(rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into());
         });
         Ok(())
     }
@@ -45,16 +40,10 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRightBitmaskI> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-            Rep3Operand::Public(0),
-        )
+        (Rep3Operand::Public(self.instruction.operands.imm.into()), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -65,7 +54,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Same bitmask formula as VirtualShiftRightBitmask.
         itertools::izip!(steps, out).for_each(|(step, out)| {
@@ -77,9 +66,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
                 let ones = (1u128 << (XLEN as u128 - shift as u128)) - 1;
                 (ones << shift as u128) as u64
             };
-            *out = FutureRep3Ring::Ready(
-                rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into(),
-            );
+            *out = FutureRep3Ring::Ready(rep3::arithmetic::promote_to_trivial_share(io_ctx.id, F::from(mask)).into());
         });
         Ok(())
     }

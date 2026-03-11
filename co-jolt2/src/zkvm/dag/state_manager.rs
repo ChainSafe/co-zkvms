@@ -1,10 +1,10 @@
-use jolt_core::field::JoltField;
 use crate::host::jolt_device::Rep3ProgramIOInput;
 use crate::host::memory::Rep3Memory;
 use crate::poly::multilinear_polynomial::Rep3MultilinearPolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::zkvm::dag::witness::Rep3CycleWitnesses;
 use crate::zkvm::instruction::Rep3Cycle;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::zkvm::JoltProverPreprocessing;
 use mpc_core::protocols::rep3::PartyID;
@@ -54,11 +54,7 @@ where
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = if num_chunks > 0 { T / num_chunks } else { T };
-        let twist_sumcheck_switch_index = if chunk_size > 0 {
-            chunk_size.trailing_zeros() as usize
-        } else {
-            0
-        };
+        let twist_sumcheck_switch_index = if chunk_size > 0 { chunk_size.trailing_zeros() as usize } else { 0 };
 
         Self {
             party_id,
@@ -81,18 +77,8 @@ where
 
     pub fn get_prover_data(
         &self,
-    ) -> (
-        &'a JoltProverPreprocessing<F, PCS>,
-        &[Rep3Cycle],
-        &Rep3ProgramIOInput,
-        &Rep3Memory,
-    ) {
-        (
-            self.prover_state.preprocessing,
-            self.trace_ref(),
-            &self.program_io,
-            &self.prover_state.final_memory_state,
-        )
+    ) -> (&'a JoltProverPreprocessing<F, PCS>, &[Rep3Cycle], &Rep3ProgramIOInput, &Rep3Memory) {
+        (self.prover_state.preprocessing, self.trace_ref(), &self.program_io, &self.prover_state.final_memory_state)
     }
 
     pub fn get_cycle_witness(&self) -> &Rep3CycleWitnesses<F> {
@@ -100,17 +86,11 @@ where
     }
 
     pub fn trace_ref(&self) -> &[Rep3Cycle] {
-        self.prover_state
-            .trace
-            .as_deref()
-            .expect("trace already dropped")
+        self.prover_state.trace.as_deref().expect("trace already dropped")
     }
 
     pub fn trace_mut(&mut self) -> &mut Vec<Rep3Cycle> {
-        self.prover_state
-            .trace
-            .as_mut()
-            .expect("trace already dropped")
+        self.prover_state.trace.as_mut().expect("trace already dropped")
     }
 
     pub fn trace_len(&self) -> usize {

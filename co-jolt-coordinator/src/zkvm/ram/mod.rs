@@ -9,9 +9,9 @@ use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use rayon::prelude::ParallelSlice;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
+use jolt_core::field::JoltField;
 
 use self::output_check::{Rep3OutputSumcheck, Rep3ValFinalSumcheck};
 use self::raf_evaluation::Rep3RafEvaluation;

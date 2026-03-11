@@ -10,8 +10,8 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use tracer::JoltDevice;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
+use jolt_core::field::JoltField;
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
 use crate::zkvm::dag::state_manager::StateManager;

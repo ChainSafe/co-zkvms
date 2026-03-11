@@ -80,7 +80,10 @@ impl<F: JoltField> PCSumcheck<F> {
     /// Return the final evaluations of (UnexpandedPC, PC, IsNoop) after all rounds
     /// have been bound (i.e. at the shift opening point).
     pub fn final_shift_evals(&self) -> (F, F, F) {
-        let ps = self.prover_state.as_ref().expect("Prover state not initialized");
+        let ps = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
         (
             ps.unexpanded_pc_poly.final_sumcheck_claim(),
             ps.pc_poly.final_sumcheck_claim(),

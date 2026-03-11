@@ -5,8 +5,8 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{self, Rep3PrimeFieldShare};
 use rayon::prelude::*;
 
-use jolt_core::field::JoltField;
 use crate::poly::ra_poly::Rep3RaPolynomial;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Per-level product tree functions (mirrors vanilla eval_inter{2,4,8,16})
@@ -121,10 +121,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
     let n_wl = eq_wl_evals.len();
     let n_wr = eq_wr_evals.len();
 
-    let mut wr_tile: usize = std::env::var("RA_MLES_WR_TILE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(32);
+    let mut wr_tile: usize = std::env::var("RA_MLES_WR_TILE").ok().and_then(|s| s.parse().ok()).unwrap_or(32);
     wr_tile = wr_tile.max(1).min(n_wr.max(1));
 
     // Small instances are cheap; avoid tiling overhead.
@@ -148,40 +145,36 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
         let level1_len = tile_wr * n_wl * level1_block_len;
         let mut level1_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level1_len];
 
-        level1_additive
-            .par_chunks_mut(n_wl * level1_block_len)
-            .enumerate()
-            .for_each(|(local_wr, out_wr)| {
-                let j_wr = wr0 + local_wr;
-                for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
-                    let j = j_wl + (j_wr << wl_len);
-                    let out = &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
+        level1_additive.par_chunks_mut(n_wl * level1_block_len).enumerate().for_each(|(local_wr, out_wr)| {
+            let j_wr = wr0 + local_wr;
+            for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
+                let j = j_wl + (j_wr << wl_len);
+                let out = &mut out_wr[j_wl * level1_block_len..(j_wl + 1) * level1_block_len];
 
-                    let mut pairs: [(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>); D] =
-                        std::array::from_fn(|i| {
-                            let e0 = ra_i_polys[i].get_bound_coeff(j);
-                            let e1 = ra_i_polys[i].get_bound_coeff(j + half);
-                            (e0, e1)
-                        });
+                let mut pairs: [(Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>); D] = std::array::from_fn(|i| {
+                    let e0 = ra_i_polys[i].get_bound_coeff(j);
+                    let e1 = ra_i_polys[i].get_bound_coeff(j + half);
+                    (e0, e1)
+                });
 
-                    // Fold eq_wl into the first pair (public × rep3).
-                    pairs[0].0 *= eq_wl_eval;
-                    pairs[0].1 *= eq_wl_eval;
+                // Fold eq_wl into the first pair (public × rep3).
+                pairs[0].0 *= eq_wl_eval;
+                pairs[0].1 *= eq_wl_eval;
 
-                    for pair_idx in 0..8 {
-                        let triple = eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
-                        let base = pair_idx * 3;
-                        out[base] = triple[0];
-                        out[base + 1] = triple[1];
-                        out[base + 2] = triple[2];
-                    }
+                for pair_idx in 0..8 {
+                    let triple = eval_inter2_rep3(pairs[2 * pair_idx], pairs[2 * pair_idx + 1]);
+                    let base = pair_idx * 3;
+                    out[base] = triple[0];
+                    out[base + 1] = triple[1];
+                    out[base + 2] = triple[2];
                 }
-            });
+            }
+        });
 
         // ---- Reshare level 1 → rep3 ----
         let _reshare1 = tracing::trace_span!("reshare_level1").entered();
-        let level1_rep3 = rep3::arithmetic::reshare_additive_many(&level1_additive, io_ctx.main())
-            .context("reshare level 1")?;
+        let level1_rep3 =
+            rep3::arithmetic::reshare_additive_many(&level1_additive, io_ctx.main()).context("reshare level 1")?;
         drop(_reshare1);
         drop(level1_additive);
 
@@ -189,27 +182,24 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
         let level2_len = tile_wr * n_wl * level2_block_len;
         let mut level2_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level2_len];
 
-        level2_additive
-            .par_chunks_mut(level2_block_len)
-            .enumerate()
-            .for_each(|(idx, out)| {
-                let start = idx * level1_block_len;
-                let in_block = &level1_rep3[start..start + level1_block_len];
+        level2_additive.par_chunks_mut(level2_block_len).enumerate().for_each(|(idx, out)| {
+            let start = idx * level1_block_len;
+            let in_block = &level1_rep3[start..start + level1_block_len];
 
-                let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] =
-                    std::array::from_fn(|t| std::array::from_fn(|k| in_block[t * 3 + k]));
+            let triples: [[Rep3PrimeFieldShare<F>; 3]; 8] =
+                std::array::from_fn(|t| std::array::from_fn(|k| in_block[t * 3 + k]));
 
-                for group in 0..4 {
-                    let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
-                    let base = group * 5;
-                    out[base..base + 5].copy_from_slice(&result);
-                }
-            });
+            for group in 0..4 {
+                let result = eval_inter4_rep3(&triples[2 * group], &triples[2 * group + 1]);
+                let base = group * 5;
+                out[base..base + 5].copy_from_slice(&result);
+            }
+        });
 
         // ---- Reshare level 2 → rep3 ----
         let _reshare2 = tracing::trace_span!("reshare_level2").entered();
-        let level2_rep3 = rep3::arithmetic::reshare_additive_many(&level2_additive, io_ctx.main())
-            .context("reshare level 2")?;
+        let level2_rep3 =
+            rep3::arithmetic::reshare_additive_many(&level2_additive, io_ctx.main()).context("reshare level 2")?;
         drop(_reshare2);
         drop(level2_additive);
 
@@ -217,27 +207,24 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
         let level3_len = tile_wr * n_wl * level3_block_len;
         let mut level3_additive: Vec<AdditiveShare<F>> = vec![AdditiveShare::zero(); level3_len];
 
-        level3_additive
-            .par_chunks_mut(level3_block_len)
-            .enumerate()
-            .for_each(|(idx, out)| {
-                let start = idx * level2_block_len;
-                let in_block = &level2_rep3[start..start + level2_block_len];
+        level3_additive.par_chunks_mut(level3_block_len).enumerate().for_each(|(idx, out)| {
+            let start = idx * level2_block_len;
+            let in_block = &level2_rep3[start..start + level2_block_len];
 
-                let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] =
-                    std::array::from_fn(|q| std::array::from_fn(|k| in_block[q * 5 + k]));
+            let quints: [[Rep3PrimeFieldShare<F>; 5]; 4] =
+                std::array::from_fn(|q| std::array::from_fn(|k| in_block[q * 5 + k]));
 
-                for group in 0..2 {
-                    let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);
-                    let base = group * 9;
-                    out[base..base + 9].copy_from_slice(&result);
-                }
-            });
+            for group in 0..2 {
+                let result = eval_inter8_rep3(&quints[2 * group], &quints[2 * group + 1]);
+                let base = group * 9;
+                out[base..base + 9].copy_from_slice(&result);
+            }
+        });
 
         // ---- Reshare level 3 → rep3 ----
         let _reshare3 = tracing::trace_span!("reshare_level3").entered();
-        let level3_rep3 = rep3::arithmetic::reshare_additive_many(&level3_additive, io_ctx.main())
-            .context("reshare level 3")?;
+        let level3_rep3 =
+            rep3::arithmetic::reshare_additive_many(&level3_additive, io_ctx.main()).context("reshare level 3")?;
         drop(_reshare3);
         drop(level3_additive);
 
@@ -287,10 +274,7 @@ pub fn compute_mles_product_16_rep3<F: JoltField, N: Rep3NetworkWorker>(
 ///
 /// Formula: `f(3) = 2*(f(2) + f(∞)) - f(1)`.
 #[inline]
-fn ex2_rep3<F: JoltField>(
-    f: &[Rep3PrimeFieldShare<F>; 2],
-    f_inf: &Rep3PrimeFieldShare<F>,
-) -> Rep3PrimeFieldShare<F> {
+fn ex2_rep3<F: JoltField>(f: &[Rep3PrimeFieldShare<F>; 2], f_inf: &Rep3PrimeFieldShare<F>) -> Rep3PrimeFieldShare<F> {
     let sum = f[1] + *f_inf;
     sum + sum - f[0]
 }
@@ -332,9 +316,7 @@ fn ex8_rep3<F: JoltField>(
 
 /// Extrapolate 9 evaluations at `{1, ..., 8, ∞}` to 16 evaluations at
 /// `{1, ..., 15, ∞}`.
-fn extrapolate_9_to_16_rep3<F: JoltField>(
-    vals: &[Rep3PrimeFieldShare<F>; 9],
-) -> [Rep3PrimeFieldShare<F>; D] {
+fn extrapolate_9_to_16_rep3<F: JoltField>(vals: &[Rep3PrimeFieldShare<F>; 9]) -> [Rep3PrimeFieldShare<F>; D] {
     let mut f = [Rep3PrimeFieldShare::<F>::zero_share(); D];
     f[..8].copy_from_slice(&vals[..8]);
     f[15] = vals[8]; // f(∞)

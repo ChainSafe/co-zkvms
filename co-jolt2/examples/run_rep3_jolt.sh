@@ -11,8 +11,9 @@ NUM_ITERS=${NUM_ITERS:-1}
 TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
 ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
 # Base port for Tracy profiling. Worker p listens on TRACY_BASE_PORT + p.
+# Coordinator listens on TRACY_BASE_PORT - 1.
 # Connect with: tracy-capture -a 127.0.0.1 -p <port>
-#   worker 0 → 8086, worker 1 → 8087, worker 2 → 8088
+#   coordinator → 8085, worker 0 → 8086, worker 1 → 8087, worker 2 → 8088
 TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 # When set, preprocessing is saved to (and loaded from) this directory.
 PREPROC_DIR=${PREPROC_DIR:-"$CO_JOLT2_DIR/.preprocessing"}
@@ -138,19 +139,17 @@ fi
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace
 
-# Optionally pass --preproc-dir to workers.  Each worker stores its data in
+# Pass --preproc-dir to workers.  Each worker stores its data in
 # <PREPROC_DIR>/party_<id>/ so files from different parties don't collide.
-PREPROC_ARGS=()
-if [ -n "$PREPROC_DIR" ]; then
-  mkdir -p "$PREPROC_DIR"
-  PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
-fi
+mkdir -p "$PREPROC_DIR"
+PREPROC_ARGS=(--preproc-dir "$PREPROC_DIR")
 if [ "$PREPROC_ONLY" = "1" ]; then
   PREPROC_ARGS+=(--preprocess-only true)
 fi
 
-# Launch coordinator
-../target/release/examples/rep3_jolt \
+# Launch coordinator (with Tracy on TRACY_BASE_PORT - 1)
+TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT - 1)) \
+  ../target/release/examples/rep3_jolt \
   -c "$ARTIFACT_DIR/config_coordinator.toml" \
   -t "$TRACE_DIR" -n "$NUM_ITERS" \
   ${PREPROC_ARGS[@]+"${PREPROC_ARGS[@]}"} \
@@ -179,6 +178,22 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
     fi
     capture_pids+=($!)
   done
+  # Coordinator capture
+  capture_log="$TRACE_DIR/tracy-capture-coordinator.log"
+  if [ "$TRACY_CAPTURE_LOG" = "1" ]; then
+    "$TRACY_CAPTURE_BIN" \
+      -f \
+      -o "$TRACE_DIR/coordinator_${TRACE_SUFFIX}.tracy" \
+      -a 127.0.0.1 \
+      -p $((TRACY_BASE_PORT - 1)) >"$capture_log" 2>&1 &
+  else
+    "$TRACY_CAPTURE_BIN" \
+      -f \
+      -o "$TRACE_DIR/coordinator_${TRACE_SUFFIX}.tracy" \
+      -a 127.0.0.1 \
+      -p $((TRACY_BASE_PORT - 1)) >/dev/null 2>&1 &
+  fi
+  capture_pids+=($!)
 fi
 
 # Launch 3 workers (party 0, 1, 2) with Tracy on separate ports.

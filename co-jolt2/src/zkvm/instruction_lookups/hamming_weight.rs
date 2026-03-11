@@ -9,10 +9,10 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
 use std::sync::Arc;
 
-use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 
 use crate::zkvm::dag::stage::Rep3SumcheckInstanceWorker;
@@ -30,16 +30,11 @@ pub struct Rep3HammingWeightSumcheckWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3HammingWeightSumcheckWorker<F> {
     pub fn new(G: [Arc<Vec<Rep3PrimeFieldShare<F>>>; D], gamma: [F; D]) -> Self {
-        Self {
-            gamma,
-            ra: G.map(Rep3DensePolynomial::from_coeffs_arc),
-        }
+        Self { gamma, ra: G.map(Rep3DensePolynomial::from_coeffs_arc) }
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3HammingWeightSumcheckWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3HammingWeightSumcheckWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -93,15 +88,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         _preproc: &mut PreprocessingPool<F>,
     ) {
         let r: F = r_j.into();
-        self.ra
-            .par_iter_mut()
-            .for_each(|ra| ra.bind(r, BindingOrder::LowToHigh));
+        self.ra.par_iter_mut().for_each(|ra| ra.bind(r, BindingOrder::LowToHigh));
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
@@ -110,17 +100,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let ra_claims: Vec<Rep3PrimeFieldShare<F>> =
-            self.ra.iter().map(|ra| ra.final_sumcheck_claim()).collect();
+        let ra_claims: Vec<Rep3PrimeFieldShare<F>> = self.ra.iter().map(|ra| ra.final_sumcheck_claim()).collect();
 
         // Get r_cycle from the accumulator (stored during Spartan outer sumcheck).
-        let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
+        let r_cycle =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter).0.r;
 
         accumulator.append_sparse(
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),

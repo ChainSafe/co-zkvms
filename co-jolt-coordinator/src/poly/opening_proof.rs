@@ -49,9 +49,10 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings.insert(key, (point, *claim));
-            self.sumchecks.push(Rep3CoordinatorReductionSumcheck::new_one_hot(
-                *label, sumcheck, r_address, r_cycle, *claim,
-            ));
+            self.sumchecks
+                .push(Rep3CoordinatorReductionSumcheck::new_one_hot(
+                    *label, sumcheck, r_address, r_cycle, *claim,
+                ));
         }
     }
 
@@ -66,12 +67,13 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         assert_eq!(polynomials.len(), claims.len());
         transcript.append_scalars(&claims);
 
-        self.sumchecks.push(Rep3CoordinatorReductionSumcheck::new_dense(
-            polynomials.clone(),
-            sumcheck,
-            opening_point.clone(),
-            claims.clone(),
-        ));
+        self.sumchecks
+            .push(Rep3CoordinatorReductionSumcheck::new_dense(
+                polynomials.clone(),
+                sumcheck,
+                opening_point.clone(),
+                claims.clone(),
+            ));
 
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
@@ -132,15 +134,20 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         network: &mut N,
     ) -> eyre::Result<ReducedOpeningProof<F, PCS, ProofTranscript>>
     where
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
     {
         let total_gammas: usize = self
             .sumchecks
             .iter()
-            .map(|s| if s.polynomials.len() > 1 { s.polynomials.len() } else { 1 })
+            .map(|s| {
+                if s.polynomials.len() > 1 {
+                    s.polynomials.len()
+                } else {
+                    1
+                }
+            })
             .sum();
         let all_gammas: Vec<F> = transcript.challenge_vector(total_gammas);
         network.broadcast_request(all_gammas.clone())?;
@@ -212,7 +219,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             .map(|(g, c)| *g * *c)
             .sum();
 
-        let joint_opening_proof =
+        let (joint_opening_proof, y_blinding) =
             <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::coordinate_prove(
                 pcs_setup,
                 transcript,
@@ -220,12 +227,14 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
                 &r_sumcheck,
                 &joint_claim,
                 &joint_commitment,
+                None,
             )?;
 
         Ok(ReducedOpeningProof {
             sumcheck_proof,
             sumcheck_claims,
             joint_opening_proof,
+            y_blinding,
         })
     }
 }
@@ -244,6 +253,7 @@ pub struct ReducedOpeningProof<
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
+    pub y_blinding: Option<F>,
 }
 
 pub struct Rep3CoordinatorReductionSumcheck<F: JoltField> {

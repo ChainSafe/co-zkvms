@@ -120,7 +120,7 @@ impl<F: JoltField, T: Transcript> BatchedSumcheckInstance<F, T> {
 pub struct Rep3BatchedSumcheck;
 
 impl Rep3BatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove")]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>],
         accumulator: &mut Rep3OpeningAccumulator<F>,
@@ -132,7 +132,10 @@ impl Rep3BatchedSumcheck {
         ProofTranscript: Transcript,
         N: Rep3NetworkCoordinator,
     {
-        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
+        eyre::ensure!(
+            !instances.is_empty(),
+            "Batched sumcheck requires >= 1 instance"
+        );
 
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();
@@ -215,7 +218,7 @@ type HybridRoundMsg<F> = (Vec<AdditiveShare<F>>, Option<Vec<F>>);
 type HybridOpeningsMsg<F> = Vec<(Vec<AdditiveShare<F>>, Option<Vec<F>>)>;
 
 impl HybridBatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove")]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[BatchedSumcheckInstance<F, ProofTranscript>],
         accumulator: &mut Rep3OpeningAccumulator<F>,
@@ -227,7 +230,10 @@ impl HybridBatchedSumcheck {
         ProofTranscript: Transcript,
         N: Rep3NetworkCoordinator,
     {
-        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
+        eyre::ensure!(
+            !instances.is_empty(),
+            "Batched sumcheck requires >= 1 instance"
+        );
 
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();

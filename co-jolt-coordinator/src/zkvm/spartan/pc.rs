@@ -5,9 +5,9 @@ use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F> {
     fn degree(&self) -> usize {
@@ -31,8 +31,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F>
         let (outer_sumcheck_opening, _) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
-        let num_cycles_bits =
-            self.num_rounds();
+        let num_cycles_bits = self.num_rounds();
         let (r_cycle, _) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // Shift openings from accumulator.

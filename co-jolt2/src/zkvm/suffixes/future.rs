@@ -3,8 +3,8 @@
 //! Values are pushed into typed buckets during suffix evaluation, then
 //! fulfilled in a single batched pass per ring type.
 
-use jolt_core::field::JoltField;
 use crate::utils::types::rep3_value::Rep3Value;
+use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
@@ -168,20 +168,12 @@ impl<F: JoltField> SuffixFutureBatch<F> {
 
         let mut out = vec![Rep3Value::zero_share(); self.len];
 
-        let b2a_outer_chunk: usize = std::env::var("SUFFIXES_B2A_CHUNK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8192)
-            .max(1);
-        let b2a_min_inner_chunk: usize = std::env::var("SUFFIXES_B2A_MIN_INNER_CHUNK")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2048)
-            .max(1);
-        let b2a_max_forks_cap: Option<usize> = std::env::var("SUFFIXES_B2A_MAX_FORKS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .map(|v: usize| v.max(1));
+        let b2a_outer_chunk: usize =
+            std::env::var("SUFFIXES_B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8192).max(1);
+        let b2a_min_inner_chunk: usize =
+            std::env::var("SUFFIXES_B2A_MIN_INNER_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(2048).max(1);
+        let b2a_max_forks_cap: Option<usize> =
+            std::env::var("SUFFIXES_B2A_MAX_FORKS").ok().and_then(|s| s.parse().ok()).map(|v: usize| v.max(1));
 
         // Phase 1: Sequential conversions, collect all (idx, val) pairs.
         let mut scatter: Vec<(usize, Rep3Value<F>)> = Vec::with_capacity(self.len);
@@ -192,23 +184,18 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         // BitInject — single-bit → field via daBits
         if !self.bitinject.is_empty() {
             let dabits = pool.take_dabits(self.bitinject.len())?;
-            let _span =
-                tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
+            let _span = tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
             let fields = dabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
             drop(_span);
-            scatter.extend(
-                self.bitinject_idx
-                    .into_iter()
-                    .enumerate()
-                    .zip(fields.into_iter())
-                    .map(|((pos, idx), f)| {
-                        let val = match self.bitinject_scalars.get(&pos) {
-                            Some(&w) => f * w,
-                            None => f,
-                        };
-                        (idx, Rep3Value::Shared(val))
-                    }),
-            );
+            scatter.extend(self.bitinject_idx.into_iter().enumerate().zip(fields.into_iter()).map(
+                |((pos, idx), f)| {
+                    let val = match self.bitinject_scalars.get(&pos) {
+                        Some(&w) => f * w,
+                        None => f,
+                    };
+                    (idx, Rep3Value::Shared(val))
+                },
+            ));
         }
 
         // B2A per ring type
@@ -223,8 +210,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let chunk_len = end - off;
 
                         let batch = pool.take_edabits::<$ring>(chunk_len)?;
-                        let _span =
-                            tracing::info_span!("ring_to_field_b2a_many", n = chunk_len).entered();
+                        let _span = tracing::info_span!("ring_to_field_b2a_many", n = chunk_len).entered();
 
                         let chunk_vals: Vec<Rep3RingShare<$ring>> = self.$val[off..end].to_vec();
                         let max_forks_cap = b2a_max_forks_cap.unwrap_or(io_ctx.max_forks()).max(1);
@@ -232,31 +218,18 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let forks_effective = forks_by_size.clamp(1, max_forks_cap);
 
                         let fields = if io_ctx.max_forks() == 0 || forks_effective <= 1 {
-                            edabits::ring_to_field_b2a_many::<$ring, F, _>(
-                                &chunk_vals,
-                                &batch,
-                                io_ctx.main(),
-                            )?
+                            edabits::ring_to_field_b2a_many::<$ring, F, _>(&chunk_vals, &batch, io_ctx.main())?
                         } else {
                             let inner_chunk_size = chunk_len.div_ceil(forks_effective);
-                            io_ctx.par_chunks_preproc(
-                                chunk_vals,
-                                batch,
-                                Some(inner_chunk_size),
-                                |xs, b, ctx| {
-                                    edabits::ring_to_field_b2a_many::<$ring, F, _>(&xs, &b, ctx)
-                                },
-                            )?
+                            io_ctx.par_chunks_preproc(chunk_vals, batch, Some(inner_chunk_size), |xs, b, ctx| {
+                                edabits::ring_to_field_b2a_many::<$ring, F, _>(&xs, &b, ctx)
+                            })?
                         };
                         drop(_span);
 
                         debug_assert_eq!(fields.len(), chunk_len);
-                        scatter.extend(
-                            self.$idx[off..end]
-                                .iter()
-                                .copied()
-                                .zip(fields.into_iter().map(Rep3Value::Shared)),
-                        );
+                        scatter
+                            .extend(self.$idx[off..end].iter().copied().zip(fields.into_iter().map(Rep3Value::Shared)));
                     }
                 }
             };

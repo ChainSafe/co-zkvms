@@ -10,10 +10,8 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        bytecode::BytecodePreprocessing,
-        dag::proof_serialization::JoltProof,
-        ram::RAMPreprocessing,
-        witness::DTH_ROOT_OF_K,
+        bytecode::BytecodePreprocessing, dag::proof_serialization::JoltProof,
+        ram::RAMPreprocessing, witness::DTH_ROOT_OF_K,
     },
 };
 use ark_bn254::Fr;
@@ -235,7 +233,6 @@ where
 
         JoltProverPreprocessing { generators, shared }
     }
-
 }
 
 pub struct JoltRV32IM;
@@ -298,4 +295,3 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
 impl Serializable for RV64IMACJoltProof {}
 impl Serializable for JoltDevice {}
-

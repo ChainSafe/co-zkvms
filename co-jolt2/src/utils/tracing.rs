@@ -35,9 +35,7 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
 
     // Only enable Tracy layer when TRACY env var is set, so only the target
     // process starts the Tracy client and binds port 8086.
-    let tracy_layer = std::env::var("TRACY")
-        .is_ok()
-        .then(tracing_tracy::TracyLayer::default);
+    let tracy_layer = std::env::var("TRACY").is_ok().then(tracing_tracy::TracyLayer::default);
     let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
     if tracing::subscriber::set_global_default(
         Registry::default()
@@ -49,10 +47,7 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
     .is_err()
     {}
     info!("tracing_chrome writes to file: {}", file);
-    TracingGuard {
-        _guard: Some(_guard),
-        file: file.to_string(),
-    }
+    TracingGuard { _guard: Some(_guard), file: file.to_string() }
 }
 
 pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
@@ -72,15 +67,10 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
     if current_level == LevelFilter::TRACE {
         let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
         let _ = tracing::subscriber::set_global_default(
-            subscriber
-                .with(chrome_layer)
-                .with(ForestLayer::default().with_filter(LevelFilter::TRACE)),
+            subscriber.with(chrome_layer).with(ForestLayer::default().with_filter(LevelFilter::TRACE)),
         );
         info!("tracing_chrome writes to file: {}", file);
-        Some(TracingGuard {
-            _guard: Some(_guard),
-            file: file.to_string(),
-        })
+        Some(TracingGuard { _guard: Some(_guard), file: file.to_string() })
     } else {
         let _ = tracing::subscriber::set_global_default(subscriber.with(ForestLayer::default()));
         None

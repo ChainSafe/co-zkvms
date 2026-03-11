@@ -15,10 +15,7 @@ mod jemalloc {
     static P_METADATA: tracy_client::PlotName = plot_name!("jemalloc.metadata");
 
     fn config_plot() -> PlotConfiguration {
-        PlotConfiguration::default()
-            .format(PlotFormat::Memory)
-            .line_style(PlotLineStyle::Smooth)
-            .fill(false)
+        PlotConfiguration::default().format(PlotFormat::Memory).line_style(PlotLineStyle::Smooth).fill(false)
     }
 
     pub(super) fn start_monitor(interval: Duration) {

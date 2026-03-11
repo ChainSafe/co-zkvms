@@ -16,9 +16,15 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         opening_point: &[<F as jolt_core::field::JoltField>::Challenge],
         claimed_opening: &F,
         commitment: &Self::Commitment,
-    ) -> eyre::Result<Self::Proof>
+        commitment_blinding: Option<F>,
+    ) -> eyre::Result<(Self::Proof, Option<F>)>
     where
         Network: Rep3NetworkCoordinator;
+
+    fn blind_transcript_commitment(
+        setup: &Self::ProverSetup,
+        commitment: Self::Commitment,
+    ) -> (Self::Commitment, Option<F>);
 
     fn combine_commitment_shares(
         commitments: &[&MaybeShared<Self::Commitment>],

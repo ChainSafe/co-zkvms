@@ -6,9 +6,9 @@ use jolt_core::zkvm::spartan::pc::PCSumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
     fn degree(&self) -> usize {
@@ -23,12 +23,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
         self.input_claim()
     }
 
-    fn compute_prover_message_public(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-        max_degree: usize,
-    ) -> Vec<F> {
+    fn compute_prover_message_public(&mut self, round: usize, previous_claim: F, max_degree: usize) -> Vec<F> {
         let degree = self.degree();
         let base = self.compute_prover_message(round, previous_claim);
 
@@ -64,10 +59,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
         self.bind(r_j, round)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -77,11 +69,8 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for PCSumcheck<F> {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         party_id: PartyID,
     ) -> Vec<F> {
-        let (unexpanded_pc_eval, pc_eval, is_noop_eval) = if party_id == PartyID::ID0 {
-            self.final_shift_evals()
-        } else {
-            (F::zero(), F::zero(), F::zero())
-        };
+        let (unexpanded_pc_eval, pc_eval, is_noop_eval) =
+            if party_id == PartyID::ID0 { self.final_shift_evals() } else { (F::zero(), F::zero(), F::zero()) };
 
         accumulator.append_virtual_public(
             VirtualPolynomial::UnexpandedPC,

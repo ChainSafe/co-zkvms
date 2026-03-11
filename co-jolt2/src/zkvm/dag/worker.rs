@@ -5,7 +5,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use tracing::info_span;
 
-use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 use crate::poly::multilinear_polynomial::Rep3SharedPoly;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
@@ -17,13 +16,12 @@ use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
-use jolt_core::zkvm::witness::{
-    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
-};
+use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
@@ -105,12 +103,7 @@ impl Rep3JoltDagWorker {
 
         let stage2_instances = stages.stage2_instances(&mut state, &mut io_ctx)?;
         let _stage2 = info_span!("stage2_prove").entered();
-        HybridBatchedSumcheckWorker::prove(
-            stage2_instances,
-            &mut state.accumulator,
-            &mut io_ctx,
-            preproc,
-        )?;
+        HybridBatchedSumcheckWorker::prove(stage2_instances, &mut state.accumulator, &mut io_ctx, preproc)?;
         drop(_stage2);
         maybe_purge_jemalloc();
 
@@ -120,12 +113,7 @@ impl Rep3JoltDagWorker {
 
         let stage3_instances = stages.stage3_instances(&mut state, &mut io_ctx, preproc)?;
         let _stage3 = info_span!("stage3_prove").entered();
-        HybridBatchedSumcheckWorker::prove(
-            stage3_instances,
-            &mut state.accumulator,
-            &mut io_ctx,
-            preproc,
-        )?;
+        HybridBatchedSumcheckWorker::prove(stage3_instances, &mut state.accumulator, &mut io_ctx, preproc)?;
         drop(_stage3);
         maybe_purge_jemalloc();
 
@@ -135,12 +123,7 @@ impl Rep3JoltDagWorker {
         let stage4_instances = stages.stage4_instances(&mut state, &mut io_ctx)?;
         if !stage4_instances.is_empty() {
             let _stage4 = info_span!("stage4_prove").entered();
-            HybridBatchedSumcheckWorker::prove(
-                stage4_instances,
-                &mut state.accumulator,
-                &mut io_ctx,
-                preproc,
-            )?;
+            HybridBatchedSumcheckWorker::prove(stage4_instances, &mut state.accumulator, &mut io_ctx, preproc)?;
             drop(_stage4);
         }
 
@@ -153,14 +136,12 @@ impl Rep3JoltDagWorker {
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
         let _stage5 = info_span!("stage5_reduce_and_prove").entered();
-        state
-            .accumulator
-            .reduce_and_prove::<PCS, ProofTranscript, N>(
-                &polynomials_map,
-                opening_hints,
-                &state.prover_state.preprocessing.generators,
-                &mut io_ctx,
-            )?;
+        state.accumulator.reduce_and_prove::<PCS, ProofTranscript, N>(
+            &polynomials_map,
+            opening_hints,
+            &state.prover_state.preprocessing.generators,
+            &mut io_ctx,
+        )?;
         drop(_stage5);
         maybe_purge_jemalloc();
 
@@ -187,8 +168,7 @@ impl Rep3JoltDagWorker {
         N: Rep3NetworkWorker,
         Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
     {
-        let poly_keys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
+        let poly_keys: Vec<CommittedPolynomial> = AllCommittedPolynomials::iter().copied().collect();
 
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
@@ -197,13 +177,9 @@ impl Rep3JoltDagWorker {
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);
-            let poly = witness_polys
-                .get(&key)
-                .unwrap_or_else(|| panic!("missing witness poly for {key:?}"));
+            let poly = witness_polys.get(&key).unwrap_or_else(|| panic!("missing witness poly for {key:?}"));
             match poly {
-                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
-                    one_hot.clone()
-                }
+                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => one_hot.clone(),
                 _ => panic!("witness poly for {key:?} is not a shared OneHot polynomial"),
             }
         });
@@ -213,18 +189,15 @@ impl Rep3JoltDagWorker {
 
         // Avoid cloning large polynomials just to commit: commit borrows them.
         let default_poly = Rep3MultilinearPolynomial::<F>::default();
-        let ordered_polys: Vec<&Rep3MultilinearPolynomial<F>> = poly_keys
-            .iter()
-            .map(|key| witness_polys.get(key).unwrap_or(&default_poly))
-            .collect();
+        let ordered_polys: Vec<&Rep3MultilinearPolynomial<F>> =
+            poly_keys.iter().map(|key| witness_polys.get(key).unwrap_or(&default_poly)).collect();
 
-        let commit_results =
-            <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
-                &ordered_polys,
-                generators,
-                io_ctx,
-                preproc,
-            )?;
+        let commit_results = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::batch_commit_rep3(
+            &ordered_polys,
+            generators,
+            io_ctx,
+            preproc,
+        )?;
 
         let (commitment_shares, hint_shares): (Vec<_>, Vec<_>) = commit_results.into_iter().unzip();
 
@@ -232,9 +205,7 @@ impl Rep3JoltDagWorker {
         io_ctx.network().send_response(commitment_shares)?;
 
         // Send untrusted advice commitment share to coordinator.
-        io_ctx
-            .network()
-            .send_response(state.untrusted_advice_commitment.clone())?;
+        io_ctx.network().send_response(state.untrusted_advice_commitment.clone())?;
 
         // Build hint map from raw MaybeShared hint shares (used by reduce_and_prove).
         let hint_map: HashMap<CommittedPolynomial, MaybeShared<PCS::OpeningProofHint>> = poly_keys
@@ -252,33 +223,15 @@ impl Rep3JoltDagWorker {
         {
             use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
             let n = state.prover_state.cycle_witness.len();
-            for key in [
-                CommittedPolynomial::LeftInstructionInput,
-                CommittedPolynomial::RightInstructionInput,
-            ] {
+            for key in [CommittedPolynomial::LeftInstructionInput, CommittedPolynomial::RightInstructionInput] {
                 if let Some(poly) = witness_polys.get(&key) {
-                    if matches!(
-                        poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))
-                    ) {
-                        let mut field_shares: Vec<Rep3PrimeFieldShare<F>> =
-                            Vec::with_capacity(n);
+                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))) {
+                        let mut field_shares: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                         for t in 0..n {
-                            let (l, r) = state
-                                .prover_state
-                                .cycle_witness
-                                .row_stage1(t)
-                                .to_instruction_inputs(party_id);
-                            field_shares.push(
-                                if key == CommittedPolynomial::LeftInstructionInput {
-                                    l
-                                } else {
-                                    r
-                                },
-                            );
+                            let (l, r) = state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id);
+                            field_shares.push(if key == CommittedPolynomial::LeftInstructionInput { l } else { r });
                         }
-                        witness_polys
-                            .insert(key, Rep3MultilinearPolynomial::from(field_shares));
+                        witness_polys.insert(key, Rep3MultilinearPolynomial::from(field_shares));
                     }
                 }
             }
@@ -286,10 +239,7 @@ impl Rep3JoltDagWorker {
 
         // Build Arc-wrapped polynomial map for reduce_and_prove.
         let polynomials_map: HashMap<CommittedPolynomial, Arc<Rep3MultilinearPolynomial<F>>> =
-            witness_polys
-                .into_iter()
-                .map(|(k, v)| (k, Arc::new(v)))
-                .collect();
+            witness_polys.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
 
         // Ring-shared trace is no longer needed after witness generation; drop it to free memory.
         state.prover_state.trace = None;
@@ -340,11 +290,7 @@ impl Rep3JoltDagWorker {
              current PCS generators/DoryGlobals are built for padded_trace_length"
         );
 
-        let poly = Self::shared_advice_polynomial::<F, PCS, N>(
-            &state.program_io.untrusted_advice,
-            max_size,
-            io_ctx,
-        )?;
+        let poly = Self::shared_advice_polynomial::<F, PCS, N>(&state.program_io.untrusted_advice, max_size, io_ctx)?;
         let (commitment, _hint) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::commit_rep3(
             &poly,
             &state.prover_state.preprocessing.generators,
@@ -374,11 +320,7 @@ impl Rep3JoltDagWorker {
         }
 
         let max_size = state.program_io.memory_layout.max_trusted_advice_size as usize / 8;
-        let poly = Self::shared_advice_polynomial::<F, PCS, N>(
-            &state.program_io.trusted_advice,
-            max_size,
-            io_ctx,
-        )?;
+        let poly = Self::shared_advice_polynomial::<F, PCS, N>(&state.program_io.trusted_advice, max_size, io_ctx)?;
         state.prover_state.trusted_advice_polynomial = Some(poly);
         Ok(())
     }

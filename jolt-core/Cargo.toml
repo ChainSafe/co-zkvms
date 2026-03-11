@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["minimal"]
+default = ["minimal", "zk"]
+zk = ["dory/zk"]
 host = [
     "dep:reqwest",
     "dep:tokio",
@@ -28,6 +29,8 @@ rv64 = [
     "tracer/rv64",
 ]
 challenge-254-bit = []
+fewer-phases = []
+test-utils = []
 
 [dependencies]
 ark-bn254.workspace = true
@@ -88,6 +91,7 @@ tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 serial_test.workspace = true
+tracer = { workspace = true, default-features = false, features = ["std", "test-utils"] }
 
 [lib]
 name = "jolt_core"

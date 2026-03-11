@@ -1,6 +1,6 @@
-use jolt_core::field::JoltField;
 use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::types::MaybeShared;
+use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
@@ -14,28 +14,20 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 pub mod dory;
 pub use dory::*;
 
-pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
-    CommitmentScheme<Field = F>
-{
+pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>: CommitmentScheme<Field = F> {
     fn commit_rep3<N: Rep3NetworkWorker>(
         poly: &Rep3MultilinearPolynomial<F>,
         setup: &Self::ProverSetup,
         commit_to_public: bool,
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<F>,
-    ) -> eyre::Result<(
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    )>;
+    ) -> eyre::Result<(MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>)>;
 
     fn distributed_commit_rep3(
         _poly: &Rep3MultilinearPolynomial<F>,
         _setup: &Self::ProverSetup,
         _commit_to_public: bool,
-    ) -> (
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    ) {
+    ) -> (MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>) {
         todo!("distributed commit not implemented for this PCS")
     }
 
@@ -44,10 +36,7 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         setup: &Self::ProverSetup,
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<F>,
-    ) -> eyre::Result<Vec<(
-        MaybeShared<Self::Commitment>,
-        MaybeShared<Self::OpeningProofHint>,
-    )>>
+    ) -> eyre::Result<Vec<(MaybeShared<Self::Commitment>, MaybeShared<Self::OpeningProofHint>)>>
     where
         U: Borrow<Rep3MultilinearPolynomial<F>> + Sync,
         N: Rep3NetworkWorker;

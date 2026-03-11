@@ -2,10 +2,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::transcripts::Transcript;
 use crate::{
-    field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::errors::ProofVerifyError,
+    curve::JoltCurve,
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -19,14 +21,13 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + PartialEq
         + CanonicalSerialize
         + CanonicalDeserialize
-        + AppendToTranscript
         + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
     /// used as a hint for the opening proof.
-    type OpeningProofHint: Sync + Send + Clone + Debug;
+    type OpeningProofHint: Sync + Send + Clone + Debug + PartialEq;
 
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
@@ -88,27 +89,21 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `setup` - The prover setup for the commitment scheme
     /// * `poly` - The multilinear polynomial being proved
     /// * `opening_point` - The point at which the polynomial is evaluated
-    /// * `hint` - A hint that helps optimize the proof generation
+    /// * `hint` - An optional hint that helps optimize the proof generation.
+    ///   When `None`, implementations should compute the hint internally if needed.
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
-    /// A proof of the polynomial evaluation at the specified point
+    /// A tuple containing:
+    /// - The proof of the polynomial evaluation at the specified point
+    /// - An optional ZK blinding factor (y_blinding) for use in future BlindFold integration
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        hint: Self::OpeningProofHint,
+        hint: Option<Self::OpeningProofHint>,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof;
-
-    fn prove_without_hint<ProofTranscript: Transcript>(
-        _setup: &Self::ProverSetup,
-        _poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[<Self::Field as JoltField>::Challenge],
-        _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        unimplemented!()
-    }
+    ) -> (Self::Proof, Option<Self::Field>);
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -134,10 +129,33 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait StreamingCommitmentScheme: CommitmentScheme {
-    type State<'a>; // : Clone + Debug;
+pub trait ZkEvalCommitment<C: JoltCurve>: CommitmentScheme {
+    fn eval_commitment(proof: &Self::Proof) -> Option<C::G1>;
 
-    fn initialize<'a>(size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
-    fn process<'a>(state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
-    fn finalize<'a>(state: Self::State<'a>) -> Self::Commitment;
+    fn eval_commitment_gens(setup: &Self::ProverSetup) -> Option<(C::G1, C::G1)>;
+
+    fn eval_commitment_gens_verifier(setup: &Self::VerifierSetup) -> Option<(C::G1, C::G1)>;
+
+    #[cfg(feature = "zk")]
+    fn zk_generators(_setup: &Self::ProverSetup, _count: usize) -> Option<(Vec<C::G1>, C::G1)> {
+        None
+    }
+}
+
+pub trait StreamingCommitmentScheme: CommitmentScheme {
+    type ChunkState: Send + Sync + Clone + PartialEq + Debug;
+
+    fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState;
+
+    fn process_chunk_onehot(
+        setup: &Self::ProverSetup,
+        onehot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::ChunkState;
+
+    fn aggregate_chunks(
+        setup: &Self::ProverSetup,
+        onehot_k: Option<usize>,
+        tier1_commitments: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint);
 }

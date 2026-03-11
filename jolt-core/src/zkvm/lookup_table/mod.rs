@@ -120,6 +120,9 @@ pub mod virtual_xor_rotw;
 pub mod word_alignment;
 pub mod xor;
 
+#[cfg(test)]
+pub mod test;
+
 pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
 #[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]

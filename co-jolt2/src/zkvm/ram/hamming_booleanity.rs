@@ -5,9 +5,9 @@ use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
 use crate::subprotocols::sumcheck::PublicSumcheckInstanceWorker;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingBooleanitySumcheck<F> {
     fn degree(&self) -> usize {
@@ -22,12 +22,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingBooleanitySumcheck
         self.input_claim()
     }
 
-    fn compute_prover_message_public(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-        max_degree: usize,
-    ) -> Vec<F> {
+    fn compute_prover_message_public(&mut self, round: usize, previous_claim: F, max_degree: usize) -> Vec<F> {
         let degree = self.degree();
         let base = self.compute_prover_message(round, previous_claim);
 
@@ -62,10 +57,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingBooleanitySumcheck
         self.bind(r_j, round)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -75,11 +67,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for HammingBooleanitySumcheck
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         party_id: PartyID,
     ) -> Vec<F> {
-        let claim = if party_id == PartyID::ID0 {
-            self.h_final_claim()
-        } else {
-            F::zero()
-        };
+        let claim = if party_id == PartyID::ID0 { self.h_final_claim() } else { F::zero() };
 
         accumulator.append_virtual_public(
             VirtualPolynomial::RamHammingWeight,

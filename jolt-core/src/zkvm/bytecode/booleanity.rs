@@ -304,9 +304,7 @@ impl<F: JoltField> BooleanityProverState<F> {
             .map(|i| {
                 pc_indices
                     .par_iter()
-                    .map(|&k| {
-                        Some(((k as usize >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
-                    })
+                    .map(|&k| Some(((k as usize >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8))
                     .collect()
             })
             .collect();

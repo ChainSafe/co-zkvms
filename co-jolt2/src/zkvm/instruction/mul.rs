@@ -2,16 +2,10 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MUL> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -23,23 +17,20 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MUL> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                )
+                (l.as_arithmetic_or_trivial::<u64>(io_ctx.id), r.as_arithmetic_or_trivial::<u64>(io_ctx.id))
             })
             .unzip();
         let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
-        cast_wrapped_lookup_output_many(&products, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(share, out)| *out = FutureRep3Ring::Ready(share));
+        products.into_iter().zip(out).for_each(|(prod, out)| {
+            let truncated: Rep3RingShare<XlenInt> = downcast(prod);
+            *out = FutureRep3Ring::cast_to_field(truncated);
+        });
         Ok(())
     }
 }

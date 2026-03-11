@@ -9,9 +9,9 @@ use mpc_core::protocols::rep3::PartyID;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckWorkerInstance, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+use jolt_core::field::JoltField;
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -37,8 +37,8 @@ impl<F: JoltField> Rep3BytecodeDagWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3BytecodeDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> SumcheckStagesWorker<F, PCS, N>
+    for Rep3BytecodeDagWorker<F>
 {
     fn stage4_instances(
         &mut self,
@@ -52,10 +52,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             read_raf_checking::ReadRafSumcheck as BytecodeReadRaf,
         };
 
-        let init = self
-            .stage4
-            .take()
-            .expect("Rep3BytecodeDagWorker stage4 init not set");
+        let init = self.stage4.take().expect("Rep3BytecodeDagWorker stage4 init not set");
 
         let d = sm.prover_state.preprocessing.shared.bytecode.d;
         let K = sm.prover_state.preprocessing.shared.bytecode.code_size;
@@ -67,18 +64,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         let instances = if sm.party_id == PartyID::ID0 {
             // Use cycle_witness.pc which stores bytecode table indices (from get_pc).
             let meta = sm.prover_state.cycle_witness.meta();
-            let (pc_indices, pc): (Vec<u64>, Vec<usize>) = meta
-                .par_iter()
-                .map(|m| (m.pc_index, m.pc_index as usize))
-                .unzip();
+            let (pc_indices, pc): (Vec<u64>, Vec<usize>) =
+                meta.par_iter().map(|m| (m.pc_index, m.pc_index as usize)).unzip();
 
             // Compute eq_r_cycle from accumulator r_cycle point
             let r_cycle: Vec<F::Challenge> = sm
                 .accumulator
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::UnexpandedPC,
-                    SumcheckId::SpartanOuter,
-                )
+                .get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter)
                 .0
                 .r
                 .clone();
@@ -96,16 +88,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 EqPolynomial::evals(&init.r_cycles[2]),
             ];
 
-            let (F_1, F_polys) = compute_pc_hists::<F>(
-                &pc_indices,
-                &eq_r_cycle,
-                &eq_evals,
-                d,
-                log_K_chunk,
-                K_chunk,
-                K,
-                chunk_size,
-            );
+            let (F_1, F_polys) =
+                compute_pc_hists::<F>(&pc_indices, &eq_r_cycle, &eq_evals, d, log_K_chunk, K_chunk, K, chunk_size);
 
             let read_raf = BytecodeReadRaf::new_prover_from_parts(
                 init.read_raf_gamma,
@@ -129,11 +113,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 &pc_indices,
             );
 
-            let hamming_weight = BytecodeHammingWeight::new_prover_from_parts(
-                init.hw_gamma_powers,
-                log_K_chunk,
-                F_1,
-            );
+            let hamming_weight = BytecodeHammingWeight::new_prover_from_parts(init.hw_gamma_powers, log_K_chunk, F_1);
 
             vec![
                 BatchedSumcheckWorkerInstance::Public(Box::new(read_raf)),
@@ -157,8 +137,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 log_K_chunk,
             );
 
-            let hamming_weight =
-                BytecodeHammingWeight::new_verifier_from_parts(init.hw_gamma_powers, log_K_chunk);
+            let hamming_weight = BytecodeHammingWeight::new_verifier_from_parts(init.hw_gamma_powers, log_K_chunk);
 
             vec![
                 BatchedSumcheckWorkerInstance::Public(Box::new(read_raf)),
@@ -200,8 +179,7 @@ fn compute_pc_hists<F: JoltField>(
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, pcs)| {
-            let mut local_G: Vec<Vec<F>> =
-                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut local_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
             let mut r1: Vec<F> = unsafe_allocate_zero_vec(K);
             let mut r2: Vec<F> = unsafe_allocate_zero_vec(K);
             let mut r3: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -228,13 +206,8 @@ fn compute_pc_hists<F: JoltField>(
         })
         .reduce(
             || {
-                let zeros_G: Vec<Vec<F>> =
-                    (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
-                let zeros_F = [
-                    unsafe_allocate_zero_vec(K),
-                    unsafe_allocate_zero_vec(K),
-                    unsafe_allocate_zero_vec(K),
-                ];
+                let zeros_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+                let zeros_F = [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
                 (zeros_G, zeros_F)
             },
             |(mut running_G, mut running_F), (new_G, new_F)| {

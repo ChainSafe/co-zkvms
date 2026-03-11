@@ -5,10 +5,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMove> {
         (self.register_state.rs1_operand(), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -19,19 +16,15 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMove> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        let values: Vec<_> = steps
-            .iter()
-            .map(|step| {
-                let (l, _r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-                l.as_arithmetic_or_trivial::<u64>(io_ctx.id)
-            })
-            .collect();
-        cast_wrapped_lookup_output_many(&values, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(share, out)| *out = FutureRep3Ring::Ready(share));
+        steps.iter().zip(out).for_each(|(step, out)| {
+            let (l, _r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
+            let result: Rep3RingShare<XlenInt> = downcast(
+                l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
+            );
+            *out = FutureRep3Ring::cast_to_field(result);
+        });
         Ok(())
     }
 }

@@ -5,10 +5,10 @@ use mpc_core::protocols::rep3::arithmetic::promote_to_trivial_share;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 
-use jolt_core::field::JoltField;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::utils::types::Either;
 use crate::utils::types::Rep3Value;
+use jolt_core::field::JoltField;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CycleMeta {
@@ -73,8 +73,7 @@ struct Stage3Witness<F: JoltField> {
 #[derive(Clone, Debug, Default)]
 pub struct Stage3Update<F: JoltField> {
     pub pc_sumcheck: Option<(Vec<u64>, Vec<u32>)>,
-    pub read_raf_tables_and_masks:
-        Option<(Vec<Option<LookupTables<XLEN>>>, Vec<bool>, Vec<Option<u64>>)>,
+    pub read_raf_tables_and_masks: Option<(Vec<Option<LookupTables<XLEN>>>, Vec<bool>, Vec<Option<u64>>)>,
     pub read_raf_lookup_indices: Option<Vec<Either<LookupIndexInt, Rep3RingShare<LookupIndexInt>>>>,
     pub product_inputs: Option<ProductInputs<F>>,
 }
@@ -114,11 +113,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     pub fn stage1_lookup_output(&self) -> &[Rep3PrimeFieldShare<F>] {
-        &self
-            .stage1
-            .as_ref()
-            .expect("stage1 witness already dropped")
-            .lookup_output
+        &self.stage1.as_ref().expect("stage1 witness already dropped").lookup_output
     }
 
     pub fn pc_sumcheck_unexpanded_pc(&self) -> &[u64] {
@@ -138,35 +133,21 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     pub fn take_read_raf(&mut self) -> ReadRafWitness {
-        let rr = self
-            .stage3
-            .read_raf
-            .take()
-            .expect("read_raf witness already taken/dropped");
-        assert!(
-            rr.lookup_indices.len() == self.len,
-            "read_raf.lookup_indices not populated"
-        );
+        let rr = self.stage3.read_raf.take().expect("read_raf witness already taken/dropped");
+        assert!(rr.lookup_indices.len() == self.len, "read_raf.lookup_indices not populated");
         rr
     }
 
     pub fn update_stage3(&mut self, update: Stage3Update<F>) {
         if let Some((unexpanded_pc, flags_bits)) = update.pc_sumcheck {
-            self.stage3.pc_sumcheck = Some(PcInputs {
-                unexpanded_pc,
-                flags_bits,
-            });
+            self.stage3.pc_sumcheck = Some(PcInputs { unexpanded_pc, flags_bits });
         }
 
         if let Some((lookup_tables, is_interleaved_operands, right_operand_public_mask)) =
             update.read_raf_tables_and_masks
         {
-            let lookup_indices = self
-                .stage3
-                .read_raf
-                .as_mut()
-                .map(|rr| std::mem::take(&mut rr.lookup_indices))
-                .unwrap_or_default();
+            let lookup_indices =
+                self.stage3.read_raf.as_mut().map(|rr| std::mem::take(&mut rr.lookup_indices)).unwrap_or_default();
             self.stage3.read_raf = Some(ReadRafWitness {
                 lookup_indices,
                 lookup_tables,
@@ -176,11 +157,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
         }
 
         if let Some(lookup_indices) = update.read_raf_lookup_indices {
-            let rr = self
-                .stage3
-                .read_raf
-                .as_mut()
-                .expect("read_raf must be initialized before setting lookup_indices");
+            let rr = self.stage3.read_raf.as_mut().expect("read_raf must be initialized before setting lookup_indices");
             rr.lookup_indices = lookup_indices;
         }
 
@@ -221,17 +198,10 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     pub fn take_product_inputs(&mut self) -> ProductInputs<F> {
-        self.stage3
-            .product_inputs
-            .take()
-            .expect("product inputs already taken/dropped")
+        self.stage3.product_inputs.take().expect("product inputs already taken/dropped")
     }
 
-    pub fn set_stage2_incs(
-        &mut self,
-        rd_inc: Option<Rep3DensePolynomial<F>>,
-        ram_inc: Option<Rep3DensePolynomial<F>>,
-    ) {
+    pub fn set_stage2_incs(&mut self, rd_inc: Option<Rep3DensePolynomial<F>>, ram_inc: Option<Rep3DensePolynomial<F>>) {
         if let Some(rd) = rd_inc {
             self.stage2.rd_inc = Some(rd);
         }
@@ -286,10 +256,7 @@ impl<F: JoltField> Rep3CycleWitnesses<F> {
     }
 
     fn pc(&self) -> &PcInputs {
-        self.stage3
-            .pc_sumcheck
-            .as_ref()
-            .expect("pc_sumcheck inputs already dropped")
+        self.stage3.pc_sumcheck.as_ref().expect("pc_sumcheck inputs already dropped")
     }
 }
 
@@ -305,10 +272,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
     }
 
     fn stage1(&self) -> &'a Stage1Witness<F> {
-        self.w
-            .stage1
-            .as_ref()
-            .expect("stage1 witness already dropped")
+        self.w.stage1.as_ref().expect("stage1 witness already dropped")
     }
 
     pub fn flags_bits(&self) -> u32 {
@@ -440,11 +404,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         (left, right)
     }
 
-    pub fn to_lookup_operands_value(
-        &self,
-        party_id: PartyID,
-        product: Rep3Value<F>,
-    ) -> (Rep3Value<F>, Rep3Value<F>) {
+    pub fn to_lookup_operands_value(&self, party_id: PartyID, product: Rep3Value<F>) -> (Rep3Value<F>, Rep3Value<F>) {
         let left_u64 = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
             Rep3Value::Shared(self.rs1_value())
         } else if self.flag(CircuitFlags::LeftOperandIsPC) {
@@ -467,12 +427,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
             (zero, left_u64.add(&right_u64, party_id))
         } else if self.flag(CircuitFlags::SubtractOperands) {
             let two_pow_xlen = F::from_u128(1u128 << XLEN);
-            (
-                zero,
-                left_u64
-                    .sub(&right_u64, party_id)
-                    .add_public(two_pow_xlen, party_id),
-            )
+            (zero, left_u64.sub(&right_u64, party_id).add_public(two_pow_xlen, party_id))
         } else if self.flag(CircuitFlags::MultiplyOperands) {
             (zero, product)
         } else if self.flag(CircuitFlags::Advice) {
@@ -482,10 +437,7 @@ impl<'a, F: JoltField> Stage1RowRef<'a, F> {
         }
     }
 
-    pub fn to_instruction_inputs(
-        &self,
-        party_id: PartyID,
-    ) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
+    pub fn to_instruction_inputs(&self, party_id: PartyID) -> (Rep3PrimeFieldShare<F>, Rep3PrimeFieldShare<F>) {
         let left = if self.flag(CircuitFlags::LeftOperandIsRs1Value) {
             self.rs1_value()
         } else if self.flag(CircuitFlags::LeftOperandIsPC) {
