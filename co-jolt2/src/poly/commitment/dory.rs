@@ -6,7 +6,7 @@ use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ec::pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput};
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
+use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One, PrimeField};
 use ark_std::Zero;
 use dory::primitives::{arithmetic::PairingCurve, poly::compute_left_right_vectors};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
@@ -15,6 +15,7 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::PartyID;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
@@ -38,11 +39,12 @@ pub use jolt_core::poly::commitment::dory::*;
 use super::Rep3CommitmentScheme;
 
 type DoryOpenParams = (usize, usize, usize, Vec<Fr>, Vec<Fr>);
-type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>);
+type DoryMaskedRowsRequest = (Vec<G1Affine>, Vec<Rep3PrimeFieldShare<Fr>>);
+type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>, Fr);
 type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, Option<G2Affine>);
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
-type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg);
+type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
 type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
 
 fn owns_public_vmv_e1(party_id: PartyID) -> bool {
@@ -72,6 +74,48 @@ fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
     num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
+}
+
+fn fold_mask_shares(mask_shares: &mut Vec<Rep3PrimeFieldShare<Fr>>, alpha: Fr, n2: usize) {
+    let (left, right) = mask_shares.split_at(n2);
+    let next: Vec<_> = (0..n2)
+        .into_par_iter()
+        .map(|i| Rep3PrimeFieldShare::new(left[i].a * alpha + right[i].a, left[i].b * alpha + right[i].b))
+        .collect();
+    *mask_shares = next;
+}
+
+fn local_masked_scalar_inner_product<N: Rep3NetworkWorker>(
+    network: &mut N,
+    mask_shares: &[Rep3PrimeFieldShare<Fr>],
+    additive_values: &[Fr],
+) -> eyre::Result<Fr> {
+    let replicated_prev_values = {
+        let _span = tracing::trace_span!("blocked_vmv_c_exchange").entered();
+        network.reshare_many(additive_values)?
+    };
+    Ok(mask_shares
+        .par_iter()
+        .zip(additive_values.par_iter())
+        .zip(replicated_prev_values.par_iter())
+        .map(|((mask_share, self_share), prev_share)| {
+            (mask_share.a * *self_share) + (mask_share.a * *prev_share) + (mask_share.b * *self_share)
+        })
+        .reduce(Fr::zero, |acc, value| acc + value))
+}
+
+fn accumulate_masked_g2_msm(
+    mask_shares: &[Rep3PrimeFieldShare<Fr>],
+    additive_points_affine: &[G2Affine],
+    replicated_prev_points: &[G2Affine],
+) -> G2Projective {
+    let self_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a + mask_share.b).collect();
+    let prev_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a).collect();
+    let (self_term, prev_term) = rayon::join(
+        || msm_g2_affine(additive_points_affine, &self_scalars),
+        || msm_g2_affine(replicated_prev_points, &prev_scalars),
+    );
+    self_term + prev_term
 }
 
 // =============================================================================
@@ -297,7 +341,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         network.send_response((num_vars, row_commit_shares_affine, v2_share_affine))?;
 
         // 3) receive masked row commitments from coordinator
-        let row_commitments_affine: Vec<G1Affine> = {
+        let (row_commitments_affine, mut row_mask_shares): DoryMaskedRowsRequest = {
             let _span = tracing::info_span!("receive_masked_rows").entered();
             network.receive_request()?
         };
@@ -305,25 +349,35 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         if nu < sigma {
             padded_row_commitments_affine.resize(1 << sigma, G1Affine::zero());
         }
+        debug_assert_eq!(row_mask_shares.len(), padded_row_commitments_affine.len());
 
         // c_share + d2_share: MSMs + pairings for VMV message
-        let ((c_share, d2_share), public_e1) = {
+        let ((c_share, d2_share), public_e1, blocked_vmv_correction_share) = {
             let _span = tracing::info_span!("vmv_message").entered();
-            rayon::join(
+            let ((c_and_d2, public_e1), blocked_vmv_correction_share) = rayon::join(
                 || {
-                    let t_vec_v = msm_g1_affine(&padded_row_commitments_affine, &v_vec_share);
-                    let g_fin_affine = setup.g2_vec[0].0.into_affine();
-                    let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
+                    rayon::join(
+                        || {
+                            let t_vec_v = msm_g1_affine(&padded_row_commitments_affine, &v_vec_share);
+                            let g_fin_affine = setup.g2_vec[0].0.into_affine();
+                            let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
 
-                    let gamma1_v = msm_g1_affine(&g1_affine_all, &v_vec_share);
-                    let d2_share = Bn254::pairing(gamma1_v, g_fin_affine).0;
-                    (c_share, d2_share)
+                            let gamma1_v = msm_g1_affine(&g1_affine_all, &v_vec_share);
+                            let d2_share = Bn254::pairing(gamma1_v, g_fin_affine).0;
+                            (c_share, d2_share)
+                        },
+                        || compute_public_vmv_e1(party_id, &row_commitments_affine, &l_vec),
+                    )
                 },
-                || compute_public_vmv_e1(party_id, &row_commitments_affine, &l_vec),
-            )
+                || {
+                    let _span = tracing::trace_span!("blocked_vmv_c_local").entered();
+                    local_masked_scalar_inner_product(network, &row_mask_shares, &v_vec_share)
+                },
+            );
+            (c_and_d2, public_e1, blocked_vmv_correction_share?)
         };
 
-        network.send_response(((c_share, d2_share), public_e1))?;
+        network.send_response(((c_share, d2_share), public_e1, blocked_vmv_correction_share))?;
 
         // s1 = R, s2 = L (matches dory vmv_state_to_dory_prover_state)
         let mut s1 = r_vec;
@@ -391,35 +445,64 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             }
 
             // Second message: c_plus/c_minus pairings + e2 MSMs (all 4 in parallel)
-            let (share_second_round, public_second_round) = {
+            let (share_second_round, public_second_round, blocked_second_corrections) = {
                 let _span = tracing::trace_span!("second_msg", n2).entered();
                 let v1_affine_post = G1Projective::normalize_batch(&v1_pub);
                 let v2_affine_post = G2Projective::normalize_batch(&v2_share);
+                let replicated_prev_v2_affine = {
+                    let _span = tracing::trace_span!("blocked_second_v2_exchange", n2).entered();
+                    network.reshare_many(&v2_affine_post)?
+                };
                 let (s1_l, s1_r) = s1.split_at(n2);
-                let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = rayon::join(
-                    || {
-                        let (v1_l_aff, v1_r_aff) = v1_affine_post.split_at(n2);
-                        let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
-                        rayon::join(
-                            || multi_pairing_both_affine(v1_l_aff, v2_r_aff),
-                            || multi_pairing_both_affine(v1_r_aff, v2_l_aff),
-                        )
-                    },
-                    || {
-                        let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
-                        rayon::join(
-                            || msm_g2_affine(v2_r_aff, s1_l).into_affine(),
-                            || msm_g2_affine(v2_l_aff, s1_r).into_affine(),
-                        )
-                    },
-                );
-                rayon::join(
-                    || ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)),
-                    || compute_public_second_reduce_terms(party_id, &v1_affine_post, &s2, n2),
-                )
+                let (((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)), public_second_round) =
+                    rayon::join(
+                        || {
+                            rayon::join(
+                                || {
+                                    let (v1_l_aff, v1_r_aff) = v1_affine_post.split_at(n2);
+                                    let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
+                                    rayon::join(
+                                        || multi_pairing_both_affine(v1_l_aff, v2_r_aff),
+                                        || multi_pairing_both_affine(v1_r_aff, v2_l_aff),
+                                    )
+                                },
+                                || {
+                                    let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
+                                    rayon::join(
+                                        || msm_g2_affine(v2_r_aff, s1_l).into_affine(),
+                                        || msm_g2_affine(v2_l_aff, s1_r).into_affine(),
+                                    )
+                                },
+                            )
+                        },
+                        || compute_public_second_reduce_terms(party_id, &v1_affine_post, &s2, n2),
+                    );
+                let blocked_second_corrections = {
+                    let (mask_left, mask_right) = row_mask_shares.split_at(n2);
+                    let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
+                    let (prev_v2_l_aff, prev_v2_r_aff) = replicated_prev_v2_affine.split_at(n2);
+                    rayon::join(
+                        || {
+                            let _span = tracing::trace_span!("blocked_second_c_plus_local").entered();
+                            accumulate_masked_g2_msm(mask_left, v2_r_aff, prev_v2_r_aff)
+                        },
+                        || {
+                            let _span = tracing::trace_span!("blocked_second_c_minus_local").entered();
+                            accumulate_masked_g2_msm(mask_right, v2_l_aff, prev_v2_l_aff)
+                        },
+                    )
+                };
+                (((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)), public_second_round, blocked_second_corrections)
             };
 
-            network.send_response((share_second_round, public_second_round))?;
+            network.send_response((
+                share_second_round,
+                public_second_round,
+                (
+                    blocked_second_corrections.0.into_affine(),
+                    blocked_second_corrections.1.into_affine(),
+                ),
+            ))?;
 
             // Receive alpha challenge from coordinator
             let (alpha, alpha_inv): (Fr, Fr) = {
@@ -448,6 +531,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                     (0..n2).into_par_iter().map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i])).unzip();
                 s1 = s1_next;
                 s2 = s2_next;
+                fold_mask_shares(&mut row_mask_shares, alpha, n2);
             }
 
             curr_rounds -= 1;

@@ -227,6 +227,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
                 &r_sumcheck,
                 &joint_claim,
                 &joint_commitment,
+                None,
             )?;
 
         Ok(ReducedOpeningProof {

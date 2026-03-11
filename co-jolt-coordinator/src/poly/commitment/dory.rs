@@ -23,7 +23,9 @@ use jolt_core::poly::commitment::dory::{
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
+use mpc_core::protocols::rep3::share_field_elements;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::MaybeShared;
 use rayon::prelude::*;
@@ -31,11 +33,12 @@ use tracing::info_span;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
-type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>);
+type DoryMaskedRowsRequest = (Vec<G1Affine>, Vec<Rep3PrimeFieldShare<Fr>>);
+type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>, Fr);
 type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, Option<G2Affine>);
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
-type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg);
+type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
 type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
 
 #[derive(Clone)]
@@ -129,7 +132,7 @@ fn sample_round_blinds() -> ZkRoundBlinds {
 }
 
 fn blocked_gt_strategy() -> BlockedGtStrategy {
-    BlockedGtStrategy::CoordinatorRecompute
+    BlockedGtStrategy::MpcCorrection
 }
 
 fn row_masks_for_commitments(len: usize) -> Vec<Fr> {
@@ -223,6 +226,16 @@ fn compute_blocked_vmv_c(
     }
 }
 
+fn correct_blocked_vmv_c_from_mpc(
+    masked_c: Fq12,
+    correction_scalar: Fr,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> eyre::Result<Fq12> {
+    let _span = tracing::trace_span!("blocked_vmv_c_mpc").entered();
+    let correction = Bn254::pairing(setup.h1.0 * correction_scalar, setup.g2_vec[0].0).0;
+    Ok(masked_c * correction.inverse().expect("vmv correction pairing must be invertible"))
+}
+
 fn compute_blocked_second_c_plus_from_affine(
     v1_l_aff: &[G1Affine],
     v2_r_aff: &[G2Affine],
@@ -258,6 +271,32 @@ fn compute_blocked_second_terms(
         }
         BlockedGtStrategy::MpcCorrection => Err(eyre::eyre!("blocked GT MPC correction path not implemented")),
     }
+}
+
+fn correct_blocked_second_term_from_mpc(
+    label: &'static str,
+    masked: Fq12,
+    correction_point: G2Projective,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> eyre::Result<Fq12> {
+    match label {
+        "blocked_second_c_plus_mpc" => {
+            let _span = tracing::trace_span!("blocked_second_c_plus_mpc").entered();
+            let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
+            Ok(masked * correction.inverse().expect("second-round correction pairing must be invertible"))
+        }
+        "blocked_second_c_minus_mpc" => {
+            let _span = tracing::trace_span!("blocked_second_c_minus_mpc").entered();
+            let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
+            Ok(masked * correction.inverse().expect("second-round correction pairing must be invertible"))
+        }
+        _ => unreachable!("unexpected blocked second correction label"),
+    }
+}
+
+fn share_mask_scalars(mask_scalars: &[Fr]) -> [Vec<Rep3PrimeFieldShare<Fr>>; 3] {
+    let mut rng = ark_std::rand::thread_rng();
+    share_field_elements(mask_scalars, &mut rng)
 }
 
 #[cfg(feature = "zk")]
@@ -337,23 +376,36 @@ where
             let init_msgs: Vec<DoryInitShareMsg> = network.receive_responses()?;
             let num_vars = init_msgs[0].0;
             let nu = compute_nu(num_vars, sigma);
+            let reconstruct_v2 = matches!(blocked_gt_strategy, BlockedGtStrategy::CoordinatorRecompute);
 
             let rows_len = init_msgs[0].1.len();
             let mut row_commitments = vec![G1Projective::zero(); rows_len];
-            let mut v2 = vec![G2Projective::zero(); init_msgs[0].2.len()];
+            let mut v2 = reconstruct_v2.then(|| vec![G2Projective::zero(); init_msgs[0].2.len()]);
             for (_nv, shares, v2_shares) in &init_msgs {
                 debug_assert_eq!(*_nv, num_vars);
                 for (acc, s) in row_commitments.iter_mut().zip(shares.iter()) {
                     *acc += s.into_group();
                 }
-                for (acc, s) in v2.iter_mut().zip(v2_shares.iter()) {
-                    *acc += s.into_group();
+                if let Some(v2_acc) = v2.as_mut() {
+                    for (acc, s) in v2_acc.iter_mut().zip(v2_shares.iter()) {
+                        *acc += s.into_group();
+                    }
                 }
             }
             let (row_commitments_affine, raw_masks) = mask_row_commitments(&row_commitments, setup);
+            let mut folded_masks = raw_masks.clone();
+            if nu < sigma {
+                folded_masks.resize(1 << sigma, Fr::zero());
+            }
+            let mask_shares = share_mask_scalars(&folded_masks);
+            let requests = vec![
+                (row_commitments_affine.clone(), mask_shares[0].clone()),
+                (row_commitments_affine.clone(), mask_shares[1].clone()),
+                (row_commitments_affine.clone(), mask_shares[2].clone()),
+            ];
             {
                 let _broadcast_span = info_span!("masked_rows_broadcast").entered();
-                network.broadcast_request(row_commitments_affine)?;
+                network.send_requests_to_workers(requests)?;
             }
 
             let point_wrapped: Vec<_> = opening_point
@@ -367,10 +419,6 @@ where
             let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
             let l_vec: Vec<Fr> = l_vec_w.iter().map(ark_to_jolt).collect();
             let r_vec: Vec<Fr> = r_vec_w.iter().map(ark_to_jolt).collect();
-            let mut folded_masks = raw_masks.clone();
-            if nu < sigma {
-                folded_masks.resize(1 << sigma, Fr::zero());
-            }
             (
                 row_commitments,
                 v2,
@@ -401,19 +449,25 @@ where
             let _span = info_span!("vmv_receive").entered();
             network.receive_responses()?
         };
-        let ((vmv_c_masked, d2), e1_masked) = combine_vmv_shares(&vmv_shares)?;
-        let blocked_vmv_c = {
-            let _span = info_span!("vmv_local_recompute").entered();
-            let _ = vmv_c_masked;
-            compute_blocked_vmv_c(
-                blocked_gt_strategy,
-                &v1_pub,
-                &v2,
-                Some(BlockedVmvCorrectionInput {
-                    row_mask_scalars: &row_mask_state.raw_masks,
-                    worker_shared_v_vec_len: v2.len(),
-                }),
-            )?
+        let ((vmv_c_masked, d2), e1_masked, vmv_c_correction_scalar) = combine_vmv_shares(&vmv_shares)?;
+        let blocked_vmv_c = match blocked_gt_strategy {
+            BlockedGtStrategy::CoordinatorRecompute => {
+                let _span = info_span!("vmv_local_recompute").entered();
+                let v2_ref = v2
+                    .as_ref()
+                    .expect("coordinator recompute strategy requires reconstructed v2");
+                let _ = vmv_c_masked;
+                compute_blocked_vmv_c(
+                    blocked_gt_strategy,
+                    &v1_pub,
+                    v2_ref,
+                    Some(BlockedVmvCorrectionInput {
+                        row_mask_scalars: &row_mask_state.raw_masks,
+                        worker_shared_v_vec_len: v2_ref.len(),
+                    }),
+                )?
+            }
+            BlockedGtStrategy::MpcCorrection => correct_blocked_vmv_c_from_mpc(vmv_c_masked, vmv_c_correction_scalar, setup)?,
         };
         let e1 = correct_masked_g1_term(e1_masked, &row_mask_state.raw_masks, &s2[..row_mask_state.raw_masks.len()], setup);
 
@@ -530,29 +584,55 @@ where
             {
                 let _span = tracing::trace_span!("coordinator_v1v2_update", n2).entered();
                 jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
-                jolt_optimizations::vector_add_scalar_mul_g2_online(&mut v2, &g2_all[..(1 << curr_rounds)], beta_inv);
+                if let Some(v2_mut) = v2.as_mut() {
+                    jolt_optimizations::vector_add_scalar_mul_g2_online(v2_mut, &g2_all[..(1 << curr_rounds)], beta_inv);
+                }
             }
 
             let second_msgs: Vec<DorySecondReduceShareMsg> = {
                 let _span = tracing::trace_span!("second_round_receive", n2).entered();
                 network.receive_responses()?
             };
-            let ((combined_c_plus, combined_c_minus), (e2_plus, e2_minus), (e1_plus_masked, e1_minus_masked)) =
+            let (
+                (combined_c_plus, combined_c_minus),
+                (e2_plus, e2_minus),
+                (e1_plus_masked, e1_minus_masked),
+                (c_plus_correction_point, c_minus_correction_point),
+            ) =
                 combine_second_reduce_shares(&second_msgs)?;
-            let (blocked_c_plus, blocked_c_minus) = {
-                let _span = tracing::trace_span!("second_round_local_recompute", n2).entered();
-                let _ = (combined_c_plus, combined_c_minus);
-                compute_blocked_second_terms(
-                    blocked_gt_strategy,
-                    &v1_pub,
-                    &v2,
-                    n2,
-                    Some(BlockedSecondCorrectionInput {
-                        row_mask_scalars: &row_mask_state.folded_masks,
-                        worker_shared_folded_v2_len: v2.len(),
-                        split_index: n2,
-                    }),
-                )?
+            let (blocked_c_plus, blocked_c_minus) = match blocked_gt_strategy {
+                BlockedGtStrategy::CoordinatorRecompute => {
+                    let _span = tracing::trace_span!("second_round_local_recompute", n2).entered();
+                    let v2_ref = v2
+                        .as_ref()
+                        .expect("coordinator recompute strategy requires reconstructed v2");
+                    let _ = (combined_c_plus, combined_c_minus);
+                    compute_blocked_second_terms(
+                        blocked_gt_strategy,
+                        &v1_pub,
+                        v2_ref,
+                        n2,
+                        Some(BlockedSecondCorrectionInput {
+                            row_mask_scalars: &row_mask_state.folded_masks,
+                            worker_shared_folded_v2_len: v2_ref.len(),
+                            split_index: n2,
+                        }),
+                    )?
+                }
+                BlockedGtStrategy::MpcCorrection => (
+                    correct_blocked_second_term_from_mpc(
+                        "blocked_second_c_plus_mpc",
+                        combined_c_plus,
+                        c_plus_correction_point,
+                        setup,
+                    )?,
+                    correct_blocked_second_term_from_mpc(
+                        "blocked_second_c_minus_mpc",
+                        combined_c_minus,
+                        c_minus_correction_point,
+                        setup,
+                    )?,
+                ),
             };
             let (s2_l, s2_r) = s2.split_at(n2);
             let (mask_left, mask_right) = row_mask_state.folded_masks.split_at(n2);
@@ -606,9 +686,11 @@ where
                 let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
                 jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
                 v1_pub.truncate(n2);
-                let (v2_l_mut, v2_r_ref) = v2.split_at_mut(n2);
-                jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
-                v2.truncate(n2);
+                if let Some(v2_mut) = v2.as_mut() {
+                    let (v2_l_mut, v2_r_ref) = v2_mut.split_at_mut(n2);
+                    jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
+                    v2_mut.truncate(n2);
+                }
 
                 let (s1_l, s1_r) = s1.split_at(n2);
                 let (s2_l, s2_r) = s2.split_at(n2);
@@ -633,12 +715,15 @@ where
         for s in v2_shares {
             v2_from_workers += s.into_group();
         }
-        debug_assert_eq!(v2_from_workers, v2[0]);
+        if let Some(v2_recomputed) = v2.as_ref() {
+            debug_assert_eq!(v2_from_workers, v2_recomputed[0]);
+        }
 
         #[cfg(feature = "zk")]
         let scalar_product_proof = {
             let _span = info_span!("scalar_product_proof").entered();
-            let (proof, _sigma_c) = scalar_product_proof(&mut dory_transcript, setup, v1_pub[0], v2[0], zk_blinds);
+            let (proof, _sigma_c) =
+                scalar_product_proof(&mut dory_transcript, setup, v1_pub[0], v2_from_workers, zk_blinds);
             Some(proof)
         };
         #[cfg(not(feature = "zk"))]
@@ -666,7 +751,7 @@ where
                 Fr::zero()
             }
         };
-        let e2_final = v2[0] + setup.h2.0 * gamma_inv_s2;
+        let e2_final = v2_from_workers + setup.h2.0 * gamma_inv_s2;
 
         let final_message = ScalarProductMessage::<ArkG1, ArkG2> { e1: ArkG1(e1_final), e2: ArkG2(e2_final) };
         dory_transcript.append_serde(b"final_e1", &final_message.e1);
@@ -776,17 +861,19 @@ fn take_owned_public_term<T: Clone>(values: &[Option<T>], owner: PartyID, label:
     Ok(values[owner_idx].clone().unwrap())
 }
 
-fn combine_vmv_shares(msgs: &[DoryVmvShareMsg]) -> eyre::Result<((Fq12, Fq12), G1Affine)> {
+fn combine_vmv_shares(msgs: &[DoryVmvShareMsg]) -> eyre::Result<((Fq12, Fq12), G1Affine, Fr)> {
     let mut c = Fq12::one();
     let mut d2 = Fq12::one();
+    let mut correction_scalar = Fr::zero();
     let mut e1_vals = Vec::with_capacity(msgs.len());
-    for ((cs, d2s), e1) in msgs {
+    for ((cs, d2s), e1, correction_share) in msgs {
         c *= *cs;
         d2 *= *d2s;
+        correction_scalar += *correction_share;
         e1_vals.push(*e1);
     }
     let e1 = take_owned_public_term(&e1_vals, PartyID::ID0, "vmv.e1")?;
-    Ok(((c, d2), e1))
+    Ok(((c, d2), e1, correction_scalar))
 }
 
 fn combine_first_reduce_shares(
@@ -818,19 +905,23 @@ fn combine_first_reduce_shares(
 
 fn combine_second_reduce_shares(
     msgs: &[DorySecondReduceShareMsg],
-) -> eyre::Result<((Fq12, Fq12), (G2Projective, G2Projective), (G1Affine, G1Affine))> {
+) -> eyre::Result<((Fq12, Fq12), (G2Projective, G2Projective), (G1Affine, G1Affine), (G2Projective, G2Projective))> {
     let mut c_plus = Fq12::one();
     let mut c_minus = Fq12::one();
     let mut e2_plus = G2Projective::zero();
     let mut e2_minus = G2Projective::zero();
+    let mut c_plus_correction = G2Projective::zero();
+    let mut c_minus_correction = G2Projective::zero();
     let mut e1_plus_vals = Vec::with_capacity(msgs.len());
     let mut e1_minus_vals = Vec::with_capacity(msgs.len());
 
-    for (((cp, cm), (e2p, e2m)), (e1_plus, e1_minus)) in msgs {
+    for (((cp, cm), (e2p, e2m)), (e1_plus, e1_minus), (corr_plus, corr_minus)) in msgs {
         c_plus *= *cp;
         c_minus *= *cm;
         e2_plus += e2p.into_group();
         e2_minus += e2m.into_group();
+        c_plus_correction += corr_plus.into_group();
+        c_minus_correction += corr_minus.into_group();
         e1_plus_vals.push(*e1_plus);
         e1_minus_vals.push(*e1_minus);
     }
@@ -838,7 +929,7 @@ fn combine_second_reduce_shares(
     let e1_plus = take_owned_public_term(&e1_plus_vals, PartyID::ID0, "second.e1_plus")?;
     let e1_minus = take_owned_public_term(&e1_minus_vals, PartyID::ID1, "second.e1_minus")?;
 
-    Ok(((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)))
+    Ok(((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus), (c_plus_correction, c_minus_correction)))
 }
 
 // =============================================================================
