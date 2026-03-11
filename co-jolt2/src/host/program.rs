@@ -23,6 +23,7 @@ pub trait Rep3Program {
 }
 
 impl Rep3Program for Program {
+    #[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
     fn generate_trace_shares<R: RngCore>(
         &mut self,
         inputs: &[u8],

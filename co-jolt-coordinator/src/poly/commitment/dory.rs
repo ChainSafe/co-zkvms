@@ -27,6 +27,7 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::MaybeShared;
 use rayon::prelude::*;
+use tracing::info_span;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
@@ -378,6 +379,7 @@ where
             s2 = s2_next;
             curr_rounds -= 1;
         }
+        drop(_dory_loop);
 
         let gamma_ark = dory_transcript.challenge_scalar(b"gamma");
         let gamma = ark_to_jolt(&gamma_ark);

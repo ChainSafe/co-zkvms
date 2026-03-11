@@ -16,6 +16,7 @@ use jolt_core::zkvm::witness::{
 };
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::MaybeShared;
+use tracing::info_span;
 
 /// Coordinator side of the MPC DAG prover.
 ///
@@ -57,6 +58,7 @@ impl Rep3JoltDag {
             AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
 
         // --- Receive, combine, and store commitments ---
+        let _recv_commits = info_span!("receive_commitments").entered();
         Self::receive_commitments::<F, PCS, ProofTranscript, N>(&mut state, network)?;
 
         // --- Receive untrusted advice commitment from workers ---
@@ -76,6 +78,7 @@ impl Rep3JoltDag {
                 .transcript
                 .append_serializable(trusted_advice_commitment);
         }
+        drop(_recv_commits);
 
         Rep3SpartanDag::stage1_prove(&mut state, network)?;
 
@@ -83,6 +86,7 @@ impl Rep3JoltDag {
         // Stage 2: batched sumcheck
         // -------------------------------------------------------------------
 
+        let _stage2 = info_span!("stage2_prove").entered();
         let mut stages = Rep3JoltDagStages;
         let stage2_hybrid: Vec<BatchedSumcheckInstance<F, ProofTranscript>> =
             stages.stage2_instances(&mut state, network)?;
@@ -96,11 +100,13 @@ impl Rep3JoltDag {
         state
             .proofs
             .insert(ProofKeys::Stage2Sumcheck, ProofData::SumcheckProof(proof));
+        drop(_stage2);
 
         // -------------------------------------------------------------------
         // Stage 3: batched sumcheck (secret + public instances)
         // -------------------------------------------------------------------
 
+        let _stage3 = info_span!("stage3_prove").entered();
         let stage3_instances = stages.stage3_instances(&mut state, network)?;
 
         let (stage3_proof, _r_stage3) = HybridBatchedSumcheck::prove(
@@ -113,11 +119,13 @@ impl Rep3JoltDag {
             ProofKeys::Stage3Sumcheck,
             ProofData::SumcheckProof(stage3_proof),
         );
+        drop(_stage3);
 
         // -------------------------------------------------------------------
         // Stage 4: batched sumcheck (RAM + Bytecode public, Lookups RA secret)
         // -------------------------------------------------------------------
 
+        let _stage4 = info_span!("stage4_prove").entered();
         let stage4_instances = stages.stage4_instances(&mut state, network)?;
 
         if !stage4_instances.is_empty() {
@@ -132,12 +140,13 @@ impl Rep3JoltDag {
                 ProofData::SumcheckProof(stage4_proof),
             );
         }
+        drop(_stage4);
 
-        // --- Construct stub JoltProof with real commitments, deferred stages ---
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
 
+        let _stage5 = info_span!("stage5_reduce_and_prove").entered();
         let poly_keys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
         let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> = poly_keys
@@ -165,6 +174,7 @@ impl Rep3JoltDag {
                 joint_opening_proof: reduced.joint_opening_proof,
             }),
         );
+        drop(_stage5);
 
         // --- Construct JoltProof ---
         let proof = JoltProof {
