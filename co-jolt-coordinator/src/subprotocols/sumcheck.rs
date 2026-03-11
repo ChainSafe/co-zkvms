@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use eyre::Context;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -126,7 +127,7 @@ impl Rep3BatchedSumcheck {
         accumulator: &mut Rep3OpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
         network: &mut N,
-    ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>
+    ) -> eyre::Result<(SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>, Vec<F::Challenge>)>
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -208,7 +209,10 @@ impl Rep3BatchedSumcheck {
             );
         }
 
-        Ok((SumcheckInstanceProof::new(compressed_polys), r_sumcheck))
+        Ok((
+            SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new(compressed_polys),
+            r_sumcheck,
+        ))
     }
 }
 
@@ -224,7 +228,7 @@ impl HybridBatchedSumcheck {
         accumulator: &mut Rep3OpeningAccumulator<F>,
         transcript: &mut ProofTranscript,
         network: &mut N,
-    ) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>
+    ) -> eyre::Result<(SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>, Vec<F::Challenge>)>
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -306,7 +310,10 @@ impl HybridBatchedSumcheck {
             );
         }
 
-        Ok((SumcheckInstanceProof::new(compressed_polys), r_sumcheck))
+        Ok((
+            SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new(compressed_polys),
+            r_sumcheck,
+        ))
     }
 }
 

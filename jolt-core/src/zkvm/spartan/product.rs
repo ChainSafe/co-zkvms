@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -18,8 +19,12 @@ pub struct ProductVirtualizationSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualizationSumcheck<F> {
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        sm: &StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();

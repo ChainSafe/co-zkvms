@@ -14,6 +14,7 @@ use co_jolt2::zkvm::{JoltArch, Rep3JoltWorker};
 use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
 use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 
+use jolt_core::curve::Bn254Curve;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
@@ -183,7 +184,8 @@ fn dag_correct() {
         ram_K,
         rep3_proof_twist_switch_index(padded_len),
     );
-    JoltDAG::verify::<F, FS, PCS>(verifier_sm).expect("Vanilla verification of MPC proof failed");
+    JoltDAG::verify::<F, Bn254Curve, FS, PCS>(verifier_sm)
+        .expect("Vanilla verification of MPC proof failed");
 }
 
 fn rep3_proof_twist_switch_index(padded_len: usize) -> usize {

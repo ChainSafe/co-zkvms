@@ -11,6 +11,7 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,10 @@ pub fn prove_coordinator<F, ProofTranscript, N>(
     accumulator: &mut Rep3OpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
     network: &mut N,
-) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>
+) -> eyre::Result<(
+    SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>,
+    Vec<F::Challenge>,
+)>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -196,7 +200,10 @@ where
     let opening_point = coord.normalize_opening_point(&r_sumcheck);
     coord.cache_openings(accumulator, transcript, opening_point, claims);
 
-    Ok((SumcheckInstanceProof::new(compressed_polys), r_sumcheck))
+    Ok((
+        SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new(compressed_polys),
+        r_sumcheck,
+    ))
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
@@ -98,8 +99,12 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         }
     }
 
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, trace_length) = state_manager.get_verifier_data();
 

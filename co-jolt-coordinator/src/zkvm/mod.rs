@@ -6,6 +6,7 @@ pub mod registers;
 pub mod spartan;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
@@ -32,7 +33,7 @@ where
         network: &mut N,
         ram_K: usize,
         trace_length: usize,
-    ) -> eyre::Result<JoltProof<F, PCS, ProofTranscript>>;
+    ) -> eyre::Result<JoltProof<F, Bn254Curve, PCS, ProofTranscript>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
         network: &mut N,
         ram_K: usize,
         trace_length: usize,
-    ) -> eyre::Result<JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>> {
+    ) -> eyre::Result<JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>> {
         // Compute twist_sumcheck_switch_index the same way as the worker
         let T = trace_length;
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);

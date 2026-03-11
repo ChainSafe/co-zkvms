@@ -13,6 +13,7 @@ use tracing::info;
 use co_jolt2::client::ProvingClient;
 use co_jolt2::utils::tracing::init_tracing_bench;
 use co_jolt2::zkvm::JoltArch;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
@@ -103,7 +104,7 @@ fn main() -> eyre::Result<()> {
     let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_k), preprocessing.shared.bytecode.d);
 
     // Deserialize the proof
-    let proof: JoltProof<F, PCS, FS> =
+    let proof: JoltProof<F, Bn254Curve, PCS, FS> =
         CanonicalDeserialize::deserialize_compressed(&proof_bytes[..]).context("deserializing proof")?;
 
     let twist_switch = proof.twist_sumcheck_switch_index;
@@ -130,7 +131,8 @@ fn main() -> eyre::Result<()> {
         ram_k,
         twist_switch,
     );
-    JoltDAG::verify::<F, FS, PCS>(verifier_sm).map_err(|e| eyre::eyre!("{e:#}"))?;
+    JoltDAG::verify::<F, Bn254Curve, FS, PCS>(verifier_sm)
+        .map_err(|e| eyre::eyre!("{e:#}"))?;
 
     info!("proof verified successfully!");
     Ok(())

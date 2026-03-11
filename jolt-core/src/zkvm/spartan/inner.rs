@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
@@ -23,8 +24,12 @@ pub struct InnerSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
 

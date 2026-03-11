@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_core::subprotocols::blindfold::BlindFoldAccumulator;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
 use tracer::JoltDevice;
@@ -17,7 +19,7 @@ pub struct StateManager<
     PCS: CommitmentScheme<Field = F>,
 > {
     pub transcript: ProofTranscript,
-    pub proofs: BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>,
+    pub proofs: BTreeMap<ProofKeys, ProofData<F, Bn254Curve, PCS, ProofTranscript>>,
     pub commitments: Vec<PCS::Commitment>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
@@ -29,6 +31,8 @@ pub struct StateManager<
     pub pcs_setup: Option<&'a PCS::ProverSetup>,
     pub accumulator: Rep3OpeningAccumulator<F>,
     pub stage5_y_blinding: Option<F>,
+    #[cfg(feature = "zk")]
+    pub blindfold_accumulator: BlindFoldAccumulator<F, Bn254Curve>,
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
@@ -57,6 +61,8 @@ where
             pcs_setup: None,
             accumulator: Rep3OpeningAccumulator::new(),
             stage5_y_blinding: None,
+            #[cfg(feature = "zk")]
+            blindfold_accumulator: BlindFoldAccumulator::new(),
         }
     }
 

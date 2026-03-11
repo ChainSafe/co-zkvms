@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
@@ -14,6 +15,9 @@ pub struct Rep3OpeningAccumulator<F: JoltField> {
     pub openings: BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>,
     pub sumchecks: Vec<Rep3CoordinatorReductionSumcheck<F>>,
     pub opening_proof_reduction_claims: Vec<F>,
+    pending_claims: Vec<F>,
+    pending_claim_ids: Vec<OpeningId>,
+    zk_mode: bool,
 }
 
 impl<F: JoltField> Rep3OpeningAccumulator<F> {
@@ -22,6 +26,20 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             openings: BTreeMap::new(),
             sumchecks: Vec::new(),
             opening_proof_reduction_claims: Vec::new(),
+            pending_claims: Vec::new(),
+            pending_claim_ids: Vec::new(),
+            zk_mode: false,
+        }
+    }
+
+    pub fn new_zk() -> Self {
+        Self {
+            openings: BTreeMap::new(),
+            sumchecks: Vec::new(),
+            opening_proof_reduction_claims: Vec::new(),
+            pending_claims: Vec::new(),
+            pending_claim_ids: Vec::new(),
+            zk_mode: true,
         }
     }
 
@@ -35,9 +53,18 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         claims: Vec<F>,
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        claims
-            .iter()
-            .for_each(|claim| transcript.append_scalar(claim));
+        if self.zk_mode {
+            self.pending_claims.extend(claims.iter().copied());
+            self.pending_claim_ids.extend(
+                polynomials
+                    .iter()
+                    .map(|poly| OpeningId::Committed(*poly, sumcheck)),
+            );
+        } else {
+            claims
+                .iter()
+                .for_each(|claim| transcript.append_scalar(claim));
+        }
 
         let r_concat: Vec<F::Challenge> = r_address
             .iter()
@@ -65,7 +92,16 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         claims: Vec<F>,
     ) {
         assert_eq!(polynomials.len(), claims.len());
-        transcript.append_scalars(&claims);
+        if self.zk_mode {
+            self.pending_claims.extend(claims.iter().copied());
+            self.pending_claim_ids.extend(
+                polynomials
+                    .iter()
+                    .map(|poly| OpeningId::Committed(*poly, sumcheck)),
+            );
+        } else {
+            transcript.append_scalars(&claims);
+        }
 
         self.sumchecks
             .push(Rep3CoordinatorReductionSumcheck::new_dense(
@@ -90,11 +126,32 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
+        if self.zk_mode {
+            self.pending_claims.push(claim);
+            self.pending_claim_ids
+                .push(OpeningId::Virtual(polynomial, sumcheck));
+        } else {
+            transcript.append_scalar(&claim);
+        }
         self.openings.insert(
             OpeningId::Virtual(polynomial, sumcheck),
             (opening_point, claim),
         );
+    }
+
+    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(&claim);
+        }
+        self.pending_claim_ids.clear();
+    }
+
+    pub fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
+    }
+
+    pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
+        std::mem::take(&mut self.pending_claim_ids)
     }
 
     pub fn get_virtual_polynomial_opening(
@@ -201,6 +258,11 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             }
         }
 
+        let opening_ids: Vec<OpeningId> = rlc_map
+            .keys()
+            .map(|poly| OpeningId::Committed(*poly, SumcheckId::OpeningReduction))
+            .collect();
+        let constraint_coeffs: Vec<F> = rlc_map.values().copied().collect();
         let (rlc_coeffs_vec, commitments_vec): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
             .iter()
             .map(|(poly_label, rlc_coeff)| {
@@ -235,6 +297,9 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             sumcheck_claims,
             joint_opening_proof,
             y_blinding,
+            opening_ids,
+            constraint_coeffs,
+            joint_claim,
         })
     }
 }
@@ -250,10 +315,13 @@ pub struct ReducedOpeningProof<
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub sumcheck_proof: SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
     pub y_blinding: Option<F>,
+    pub opening_ids: Vec<OpeningId>,
+    pub constraint_coeffs: Vec<F>,
+    pub joint_claim: F,
 }
 
 pub struct Rep3CoordinatorReductionSumcheck<F: JoltField> {

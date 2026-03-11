@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
@@ -17,10 +18,11 @@ impl JoltDAG {
     pub fn verify<
         'a,
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
+        mut state_manager: StateManager<'a, F, C, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         state_manager.fiat_shamir_preamble();
 
@@ -204,10 +206,11 @@ impl JoltDAG {
 
     fn verify_trusted_advice_proofs<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &StateManager<'_, F, C, ProofTranscript, PCS>,
         verifier_setup: &PCS::VerifierSetup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
@@ -239,10 +242,11 @@ impl JoltDAG {
 
     fn verify_untrusted_advice_proofs<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &StateManager<'_, F, C, ProofTranscript, PCS>,
         verifier_setup: &PCS::VerifierSetup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {

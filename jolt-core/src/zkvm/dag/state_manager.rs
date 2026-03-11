@@ -2,11 +2,13 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     OpeningPoint, ReducedOpeningProof, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::subprotocols::blindfold::BlindFoldProof;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::proof_serialization::JoltProof;
@@ -27,13 +29,19 @@ pub enum ProofKeys {
     UntrustedAdviceProof,
 }
 
-pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
-    SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
-    ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
+pub enum ProofData<
+    F: JoltField,
+    C: JoltCurve,
+    PCS: CommitmentScheme<Field = F>,
+    ProofTranscript: Transcript,
+> {
+    SumcheckProof(SumcheckInstanceProof<F, C, ProofTranscript>),
+    ReducedOpeningProof(ReducedOpeningProof<F, C, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
 }
 
-pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
+pub type Proofs<F, C, PCS, ProofTranscript> =
+    BTreeMap<ProofKeys, ProofData<F, C, PCS, ProofTranscript>>;
 
 // ---------------------------------------------------------------------------
 // Vanilla verifier StateManager
@@ -42,14 +50,17 @@ pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS,
 pub struct StateManager<
     'a,
     F: JoltField,
+    C: JoltCurve,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 > {
     pub transcript: Rc<RefCell<ProofTranscript>>,
-    pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
+    pub proofs: Rc<RefCell<Proofs<F, C, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trusted_advice_commitment: Option<PCS::Commitment>,
+    #[cfg(feature = "zk")]
+    pub blindfold_proof: Option<BlindFoldProof<F, C>>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub trace_length: usize,
@@ -58,14 +69,15 @@ pub struct StateManager<
     accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
 }
 
-impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F, C, ProofTranscript, PCS> StateManager<'a, F, C, ProofTranscript, PCS>
 where
     F: JoltField,
+    C: JoltCurve,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
     pub fn from_proof(
-        proof: JoltProof<F, PCS, ProofTranscript>,
+        proof: JoltProof<F, C, PCS, ProofTranscript>,
         preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
         program_io: JoltDevice,
         ram_K: usize,
@@ -81,6 +93,8 @@ where
             commitments: Rc::new(RefCell::new(proof.commitments)),
             untrusted_advice_commitment: proof.untrusted_advice_commitment,
             trusted_advice_commitment: None,
+            #[cfg(feature = "zk")]
+            blindfold_proof: proof.blindfold_proof,
             ram_K,
             twist_sumcheck_switch_index,
             trace_length: proof.trace_length,

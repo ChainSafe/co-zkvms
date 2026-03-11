@@ -17,6 +17,7 @@ use super::{
     multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
@@ -155,6 +156,20 @@ pub enum OpeningId {
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+
+pub trait OpeningAccumulator<F: JoltField> {
+    fn get_virtual_polynomial_opening(
+        &self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
+
+    fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
+}
 
 #[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>
@@ -436,6 +451,24 @@ where
     }
 }
 
+impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
+    fn get_virtual_polynomial_opening(
+        &self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        ProverOpeningAccumulator::get_virtual_polynomial_opening(self, polynomial, sumcheck)
+    }
+
+    fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        ProverOpeningAccumulator::get_committed_polynomial_opening(self, polynomial, sumcheck)
+    }
+}
+
 /// Accumulates openings encountered by the verifier over the course of Jolt,
 /// so that they can all be reduced to a single opening proof verification using sumcheck.
 pub struct VerifierOpeningAccumulator<F>
@@ -449,10 +482,11 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct ReducedOpeningProof<
     F: JoltField,
+    C: JoltCurve,
     PCS: CommitmentScheme<Field = F>,
     ProofTranscript: Transcript,
 > {
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub sumcheck_proof: SumcheckInstanceProof<F, C, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
     #[cfg(test)]
@@ -634,11 +668,15 @@ where
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_verify<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
-        reduced_opening_proof: &ReducedOpeningProof<F, PCS, ProofTranscript>,
+        reduced_opening_proof: &ReducedOpeningProof<F, C, PCS, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let total_challenges_needed: usize = self
@@ -757,9 +795,9 @@ where
     }
 
     /// Verifies the sumcheck proven in batch opening reduction.
-    fn verify_batch_opening_reduction<ProofTranscript: Transcript>(
+    fn verify_batch_opening_reduction<C: JoltCurve, ProofTranscript: Transcript>(
         &self,
-        sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
+        sumcheck_proof: &SumcheckInstanceProof<F, C, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = self
@@ -771,5 +809,23 @@ where
             })
             .collect();
         BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript)
+    }
+}
+
+impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
+    fn get_virtual_polynomial_opening(
+        &self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        VerifierOpeningAccumulator::get_virtual_polynomial_opening(self, polynomial, sumcheck)
+    }
+
+    fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        VerifierOpeningAccumulator::get_committed_polynomial_opening(self, polynomial, sumcheck)
     }
 }

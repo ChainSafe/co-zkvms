@@ -1,3 +1,4 @@
+use crate::curve::JoltCurve;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -263,8 +264,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         }
     }
 
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, trace_length) = state_manager.get_verifier_data();
         let accumulator = state_manager.get_verifier_accumulator();

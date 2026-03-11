@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use strum::{EnumCount, IntoEnumIterator};
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -35,9 +36,13 @@ impl<F: JoltField> SpartanDag<F> {
         }
     }
 
-    pub fn stage1_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn stage1_verify<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         let key = UniformSpartanKey::<F>::new(self.padded_trace_length);
         let num_rounds_x = key.num_rows_bits();
@@ -163,23 +168,25 @@ impl<F: JoltField> SpartanDag<F> {
     }
 
     pub fn stage2_verifier_instances<
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::spartan::inner::InnerSumcheck;
-        let inner = InnerSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let inner = InnerSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(inner)]
     }
 
     pub fn stage3_verifier_instances<
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::spartan::pc::PCSumcheck;
         use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
@@ -208,7 +215,11 @@ impl<F: JoltField> SpartanDag<F> {
             gamma_pc,
             r_cycle_point.r.len(),
         );
-        let spartan_product = ProductVirtualizationSumcheck::<F>::new_verifier(sm);
+        let spartan_product = ProductVirtualizationSumcheck::<F>::new_verifier::<
+            C,
+            ProofTranscript,
+            PCS,
+        >(sm);
 
         vec![Box::new(spartan_pc), Box::new(spartan_product)]
     }
@@ -224,27 +235,29 @@ pub struct RegistersDag;
 impl RegistersDag {
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::registers::read_write_checking::RegistersReadWriteChecking;
-        let rwc = RegistersReadWriteChecking::new_verifier::<ProofTranscript, PCS>(sm);
+        let rwc = RegistersReadWriteChecking::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(rwc)]
     }
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::registers::val_evaluation::ValEvaluationSumcheck;
-        let val_eval = ValEvaluationSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let val_eval = ValEvaluationSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(val_eval)]
     }
 }
@@ -260,10 +273,11 @@ pub struct RamDag {
 impl RamDag {
     pub fn new_verifier<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        sm: &StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let initial_ram_state = crate::zkvm::ram::build_initial_memory_state(
             &sm.preprocessing.shared.ram,
@@ -275,11 +289,12 @@ impl RamDag {
 
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::output_check::OutputSumcheck;
         use crate::zkvm::ram::raf_evaluation::RafEvaluationSumcheck;
@@ -302,30 +317,33 @@ impl RamDag {
             sm.program_io.memory_layout.trusted_advice_start,
             ra_claim,
         );
-        let rwc = RamReadWriteChecking::new_verifier::<ProofTranscript, PCS>(sm);
-        let output = OutputSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let rwc = RamReadWriteChecking::new_verifier::<C, ProofTranscript, PCS>(sm);
+        let output = OutputSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
 
         vec![Box::new(raf), Box::new(rwc), Box::new(output)]
     }
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
         use crate::zkvm::ram::output_check::ValFinalSumcheck;
         use crate::zkvm::ram::val_evaluation::ValEvaluationSumcheck;
 
-        let val_eval = ValEvaluationSumcheck::new_verifier::<ProofTranscript, PCS>(
+        let val_eval = ValEvaluationSumcheck::new_verifier::<C, ProofTranscript, PCS>(
             &self.initial_ram_state,
             sm,
         );
-        let val_final =
-            ValFinalSumcheck::new_verifier::<ProofTranscript, PCS>(&self.initial_ram_state, sm);
+        let val_final = ValFinalSumcheck::new_verifier::<C, ProofTranscript, PCS>(
+            &self.initial_ram_state,
+            sm,
+        );
         let log_T = sm.trace_length.log_2();
         let hamming_bool = HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
 
@@ -338,11 +356,12 @@ impl RamDag {
 
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::booleanity::BooleanitySumcheck;
         use crate::zkvm::ram::hamming_weight::HammingWeightSumcheck;
@@ -458,11 +477,12 @@ pub struct LookupsDag;
 impl LookupsDag {
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::booleanity::BooleanitySumcheck;
         use crate::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -497,11 +517,12 @@ impl LookupsDag {
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::hamming_weight::HammingWeightSumcheck;
         use crate::zkvm::instruction_lookups::read_raf_checking::ReadRafSumcheck;
@@ -553,11 +574,12 @@ impl LookupsDag {
 
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::ra_virtual::InstructionRaSumcheck;
         use crate::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -589,11 +611,12 @@ pub struct BytecodeDag;
 impl BytecodeDag {
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::bytecode::booleanity::BooleanitySumcheck as BytecodeBooleanity;
         use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck as BytecodeHammingWeight;

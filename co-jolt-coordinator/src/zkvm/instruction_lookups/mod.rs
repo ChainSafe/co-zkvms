@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -52,7 +53,10 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     pub fn stage4_prove_coordinator<ProofTranscript, PCS, N>(
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
-    ) -> eyre::Result<Option<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>>
+    ) -> eyre::Result<Option<(
+        SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>,
+        Vec<F::Challenge>,
+    )>>
     where
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,

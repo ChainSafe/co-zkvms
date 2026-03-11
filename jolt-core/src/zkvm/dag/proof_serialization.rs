@@ -10,11 +10,13 @@ use num::FromPrimitive;
 
 use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
     },
+    subprotocols::blindfold::BlindFoldProof,
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
@@ -23,10 +25,12 @@ use crate::{
     },
 };
 
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
-    pub proofs: Proofs<F, PCS, FS>,
+    pub proofs: Proofs<F, C, PCS, FS>,
+    #[cfg(feature = "zk")]
+    pub blindfold_proof: Option<BlindFoldProof<F, C>>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -34,8 +38,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub twist_sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for JoltProof<F, C, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -54,6 +58,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.untrusted_advice_commitment
             .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof
+            .serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
         self.twist_sumcheck_switch_index
@@ -65,6 +72,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.commitments.serialized_size(compress)
             + self.untrusted_advice_commitment.serialized_size(compress)
             + self.proofs.serialized_size(compress)
+            + {
+                #[cfg(feature = "zk")]
+                {
+                    self.blindfold_proof.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    0
+                }
+            }
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
             + self.bytecode_d.serialized_size(compress)
@@ -72,14 +89,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for JoltProof<F, C, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
         self.commitments.check()?;
         self.untrusted_advice_commitment.check()?;
         self.proofs.check()?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
         self.bytecode_d.check()?;
@@ -88,8 +107,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for JoltProof<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -106,7 +125,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_commitment =
             Option::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let proofs =
+            Proofs::<F, C, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+        #[cfg(feature = "zk")]
+        let blindfold_proof =
+            Option::<BlindFoldProof<F, C>>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -117,6 +140,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             commitments,
             untrusted_advice_commitment,
             proofs,
+            #[cfg(feature = "zk")]
+            blindfold_proof,
             trace_length,
             ram_K,
             bytecode_d,
@@ -125,7 +150,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {}
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    JoltProof<F, C, PCS, FS>
+{
+}
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
@@ -346,8 +374,8 @@ impl CanonicalDeserialize for ProofKeys {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for ProofData<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalSerialize for ProofData<F, C, PCS, FS>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -379,16 +407,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for ProofData<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
+    for ProofData<F, C, PCS, FS>
 {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for ProofData<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript>
+    CanonicalDeserialize for ProofData<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,

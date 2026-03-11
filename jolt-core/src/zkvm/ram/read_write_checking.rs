@@ -1,6 +1,7 @@
 use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::curve::JoltCurve;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
@@ -361,8 +362,12 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         }
     }
 
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<
+        C: JoltCurve,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let (_, _, T) = state_manager.get_verifier_data();

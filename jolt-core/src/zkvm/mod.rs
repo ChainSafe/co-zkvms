@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    curve::Bn254Curve,
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     transcripts::Transcript,
@@ -240,7 +241,7 @@ impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
 
 pub struct JoltRV64IMAC;
 impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {}
-pub type RV64IMACJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub type RV64IMACJoltProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Blake2bTranscript;

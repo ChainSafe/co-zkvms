@@ -5,10 +5,12 @@ use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumche
 use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::spartan::Rep3SpartanDag;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::ReducedOpeningProof;
+use jolt_core::subprotocols::blindfold::OpeningProofData;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::witness::{
@@ -30,7 +32,7 @@ impl Rep3JoltDag {
     pub fn prove<'a, F, ProofTranscript, PCS, N>(
         mut state: StateManager<'a, F, ProofTranscript, PCS>,
         network: &mut N,
-    ) -> eyre::Result<JoltProof<F, PCS, ProofTranscript>>
+    ) -> eyre::Result<JoltProof<F, Bn254Curve, PCS, ProofTranscript>>
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -166,9 +168,25 @@ impl Rep3JoltDag {
                 network,
             )?;
         state.stage5_y_blinding = reduced.y_blinding;
+        #[cfg(feature = "zk")]
+        if let Some(y_blinding) = reduced.y_blinding {
+            state
+                .blindfold_accumulator
+                .set_opening_proof_data(OpeningProofData {
+                    opening_ids: reduced.opening_ids.clone(),
+                    constraint_coeffs: reduced.constraint_coeffs.clone(),
+                    joint_claim: reduced.joint_claim,
+                    y_blinding,
+                });
+        }
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(ReducedOpeningProof {
+            ProofData::ReducedOpeningProof(ReducedOpeningProof::<
+                F,
+                Bn254Curve,
+                PCS,
+                ProofTranscript,
+            > {
                 sumcheck_proof: reduced.sumcheck_proof,
                 sumcheck_claims: reduced.sumcheck_claims,
                 joint_opening_proof: reduced.joint_opening_proof,
@@ -181,6 +199,8 @@ impl Rep3JoltDag {
             opening_claims: Claims(std::mem::take(&mut state.accumulator.openings)),
             commitments: std::mem::take(&mut state.commitments),
             proofs: std::mem::take(&mut state.proofs),
+            #[cfg(feature = "zk")]
+            blindfold_proof: None,
             untrusted_advice_commitment: state.untrusted_advice_commitment.take(),
             trace_length,
             ram_K: state.ram_K,
