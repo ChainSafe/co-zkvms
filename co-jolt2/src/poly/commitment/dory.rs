@@ -8,10 +8,7 @@ use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
-use dory::primitives::{
-    arithmetic::PairingCurve,
-    poly::compute_left_right_vectors,
-};
+use dory::primitives::{arithmetic::PairingCurve, poly::compute_left_right_vectors};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -46,6 +43,7 @@ type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, O
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg);
+type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
 
 fn owns_public_vmv_e1(party_id: PartyID) -> bool {
     party_id == PartyID::ID0
@@ -73,9 +71,7 @@ fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
 
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    num_vars
-        .checked_sub(sigma)
-        .expect("Dory opening point must have at least sigma coordinates")
+    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
 }
 
 // =============================================================================
@@ -261,18 +257,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             }
         };
 
-        let row_commit_shares_affine: Vec<G1Affine> = G1Projective::normalize_batch(&row_commit_shares);
-
-        network.send_response((num_vars, row_commit_shares_affine))?;
-
-        // 2) receive reconstructed row commitments from coordinator
-        let row_commitments_affine: Vec<G1Affine> = network.receive_request()?;
-        let mut padded_row_commitments_affine = row_commitments_affine.clone();
-        if nu < sigma {
-            padded_row_commitments_affine.resize(1 << sigma, G1Affine::zero());
-        }
-
-        // 3) compute v_vec share — dispatch based on variant
+        // 2) compute v_vec share — dispatch based on variant
         let v_vec_share: Vec<Fr> = match poly {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
                 let mut v = vec![<Fr as ark_ff::Zero>::zero(); num_columns];
@@ -302,6 +287,24 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                 return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
             }
         };
+        let row_commit_shares_affine: Vec<G1Affine> = G1Projective::normalize_batch(&row_commit_shares);
+        let mut v2_share: Vec<G2Projective> = {
+            let _span = tracing::info_span!("v2_init").entered();
+            fixed_base_vector_msm_g2(setup, &v_vec_share)
+        };
+        let v2_share_affine = G2Projective::normalize_batch(&v2_share);
+
+        network.send_response((num_vars, row_commit_shares_affine, v2_share_affine))?;
+
+        // 3) receive masked row commitments from coordinator
+        let row_commitments_affine: Vec<G1Affine> = {
+            let _span = tracing::info_span!("receive_masked_rows").entered();
+            network.receive_request()?
+        };
+        let mut padded_row_commitments_affine = row_commitments_affine.clone();
+        if nu < sigma {
+            padded_row_commitments_affine.resize(1 << sigma, G1Affine::zero());
+        }
 
         // c_share + d2_share: MSMs + pairings for VMV message
         let ((c_share, d2_share), public_e1) = {
@@ -321,12 +324,6 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         };
 
         network.send_response(((c_share, d2_share), public_e1))?;
-
-        // v2_share[j] = g_fin * v_vec_share[j]  (parallelized)
-        let mut v2_share: Vec<G2Projective> = {
-            let _span = tracing::info_span!("v2_init").entered();
-            fixed_base_vector_msm_g2(setup, &v_vec_share)
-        };
 
         // s1 = R, s2 = L (matches dory vmv_state_to_dory_prover_state)
         let mut s1 = r_vec;
@@ -374,7 +371,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             network.send_response((d2_share_round, public_first_round))?;
 
             // Receive beta challenge from coordinator
-            let (beta, beta_inv): (Fr, Fr) = network.receive_request()?;
+            let (beta, beta_inv): (Fr, Fr) = {
+                let _span = tracing::trace_span!("wait_beta", n2).entered();
+                network.receive_request()?
+            };
 
             // Update v1/v2 with generators
             {
@@ -422,7 +422,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             network.send_response((share_second_round, public_second_round))?;
 
             // Receive alpha challenge from coordinator
-            let (alpha, alpha_inv): (Fr, Fr) = network.receive_request()?;
+            let (alpha, alpha_inv): (Fr, Fr) = {
+                let _span = tracing::trace_span!("wait_alpha", n2).entered();
+                network.receive_request()?
+            };
 
             // Fold v1, v2, s1, s2 — in-place GLV-accelerated for group elements
             {
@@ -698,16 +701,15 @@ fn rows_to_commitment(
     let row_commitments_wrapped: Vec<ArkG1> = row_commitments.into_iter().map(ArkG1).collect();
 
     let _pairing_span = tracing::trace_span!("multi_pairing").entered();
-    let commitment_share =
-        <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments_wrapped, &setup.g2_vec[..row_commitments_wrapped.len()]);
+    let commitment_share = <BN254 as PairingCurve>::multi_pair_g2_setup(
+        &row_commitments_wrapped,
+        &setup.g2_vec[..row_commitments_wrapped.len()],
+    );
     drop(_pairing_span);
 
     let hint_share = DoryOpeningProofHint::new(row_commitments_wrapped);
 
-    Ok((
-        MaybeShared::Shared(DoryCommitment(commitment_share)),
-        MaybeShared::Shared(hint_share),
-    ))
+    Ok((MaybeShared::Shared(DoryCommitment(commitment_share)), MaybeShared::Shared(hint_share)))
 }
 
 /// Zero-copy view of `setup.core.g1_vec` as `&[G1Projective]`.
@@ -1014,10 +1016,7 @@ fn fixed_base_vector_msm_g2(
     }
 
     let g_fin = setup.g2_vec[0].0;
-    scalars
-        .par_iter()
-        .map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[g_fin])[0])
-        .collect()
+    scalars.par_iter().map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[g_fin])[0]).collect()
 }
 
 pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
@@ -1222,7 +1221,13 @@ mod tests {
                     Fr,
                     Blake2bTranscript,
                 >>::coordinate_prove(
-                    &coord_setup, &mut transcript, net, &coord_point, &coord_claim, &coord_commitment
+                    &coord_setup,
+                    &mut transcript,
+                    net,
+                    &coord_point,
+                    &coord_claim,
+                    &coord_commitment,
+                    None,
                 )
                 .map(|(proof, _y_blinding)| proof)
             },
@@ -1318,7 +1323,13 @@ mod tests {
                     Fr,
                     Blake2bTranscript,
                 >>::coordinate_prove(
-                    &coord_setup, &mut transcript, net, &coord_point, &coord_claim, &coord_commitment
+                    &coord_setup,
+                    &mut transcript,
+                    net,
+                    &coord_point,
+                    &coord_claim,
+                    &coord_commitment,
+                    None,
                 )
                 .map(|(proof, _y_blinding)| proof)
             },

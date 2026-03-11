@@ -4,9 +4,9 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, One, Zero};
 #[cfg(feature = "zk")]
 use ark_std::UniformRand;
-use dory::messages::{FirstReduceMessage, ScalarProductMessage, SecondReduceMessage, VMVMessage};
 #[cfg(feature = "zk")]
 use dory::messages::ScalarProductProof;
+use dory::messages::{FirstReduceMessage, ScalarProductMessage, SecondReduceMessage, VMVMessage};
 #[cfg(feature = "zk")]
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::poly::compute_left_right_vectors;
@@ -18,8 +18,8 @@ use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::commitment::dory::{
-    ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkG1, ArkG2, ArkGT, DoryCommitment,
-    DoryCommitmentScheme, DoryProofData, DoryOpeningProofHint, JoltToDoryTranscript,
+    ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkG1, ArkG2, ArkGT, DoryCommitment, DoryCommitmentScheme,
+    DoryOpeningProofHint, DoryProofData, JoltToDoryTranscript,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
@@ -36,12 +36,43 @@ type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, O
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg);
+type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
+
+#[derive(Clone)]
+struct RowMaskState {
+    raw_masks: Vec<Fr>,
+    folded_masks: Vec<Fr>,
+}
+
+#[derive(Clone, Copy)]
+enum BlockedGtStrategy {
+    CoordinatorRecompute,
+    #[allow(dead_code)]
+    MpcCorrection,
+}
+
+struct BlockedGtTerms {
+    c: Fq12,
+    c_plus: Fq12,
+    c_minus: Fq12,
+}
+
+#[allow(dead_code)]
+struct BlockedVmvCorrectionInput<'a> {
+    row_mask_scalars: &'a [Fr],
+    worker_shared_v_vec_len: usize,
+}
+
+#[allow(dead_code)]
+struct BlockedSecondCorrectionInput<'a> {
+    row_mask_scalars: &'a [Fr],
+    worker_shared_folded_v2_len: usize,
+    split_index: usize,
+}
 
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    num_vars
-        .checked_sub(sigma)
-        .expect("Dory opening point must have at least sigma coordinates")
+    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
 }
 
 #[cfg(feature = "zk")]
@@ -77,20 +108,12 @@ fn mask_gt(base: Fq12, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentSch
 }
 
 #[cfg(feature = "zk")]
-fn mask_g1(
-    base: G1Projective,
-    blind: Fr,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> ArkG1 {
+fn mask_g1(base: G1Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG1 {
     ArkG1(base + setup.h1.0 * blind)
 }
 
 #[cfg(feature = "zk")]
-fn mask_g2(
-    base: G2Projective,
-    blind: Fr,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> ArkG2 {
+fn mask_g2(base: G2Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG2 {
     ArkG2(base + setup.h2.0 * blind)
 }
 
@@ -102,6 +125,138 @@ fn sample_round_blinds() -> ZkRoundBlinds {
         c: [sample_fr(), sample_fr()],
         e1: [sample_fr(), sample_fr()],
         e2: [sample_fr(), sample_fr()],
+    }
+}
+
+fn blocked_gt_strategy() -> BlockedGtStrategy {
+    BlockedGtStrategy::CoordinatorRecompute
+}
+
+fn row_masks_for_commitments(len: usize) -> Vec<Fr> {
+    #[cfg(feature = "zk")]
+    {
+        (0..len).map(|_| sample_fr()).collect()
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        vec![Fr::zero(); len]
+    }
+}
+
+fn mask_row_commitments(
+    row_commitments: &[G1Projective],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> (Vec<G1Affine>, Vec<Fr>) {
+    let mask_scalars = row_masks_for_commitments(row_commitments.len());
+    let masked_rows = row_commitments
+        .iter()
+        .zip(mask_scalars.iter())
+        .map(|(row, mask)| (*row + setup.h1.0 * *mask).into_affine())
+        .collect();
+    (masked_rows, mask_scalars)
+}
+
+fn dot_scalars(lhs: &[Fr], rhs: &[Fr]) -> Fr {
+    lhs.iter().zip(rhs.iter()).fold(Fr::zero(), |acc, (l, r)| acc + (*l * *r))
+}
+
+fn correct_masked_g1_term(
+    masked: G1Affine,
+    mask_scalars: &[Fr],
+    public_scalars: &[Fr],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> G1Affine {
+    let correction = setup.h1.0 * dot_scalars(mask_scalars, public_scalars);
+    (masked.into_group() - correction).into_affine()
+}
+
+fn correct_masked_d1_term(
+    masked: Fq12,
+    mask_scalars: &[Fr],
+    g2_affine: &[G2Affine],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> Fq12 {
+    if mask_scalars.iter().all(|mask| mask.is_zero()) {
+        return masked;
+    }
+    let correction_g2 = msm_g2_affine(g2_affine, mask_scalars);
+    let correction = Bn254::pairing(setup.h1.0, correction_g2.into_affine()).0;
+    masked * correction.inverse().expect("pairing correction must be invertible")
+}
+
+fn fold_mask_scalars(mask_scalars: &mut Vec<Fr>, alpha: Fr, n2: usize) {
+    let (left, right) = mask_scalars.split_at(n2);
+    let next: Vec<Fr> = (0..n2).into_par_iter().map(|i| left[i] * alpha + right[i]).collect();
+    *mask_scalars = next;
+}
+
+fn prepare_blocked_affine(v1_pub: &[G1Projective], v2: &[G2Projective]) -> (Vec<G1Affine>, Vec<G2Affine>) {
+    rayon::join(
+        || {
+            let _span = tracing::trace_span!("blocked_v1_affine_prep").entered();
+            G1Projective::normalize_batch(v1_pub)
+        },
+        || {
+            let _span = tracing::trace_span!("blocked_v2_affine_prep").entered();
+            G2Projective::normalize_batch(v2)
+        },
+    )
+}
+
+fn compute_blocked_vmv_c_from_affine(v1_affine: &[G1Affine], v2_affine: &[G2Affine]) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_vmv_c").entered();
+    multi_pairing_both_affine(v1_affine, v2_affine)
+}
+
+fn compute_blocked_vmv_c(
+    strategy: BlockedGtStrategy,
+    v1_pub: &[G1Projective],
+    v2: &[G2Projective],
+    _mpc_input: Option<BlockedVmvCorrectionInput<'_>>,
+) -> eyre::Result<Fq12> {
+    match strategy {
+        BlockedGtStrategy::CoordinatorRecompute => {
+            let (v1_affine, v2_affine) = prepare_blocked_affine(v1_pub, v2);
+            Ok(compute_blocked_vmv_c_from_affine(&v1_affine, &v2_affine))
+        }
+        BlockedGtStrategy::MpcCorrection => Err(eyre::eyre!("blocked GT MPC correction path not implemented")),
+    }
+}
+
+fn compute_blocked_second_c_plus_from_affine(
+    v1_l_aff: &[G1Affine],
+    v2_r_aff: &[G2Affine],
+) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_second_c_plus").entered();
+    multi_pairing_both_affine(v1_l_aff, v2_r_aff)
+}
+
+fn compute_blocked_second_c_minus_from_affine(
+    v1_r_aff: &[G1Affine],
+    v2_l_aff: &[G2Affine],
+) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_second_c_minus").entered();
+    multi_pairing_both_affine(v1_r_aff, v2_l_aff)
+}
+
+fn compute_blocked_second_terms(
+    strategy: BlockedGtStrategy,
+    v1_pub: &[G1Projective],
+    v2: &[G2Projective],
+    n2: usize,
+    _mpc_input: Option<BlockedSecondCorrectionInput<'_>>,
+) -> eyre::Result<(Fq12, Fq12)> {
+    match strategy {
+        BlockedGtStrategy::CoordinatorRecompute => {
+            let (v1_affine, v2_affine) = prepare_blocked_affine(v1_pub, v2);
+            let (v1_l_aff, v1_r_aff) = v1_affine.split_at(n2);
+            let (v2_l_aff, v2_r_aff) = v2_affine.split_at(n2);
+            Ok(rayon::join(
+                || compute_blocked_second_c_plus_from_affine(v1_l_aff, v2_r_aff),
+                || compute_blocked_second_c_minus_from_affine(v1_r_aff, v2_l_aff),
+            ))
+        }
+        BlockedGtStrategy::MpcCorrection => Err(eyre::eyre!("blocked GT MPC correction path not implemented")),
     }
 }
 
@@ -125,17 +280,10 @@ fn scalar_product_proof<ProofTranscript: Transcript>(
 
     let p1 = ArkGT(Bn254::pairing(d1, setup.g2_vec[0].0).0) + setup.ht.scale(&jolt_to_ark(&rp1));
     let p2 = ArkGT(Bn254::pairing(setup.g1_vec[0].0, d2).0) + setup.ht.scale(&jolt_to_ark(&rp2));
-    let q = ArkGT(Bn254::pairing(d1, v2).0)
-        + ArkGT(Bn254::pairing(v1, d2).0)
-        + setup.ht.scale(&jolt_to_ark(&rq));
+    let q = ArkGT(Bn254::pairing(d1, v2).0) + ArkGT(Bn254::pairing(v1, d2).0) + setup.ht.scale(&jolt_to_ark(&rq));
     let r = ArkGT(Bn254::pairing(d1, d2).0) + setup.ht.scale(&jolt_to_ark(&rr));
 
-    for (label, value) in [
-        (b"sigma_p1" as &[u8], &p1),
-        (b"sigma_p2", &p2),
-        (b"sigma_q", &q),
-        (b"sigma_r", &r),
-    ] {
+    for (label, value) in [(b"sigma_p1" as &[u8], &p1), (b"sigma_p2", &p2), (b"sigma_q", &q), (b"sigma_r", &r)] {
         transcript.append_serde(label, value);
     }
     let sigma_c_ark = transcript.challenge_scalar(b"sigma_c");
@@ -161,6 +309,7 @@ impl<ProofTranscript> Rep3CommitmentScheme<Fr, ProofTranscript> for DoryCommitme
 where
     ProofTranscript: Transcript,
 {
+    #[tracing::instrument(skip_all, name = "Dory::coordinate_prove")]
     fn coordinate_prove<Network>(
         setup: &Self::ProverSetup,
         transcript: &mut ProofTranscript,
@@ -168,6 +317,7 @@ where
         opening_point: &[<Fr as jolt_core::field::JoltField>::Challenge],
         claimed_opening: &Fr,
         commitment: &Self::Commitment,
+        commitment_blinding: Option<Fr>,
     ) -> eyre::Result<(Self::Proof, Option<Fr>)>
     where
         Network: Rep3NetworkCoordinator,
@@ -178,21 +328,33 @@ where
 
         let sigma = DoryGlobals::get_num_columns().log_2();
         let g1_all = setup_g1_projective(setup);
-        let (row_commitments, nu, l_vec, r_vec) = {
-            let init_msgs: Vec<(usize, Vec<G1Affine>)> = network.receive_responses()?;
+        let g2_all = setup_g2_projective(setup);
+        let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
+        let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << sigma)]);
+        let blocked_gt_strategy = blocked_gt_strategy();
+        let (row_commitments, mut v2, row_mask_state, nu, l_vec, r_vec) = {
+            let _span = info_span!("init_receive_reconstruct").entered();
+            let init_msgs: Vec<DoryInitShareMsg> = network.receive_responses()?;
             let num_vars = init_msgs[0].0;
             let nu = compute_nu(num_vars, sigma);
 
             let rows_len = init_msgs[0].1.len();
             let mut row_commitments = vec![G1Projective::zero(); rows_len];
-            for (_nv, shares) in &init_msgs {
+            let mut v2 = vec![G2Projective::zero(); init_msgs[0].2.len()];
+            for (_nv, shares, v2_shares) in &init_msgs {
                 debug_assert_eq!(*_nv, num_vars);
                 for (acc, s) in row_commitments.iter_mut().zip(shares.iter()) {
                     *acc += s.into_group();
                 }
+                for (acc, s) in v2.iter_mut().zip(v2_shares.iter()) {
+                    *acc += s.into_group();
+                }
             }
-            let row_commitments_affine = G1Projective::normalize_batch(&row_commitments);
-            network.broadcast_request(row_commitments_affine)?;
+            let (row_commitments_affine, raw_masks) = mask_row_commitments(&row_commitments, setup);
+            {
+                let _broadcast_span = info_span!("masked_rows_broadcast").entered();
+                network.broadcast_request(row_commitments_affine)?;
+            }
 
             let point_wrapped: Vec<_> = opening_point
                 .iter()
@@ -205,18 +367,60 @@ where
             let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
             let l_vec: Vec<Fr> = l_vec_w.iter().map(ark_to_jolt).collect();
             let r_vec: Vec<Fr> = r_vec_w.iter().map(ark_to_jolt).collect();
-            (row_commitments, nu, l_vec, r_vec)
+            let mut folded_masks = raw_masks.clone();
+            if nu < sigma {
+                folded_masks.resize(1 << sigma, Fr::zero());
+            }
+            (
+                row_commitments,
+                v2,
+                RowMaskState {
+                    raw_masks,
+                    folded_masks,
+                },
+                nu,
+                l_vec,
+                r_vec,
+            )
         };
 
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+        let mut padded_row_commitments = row_commitments;
+        if nu < sigma {
+            padded_row_commitments.resize(1 << sigma, G1Projective::zero());
+        }
+        let mut v1_pub: Vec<G1Projective> = padded_row_commitments;
+        let mut s1: Vec<Fr> = r_vec;
+        let mut s2: Vec<Fr> = l_vec;
+        if nu < sigma {
+            s1.resize(1 << sigma, Fr::zero());
+            s2.resize(1 << sigma, Fr::zero());
+        }
 
-        let vmv_shares: Vec<DoryVmvShareMsg> = network.receive_responses()?;
-        let ((c, d2), e1) = combine_vmv_shares(&vmv_shares)?;
+        let vmv_shares: Vec<DoryVmvShareMsg> = {
+            let _span = info_span!("vmv_receive").entered();
+            network.receive_responses()?
+        };
+        let ((vmv_c_masked, d2), e1_masked) = combine_vmv_shares(&vmv_shares)?;
+        let blocked_vmv_c = {
+            let _span = info_span!("vmv_local_recompute").entered();
+            let _ = vmv_c_masked;
+            compute_blocked_vmv_c(
+                blocked_gt_strategy,
+                &v1_pub,
+                &v2,
+                Some(BlockedVmvCorrectionInput {
+                    row_mask_scalars: &row_mask_state.raw_masks,
+                    worker_shared_v_vec_len: v2.len(),
+                }),
+            )?
+        };
+        let e1 = correct_masked_g1_term(e1_masked, &row_mask_state.raw_masks, &s2[..row_mask_state.raw_masks.len()], setup);
 
         #[cfg(feature = "zk")]
         let mut zk_blinds = ZkAccumBlinds {
             c: sample_fr(),
-            d1: Fr::zero(),
+            d1: commitment_blinding.unwrap_or_else(Fr::zero),
             d2: sample_fr(),
             e1: sample_fr(),
             e2: sample_fr(),
@@ -224,16 +428,12 @@ where
 
         #[cfg(feature = "zk")]
         let vmv_message = VMVMessage::<ArkG1, ArkGT> {
-            c: mask_gt(c, zk_blinds.c, setup),
+            c: mask_gt(blocked_vmv_c, zk_blinds.c, setup),
             d2: mask_gt(d2, zk_blinds.d2, setup),
             e1: mask_g1(e1.into_group(), zk_blinds.e1, setup),
         };
         #[cfg(not(feature = "zk"))]
-        let vmv_message = VMVMessage::<ArkG1, ArkGT> {
-            c: ArkGT(c),
-            d2: ArkGT(d2),
-            e1: ArkG1(e1.into_group()),
-        };
+        let vmv_message = VMVMessage::<ArkG1, ArkGT> { c: ArkGT(blocked_vmv_c), d2: ArkGT(d2), e1: ArkG1(e1.into_group()) };
         dory_transcript.append_serde(b"vmv_c", &vmv_message.c);
         dory_transcript.append_serde(b"vmv_d2", &vmv_message.d2);
         dory_transcript.append_serde(b"vmv_e1", &vmv_message.e1);
@@ -263,27 +463,29 @@ where
         #[cfg(not(feature = "zk"))]
         let (zk_e2, zk_y_com, zk_sigma1, zk_sigma2, y_blinding) = (None, None, None, None, None);
 
-        let mut padded_row_commitments = row_commitments;
-        if nu < sigma {
-            padded_row_commitments.resize(1 << sigma, G1Projective::zero());
-        }
-        let mut v1_pub: Vec<G1Projective> = padded_row_commitments;
-        let mut s1: Vec<Fr> = r_vec;
-        let mut s2: Vec<Fr> = l_vec;
-        if nu < sigma {
-            s1.resize(1 << sigma, Fr::zero());
-            s2.resize(1 << sigma, Fr::zero());
-        }
         let mut first_messages = Vec::with_capacity(sigma);
         let mut second_messages = Vec::with_capacity(sigma);
 
+        let mut row_mask_state = row_mask_state;
         let mut curr_rounds = sigma;
+        let _loop_span = info_span!("coordinate_reduction_loop").entered();
         while curr_rounds > 0 {
             let n2 = 1usize << (curr_rounds - 1);
 
-            let first_msgs: Vec<DoryFirstReduceShareMsg> = network.receive_responses()?;
-            let ((d2_left, d2_right), (d1_left, d1_right, e1_beta, e2_beta)) =
+            let first_msgs: Vec<DoryFirstReduceShareMsg> = {
+                let _span = tracing::trace_span!("first_round_receive", n2).entered();
+                network.receive_responses()?
+            };
+            let ((d2_left, d2_right), (d1_left_masked, d1_right_masked, e1_beta, e2_beta)) =
                 combine_first_reduce_shares(&first_msgs)?;
+            let (d1_left, d1_right) = {
+                let _span = tracing::trace_span!("first_round_local_recompute", n2).entered();
+                let (mask_left, mask_right) = row_mask_state.folded_masks.split_at(n2);
+                (
+                    correct_masked_d1_term(d1_left_masked, mask_left, &g2_affine_all[..n2], setup),
+                    correct_masked_d1_term(d1_right_masked, mask_right, &g2_affine_all[..n2], setup),
+                )
+            };
 
             #[cfg(feature = "zk")]
             let round_blinds = sample_round_blinds();
@@ -314,7 +516,10 @@ where
             let beta_ark = dory_transcript.challenge_scalar(b"beta");
             let beta = ark_to_jolt(&beta_ark);
             let beta_inv = beta.inverse().expect("beta must be invertible");
-            network.broadcast_request((beta, beta_inv))?;
+            {
+                let _span = tracing::trace_span!("beta_broadcast", n2).entered();
+                network.broadcast_request((beta, beta_inv))?;
+            }
             first_messages.push(first_msg);
 
             #[cfg(feature = "zk")]
@@ -322,16 +527,42 @@ where
                 zk_blinds.c += zk_blinds.d2 * beta + zk_blinds.d1 * beta_inv;
             }
 
-            jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
+            {
+                let _span = tracing::trace_span!("coordinator_v1v2_update", n2).entered();
+                jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
+                jolt_optimizations::vector_add_scalar_mul_g2_online(&mut v2, &g2_all[..(1 << curr_rounds)], beta_inv);
+            }
 
-            let second_msgs: Vec<DorySecondReduceShareMsg> = network.receive_responses()?;
-            let ((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)) =
+            let second_msgs: Vec<DorySecondReduceShareMsg> = {
+                let _span = tracing::trace_span!("second_round_receive", n2).entered();
+                network.receive_responses()?
+            };
+            let ((combined_c_plus, combined_c_minus), (e2_plus, e2_minus), (e1_plus_masked, e1_minus_masked)) =
                 combine_second_reduce_shares(&second_msgs)?;
+            let (blocked_c_plus, blocked_c_minus) = {
+                let _span = tracing::trace_span!("second_round_local_recompute", n2).entered();
+                let _ = (combined_c_plus, combined_c_minus);
+                compute_blocked_second_terms(
+                    blocked_gt_strategy,
+                    &v1_pub,
+                    &v2,
+                    n2,
+                    Some(BlockedSecondCorrectionInput {
+                        row_mask_scalars: &row_mask_state.folded_masks,
+                        worker_shared_folded_v2_len: v2.len(),
+                        split_index: n2,
+                    }),
+                )?
+            };
+            let (s2_l, s2_r) = s2.split_at(n2);
+            let (mask_left, mask_right) = row_mask_state.folded_masks.split_at(n2);
+            let e1_plus = correct_masked_g1_term(e1_plus_masked, mask_left, s2_r, setup);
+            let e1_minus = correct_masked_g1_term(e1_minus_masked, mask_right, s2_l, setup);
 
             #[cfg(feature = "zk")]
             let second_msg = SecondReduceMessage::<ArkG1, ArkG2, ArkGT> {
-                c_plus: mask_gt(c_plus, round_blinds.c[0], setup),
-                c_minus: mask_gt(c_minus, round_blinds.c[1], setup),
+                c_plus: mask_gt(blocked_c_plus, round_blinds.c[0], setup),
+                c_minus: mask_gt(blocked_c_minus, round_blinds.c[1], setup),
                 e1_plus: mask_g1(e1_plus.into_group(), round_blinds.e1[0], setup),
                 e1_minus: mask_g1(e1_minus.into_group(), round_blinds.e1[1], setup),
                 e2_plus: mask_g2(e2_plus, round_blinds.e2[0], setup),
@@ -339,8 +570,8 @@ where
             };
             #[cfg(not(feature = "zk"))]
             let second_msg = SecondReduceMessage::<ArkG1, ArkG2, ArkGT> {
-                c_plus: ArkGT(c_plus),
-                c_minus: ArkGT(c_minus),
+                c_plus: ArkGT(blocked_c_plus),
+                c_minus: ArkGT(blocked_c_minus),
                 e1_plus: ArkG1(e1_plus.into_group()),
                 e1_minus: ArkG1(e1_minus.into_group()),
                 e2_plus: ArkG2(e2_plus),
@@ -355,7 +586,10 @@ where
             let alpha_ark = dory_transcript.challenge_scalar(b"alpha");
             let alpha = ark_to_jolt(&alpha_ark);
             let alpha_inv = alpha.inverse().expect("alpha must be invertible");
-            network.broadcast_request((alpha, alpha_inv))?;
+            {
+                let _span = tracing::trace_span!("alpha_broadcast", n2).entered();
+                network.broadcast_request((alpha, alpha_inv))?;
+            }
             second_messages.push(second_msg);
 
             #[cfg(feature = "zk")]
@@ -367,69 +601,74 @@ where
                 zk_blinds.e2 += round_blinds.e2[0] * alpha + round_blinds.e2[1] * alpha_inv;
             }
 
-            let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
-            v1_pub.truncate(n2);
+            {
+                let _span = tracing::trace_span!("coordinator_fold", n2).entered();
+                let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
+                v1_pub.truncate(n2);
+                let (v2_l_mut, v2_r_ref) = v2.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
+                v2.truncate(n2);
 
-            let (s1_l, s1_r) = s1.split_at(n2);
-            let (s2_l, s2_r) = s2.split_at(n2);
-            let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) =
-                (0..n2).into_par_iter().map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i])).unzip();
-            s1 = s1_next;
-            s2 = s2_next;
+                let (s1_l, s1_r) = s1.split_at(n2);
+                let (s2_l, s2_r) = s2.split_at(n2);
+                let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) =
+                    (0..n2).into_par_iter().map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i])).unzip();
+                s1 = s1_next;
+                s2 = s2_next;
+                fold_mask_scalars(&mut row_mask_state.folded_masks, alpha, n2);
+            }
             curr_rounds -= 1;
         }
-        drop(_dory_loop);
-
+        drop(_loop_span);
         let gamma_ark = dory_transcript.challenge_scalar(b"gamma");
         let gamma = ark_to_jolt(&gamma_ark);
         let gamma_inv = gamma.inverse().expect("gamma must be invertible");
 
-        let v2_shares: Vec<G2Affine> = network.receive_responses()?;
-        let mut v2 = G2Projective::zero();
+        let v2_shares: Vec<G2Affine> = {
+            let _span = info_span!("final_v2_receive").entered();
+            network.receive_responses()?
+        };
+        let mut v2_from_workers = G2Projective::zero();
         for s in v2_shares {
-            v2 += s.into_group();
+            v2_from_workers += s.into_group();
         }
+        debug_assert_eq!(v2_from_workers, v2[0]);
 
         #[cfg(feature = "zk")]
         let scalar_product_proof = {
-            let (proof, _sigma_c) =
-                scalar_product_proof(&mut dory_transcript, setup, v1_pub[0], v2, zk_blinds);
+            let _span = info_span!("scalar_product_proof").entered();
+            let (proof, _sigma_c) = scalar_product_proof(&mut dory_transcript, setup, v1_pub[0], v2[0], zk_blinds);
             Some(proof)
         };
         #[cfg(not(feature = "zk"))]
         let scalar_product_proof = None;
 
-        let gamma_s1 = gamma * s1[0]
-            + {
-                #[cfg(feature = "zk")]
-                {
-                    sample_fr()
-                }
-                #[cfg(not(feature = "zk"))]
-                {
-                    Fr::zero()
-                }
-            };
+        let gamma_s1 = gamma * s1[0] + {
+            #[cfg(feature = "zk")]
+            {
+                sample_fr()
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                Fr::zero()
+            }
+        };
         let e1_final = v1_pub[0] + setup.h1.0 * gamma_s1;
 
-        let gamma_inv_s2 = gamma_inv * s2[0]
-            + {
-                #[cfg(feature = "zk")]
-                {
-                    sample_fr()
-                }
-                #[cfg(not(feature = "zk"))]
-                {
-                    Fr::zero()
-                }
-            };
-        let e2_final = v2 + setup.h2.0 * gamma_inv_s2;
-
-        let final_message = ScalarProductMessage::<ArkG1, ArkG2> {
-            e1: ArkG1(e1_final),
-            e2: ArkG2(e2_final),
+        let gamma_inv_s2 = gamma_inv * s2[0] + {
+            #[cfg(feature = "zk")]
+            {
+                sample_fr()
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                Fr::zero()
+            }
         };
+        let e2_final = v2[0] + setup.h2.0 * gamma_inv_s2;
+
+        let final_message = ScalarProductMessage::<ArkG1, ArkG2> { e1: ArkG1(e1_final), e2: ArkG2(e2_final) };
         dory_transcript.append_serde(b"final_e1", &final_message.e1);
         dory_transcript.append_serde(b"final_e2", &final_message.e2);
         let _d: jolt_core::poly::commitment::dory::ArkFr = dory_transcript.challenge_scalar(b"d");
@@ -461,6 +700,23 @@ where
         ))
     }
 
+    fn blind_transcript_commitment(
+        setup: &Self::ProverSetup,
+        commitment: Self::Commitment,
+    ) -> (Self::Commitment, Option<Fr>) {
+        #[cfg(feature = "zk")]
+        {
+            let blind = sample_fr();
+            let blinded = DoryCommitment(mask_gt(commitment.0 .0, blind, setup));
+            (blinded, Some(blind))
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _ = setup;
+            (commitment, None)
+        }
+    }
+
     fn combine_commitment_shares(commitments: &[&MaybeShared<Self::Commitment>]) -> Self::Commitment {
         let public = commitments.iter().find(|c| matches!(c, MaybeShared::Public(Some(_))));
         match public {
@@ -472,7 +728,7 @@ where
                 let mut acc = Fq12::one();
                 for c in commitments {
                     match c {
-                        MaybeShared::Shared(c) => acc *= c.0.0,
+                        MaybeShared::Shared(c) => acc *= c.0 .0,
                         _ => unreachable!(),
                     }
                 }
@@ -617,9 +873,136 @@ pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
     ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
 }
 
+/// Pairing with both sides already normalized.
+pub fn multi_pairing_both_affine(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
+    let n = ps_aff.len().min(qs_aff.len());
+    <Bn254 as ArkPairing>::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0
+}
+
 /// Pairing with pre-computed G2 affine bases.
 pub fn multi_pairing_g2_affine(ps: &[G1Projective], qs_aff: &[G2Affine]) -> Fq12 {
     let ps_aff = G1Projective::normalize_batch(ps);
     let n = ps_aff.len();
     <Bn254 as ArkPairing>::multi_pairing(ps_aff, &qs_aff[..n]).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_std::test_rng;
+    use ark_std::UniformRand;
+    use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
+    use jolt_core::transcripts::Blake2bTranscript;
+
+    fn test_setup() -> <DoryCommitmentScheme as CommitmentScheme>::ProverSetup {
+        DoryGlobals::initialize(256, 512);
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        <DoryCommitmentScheme as CommitmentScheme>::setup_prover(2 * sigma)
+    }
+
+    #[test]
+    fn dory_blinded_transcript_commitment_differs_from_raw() {
+        let mut rng = test_rng();
+        let setup = test_setup();
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let coeffs = (0..(1 << sigma)).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+        let poly = MultilinearPolynomial::from(coeffs);
+        let (commitment, _) = <DoryCommitmentScheme as CommitmentScheme>::commit(&poly, &setup);
+
+        let (blinded, blinding) = <DoryCommitmentScheme as crate::poly::commitment::Rep3CommitmentScheme<
+            Fr,
+            Blake2bTranscript,
+        >>::blind_transcript_commitment(&setup, commitment.clone());
+
+        #[cfg(feature = "zk")]
+        {
+            assert!(blinding.is_some());
+            assert_ne!(blinded, commitment);
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            assert!(blinding.is_none());
+            assert_eq!(blinded, commitment);
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn dory_masked_rows_differ_from_raw_rows() {
+        let mut rng = test_rng();
+        let setup = test_setup();
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let coeffs = (0..(1 << sigma)).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+        let poly = MultilinearPolynomial::from(coeffs);
+        let (_, hint) = <DoryCommitmentScheme as CommitmentScheme>::commit(&poly, &setup);
+        let raw_rows: Vec<G1Projective> = hint.into_rows().into_iter().map(|row| row.0).collect();
+        let (masked_rows, _mask_scalars) = mask_row_commitments(&raw_rows, &setup);
+
+        assert_eq!(masked_rows.len(), raw_rows.len());
+        assert!(masked_rows.iter().zip(raw_rows.iter()).any(|(masked, raw)| (*masked).into_group() != *raw));
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn dory_correct_masked_e1_matches_raw() {
+        let mut rng = test_rng();
+        let setup = test_setup();
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let raw_rows: Vec<G1Projective> = (0..(1 << sigma)).map(|_| setup.g1_vec[0].0 * Fr::rand(&mut rng)).collect();
+        let raw_rows_affine = G1Projective::normalize_batch(&raw_rows);
+        let (masked_rows, mask_scalars) = mask_row_commitments(&raw_rows, &setup);
+        let s2: Vec<Fr> = (0..raw_rows.len()).map(|_| Fr::rand(&mut rng)).collect();
+
+        let raw_e1 = msm_g1_affine(&raw_rows_affine, &s2).into_affine();
+        let masked_e1 = msm_g1_affine(&masked_rows, &s2).into_affine();
+        let corrected = correct_masked_g1_term(masked_e1, &mask_scalars, &s2, &setup);
+
+        assert_eq!(corrected, raw_e1);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn dory_correct_masked_d1_matches_raw() {
+        let mut rng = test_rng();
+        let setup = test_setup();
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let raw_rows: Vec<G1Projective> = (0..(1 << sigma)).map(|_| setup.g1_vec[0].0 * Fr::rand(&mut rng)).collect();
+        let (masked_rows, mask_scalars) = mask_row_commitments(&raw_rows, &setup);
+        let raw_rows_affine = G1Projective::normalize_batch(&raw_rows);
+        let g2_affine_all = G2Projective::normalize_batch(&setup_g2_projective(&setup)[..(1 << sigma)]);
+
+        let raw_d1 = Bn254::multi_pairing(&raw_rows_affine, &g2_affine_all[..raw_rows_affine.len()]).0;
+        let masked_d1 = Bn254::multi_pairing(&masked_rows, &g2_affine_all[..masked_rows.len()]).0;
+        let corrected = correct_masked_d1_term(masked_d1, &mask_scalars, &g2_affine_all, &setup);
+
+        assert_eq!(corrected, raw_d1);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn dory_correct_masked_second_reduce_e1_matches_raw() {
+        let mut rng = test_rng();
+        let setup = test_setup();
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let raw_rows: Vec<G1Projective> = (0..(1 << sigma)).map(|_| setup.g1_vec[0].0 * Fr::rand(&mut rng)).collect();
+        let raw_rows_affine = G1Projective::normalize_batch(&raw_rows);
+        let (masked_rows, mask_scalars) = mask_row_commitments(&raw_rows, &setup);
+        let s2: Vec<Fr> = (0..raw_rows.len()).map(|_| Fr::rand(&mut rng)).collect();
+        let n2 = raw_rows.len() / 2;
+        let (raw_left, raw_right) = raw_rows_affine.split_at(n2);
+        let (masked_left, masked_right) = masked_rows.split_at(n2);
+        let (mask_left, mask_right) = mask_scalars.split_at(n2);
+        let (s2_left, s2_right) = s2.split_at(n2);
+
+        let raw_e1_plus = msm_g1_affine(raw_left, s2_right).into_affine();
+        let raw_e1_minus = msm_g1_affine(raw_right, s2_left).into_affine();
+        let masked_e1_plus = msm_g1_affine(masked_left, s2_right).into_affine();
+        let masked_e1_minus = msm_g1_affine(masked_right, s2_left).into_affine();
+
+        let corrected_plus = correct_masked_g1_term(masked_e1_plus, mask_left, s2_right, &setup);
+        let corrected_minus = correct_masked_g1_term(masked_e1_minus, mask_right, s2_left, &setup);
+
+        assert_eq!(corrected_plus, raw_e1_plus);
+        assert_eq!(corrected_minus, raw_e1_minus);
+    }
 }
