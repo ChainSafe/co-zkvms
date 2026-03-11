@@ -73,11 +73,9 @@ fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
 
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    if num_vars <= sigma * 2 {
-        sigma
-    } else {
-        num_vars - sigma
-    }
+    num_vars
+        .checked_sub(sigma)
+        .expect("Dory opening point must have at least sigma coordinates")
 }
 
 // =============================================================================
@@ -223,31 +221,27 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let g1_all = setup_g1_projective(setup);
             let g2_all = setup_g2_projective(setup);
 
-            // The MPC opening path folds across the column dimension `sigma`.
-            // For short polynomials (num_vars < sigma), row commitments and left vectors
-            // are padded out to length 2^sigma with zeros, mirroring the old local logic.
             let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << params.0)]);
             let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << params.0)]);
             (params, g1_all, g2_all, g1_affine_all, g2_affine_all)
         };
 
         // 1) Compute row commitment shares — dispatch based on variant + hint
-        let num_rows_target = 1usize << sigma;
+        let num_rows_target = 1usize << nu;
         let num_columns = 1usize << sigma;
         let row_commit_shares: Vec<G1Projective> = {
             let _span = tracing::info_span!("row_commits").entered();
             if let Some(hint) = opening_hint {
                 // Pre-combined hint: use directly (already the correct additive shares)
                 let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
+                rows.truncate(num_rows_target);
                 rows.resize(num_rows_target, G1Projective::zero());
                 rows
             } else {
                 let g1_col_affine = &g1_affine_all[..num_columns];
                 match poly {
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(dense)) => {
-                        let mut rows = compute_row_commitment_shares_a(dense, setup, nu);
-                        rows.resize(num_rows_target, G1Projective::zero());
-                        rows
+                        compute_row_commitment_shares_a(dense, setup, nu)
                     }
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
                         return Err(eyre::eyre!(
@@ -255,16 +249,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                         ));
                     }
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(one_hot)) => {
-                        one_hot.commit_rows::<G1Projective>(g1_col_affine).map(|mut rows| {
-                            rows.resize(num_rows_target, G1Projective::zero());
-                            rows
-                        })?
+                        one_hot.commit_rows::<G1Projective>(g1_col_affine)?
                     }
                     Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
-                        rlc.commit_rows::<G1Projective>(g1_col_affine).map(|mut rows| {
-                            rows.resize(num_rows_target, G1Projective::zero());
-                            rows
-                        })?
+                        rlc.commit_rows::<G1Projective>(g1_col_affine)?
                     }
                     Rep3MultilinearPolynomial::Public(_) => {
                         return Err(eyre::eyre!("prove_rep3 does not handle public polynomials"));
@@ -279,6 +267,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
         // 2) receive reconstructed row commitments from coordinator
         let row_commitments_affine: Vec<G1Affine> = network.receive_request()?;
+        let mut padded_row_commitments_affine = row_commitments_affine.clone();
+        if nu < sigma {
+            padded_row_commitments_affine.resize(1 << sigma, G1Affine::zero());
+        }
 
         // 3) compute v_vec share — dispatch based on variant
         let v_vec_share: Vec<Fr> = match poly {
@@ -316,13 +308,11 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let _span = tracing::info_span!("vmv_message").entered();
             rayon::join(
                 || {
-                    let t_vec_v = msm_g1_affine(&row_commitments_affine, &v_vec_share);
+                    let t_vec_v = msm_g1_affine(&padded_row_commitments_affine, &v_vec_share);
                     let g_fin_affine = setup.g2_vec[0].0.into_affine();
                     let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
 
-                    let mut v_vec_padded = v_vec_share.clone();
-                    v_vec_padded.resize(1 << nu, <Fr as ark_ff::Zero>::zero());
-                    let gamma1_v = msm_g1_affine(&g1_affine_all, &v_vec_padded);
+                    let gamma1_v = msm_g1_affine(&g1_affine_all, &v_vec_share);
                     let d2_share = Bn254::pairing(gamma1_v, g_fin_affine).0;
                     (c_share, d2_share)
                 },
@@ -341,8 +331,12 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         // s1 = R, s2 = L (matches dory vmv_state_to_dory_prover_state)
         let mut s1 = r_vec;
         let mut s2 = l_vec;
+        if nu < sigma {
+            s1.resize(1 << sigma, Fr::zero());
+            s2.resize(1 << sigma, Fr::zero());
+        }
 
-        let mut v1_pub: Vec<G1Projective> = row_commitments_affine.iter().map(|a| a.into_group()).collect();
+        let mut v1_pub: Vec<G1Projective> = padded_row_commitments_affine.iter().map(|a| a.into_group()).collect();
         let mut curr_rounds = sigma;
 
         let _loop_span = tracing::info_span!("reduction_loop").entered();
@@ -526,9 +520,8 @@ fn compute_open_params(
         })
         .collect();
     let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
-    let mut l_vec: Vec<Fr> = l_vec_w.into_iter().map(|x| ark_to_jolt(&x)).collect();
+    let l_vec: Vec<Fr> = l_vec_w.into_iter().map(|x| ark_to_jolt(&x)).collect();
     let r_vec = r_vec_w.into_iter().map(|x| ark_to_jolt(&x)).collect();
-    l_vec.resize(1 << sigma, Fr::zero());
 
     (sigma, num_vars, nu, l_vec, r_vec)
 }
@@ -1164,9 +1157,9 @@ mod tests {
     fn dory_opening_dense_correct() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_vars = sigma;
         let len = 1usize << num_vars;
 
         let coeffs = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
@@ -1251,9 +1244,9 @@ mod tests {
     fn dory_opening_rlc_hint_correct() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_vars = sigma;
         let len = 1usize << num_vars;
 
         let coeffs_a = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
@@ -1347,11 +1340,11 @@ mod tests {
     fn dory_commit_hint_correct() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         // Use the same DoryGlobals sizing as the zkVM witness tests (T=512) to
         // avoid global re-initialization conflicts within the test binary.
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_vars = sigma;
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let len = 1usize << num_vars;
@@ -1474,9 +1467,9 @@ mod tests {
     fn dory_public_gating_correct() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_vars = sigma;
 
         let len = 1usize << num_vars;
         let coeffs = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
@@ -1511,9 +1504,9 @@ mod tests {
     fn dory_batch_eq_single() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
+        let num_vars = sigma;
 
         let len = 1usize << num_vars;
         let coeffs_0 = (0..len).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
@@ -1569,10 +1562,10 @@ mod tests {
     fn dory_u64_scalars_commit_correct() {
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let num_columns = DoryGlobals::get_num_columns();
         let sigma = num_columns.log_2();
+        let num_vars = sigma;
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let len = 1usize << num_vars;
@@ -1665,10 +1658,10 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let num_vars = 6;
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let num_columns = DoryGlobals::get_num_columns();
         let sigma = num_columns.log_2();
+        let num_vars = sigma;
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let len = 1usize << num_vars;

@@ -217,9 +217,7 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::Dense(poly)) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(poly)) => poly.get_num_vars(),
             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(poly)) => poly.get_num_vars(),
-            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => {
-                rlc.dense_rlc.len().next_power_of_two().trailing_zeros() as usize
-            }
+            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(rlc)) => rlc.get_num_vars(),
         }
     }
 

@@ -127,6 +127,17 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
         result
     }
 
+    pub fn get_num_vars(&self) -> usize {
+        let dense_num_vars = self.dense_rlc.len().next_power_of_two().trailing_zeros() as usize;
+        let one_hot_num_vars = self
+            .one_hot_rlc
+            .iter()
+            .map(|(_, poly)| poly.get_num_vars())
+            .max()
+            .unwrap_or(0);
+        dense_num_vars.max(one_hot_num_vars)
+    }
+
     #[tracing::instrument(skip_all, name = "RlcPoly::commit_rows")]
     pub fn commit_rows<G>(&self, bases: &[G::Affine]) -> eyre::Result<Vec<G>>
     where

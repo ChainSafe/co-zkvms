@@ -92,11 +92,8 @@ impl DoryPolynomial<ArkFr> for MultilinearPolynomial<Fr> {
 
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
         // Dory uses little-endian variable order; reverse to match Jolt's big-endian order.
-        // Local Dory proofs may pad extra high-order zero coordinates to fit the
-        // matrix shape. Drop those before evaluating the underlying polynomial.
         let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt).collect();
-        let excess = native_point.len().saturating_sub(self.get_num_vars());
-        let result = PolynomialEvaluation::evaluate(self, &native_point[excess..]);
+        let result = PolynomialEvaluation::evaluate(self, native_point.as_slice());
         jolt_to_ark(&result)
     }
 

@@ -107,24 +107,11 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve, ProofTranscript: Trans
     transcript.append_serializable(y_com);
 }
 
-fn pad_opening_point_for_dory<F: JoltField>(
-    opening_point: &[F::Challenge],
-    target_len: usize,
-) -> Vec<F::Challenge> {
-    let reordered = reorder_opening_point_for_layout::<F>(opening_point);
-    let pad = target_len.saturating_sub(reordered.len());
-    let mut padded = vec![F::Challenge::default(); pad];
-    padded.extend(reordered);
-    padded
-}
-
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    if num_vars <= sigma * 2 {
-        sigma
-    } else {
-        num_vars - sigma
-    }
+    num_vars
+        .checked_sub(sigma)
+        .expect("Dory opening point must have at least sigma coordinates")
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {
@@ -204,7 +191,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
-        let (mut row_commitments, commit_blind) = hint
+        let (row_commitments, commit_blind) = hint
             .map(|h| (h.into_rows(), DoryField::zero()))
             .unwrap_or_else(|| {
                 let (_commitment, row_commitments) = Self::commit(poly, setup);
@@ -214,9 +201,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let num_cols = DoryGlobals::get_num_columns();
         let sigma = num_cols.log_2();
         let nu = compute_nu(opening_point.len(), sigma);
-        row_commitments.resize(1 << nu, ArkG1(G1Projective::zero()));
-
-        let reordered_point = pad_opening_point_for_dory::<ark_bn254::Fr>(opening_point, sigma + nu);
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
         let ark_point: Vec<ArkFr> = reordered_point
             .iter()
             .rev()
@@ -265,10 +250,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        let reordered_point = pad_opening_point_for_dory::<ark_bn254::Fr>(
-            opening_point,
-            proof.dory_proof_data.sigma + proof.dory_proof_data.nu,
-        );
+        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
 
         // Dory uses the opposite endian-ness as Jolt
         let ark_point: Vec<ArkFr> = reordered_point

@@ -38,11 +38,9 @@ type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecon
 
 #[inline]
 fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    if num_vars <= sigma * 2 {
-        sigma
-    } else {
-        num_vars - sigma
-    }
+    num_vars
+        .checked_sub(sigma)
+        .expect("Dory opening point must have at least sigma coordinates")
 }
 
 #[cfg(feature = "zk")]
@@ -204,9 +202,8 @@ where
                 })
                 .collect();
             let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
-            let mut l_vec: Vec<Fr> = l_vec_w.iter().map(ark_to_jolt).collect();
+            let l_vec: Vec<Fr> = l_vec_w.iter().map(ark_to_jolt).collect();
             let r_vec: Vec<Fr> = r_vec_w.iter().map(ark_to_jolt).collect();
-            l_vec.resize(1 << sigma, Fr::zero());
             (row_commitments, nu, l_vec, r_vec)
         };
 
@@ -265,9 +262,17 @@ where
         #[cfg(not(feature = "zk"))]
         let (zk_e2, zk_y_com, zk_sigma1, zk_sigma2, y_blinding) = (None, None, None, None, None);
 
-        let mut v1_pub: Vec<G1Projective> = row_commitments;
+        let mut padded_row_commitments = row_commitments;
+        if nu < sigma {
+            padded_row_commitments.resize(1 << sigma, G1Projective::zero());
+        }
+        let mut v1_pub: Vec<G1Projective> = padded_row_commitments;
         let mut s1: Vec<Fr> = r_vec;
         let mut s2: Vec<Fr> = l_vec;
+        if nu < sigma {
+            s1.resize(1 << sigma, Fr::zero());
+            s2.resize(1 << sigma, Fr::zero());
+        }
         let mut first_messages = Vec::with_capacity(sigma);
         let mut second_messages = Vec::with_capacity(sigma);
 
