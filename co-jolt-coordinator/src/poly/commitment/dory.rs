@@ -8,44 +8,32 @@ use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::commitment::dory::{
-    DoryCommitment, DoryCommitmentScheme, DoryProofData, JoltFieldWrapper, JoltG1Wrapper,
-    JoltG2Wrapper, JoltGTBn254, JoltGTWrapper, JoltGroupWrapper, JoltToDoryTranscriptRef,
+    DoryCommitment, DoryCommitmentScheme, DoryProofData, JoltFieldWrapper, JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254,
+    JoltGTWrapper, JoltGroupWrapper, JoltToDoryTranscriptRef,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use mpc_core::MaybeShared;
-use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+use mpc_core::protocols::rep3::PartyID;
+use mpc_core::MaybeShared;
 use rayon::prelude::*;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
 type DoryTranscriptRef<'a, T> = JoltToDoryTranscriptRef<'a, Fr, T>;
-type DoryProofBuilderRef<'a, T> = DoryProofBuilder<
-    JoltG1Wrapper,
-    JoltG2Wrapper,
-    JoltGTBn254,
-    JoltFieldWrapper<Fr>,
-    DoryTranscriptRef<'a, T>,
->;
+type DoryProofBuilderRef<'a, T> =
+    DoryProofBuilder<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254, JoltFieldWrapper<Fr>, DoryTranscriptRef<'a, T>>;
 type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>);
-type DoryFirstReducePublicMsg = (
-    Option<Fq12>,
-    Option<Fq12>,
-    Option<G1Affine>,
-    Option<G2Affine>,
-);
+type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, Option<G2Affine>);
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
-type DorySecondReduceShareMsg = (
-    ((Fq12, Fq12), (G2Affine, G2Affine)),
-    DorySecondReducePublicMsg,
-);
+type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg);
 
 impl<ProofTranscript> Rep3CommitmentScheme<Fr, ProofTranscript> for DoryCommitmentScheme
 where
     ProofTranscript: Transcript,
 {
+    #[tracing::instrument(skip_all, name = "Dory::coordinate_prove")]
     fn coordinate_prove<Network>(
         setup: &Self::ProverSetup,
         transcript: &mut ProofTranscript,
@@ -58,67 +46,93 @@ where
         Network: Rep3NetworkCoordinator,
     {
         if network.is_distributed() {
-            return Err(eyre::eyre!(
-                "Dory opening proof: distributed subnets unsupported (single-worker mode only)"
-            ));
+            return Err(eyre::eyre!("Dory opening proof: distributed subnets unsupported (single-worker mode only)"));
         }
 
         let sigma = DoryGlobals::get_num_columns().log_2();
-        let init_msgs: Vec<(usize, Vec<G1Affine>)> = network.receive_responses()?;
-        let num_vars = init_msgs[0].0;
-        let nu = dory::vmv::compute_nu(num_vars, sigma);
-
         let g1_all = setup_g1_projective(setup);
+        let (mut row_commitments, nu, l_vec, r_vec) = {
+            let _span = tracing::info_span!("row_commit_phase").entered();
+            let init_msgs: Vec<(usize, Vec<G1Affine>)> = {
+                let _span = tracing::trace_span!("row_commit_receive").entered();
+                network.receive_responses()?
+            };
+            let num_vars = init_msgs[0].0;
+            let nu = dory::vmv::compute_nu(num_vars, sigma);
 
-        let rows_len = init_msgs[0].1.len();
-        let mut row_commitments = vec![G1Projective::zero(); rows_len];
-        for (_nv, shares) in &init_msgs {
-            debug_assert_eq!(*_nv, num_vars);
-            for (acc, s) in row_commitments.iter_mut().zip(shares.iter()) {
-                *acc += s.into_group();
+            let rows_len = init_msgs[0].1.len();
+            let mut row_commitments = {
+                let _span = tracing::trace_span!("row_commit_combine").entered();
+                let mut row_commitments = vec![G1Projective::zero(); rows_len];
+                for (_nv, shares) in &init_msgs {
+                    debug_assert_eq!(*_nv, num_vars);
+                    for (acc, s) in row_commitments.iter_mut().zip(shares.iter()) {
+                        *acc += s.into_group();
+                    }
+                }
+                row_commitments
+            };
+            let row_commitments_affine = {
+                let _span = tracing::trace_span!("row_commit_normalize").entered();
+                G1Projective::normalize_batch(&row_commitments)
+            };
+            {
+                let _span = tracing::trace_span!("row_commit_broadcast").entered();
+                network.broadcast_request(row_commitments_affine)?;
             }
-        }
-        let row_commitments_affine = G1Projective::normalize_batch(&row_commitments);
-        network.broadcast_request(row_commitments_affine)?;
 
-        let point_wrapped: Vec<JoltFieldWrapper<Fr>> = opening_point
-            .iter()
-            .rev()
-            .map(|&x| JoltFieldWrapper(x.into()))
-            .collect();
-        let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
-        let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
-        let r_vec: Vec<Fr> = r_vec_w.iter().map(|x| x.0).collect();
+            let point_wrapped: Vec<JoltFieldWrapper<Fr>> =
+                opening_point.iter().rev().map(|&x| JoltFieldWrapper(x.into())).collect();
+            let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
+            let l_vec: Vec<Fr> = l_vec_w.iter().map(|x| x.0).collect();
+            let r_vec: Vec<Fr> = r_vec_w.iter().map(|x| x.0).collect();
+            (row_commitments, nu, l_vec, r_vec)
+        };
 
         let dory_transcript: DoryTranscriptRef<'_, ProofTranscript> =
             JoltToDoryTranscriptRef::<Fr, ProofTranscript>::new(transcript);
-        let mut builder: DoryProofBuilderRef<'_, ProofTranscript> =
-            DoryProofBuilder::new(dory_transcript);
+        let mut builder: DoryProofBuilderRef<'_, ProofTranscript> = DoryProofBuilder::new(dory_transcript);
 
-        let vmv_shares: Vec<DoryVmvShareMsg> = network.receive_responses()?;
-        let ((c, d2), e1) = combine_vmv_shares(&vmv_shares)?;
+        {
+            let _span = tracing::info_span!("vmv_phase").entered();
+            let vmv_shares: Vec<DoryVmvShareMsg> = {
+                let _span = tracing::trace_span!("vmv_receive").entered();
+                network.receive_responses()?
+            };
+            let ((c, d2), e1) = {
+                let _span = tracing::trace_span!("vmv_combine").entered();
+                combine_vmv_shares(&vmv_shares)?
+            };
 
-        let vmv_message = dory::messages::VMVMessage::<JoltG1Wrapper, JoltGTBn254> {
-            c: JoltGTWrapper::<Bn254>(c),
-            d2: JoltGTWrapper::<Bn254>(d2),
-            e1: JoltGroupWrapper(e1.into_group()),
+            let vmv_message = dory::messages::VMVMessage::<JoltG1Wrapper, JoltGTBn254> {
+                c: JoltGTWrapper::<Bn254>(c),
+                d2: JoltGTWrapper::<Bn254>(d2),
+                e1: JoltGroupWrapper(e1.into_group()),
+            };
+            let _span = tracing::trace_span!("vmv_append").entered();
+            builder = builder.append_vmv_message(vmv_message);
         };
-        builder = builder.append_vmv_message(vmv_message);
 
         let mut v1_pub = row_commitments;
         let mut s1 = r_vec;
         let mut s2 = l_vec;
 
         let mut curr_nu = nu;
-        while curr_nu > 0 {
-            let n2 = 1usize << (curr_nu - 1);
+        {
+            let _span = tracing::info_span!("reduction_loop").entered();
+            while curr_nu > 0 {
+                let n2 = 1usize << (curr_nu - 1);
 
-            let first_msgs: Vec<DoryFirstReduceShareMsg> = network.receive_responses()?;
-            let ((d2_left, d2_right), (d1_left, d1_right, e1_beta, e2_beta)) =
-                combine_first_reduce_shares(&first_msgs)?;
+                let first_msgs: Vec<DoryFirstReduceShareMsg> = {
+                    let _span = tracing::trace_span!("first_receive", curr_nu, n2).entered();
+                    network.receive_responses()?
+                };
+                let ((d2_left, d2_right), (d1_left, d1_right, e1_beta, e2_beta)) = {
+                    let _span = tracing::trace_span!("first_combine", curr_nu, n2).entered();
+                    combine_first_reduce_shares(&first_msgs)?
+                };
 
-            let first_msg =
-                dory::messages::FirstReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
+                let first_msg = dory::messages::FirstReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
                     d1_left: JoltGTWrapper::<Bn254>(d1_left),
                     d1_right: JoltGTWrapper::<Bn254>(d1_right),
                     d2_left: JoltGTWrapper::<Bn254>(d2_left),
@@ -127,24 +141,32 @@ where
                     e2_beta: JoltGroupWrapper(e2_beta.into_group()),
                 };
 
-            let (beta_chal, b2) = builder.append_first_reduce_message(first_msg);
-            builder = b2;
-            let beta = beta_chal.beta.0;
-            let beta_inv = beta_chal.beta_inverse.0;
-            network.broadcast_request((beta, beta_inv))?;
+                let (beta, beta_inv) = {
+                    let _span = tracing::trace_span!("first_append", curr_nu, n2).entered();
+                    let (beta_chal, b2) = builder.append_first_reduce_message(first_msg);
+                    builder = b2;
+                    (beta_chal.beta.0, beta_chal.beta_inverse.0)
+                };
+                {
+                    let _span = tracing::trace_span!("beta_broadcast", curr_nu, n2).entered();
+                    network.broadcast_request((beta, beta_inv))?;
+                }
 
-            jolt_optimizations::vector_add_scalar_mul_g1_online(
-                &mut v1_pub,
-                &g1_all[..(1 << curr_nu)],
-                beta,
-            );
+                {
+                    let _span = tracing::trace_span!("v1_public_update", curr_nu, n2).entered();
+                    jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_nu)], beta);
+                }
 
-            let second_msgs: Vec<DorySecondReduceShareMsg> = network.receive_responses()?;
-            let ((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)) =
-                combine_second_reduce_shares(&second_msgs)?;
+                let second_msgs: Vec<DorySecondReduceShareMsg> = {
+                    let _span = tracing::trace_span!("second_receive", curr_nu, n2).entered();
+                    network.receive_responses()?
+                };
+                let ((c_plus, c_minus), (e2_plus, e2_minus), (e1_plus, e1_minus)) = {
+                    let _span = tracing::trace_span!("second_combine", curr_nu, n2).entered();
+                    combine_second_reduce_shares(&second_msgs)?
+                };
 
-            let second_msg =
-                dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
+                let second_msg = dory::messages::SecondReduceMessage::<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254> {
                     c_plus: JoltGTWrapper::<Bn254>(c_plus),
                     c_minus: JoltGTWrapper::<Bn254>(c_minus),
                     e1_plus: JoltGroupWrapper(e1_plus.into_group()),
@@ -153,72 +175,89 @@ where
                     e2_minus: JoltGroupWrapper(e2_minus),
                 };
 
-            let (alpha_chal, b3) = builder.append_second_reduce_message(second_msg);
-            builder = b3;
-            let alpha = alpha_chal.alpha.0;
-            let alpha_inv = alpha_chal.alpha_inverse.0;
-            network.broadcast_request((alpha, alpha_inv))?;
+                let (alpha, alpha_inv) = {
+                    let _span = tracing::trace_span!("second_append", curr_nu, n2).entered();
+                    let (alpha_chal, b3) = builder.append_second_reduce_message(second_msg);
+                    builder = b3;
+                    (alpha_chal.alpha.0, alpha_chal.alpha_inverse.0)
+                };
+                {
+                    let _span = tracing::trace_span!("alpha_broadcast", curr_nu, n2).entered();
+                    network.broadcast_request((alpha, alpha_inv))?;
+                }
 
-            let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
-            jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
-            v1_pub.truncate(n2);
+                {
+                    let _span = tracing::trace_span!("scalar_fold", curr_nu, n2).entered();
+                    let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+                    jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
+                    v1_pub.truncate(n2);
 
-            let (s1_l, s1_r) = s1.split_at(n2);
-            let (s2_l, s2_r) = s2.split_at(n2);
-            let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
-                .into_par_iter()
-                .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
-                .unzip();
-            s1 = s1_next;
-            s2 = s2_next;
-            curr_nu -= 1;
+                    let (s1_l, s1_r) = s1.split_at(n2);
+                    let (s2_l, s2_r) = s2.split_at(n2);
+                    let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
+                        .into_par_iter()
+                        .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
+                        .unzip();
+                    s1 = s1_next;
+                    s2 = s2_next;
+                }
+                curr_nu -= 1;
+            }
         }
 
-        let (gamma_chal, b4) = builder.challenge_fold_scalars();
-        let (_d_chal, b5) = <DoryProofBuilderRef<'_, ProofTranscript> as ProofBuilder>::challenge_scalar_product_scalars(b4);
-        builder = b5;
+        {
+            let _span = tracing::info_span!("finalize").entered();
+            let gamma_chal = {
+                let _span = tracing::trace_span!("gamma_challenge").entered();
+                let (gamma_chal, b4) = builder.challenge_fold_scalars();
+                let (_d_chal, b5) =
+                    <DoryProofBuilderRef<'_, ProofTranscript> as ProofBuilder>::challenge_scalar_product_scalars(b4);
+                builder = b5;
+                gamma_chal
+            };
 
-        let v2_shares: Vec<G2Affine> = network.receive_responses()?;
-        let mut v2 = G2Projective::zero();
-        for s in v2_shares {
-            v2 += s.into_group();
+            let v2_shares: Vec<G2Affine> = {
+                let _span = tracing::trace_span!("final_v2_receive").entered();
+                network.receive_responses()?
+            };
+            let v2 = {
+                let _span = tracing::trace_span!("final_v2_combine").entered();
+                let mut v2 = G2Projective::zero();
+                for s in v2_shares {
+                    v2 += s.into_group();
+                }
+                v2
+            };
+
+            let gamma = gamma_chal.gamma.0;
+            let gamma_inv = gamma_chal.gamma_inverse.0;
+
+            let gamma_s1 = gamma * s1[0];
+            let e1_final = v1_pub[0] + setup.core.h1.0 * gamma_s1;
+
+            let gamma_inv_s2 = gamma_inv * s2[0];
+            let e2_final = v2 + setup.core.h2.0 * gamma_inv_s2;
+
+            let final_msg = dory::messages::ScalarProductMessage::<JoltG1Wrapper, JoltG2Wrapper> {
+                e1: JoltGroupWrapper(e1_final),
+                e2: JoltGroupWrapper(e2_final),
+            };
+            {
+                let _span = tracing::trace_span!("scalar_product_finalize").entered();
+                builder = builder.append_scalar_product_message(final_msg, None, None);
+            }
         }
-
-        let gamma = gamma_chal.gamma.0;
-        let gamma_inv = gamma_chal.gamma_inverse.0;
-
-        let gamma_s1 = gamma * s1[0];
-        let e1_final = v1_pub[0] + setup.core.h1.0 * gamma_s1;
-
-        let gamma_inv_s2 = gamma_inv * s2[0];
-        let e2_final = v2 + setup.core.h2.0 * gamma_inv_s2;
-
-        let final_msg = dory::messages::ScalarProductMessage::<JoltG1Wrapper, JoltG2Wrapper> {
-            e1: JoltGroupWrapper(e1_final),
-            e2: JoltGroupWrapper(e2_final),
-        };
-        builder = builder.append_scalar_product_message(final_msg, None, None);
 
         let _ = (claimed_opening, commitment);
-        Ok(DoryProofData {
-            sigma,
-            dory_proof_data: builder.build(),
-        })
+        Ok(DoryProofData { sigma, dory_proof_data: builder.build() })
     }
 
-    fn combine_commitment_shares(
-        commitments: &[&MaybeShared<Self::Commitment>],
-    ) -> Self::Commitment {
-        let public = commitments
-            .iter()
-            .find(|c| matches!(c, MaybeShared::Public(Some(_))));
+    fn combine_commitment_shares(commitments: &[&MaybeShared<Self::Commitment>]) -> Self::Commitment {
+        let public = commitments.iter().find(|c| matches!(c, MaybeShared::Public(Some(_))));
         match public {
             Some(MaybeShared::Public(Some(c))) => c.clone(),
             None => {
-                if commitments
-                    .iter()
-                    .all(|c| matches!(c, MaybeShared::Public(None)))
-                {
+                if commitments.iter().all(|c| matches!(c, MaybeShared::Public(None))) {
                     return DoryCommitment::default();
                 }
                 let mut acc = JoltGTWrapper::<Bn254>(Fq12::one());
@@ -234,12 +273,8 @@ where
         }
     }
 
-    fn combine_hint_shares(
-        hints: &[&MaybeShared<Self::OpeningProofHint>],
-    ) -> Self::OpeningProofHint {
-        let public = hints
-            .iter()
-            .find(|h| matches!(h, MaybeShared::Public(Some(_))));
+    fn combine_hint_shares(hints: &[&MaybeShared<Self::OpeningProofHint>]) -> Self::OpeningProofHint {
+        let public = hints.iter().find(|h| matches!(h, MaybeShared::Public(Some(_))));
         match public {
             Some(MaybeShared::Public(Some(h))) => h.clone(),
             None => {
@@ -266,22 +301,13 @@ where
     }
 }
 
-fn take_owned_public_term<T: Clone>(
-    values: &[Option<T>],
-    owner: PartyID,
-    label: &str,
-) -> eyre::Result<T> {
+fn take_owned_public_term<T: Clone>(values: &[Option<T>], owner: PartyID, label: &str) -> eyre::Result<T> {
     let owner_idx = usize::from(owner);
     eyre::ensure!(
         values.get(owner_idx).and_then(|v| v.as_ref()).is_some(),
         "{label}: owner {owner_idx} did not provide the public term"
     );
-    debug_assert!(
-        values
-            .iter()
-            .enumerate()
-            .all(|(idx, value)| idx == owner_idx || value.is_none())
-    );
+    debug_assert!(values.iter().enumerate().all(|(idx, value)| idx == owner_idx || value.is_none()));
     Ok(values[owner_idx].clone().unwrap())
 }
 
@@ -327,11 +353,7 @@ fn combine_first_reduce_shares(
 
 fn combine_second_reduce_shares(
     msgs: &[DorySecondReduceShareMsg],
-) -> eyre::Result<(
-    (Fq12, Fq12),
-    (G2Projective, G2Projective),
-    (G1Affine, G1Affine),
-)> {
+) -> eyre::Result<((Fq12, Fq12), (G2Projective, G2Projective), (G1Affine, G1Affine))> {
     let mut c_plus = Fq12::one();
     let mut c_minus = Fq12::one();
     let mut e2_plus = G2Projective::zero();
@@ -360,28 +382,14 @@ fn combine_second_reduce_shares(
 
 /// Zero-copy view of `setup.core.g1_vec` as `&[G1Projective]`.
 /// Safety: `JoltGroupWrapper<G1Projective>` is `#[repr(transparent)]`.
-pub fn setup_g1_projective(
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> &[G1Projective] {
-    unsafe {
-        std::slice::from_raw_parts(
-            setup.core.g1_vec.as_ptr() as *const G1Projective,
-            setup.core.g1_vec.len(),
-        )
-    }
+pub fn setup_g1_projective(setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> &[G1Projective] {
+    unsafe { std::slice::from_raw_parts(setup.core.g1_vec.as_ptr() as *const G1Projective, setup.core.g1_vec.len()) }
 }
 
 /// Zero-copy view of `setup.core.g2_vec` as `&[G2Projective]`.
 /// Safety: `JoltGroupWrapper<G2Projective>` is `#[repr(transparent)]`.
-pub fn setup_g2_projective(
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> &[G2Projective] {
-    unsafe {
-        std::slice::from_raw_parts(
-            setup.core.g2_vec.as_ptr() as *const G2Projective,
-            setup.core.g2_vec.len(),
-        )
-    }
+pub fn setup_g2_projective(setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> &[G2Projective] {
+    unsafe { std::slice::from_raw_parts(setup.core.g2_vec.as_ptr() as *const G2Projective, setup.core.g2_vec.len()) }
 }
 
 /// MSM with projective bases (normalizes to affine internally).
