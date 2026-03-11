@@ -2,14 +2,14 @@
 use crate::poly::compact_polynomial::Rep3CompactPolynomial;
 use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::types::MaybeShared;
-use ark_ec::bn::{BnConfig as ArkBnConfig, G1Prepared as BnG1Prepared, G2Prepared as BnG2Prepared};
+use ark_ec::bn::BnConfig as ArkBnConfig;
 use ark_ec::pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput};
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
 use dory::Polynomial;
-use jolt_core::ark_bn254::{Bn254, Config as Bn254Config, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
@@ -344,8 +344,8 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                         let g1_prime_aff = &g1_affine_all[..n2];
                         let (v2_l_aff, v2_r_aff) = v2_affine_pre.split_at(n2);
                         rayon::join(
-                            || multi_pairing_both_affine_threshold(g1_prime_aff, v2_l_aff),
-                            || multi_pairing_both_affine_threshold(g1_prime_aff, v2_r_aff),
+                            || multi_pairing_both_affine(g1_prime_aff, v2_l_aff),
+                            || multi_pairing_both_affine(g1_prime_aff, v2_r_aff),
                         )
                     },
                     || {
@@ -393,8 +393,8 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                         let (v1_l_aff, v1_r_aff) = v1_affine_post.split_at(n2);
                         let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
                         rayon::join(
-                            || multi_pairing_both_affine_threshold(v1_l_aff, v2_r_aff),
-                            || multi_pairing_both_affine_threshold(v1_r_aff, v2_l_aff),
+                            || multi_pairing_both_affine(v1_l_aff, v2_r_aff),
+                            || multi_pairing_both_affine(v1_r_aff, v2_l_aff),
                         )
                     },
                     || {
@@ -1143,29 +1143,6 @@ fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
 fn multi_pairing_both_affine(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
     let n = ps_aff.len().min(qs_aff.len());
     Bn254::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0
-}
-
-const DORY_PARALLEL_PAIRING_THRESHOLD: usize = 1024;
-
-fn multi_pairing_both_affine_threshold(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
-    let n = ps_aff.len().min(qs_aff.len());
-    if n < DORY_PARALLEL_PAIRING_THRESHOLD {
-        return Bn254::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0;
-    }
-
-    let g1_prepared: Vec<BnG1Prepared<Bn254Config>> =
-        ps_aff[..n].par_iter().copied().map(BnG1Prepared::<Bn254Config>::from).collect();
-    let g2_prepared: Vec<BnG2Prepared<Bn254Config>> =
-        qs_aff[..n].par_iter().copied().map(BnG2Prepared::<Bn254Config>::from).collect();
-
-    let num_chunks = rayon::current_num_threads();
-    let chunk_size = (n / num_chunks.max(1)).max(1);
-    let ml_result = g1_prepared
-        .par_chunks(chunk_size)
-        .zip(g2_prepared.par_chunks(chunk_size))
-        .map(|(g1_chunk, g2_chunk)| Bn254::multi_miller_loop_ref(g1_chunk.iter(), g2_chunk.iter()).0)
-        .product();
-    Bn254::final_exponentiation(MillerLoopOutput(ml_result)).expect("final exponentiation should not fail").0
 }
 
 fn multi_pairing_setup_g2_cached_affine(
