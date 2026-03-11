@@ -1,6 +1,7 @@
 pub mod format;
 pub mod types;
 
+use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
 pub use types::rep3_operand::{Rep3Operand, PUBLIC_ZERO};
 pub use types::rep3_ram::{Rep3RAMAccess, Rep3RAMRead, Rep3RAMWrite, REP3_RAM_NOOP};
 
@@ -8,13 +9,12 @@ use jolt_common::constants::XLEN;
 pub use jolt_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt};
 use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables;
-use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
+use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::preprocessing::edabits;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
-
 
 pub use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 pub use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -548,17 +548,17 @@ impl_rep3_lookup_query! {
 ///
 /// Mirrors v1's `Rep3JoltInstructionSet::populate_operands_casts`:
 /// 1. Collect all `Shared { arithmetic: None }` operands and their binary shares
-/// 2. Single batched edaBits-aided `upcast_many_from_binary` (2 rounds)
+/// 2. Network parallel `upcast_many_from_binary`
 /// 3. Write arithmetic shares back
 #[tracing::instrument(skip_all, name = "populate_operands_casts")]
 pub fn populate_operands_casts<F, N>(
     trace: &mut [Rep3Cycle],
-    io_ctx: &mut IoContext<N>,
-    preproc: &mut PreprocessingPool<F>,
+    io_ctx: &mut IoContextPool<N>,
+    _preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
 where
     F: jolt_core::field::JoltField,
-    N: Rep3Network,
+    N: Rep3NetworkWorker,
 {
     let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
@@ -573,17 +573,7 @@ where
         return Ok(());
     }
 
-    let chunk_size: usize = std::env::var("B2A_CHUNK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8192);
-
-    let mut arithmetic: Vec<Rep3RingShare<ArithmeticWideInt>> = Vec::with_capacity(binary.len());
-    for chunk in binary.chunks(chunk_size) {
-        let batch = preproc.take_ring_edabits::<ArithmeticWideInt>(chunk.len())?;
-        let results = edabits::upcast_many_from_binary(chunk, &batch, io_ctx)?;
-        arithmetic.extend(results);
-    }
+    let arithmetic = io_ctx.par_chunks(binary, None, |chunk, io_ctx| upcast_many_from_binary(&chunk, io_ctx))?;
 
     operands.into_par_iter().zip(arithmetic).for_each(|(operand, arith)| match operand {
         Rep3Operand::Shared { arithmetic: None, binary, public } => {

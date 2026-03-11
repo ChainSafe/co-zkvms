@@ -40,11 +40,7 @@ impl std::fmt::Debug for PreprocessingBudget {
             self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
         )?;
         if self.ring_edabits_u64 > 0 || self.ring_edabits_u128 > 0 {
-            write!(
-                f,
-                "; ringEdaBits: u64={}, u128={}",
-                self.ring_edabits_u64, self.ring_edabits_u128
-            )?;
+            write!(f, "; ringEdaBits: u64={}, u128={}", self.ring_edabits_u64, self.ring_edabits_u128)?;
         }
         #[cfg(feature = "ring-msm")]
         write!(
@@ -184,17 +180,6 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     // Lookup output fulfill: CastToField + CastToFieldB2A futures use XlenInt ring.
     // Worst case: all n cycles emit CastToField or CastToFieldB2A.
     add_to_budget(&mut budget, XLEN, n);
-
-    // Ring edaBits for populate_operands_casts upcast (binary XlenInt → arithmetic ArithmeticWideInt).
-    // Worst case: 5 operand columns per cycle (rs1, rs2, rd_write, ram_read, ram_write).
-    #[cfg(not(feature = "rv64"))]
-    {
-        budget.ring_edabits_u64 = 5 * n;
-    }
-    #[cfg(feature = "rv64")]
-    {
-        budget.ring_edabits_u128 = 5 * n;
-    }
 
     budget
 }

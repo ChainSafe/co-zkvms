@@ -282,10 +282,8 @@ where
         group_ids[i] = Some(gid);
     }
 
-    let mut ops_by_instruction: Vec<(
-        Vec<&Rep3Cycle>,
-        Vec<&mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
-    )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
+    let mut ops_by_instruction: Vec<(Vec<&Rep3Cycle>, Vec<&mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>)> =
+        (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
 
     // TODO: parallelize
     for (i, (cycle, out)) in trace.iter().zip(output_futures.iter_mut()).enumerate() {
@@ -334,7 +332,7 @@ where
     eyre::ensure!(trace.len().is_power_of_two(), "trace length must be power-of-two");
 
     // Ensure all shared operands have arithmetic representations (batched, edaBits-aided).
-    populate_operands_casts(trace, io_ctx.main(), preproc)?;
+    populate_operands_casts(trace, io_ctx, preproc)?;
 
     // Compute lookup outputs (batched, MPC).
     let lookup_output = compute_lookup_outputs::<F, N>(trace, io_ctx, preproc)?;
@@ -382,17 +380,15 @@ where
     }
 
     // Helper to classify an operand for parallel processing.
-    let classify_op = |col: SparseCastCol, op: &Rep3Operand, ops: &mut Vec<(SparseCastCol, FieldOp<F>)>| {
-        match op {
-            Rep3Operand::Public(v) => {
-                ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v as u64)))));
-            }
-            Rep3Operand::Shared { public: Some(v), .. } => {
-                ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v)))));
-            }
-            Rep3Operand::Shared { .. } => {
-                ops.push((col, FieldOp::NeedsCast(op.as_binary())));
-            }
+    let classify_op = |col: SparseCastCol, op: &Rep3Operand, ops: &mut Vec<(SparseCastCol, FieldOp<F>)>| match op {
+        Rep3Operand::Public(v) => {
+            ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v as u64)))));
+        }
+        Rep3Operand::Shared { public: Some(v), .. } => {
+            ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v)))));
+        }
+        Rep3Operand::Shared { .. } => {
+            ops.push((col, FieldOp::NeedsCast(op.as_binary())));
         }
     };
 
