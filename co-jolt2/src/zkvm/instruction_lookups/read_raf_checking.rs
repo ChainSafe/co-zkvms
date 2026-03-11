@@ -64,9 +64,39 @@ fn fwht_unmask_rep3_to_additive<F: JoltField>(
     h_k
 }
 
+fn fwht_unmask_rep3_slots_to_additive<F: JoltField>(
+    slot_hists: &mut [Vec<Rep3PrimeFieldShare<F>>],
+    ehat16_by_slot: &[Vec<Rep3PrimeFieldShare<F>>],
+    inv_m: F,
+) -> Vec<AdditiveShare<F>> {
+    let mut out = vec![AdditiveShare::zero(); M];
+    for (slot_hist, ehat16) in slot_hists.iter_mut().zip(ehat16_by_slot.iter()) {
+        let h_k = fwht_unmask_rep3_to_additive(slot_hist, ehat16, inv_m);
+        for (dst, src) in out.iter_mut().zip(h_k.into_iter()) {
+            *dst = *dst + src;
+        }
+    }
+    out
+}
+
+fn unmask_histogram_public_slots<F: JoltField>(
+    slot_hists: &mut [Vec<F>],
+    ehat16_by_slot: &[Vec<Rep3PrimeFieldShare<F>>],
+    party_id: PartyID,
+) -> Vec<AdditiveShare<F>> {
+    let mut out = vec![AdditiveShare::zero(); M];
+    for (slot_hist, ehat16) in slot_hists.iter_mut().zip(ehat16_by_slot.iter()) {
+        let h_k = unmask_histogram_public(slot_hist, ehat16, party_id);
+        for (dst, src) in out.iter_mut().zip(h_k.into_iter()) {
+            *dst = *dst + src;
+        }
+    }
+    out
+}
+
 fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>(
     hists: Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
-    ehat16: &[Rep3PrimeFieldShare<F>],
+    ehat16_by_slot: &[Vec<Rep3PrimeFieldShare<F>>],
     inv_m: F,
     party_id: PartyID,
     io_ctx: &mut IoContextPool<N>,
@@ -99,7 +129,8 @@ fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>
         .entered();
 
         let mut meta: Vec<(usize, usize)> = Vec::with_capacity(chunk.len());
-        let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(chunk.len() * M);
+        let mut flat: Vec<AdditiveShare<F>> =
+            Vec::with_capacity(chunk.len() * ehat16_by_slot.len() * M);
         for (ti, si, mut hist) in chunk {
             meta.push((ti, si));
             flat.append(&mut hist);
@@ -110,8 +141,12 @@ fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>
 
         let mut out: Vec<(usize, usize, AdditiveDensePoly<F>)> = Vec::with_capacity(meta.len());
         for (k, (ti, si)) in meta.into_iter().enumerate() {
-            let seg = &mut flat_rep3[k * M..(k + 1) * M];
-            let h_k = fwht_unmask_rep3_to_additive(seg, ehat16, inv_m);
+            let mut segs: Vec<Vec<Rep3PrimeFieldShare<F>>> = (0..ehat16_by_slot.len())
+                .map(|slot| flat_rep3[(k * ehat16_by_slot.len() + slot) * M
+                    ..(k * ehat16_by_slot.len() + slot + 1) * M]
+                    .to_vec())
+                .collect();
+            let h_k = fwht_unmask_rep3_slots_to_additive(&mut segs, ehat16_by_slot, inv_m);
             out.push((ti, si, AdditiveDensePoly::new(h_k)));
         }
 
@@ -219,9 +254,11 @@ struct ReadRafProverState<F: JoltField> {
     /// The D Rep3OneHotPolynomials (owned; reused across phases).
     one_hot_polys: Arc<[Rep3OneHotPolynomial<F>; D]>,
     /// Per-phase cached Ehat16 (FWHT of E16 tensor product). Length M.
-    ehat16: Option<Vec<Rep3PrimeFieldShare<F>>>,
+    ehat16_by_slot: Option<Vec<Vec<Rep3PrimeFieldShare<F>>>>,
     /// Per-phase cached c16[j] (public masked 16-bit keys). None means inactive cycle.
     c16: Vec<Option<u16>>,
+    /// Current phase's aligned RandOHV slot per cycle.
+    rotation_slot_by_cycle: Vec<Option<u8>>,
     // -- Cycle-round data (built after LOG_K rounds) --
     eq_r_cycle: MultilinearPolynomial<F>,
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
@@ -289,8 +326,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
                 "one_hot_polys[{i}].masked_indices_c length mismatch"
             );
             eyre::ensure!(
-                ohv.rand_ohv_e_field.len() == K_CHUNK,
-                "one_hot_polys[{i}].rand_ohv_e_field must have length {}",
+                ohv.num_rotation_slots() > 0 && ohv.rand_ohv_e_field(0).len() == K_CHUNK,
+                "one_hot_polys[{i}] RandOHV bank entries must have length {}",
                 K_CHUNK
             );
         }
@@ -383,8 +420,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             lookup_indices,
             right_operand_public_mask,
             one_hot_polys,
-            ehat16: None,
+            ehat16_by_slot: None,
             c16: vec![None; num_cycles],
+            rotation_slot_by_cycle: vec![None; num_cycles],
             eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle_public.to_vec()),
             combined_val_polynomial: None,
             party_id,
@@ -446,19 +484,33 @@ impl<F: JoltField> ReadRafProverState<F> {
             "one_hot_polys[{lo}].masked_indices_c length mismatch"
         );
         eyre::ensure!(
-            self.one_hot_polys[hi].rand_ohv_e_field.len() == K_CHUNK,
-            "one_hot_polys[{hi}].rand_ohv_e_field must have length {K_CHUNK}"
+            self.one_hot_polys[hi].num_rotation_slots() > 0
+                && self.one_hot_polys[hi].rand_ohv_e_field(0).len() == K_CHUNK,
+            "one_hot_polys[{hi}] RandOHV bank entries must have length {K_CHUNK}"
         );
         eyre::ensure!(
-            self.one_hot_polys[lo].rand_ohv_e_field.len() == K_CHUNK,
-            "one_hot_polys[{lo}].rand_ohv_e_field must have length {K_CHUNK}"
+            self.one_hot_polys[lo].num_rotation_slots() > 0
+                && self.one_hot_polys[lo].rand_ohv_e_field(0).len() == K_CHUNK,
+            "one_hot_polys[{lo}] RandOHV bank entries must have length {K_CHUNK}"
         );
         let _ehat_span = tracing::info_span!("prefix_tensor_prod").entered();
+        let slot_count = self.one_hot_polys[hi].num_rotation_slots();
+        eyre::ensure!(
+            slot_count == self.one_hot_polys[lo].num_rotation_slots(),
+            "phase pair RandOHV bank size mismatch"
+        );
 
         // derive c16
         for j in 0..self.c16.len() {
             let c_hi = self.one_hot_polys[hi].masked_indices_c[j];
             let c_lo = self.one_hot_polys[lo].masked_indices_c[j];
+            let slot_hi = self.one_hot_polys[hi].rotation_slot_by_cycle[j];
+            let slot_lo = self.one_hot_polys[lo].rotation_slot_by_cycle[j];
+            eyre::ensure!(
+                slot_hi == slot_lo,
+                "phase pair slot mismatch at cycle {j}: hi={slot_hi:?} lo={slot_lo:?}"
+            );
+            self.rotation_slot_by_cycle[j] = slot_hi;
             self.c16[j] = match (c_hi, c_lo) {
                 (Some(h), Some(l)) => Some(((h as u16) << LOG_K_CHUNK) | (l as u16)),
                 _ => None,
@@ -466,27 +518,30 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         // compute Ehat16 via tensor product
-        let ehat16_prev = self.ehat16.take();
+        let ehat16_prev = self.ehat16_by_slot.take();
 
-        let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
-            self.one_hot_polys[hi].rand_ohv_e_field.as_ref().clone();
-        let mut ehat8_lo: Vec<Rep3PrimeFieldShare<F>> =
-            self.one_hot_polys[lo].rand_ohv_e_field.as_ref().clone();
-        fwht_rep3_in_place(&mut ehat8_hi);
-        fwht_rep3_in_place(&mut ehat8_lo);
-
-        // Tensor product: Ehat_M[(a<<LOG_K_CHUNK)|b] = Ehat_K_hi[a] * Ehat_K_lo[b]
-        let mut a_expanded = Vec::with_capacity(M);
-        let mut b_expanded = Vec::with_capacity(M);
-        for a_idx in 0..K_CHUNK {
-            for b_idx in 0..K_CHUNK {
-                a_expanded.push(ehat8_hi[a_idx]);
-                b_expanded.push(ehat8_lo[b_idx]);
+        let mut a_expanded = Vec::with_capacity(slot_count * M);
+        let mut b_expanded = Vec::with_capacity(slot_count * M);
+        for slot in 0..slot_count {
+            let mut ehat8_hi: Vec<Rep3PrimeFieldShare<F>> =
+                self.one_hot_polys[hi].rand_ohv_e_field(slot).to_vec();
+            let mut ehat8_lo: Vec<Rep3PrimeFieldShare<F>> =
+                self.one_hot_polys[lo].rand_ohv_e_field(slot).to_vec();
+            fwht_rep3_in_place(&mut ehat8_hi);
+            fwht_rep3_in_place(&mut ehat8_lo);
+            for a_idx in 0..K_CHUNK {
+                for b_idx in 0..K_CHUNK {
+                    a_expanded.push(ehat8_hi[a_idx]);
+                    b_expanded.push(ehat8_lo[b_idx]);
+                }
             }
         }
 
-        let ehat16 = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx.main())?;
-        self.ehat16 = Some(ehat16);
+        let ehat16_flat = rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx.main())?;
+        let ehat16_by_slot: Vec<Vec<Rep3PrimeFieldShare<F>>> = (0..slot_count)
+            .map(|slot| ehat16_flat[slot * M..(slot + 1) * M].to_vec())
+            .collect();
+        self.ehat16_by_slot = Some(ehat16_by_slot);
         drop(_ehat_span);
 
         // -- Condensation (phase > 0): u_evals *= eq_shifted[c16_prev] --
@@ -513,7 +568,10 @@ impl<F: JoltField> ReadRafProverState<F> {
             let eq16: Vec<F> = EqPolynomial::evals(&prev_challenges);
 
             // Shift into masked domain: eq_shifted[c] = eq16[c XOR r16_prev]
-            let eq_shifted = shift_eq_table_with_mask(&eq16, &ehat16_prev);
+            let eq_shifted_by_slot: Vec<Vec<Rep3PrimeFieldShare<F>>> = ehat16_prev
+                .iter()
+                .map(|ehat16| shift_eq_table_with_mask(&eq16, ehat16))
+                .collect();
 
             // c16_prev for each cycle
             let c16_prev: Vec<Option<u16>> = (0..self.c16.len())
@@ -526,6 +584,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     }
                 })
                 .collect();
+            let rotation_slot_prev = &self.one_hot_polys[prev_hi].rotation_slot_by_cycle;
 
             // Only multiply active cycles (c16_prev != None) to reduce mul_vec size.
             let active_indices: Vec<usize> = c16_prev
@@ -540,8 +599,9 @@ impl<F: JoltField> ReadRafProverState<F> {
                     // Phase 0→1: pub * shared → Shared (local, no mul_vec — saves 1 round)
                     let mut u_shared = vec![Rep3PrimeFieldShare::<F>::zero_share(); num_cycles];
                     for &j in &active_indices {
+                        let slot = rotation_slot_prev[j].expect("active slot") as usize;
                         u_shared[j] = rep3_arith::mul_public(
-                            eq_shifted[c16_prev[j].unwrap() as usize],
+                            eq_shifted_by_slot[slot][c16_prev[j].unwrap() as usize],
                             u_pub[j],
                         );
                     }
@@ -554,7 +614,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                             active_indices.iter().map(|&j| u_shared[j]).collect();
                         let eq_active: Vec<Rep3PrimeFieldShare<F>> = active_indices
                             .iter()
-                            .map(|&j| eq_shifted[c16_prev[j].unwrap() as usize])
+                            .map(|&j| {
+                                let slot = rotation_slot_prev[j].expect("active slot") as usize;
+                                eq_shifted_by_slot[slot][c16_prev[j].unwrap() as usize]
+                            })
                             .collect();
 
                         let products = rep3_arith::mul_vec(&u_active, &eq_active, io_ctx.main())?;
@@ -619,8 +682,8 @@ impl<F: JoltField> ReadRafProverState<F> {
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<()> {
-        let ehat16 = self
-            .ehat16
+        let ehat16_by_slot = self
+            .ehat16_by_slot
             .as_ref()
             .ok_or_else(|| eyre::eyre!("ehat16 missing in init_suffix_polys"))?;
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
@@ -684,9 +747,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                 &all_field,
                 &self.u_evals,
                 &self.c16,
+                &self.rotation_slot_by_cycle,
                 &self.lookup_indices_by_table,
                 suffix_len,
-                ehat16,
+                ehat16_by_slot,
                 self.party_id,
             );
         drop(zero_polys);
@@ -703,7 +767,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         let reshared_polys = reshare_and_unmask_additive_hists_chunked(
             hist_entries_to_reshare,
-            ehat16,
+            ehat16_by_slot,
             inv_m,
             self.party_id,
             io_ctx,
@@ -744,20 +808,19 @@ impl<F: JoltField> ReadRafProverState<F> {
     ) -> eyre::Result<()> {
         use jolt_core::utils::uninterleave_bits;
 
-        let ehat16 = self.ehat16.as_ref().unwrap();
+        let ehat16_by_slot = self.ehat16_by_slot.as_ref().unwrap();
         let suffix_len = (PHASES - 1 - phase) * LOG_M;
 
         // Helper: FWHT unmask a Rep3 histogram against Ehat16.
         let inv_m = F::from(M as u64).inverse().expect("M invertible");
-        let fwht_unmask = |mut h: Vec<Rep3PrimeFieldShare<F>>| -> AdditiveDensePoly<F> {
-            fwht_rep3_in_place(&mut h);
-            let mut h_k: Vec<AdditiveShare<F>> = h
-                .iter()
-                .zip(ehat16.iter())
-                .map(|(&a, &b)| (a * inv_m) * b)
-                .collect();
-            fwht_in_place(&mut h_k);
-            AdditiveDensePoly::new(h_k)
+        let slot_count = ehat16_by_slot.len();
+        let fwht_unmask =
+            |mut h: Vec<Vec<Rep3PrimeFieldShare<F>>>| -> AdditiveDensePoly<F> {
+                AdditiveDensePoly::new(fwht_unmask_rep3_slots_to_additive(
+                    &mut h,
+                    ehat16_by_slot,
+                    inv_m,
+                ))
         };
 
         if suffix_len == 0 {
@@ -767,38 +830,46 @@ impl<F: JoltField> ReadRafProverState<F> {
             let (q0, q4) = match &self.u_evals {
                 Either::Public(u_pub) => {
                     // F histograms → unmask_histogram_public (FWHT on F, ~2x cheaper)
-                    let mut h0_f = vec![F::zero(); M];
+                    let mut h0_f = vec![vec![F::zero(); M]; slot_count];
                     for &j in &self.interleaved_cycles {
-                        if let Some(c) = self.c16[j] {
-                            h0_f[c as usize] += u_pub[j];
+                        if let (Some(c), Some(slot)) =
+                            (self.c16[j], self.rotation_slot_by_cycle[j])
+                        {
+                            h0_f[slot as usize][c as usize] += u_pub[j];
                         }
                     }
-                    let mut h4_f = vec![F::zero(); M];
+                    let mut h4_f = vec![vec![F::zero(); M]; slot_count];
                     for &j in &self.identity_cycles {
-                        if let Some(c) = self.c16[j] {
-                            h4_f[c as usize] += u_pub[j];
+                        if let (Some(c), Some(slot)) =
+                            (self.c16[j], self.rotation_slot_by_cycle[j])
+                        {
+                            h4_f[slot as usize][c as usize] += u_pub[j];
                         }
                     }
                     let party_id = self.party_id;
-                    let q0 = AdditiveDensePoly::new(unmask_histogram_public(
-                        &mut h0_f, ehat16, party_id,
-                    ));
-                    let q4 = AdditiveDensePoly::new(unmask_histogram_public(
-                        &mut h4_f, ehat16, party_id,
-                    ));
+                    let q0 =
+                        AdditiveDensePoly::new(unmask_histogram_public_slots(&mut h0_f, ehat16_by_slot, party_id));
+                    let q4 =
+                        AdditiveDensePoly::new(unmask_histogram_public_slots(&mut h4_f, ehat16_by_slot, party_id));
                     (q0, q4)
                 }
                 Either::Shared(u_shared) => {
-                    let mut hist0 = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                    let mut hist0 =
+                        vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                     for &j in &self.interleaved_cycles {
-                        if let Some(c) = self.c16[j] {
-                            hist0[c as usize] += u_shared[j];
+                        if let (Some(c), Some(slot)) =
+                            (self.c16[j], self.rotation_slot_by_cycle[j])
+                        {
+                            hist0[slot as usize][c as usize] += u_shared[j];
                         }
                     }
-                    let mut hist4 = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                    let mut hist4 =
+                        vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                     for &j in &self.identity_cycles {
-                        if let Some(c) = self.c16[j] {
-                            hist4[c as usize] += u_shared[j];
+                        if let (Some(c), Some(slot)) =
+                            (self.c16[j], self.rotation_slot_by_cycle[j])
+                        {
+                            hist4[slot as usize][c as usize] += u_shared[j];
                         }
                     }
                     let q0 = fwht_unmask(hist0);
@@ -941,17 +1012,20 @@ impl<F: JoltField> ReadRafProverState<F> {
         let shift_val = F::from_u128(1u128 << suffix_len);
         let party_id = self.party_id;
         let c16 = &self.c16;
+        let rotation_slots = &self.rotation_slot_by_cycle;
 
         // Build histograms. histograms[0] == histograms[2] always (both Σ u * shift_half_val
         // for interleaved cycles), so we compute it once and clone.
         // Phase 0: shift histograms stay as F (unmask_histogram_public is ~2x cheaper).
-        let mut shift_half_f: Option<Vec<F>> = None;
-        let mut shift_f: Option<Vec<F>> = None;
-        let mut hist_shift_half = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-        let mut hist_shift = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-        let mut hist_left = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-        let mut hist_right = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
-        let mut hist_identity = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+        let mut shift_half_f: Option<Vec<Vec<F>>> = None;
+        let mut shift_f: Option<Vec<Vec<F>>> = None;
+        let mut hist_shift_half =
+            vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
+        let mut hist_shift = vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
+        let mut hist_left = vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
+        let mut hist_right = vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
+        let mut hist_identity =
+            vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
 
         // Shift histogram accumulation is folded into the operand loops below:
         // pub_interleaved ∪ shared_interleaved == interleaved_cycles, and
@@ -961,39 +1035,42 @@ impl<F: JoltField> ReadRafProverState<F> {
         match &self.u_evals {
             Either::Public(u_pub) => {
                 // Phase 0: u is public — shift histograms as plain F
-                let mut hsh_f = vec![F::zero(); M];
-                let mut hs_f = vec![F::zero(); M];
+                let mut hsh_f = vec![vec![F::zero(); M]; slot_count];
+                let mut hs_f = vec![vec![F::zero(); M]; slot_count];
                 rayon::join(
                     || {
                         // Interleaved: shift_half + left/right operands
                         for &(j, left_val, right_val) in &pub_interleaved {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
-                                hsh_f[ci] += u_pub[j] * shift_half_val;
-                                hist_left[ci] = rep3_arith::add_public(
-                                    hist_left[ci],
+                                let slot = slot as usize;
+                                hsh_f[slot][ci] += u_pub[j] * shift_half_val;
+                                hist_left[slot][ci] = rep3_arith::add_public(
+                                    hist_left[slot][ci],
                                     u_pub[j] * left_val,
                                     party_id,
                                 );
-                                hist_right[ci] = rep3_arith::add_public(
-                                    hist_right[ci],
+                                hist_right[slot][ci] = rep3_arith::add_public(
+                                    hist_right[slot][ci],
                                     u_pub[j] * right_val,
                                     party_id,
                                 );
                             }
                         }
                         for (i, &j) in shared_interleaved_js.iter().enumerate() {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
-                                hsh_f[ci] += u_pub[j] * shift_half_val;
-                                hist_left[ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
+                                let slot = slot as usize;
+                                hsh_f[slot][ci] += u_pub[j] * shift_half_val;
+                                hist_left[slot][ci] += rep3_arith::mul_public(s_left[i], u_pub[j]);
                                 match s_right[i] {
                                     Some(sr) => {
-                                        hist_right[ci] += rep3_arith::mul_public(sr, u_pub[j]);
+                                        hist_right[slot][ci] +=
+                                            rep3_arith::mul_public(sr, u_pub[j]);
                                     }
                                     None => {
-                                        hist_right[ci] = rep3_arith::add_public(
-                                            hist_right[ci],
+                                        hist_right[slot][ci] = rep3_arith::add_public(
+                                            hist_right[slot][ci],
                                             u_pub[j] * right_operand_pub[i].unwrap(),
                                             party_id,
                                         );
@@ -1005,21 +1082,23 @@ impl<F: JoltField> ReadRafProverState<F> {
                     || {
                         // Identity: shift + identity operand
                         for &(j, id_val) in &pub_identity {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
-                                hs_f[ci] += u_pub[j] * shift_val;
-                                hist_identity[ci] = rep3_arith::add_public(
-                                    hist_identity[ci],
+                                let slot = slot as usize;
+                                hs_f[slot][ci] += u_pub[j] * shift_val;
+                                hist_identity[slot][ci] = rep3_arith::add_public(
+                                    hist_identity[slot][ci],
                                     u_pub[j] * id_val,
                                     party_id,
                                 );
                             }
                         }
                         for (i, &j) in shared_identity_js.iter().enumerate() {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
-                                hs_f[ci] += u_pub[j] * shift_val;
-                                hist_identity[ci] +=
+                                let slot = slot as usize;
+                                hs_f[slot][ci] += u_pub[j] * shift_val;
+                                hist_identity[slot][ci] +=
                                     rep3_arith::mul_public(s_identity[i], u_pub[j]);
                             }
                         }
@@ -1038,13 +1117,13 @@ impl<F: JoltField> ReadRafProverState<F> {
                 let (mut add_left, mut add_right, mut add_identity) =
                     if has_shared_interleaved || has_shared_identity {
                         (
-                            vec![AdditiveShare::<F>::zero(); M],
+                            vec![AdditiveShare::<F>::zero(); slot_count * M],
                             if has_fully_shared_right {
-                                vec![AdditiveShare::<F>::zero(); M]
+                                vec![AdditiveShare::<F>::zero(); slot_count * M]
                             } else {
                                 vec![]
                             },
-                            vec![AdditiveShare::<F>::zero(); M],
+                            vec![AdditiveShare::<F>::zero(); slot_count * M],
                         )
                     } else {
                         (vec![], vec![], vec![])
@@ -1054,26 +1133,29 @@ impl<F: JoltField> ReadRafProverState<F> {
                     || {
                         // Interleaved: shift_half + pub operands + shared operands
                         for &(j, left_val, right_val) in &pub_interleaved {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
+                                let slot = slot as usize;
                                 let u = u_shared[j];
-                                hist_shift_half[ci] += u * shift_half_val;
-                                hist_left[ci] += u * left_val;
-                                hist_right[ci] += u * right_val;
+                                hist_shift_half[slot][ci] += u * shift_half_val;
+                                hist_left[slot][ci] += u * left_val;
+                                hist_right[slot][ci] += u * right_val;
                             }
                         }
                         for (i, &j) in shared_interleaved_js.iter().enumerate() {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
+                                let slot = slot as usize;
+                                let idx = slot * M + ci;
                                 let u = u_shared[j];
-                                hist_shift_half[ci] += u * shift_half_val;
-                                add_left[ci] = add_left[ci] + (u * s_left[i]);
+                                hist_shift_half[slot][ci] += u * shift_half_val;
+                                add_left[idx] = add_left[idx] + (u * s_left[i]);
                                 match s_right[i] {
                                     Some(sr) => {
-                                        add_right[ci] = add_right[ci] + (u * sr);
+                                        add_right[idx] = add_right[idx] + (u * sr);
                                     }
                                     None => {
-                                        hist_right[ci] += u * right_operand_pub[i].unwrap();
+                                        hist_right[slot][ci] += u * right_operand_pub[i].unwrap();
                                     }
                                 }
                             }
@@ -1082,19 +1164,22 @@ impl<F: JoltField> ReadRafProverState<F> {
                     || {
                         // Identity: shift + pub operands + shared operands
                         for &(j, id_val) in &pub_identity {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
+                                let slot = slot as usize;
                                 let u = u_shared[j];
-                                hist_shift[ci] += u * shift_val;
-                                hist_identity[ci] += u * id_val;
+                                hist_shift[slot][ci] += u * shift_val;
+                                hist_identity[slot][ci] += u * id_val;
                             }
                         }
                         for (i, &j) in shared_identity_js.iter().enumerate() {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
+                                let slot = slot as usize;
+                                let idx = slot * M + ci;
                                 let u = u_shared[j];
-                                hist_shift[ci] += u * shift_val;
-                                add_identity[ci] = add_identity[ci] + (u * s_identity[i]);
+                                hist_shift[slot][ci] += u * shift_val;
+                                add_identity[idx] = add_identity[idx] + (u * s_identity[i]);
                             }
                         }
                     },
@@ -1103,7 +1188,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                 // Batch reshare additive → Rep3
                 if has_shared_interleaved || has_shared_identity {
                     let _reshare = info_span!("q_reshare").entered();
-                    let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
+                    let mut flat: Vec<AdditiveShare<F>> =
+                        Vec::with_capacity((2 + usize::from(has_fully_shared_right)) * slot_count * M);
                     flat.extend_from_slice(&add_left);
                     if has_fully_shared_right {
                         flat.extend_from_slice(&add_right);
@@ -1112,19 +1198,28 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let flat_rep3 = rep3_arith::reshare_additive_many(&flat, io_ctx.main())?;
                     drop(_reshare);
 
-                    for i in 0..M {
-                        hist_left[i] += flat_rep3[i];
+                    for slot in 0..slot_count {
+                        for i in 0..M {
+                            hist_left[slot][i] += flat_rep3[slot * M + i];
+                        }
                     }
                     if has_fully_shared_right {
-                        for i in 0..M {
-                            hist_right[i] += flat_rep3[M + i];
-                        }
-                        for i in 0..M {
-                            hist_identity[i] += flat_rep3[2 * M + i];
+                        let right_offset = slot_count * M;
+                        let identity_offset = 2 * slot_count * M;
+                        for slot in 0..slot_count {
+                            for i in 0..M {
+                                hist_right[slot][i] += flat_rep3[right_offset + slot * M + i];
+                                hist_identity[slot][i] +=
+                                    flat_rep3[identity_offset + slot * M + i];
+                            }
                         }
                     } else {
-                        for i in 0..M {
-                            hist_identity[i] += flat_rep3[M + i];
+                        let identity_offset = slot_count * M;
+                        for slot in 0..slot_count {
+                            for i in 0..M {
+                                hist_identity[slot][i] +=
+                                    flat_rep3[identity_offset + slot * M + i];
+                            }
                         }
                     }
                 }
@@ -1152,8 +1247,10 @@ impl<F: JoltField> ReadRafProverState<F> {
             let party_id = self.party_id;
             let mut hsh = shift_half_f.unwrap();
             let mut hs = shift_f.unwrap();
-            let q02 = AdditiveDensePoly::new(unmask_histogram_public(&mut hsh, ehat16, party_id));
-            let q4 = AdditiveDensePoly::new(unmask_histogram_public(&mut hs, ehat16, party_id));
+            let q02 =
+                AdditiveDensePoly::new(unmask_histogram_public_slots(&mut hsh, ehat16_by_slot, party_id));
+            let q4 =
+                AdditiveDensePoly::new(unmask_histogram_public_slots(&mut hs, ehat16_by_slot, party_id));
 
             let q1 = fwht_unmask(hist_left);
             let q3 = fwht_unmask(hist_right);
@@ -1183,8 +1280,11 @@ impl<F: JoltField> ReadRafProverState<F> {
         // ra_acc[j] *= v[bucket] where bucket = prefix(k_j) % M for the current phase.
         // In masked domain: bucket = (c16[j] ^ r16) % M = c16[j] ^ r16 (since M = 2^16).
         // We use the shifted v table: v_shifted[c] = v[c ^ r16].
-        let ehat16 = self.ehat16.as_ref().unwrap();
-        let v_shifted = shift_eq_table_with_mask(self.v.values(), ehat16);
+        let ehat16_by_slot = self.ehat16_by_slot.as_ref().unwrap();
+        let v_shifted_by_slot: Vec<Vec<Rep3PrimeFieldShare<F>>> = ehat16_by_slot
+            .iter()
+            .map(|ehat16| shift_eq_table_with_mask(self.v.values(), ehat16))
+            .collect();
 
         // Only multiply active cycles (c16 != None) to reduce mul_vec size.
         // Inactive cycles have ra_acc = 0 already (multiplied by zero in condensation
@@ -1197,7 +1297,10 @@ impl<F: JoltField> ReadRafProverState<F> {
                 let ra_shared: Vec<_> = (0..num_cycles)
                     .into_par_iter()
                     .map(|j| match self.c16[j] {
-                        Some(c) => v_shifted[c as usize],
+                        Some(c) => {
+                            let slot = self.rotation_slot_by_cycle[j].expect("active slot");
+                            v_shifted_by_slot[slot as usize][c as usize]
+                        }
                         None => Rep3PrimeFieldShare::<F>::zero_share(),
                     })
                     .collect();
@@ -1213,7 +1316,12 @@ impl<F: JoltField> ReadRafProverState<F> {
                     .c16
                     .par_iter()
                     .enumerate()
-                    .filter_map(|(j, opt)| opt.map(|c| (j, ra_shared[j], v_shifted[c as usize])))
+                    .filter_map(|(j, opt)| {
+                        opt.map(|c| {
+                            let slot = self.rotation_slot_by_cycle[j].expect("active slot");
+                            (j, ra_shared[j], v_shifted_by_slot[slot as usize][c as usize])
+                        })
+                    })
                     .fold(
                         || (Vec::new(), Vec::new(), Vec::new()),
                         |(mut idx, mut ra, mut v), (j, r, vs)| {
@@ -1991,9 +2099,10 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
     all_field: &[Rep3Value<F>],
     u_evals: &Either<Vec<F>, Vec<Rep3PrimeFieldShare<F>>>,
     c16: &[Option<u16>],
+    rotation_slots: &[Option<u8>],
     lookup_indices_by_table: &[Vec<usize>],
     suffix_len: usize,
-    ehat16: &[Rep3PrimeFieldShare<F>],
+    ehat16_by_slot: &[Vec<Rep3PrimeFieldShare<F>>],
     party_id: PartyID,
 ) -> (
     Vec<(usize, usize, AdditiveDensePoly<F>)>,
@@ -2003,6 +2112,7 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
 ) {
     let _span = info_span!("build_histograms", n = eval_segments.len()).entered();
     let inv_m = F::from(M as u64).inverse().expect("M invertible");
+    let slot_count = ehat16_by_slot.len();
 
     // Build lookup: (table_idx, suffix_idx) → segment in all_field
     let segment_lookup: std::collections::HashMap<(usize, usize), (usize, usize)> = eval_segments
@@ -2045,45 +2155,49 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
                             return HistResult::Zero(ti, si);
                         }
                         let constant_f = F::from_u128(constant_u64 as u128);
-                        let mut h = vec![F::zero(); M];
+                        let mut h = vec![vec![F::zero(); M]; slot_count];
                         for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_pub[j] * constant_f;
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
+                                h[slot as usize][c as usize] += u_pub[j] * constant_f;
                             }
                         }
-                        let unmasked = unmask_histogram_public(&mut h, ehat16, party_id);
+                        let unmasked = unmask_histogram_public_slots(&mut h, ehat16_by_slot, party_id);
                         HistResult::PublicPoly(ti, si, AdditiveDensePoly::new(unmasked))
                     } else if matches!(suffix, Suffixes::One) {
-                        let mut h = vec![F::zero(); M];
+                        let mut h = vec![vec![F::zero(); M]; slot_count];
                         for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_pub[j];
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
+                                h[slot as usize][c as usize] += u_pub[j];
                             }
                         }
-                        let unmasked = unmask_histogram_public(&mut h, ehat16, party_id);
+                        let unmasked = unmask_histogram_public_slots(&mut h, ehat16_by_slot, party_id);
                         HistResult::PublicPoly(ti, si, AdditiveDensePoly::new(unmasked))
                     } else {
                         let &(seg_base, seg_n) =
                             segment_lookup.get(&(ti, si)).expect("missing eval segment");
                         let suffix_evals = &all_field[seg_base..seg_base + seg_n];
 
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        let mut h =
+                            vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                         for (local, &j) in table_cycles.iter().enumerate() {
-                            if let Some(c) = c16[j] {
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                 let ci = c as usize;
                                 match suffix_evals[local] {
                                     Rep3Value::Public(f) => {
-                                        h[ci] =
-                                            rep3_arith::add_public(h[ci], u_pub[j] * f, party_id);
+                                        h[slot as usize][ci] = rep3_arith::add_public(
+                                            h[slot as usize][ci],
+                                            u_pub[j] * f,
+                                            party_id,
+                                        );
                                     }
                                     Rep3Value::Shared(s) => {
-                                        h[ci] += rep3_arith::mul_public(s, u_pub[j]);
+                                        h[slot as usize][ci] += rep3_arith::mul_public(s, u_pub[j]);
                                     }
                                     Rep3Value::Additive(_) => unreachable!(),
                                 }
                             }
                         }
-                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        let h_k = fwht_unmask_rep3_slots_to_additive(&mut h, ehat16_by_slot, inv_m);
                         HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     }
                 })
@@ -2105,22 +2219,24 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
                             return HistResult::Zero(ti, si);
                         }
                         let constant_f = F::from_u128(constant_u64 as u128);
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        let mut h =
+                            vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                         for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_shared[j] * constant_f;
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
+                                h[slot as usize][c as usize] += u_shared[j] * constant_f;
                             }
                         }
-                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        let h_k = fwht_unmask_rep3_slots_to_additive(&mut h, ehat16_by_slot, inv_m);
                         HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     } else if matches!(suffix, Suffixes::One) {
-                        let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                        let mut h =
+                            vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                         for &j in table_cycles {
-                            if let Some(c) = c16[j] {
-                                h[c as usize] += u_shared[j];
+                            if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
+                                h[slot as usize][c as usize] += u_shared[j];
                             }
                         }
-                        let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                        let h_k = fwht_unmask_rep3_slots_to_additive(&mut h, ehat16_by_slot, inv_m);
                         HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                     } else {
                         let &(seg_base, seg_n) =
@@ -2131,25 +2247,28 @@ fn build_suffix_polys_and_additive_hists<F: JoltField>(
                             .iter()
                             .all(|v| matches!(v, Rep3Value::Public(_)));
                         if all_suffix_public {
-                            let mut h = vec![Rep3PrimeFieldShare::<F>::zero_share(); M];
+                            let mut h =
+                                vec![vec![Rep3PrimeFieldShare::<F>::zero_share(); M]; slot_count];
                             for (local, &j) in table_cycles.iter().enumerate() {
-                                if let Some(c) = c16[j] {
+                                if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
                                     let f = suffix_evals[local].as_public();
-                                    h[c as usize] += u_shared[j] * f;
+                                    h[slot as usize][c as usize] += u_shared[j] * f;
                                 }
                             }
-                            let h_k = fwht_unmask_rep3_to_additive(&mut h, ehat16, inv_m);
+                            let h_k =
+                                fwht_unmask_rep3_slots_to_additive(&mut h, ehat16_by_slot, inv_m);
                             HistResult::Rep3Poly(ti, si, AdditiveDensePoly::new(h_k))
                         } else {
-                            let mut h = vec![AdditiveShare::<F>::zero(); M];
+                            let mut h = vec![AdditiveShare::<F>::zero(); slot_count * M];
                             for (local, &j) in table_cycles.iter().enumerate() {
-                                if let Some(c) = c16[j] {
+                                if let (Some(c), Some(slot)) = (c16[j], rotation_slots[j]) {
+                                    let idx = slot as usize * M + c as usize;
                                     let w: AdditiveShare<F> = match suffix_evals[local] {
                                         Rep3Value::Public(f) => u_shared[j].into_additive() * f,
                                         Rep3Value::Shared(s) => u_shared[j] * s,
                                         Rep3Value::Additive(_) => unreachable!(),
                                     };
-                                    h[c as usize] = h[c as usize] + w;
+                                    h[idx] = h[idx] + w;
                                 }
                             }
                             HistResult::Additive(ti, si, h)

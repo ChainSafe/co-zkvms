@@ -205,14 +205,18 @@ fn prove_loop(
             use mpc_core::protocols::rep3_ring::edabits;
             let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
             let num_dabits = budget.dabits;
+            let num_rand_ohvs_u8_k4 = budget.rand_ohvs_u8_k4;
 
             let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
                     let (rem_eda, rem_da) = pool.remaining_counts();
+                    let rem_rand_ohvs = pool.remaining_rand_ohvs_u8_k4();
                     let deficit_counts: [usize; 5] =
                         std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    let deficit_rand_ohvs =
+                        num_rand_ohvs_u8_k4.saturating_sub(rem_rand_ohvs);
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
                         budget
@@ -223,8 +227,9 @@ fn prove_loop(
                             .saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
-                    let need_extend =
-                        deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                        || deficit_dabits > 0
+                        || deficit_rand_ohvs > 0;
                     #[cfg(feature = "ring-msm")]
                     let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -238,6 +243,7 @@ fn prove_loop(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             io_ctx,
                         )?;
                         #[cfg(feature = "ring-msm")]
@@ -245,6 +251,7 @@ fn prove_loop(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             deficit_wm,
                             deficit_re,
                             io_ctx,
@@ -263,6 +270,7 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             io_ctx,
                         )?
                     }
@@ -272,6 +280,7 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             budget.wrap_masks,
                             budget.ring_edabits_u66,
                             io_ctx,

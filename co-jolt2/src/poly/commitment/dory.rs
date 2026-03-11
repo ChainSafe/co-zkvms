@@ -1438,6 +1438,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ring-msm")]
     fn dory_u64_scalars_commit_correct() {
         let mut rng = test_rng();
 
@@ -1497,6 +1498,7 @@ mod tests {
                 let mut preproc = edabits::preprocess_pool::<Fr, _>(
                     &pool_dir,
                     [0, 0, 0, 0, 0],
+                    0,
                     0,
                     len,
                     len,
@@ -1633,6 +1635,7 @@ mod tests {
                 let mut preproc = edabits::preprocess_pool::<Fr, _>(
                     &pool_dir,
                     [0, 0, 0, 0, 0],
+                    0,
                     0,
                     len,
                     len,

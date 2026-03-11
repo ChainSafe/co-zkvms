@@ -1069,6 +1069,7 @@ where
                         indices,
                         instruction_lookups::K_CHUNK,
                         io_ctx.main(),
+                        preproc,
                     )?;
                     results.insert(*poly, Rep3MultilinearPolynomial::shared_one_hot(one_hot));
                 }

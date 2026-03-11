@@ -13,12 +13,14 @@ use jolt_core::utils::math::Math;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::PartyID;
-use mpc_core::protocols::rep3_ring::{binary, conversion, gadgets};
+use mpc_core::protocols::rep3_ring::binary;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::{rep3::Rep3PrimeFieldShare, rep3_ring::Rep3RingShare};
 use rayon::prelude::*;
 
 use crate::poly::ra_poly::{shifted_table_from_rand_ohv, Rep3RaPolynomial};
 use crate::utils::fwht::fwht_in_place;
+use crate::zkvm::dag::preproc_budget::rand_ohv_rotation_count;
 use jolt_core::field::JoltField;
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
@@ -33,9 +35,10 @@ pub struct Rep3OneHotPolynomial<F: JoltField> {
     /// Public masked index per cycle: `Some(c)` where `c = open(k(j) XOR r)`;
     /// `None` means this cycle has no address (row is all-zero).
     pub masked_indices_c: Arc<Vec<Option<u8>>>,
-    /// Field-injected RandOHV `E_field` (length K): secret-shared one-hot vector `e(r)`.
-    /// Used to select `table[r XOR c]` from a public table via an inner product.
-    pub rand_ohv_e_field: Arc<Vec<Rep3PrimeFieldShare<F>>>,
+    /// Per-cycle rotation slot selecting which preprocessed RandOHV bank entry masks this row.
+    pub rotation_slot_by_cycle: Arc<Vec<Option<u8>>>,
+    /// Field-injected RandOHV bank. Entry `slot` is the secret-shared one-hot vector `e(r_slot)`.
+    pub rand_ohv_e_field_bank: Arc<Vec<Arc<Vec<Rep3PrimeFieldShare<F>>>>>,
     /// The number of variables that have been bound over the
     /// course of sumcheck so far.
     num_variables_bound: usize,
@@ -44,9 +47,9 @@ pub struct Rep3OneHotPolynomial<F: JoltField> {
     /// Helper polynomial for cycle-variable rounds: `H(j) = eq(k(j), u)` for the fully-bound address
     /// challenge vector `u`.
     H: Arc<RwLock<Rep3RaPolynomial<u8, F>>>,
-    /// RandOHV mask `r` share — stored for reconstruction of plaintext indices.
+    /// RandOHV mask shares — stored for reconstruction of plaintext indices.
     #[cfg(test)]
-    r_share: Rep3RingShare<u8>,
+    r_shares: Vec<Rep3RingShare<u8>>,
 }
 
 impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
@@ -54,12 +57,13 @@ impl<F: JoltField> Default for Rep3OneHotPolynomial<F> {
         Self {
             K: 1,
             masked_indices_c: Arc::new(vec![]),
-            rand_ohv_e_field: Arc::new(vec![]),
+            rotation_slot_by_cycle: Arc::new(vec![]),
+            rand_ohv_e_field_bank: Arc::new(vec![]),
             num_variables_bound: 0,
             G: vec![],
             H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
             #[cfg(test)]
-            r_share: Rep3RingShare::default(),
+            r_shares: vec![],
         }
     }
 }
@@ -74,13 +78,25 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
         K: usize,
         io_ctx: &mut IoContext<N>,
+        preproc: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Self> {
         assert!(K.is_power_of_two(), "K must be a power of two");
         assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
-        let log_k = K.log_2();
+        let rotation_count = rand_ohv_rotation_count();
+        let batch = preproc.take_rand_ohvs_u8_k4(rotation_count)?;
+        eyre::ensure!(
+            batch.e_fields_flat.len() == rotation_count * K,
+            "RandOHV batch length mismatch: got {}, want {}",
+            batch.e_fields_flat.len(),
+            rotation_count * K
+        );
 
-        // Sample one RandOHV for the mask `r` (binary-sharing domain).
-        let (r_share, e_bits) = gadgets::ohv::rand_ohv::<u8, _>(log_k, io_ctx)?;
+        let rand_ohv_e_field_bank: Vec<Arc<Vec<Rep3PrimeFieldShare<F>>>> = (0..rotation_count)
+            .map(|slot| {
+                Arc::new(batch.e_fields_flat[slot * K..(slot + 1) * K].to_vec())
+            })
+            .collect();
+        let r_shares = batch.r_shares;
 
         // Open masked indices `c[j] = open(k(j) XOR r)` for active cycles only.
         //
@@ -89,9 +105,16 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // active entries.
         let active_count = nonzero_indices.iter().filter(|opt| opt.is_some()).count();
         let mut masked_active: Vec<Rep3RingShare<u8>> = Vec::with_capacity(active_count);
+        let mut rotation_slot_by_cycle = Vec::with_capacity(nonzero_indices.len());
+        let mut active_ordinal = 0usize;
         for opt in nonzero_indices.iter() {
             if let Some(kj) = opt {
-                masked_active.push(*kj ^ r_share);
+                let slot = (active_ordinal % rotation_count) as u8;
+                masked_active.push(*kj ^ r_shares[slot as usize]);
+                rotation_slot_by_cycle.push(Some(slot));
+                active_ordinal += 1;
+            } else {
+                rotation_slot_by_cycle.push(None);
             }
         }
         let opened_active = binary::open_vec(&masked_active, io_ctx)?;
@@ -110,16 +133,13 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             "opened_active length mismatch"
         );
 
-        // Inject the OHV bits into prime-field shares once.
-        let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
-            conversion::bit_inject_from_bits_to_field_many(&e_bits, io_ctx)?;
-
         Ok(Self {
             K,
             masked_indices_c: Arc::new(masked_indices_c),
-            rand_ohv_e_field: Arc::new(rand_ohv_e_field),
+            rotation_slot_by_cycle: Arc::new(rotation_slot_by_cycle),
+            rand_ohv_e_field_bank: Arc::new(rand_ohv_e_field_bank),
             #[cfg(test)]
-            r_share,
+            r_shares,
             ..Default::default()
         })
     }
@@ -133,8 +153,14 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     ) -> Self {
         Self {
             K,
-            masked_indices_c,
-            rand_ohv_e_field,
+            masked_indices_c: masked_indices_c.clone(),
+            rotation_slot_by_cycle: Arc::new(
+                masked_indices_c
+                    .iter()
+                    .map(|opt| opt.map(|_| 0u8))
+                    .collect(),
+            ),
+            rand_ohv_e_field_bank: Arc::new(vec![rand_ohv_e_field]),
             ..Default::default()
         }
     }
@@ -145,12 +171,20 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// All 3 parties share the same `masked_indices_c` (it's public), so we just need `r`.
     #[cfg(test)]
     pub fn reconstruct_indices(polys: [&Self; 3]) -> Vec<Option<u8>> {
-        // Binary rep3 reconstruct: secret = a_0 XOR a_1 XOR a_2
-        let r = (polys[0].r_share.a ^ polys[1].r_share.a ^ polys[2].r_share.a).0;
         polys[0]
             .masked_indices_c
             .iter()
-            .map(|opt| opt.map(|c| c ^ r))
+            .enumerate()
+            .map(|(j, opt)| {
+                opt.map(|c| {
+                    let slot = polys[0].rotation_slot_by_cycle[j].expect("active slot");
+                    let r = (polys[0].r_shares[slot as usize].a
+                        ^ polys[1].r_shares[slot as usize].a
+                        ^ polys[2].r_shares[slot as usize].a)
+                        .0;
+                    c ^ r
+                })
+            })
             .collect()
     }
 
@@ -170,13 +204,38 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         Self {
             K: self.K,
             masked_indices_c: self.masked_indices_c.clone(),
-            rand_ohv_e_field: self.rand_ohv_e_field.clone(),
+            rotation_slot_by_cycle: self.rotation_slot_by_cycle.clone(),
+            rand_ohv_e_field_bank: self.rand_ohv_e_field_bank.clone(),
             num_variables_bound: self.num_variables_bound,
             G: self.G.clone(),
             H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
             #[cfg(test)]
-            r_share: self.r_share,
+            r_shares: self.r_shares.clone(),
         }
+    }
+
+    #[inline]
+    pub fn num_rotation_slots(&self) -> usize {
+        self.rand_ohv_e_field_bank.len()
+    }
+
+    #[inline]
+    pub fn rotation_slot(&self, row: usize) -> Option<usize> {
+        self.rotation_slot_by_cycle[row].map(|slot| slot as usize)
+    }
+
+    #[inline]
+    pub fn rand_ohv_e_field(&self, slot: usize) -> &[Rep3PrimeFieldShare<F>] {
+        self.rand_ohv_e_field_bank[slot].as_ref()
+    }
+
+    pub fn shifted_tables_from_public_table(
+        &self,
+        table: &[F],
+    ) -> Vec<Vec<Rep3PrimeFieldShare<F>>> {
+        (0..self.num_rotation_slots())
+            .map(|slot| shifted_table_from_rand_ohv(table, self.rand_ohv_e_field(slot)))
+            .collect()
     }
 
     pub fn get_num_vars(&self) -> usize {
@@ -193,7 +252,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - `DoryGlobals` must be initialized and `T = DoryGlobals::get_T()` must match
     ///   `self.masked_indices_c.len()`.
     /// - `bases.len() == DoryGlobals::get_num_columns()`.
-    /// - `self.rand_ohv_e_field.len() == self.K` (use `from_indices_randohv`).
+    /// - every RandOHV bank entry has length `self.K`.
     ///
     /// Perf note:
     /// Although `E` is *actually* a one-hot vector (so the plaintext operation is an index
@@ -226,10 +285,9 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         //     bases.len()
         // );
         eyre::ensure!(
-            self.rand_ohv_e_field.len() == self.K,
-            "RandOHV E_field must be initialized (use from_indices_randohv); got {}, want {}",
-            self.rand_ohv_e_field.len(),
-            self.K
+            !self.rand_ohv_e_field_bank.is_empty()
+                && self.rand_ohv_e_field_bank.iter().all(|e| e.len() == self.K),
+            "RandOHV bank must be initialized with K-length entries"
         );
 
         // eyre::ensure!(
@@ -244,9 +302,17 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             let bases_group: Vec<G> = bases.iter().map(|b| b.into_group()).collect();
 
             debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
-            let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
-            let mut g_hat = g;
-            fwht_in_place(&mut g_hat);
+            let g_hat_by_slot: Vec<Vec<F>> = (0..self.num_rotation_slots())
+                .map(|slot| {
+                    let mut g_hat: Vec<F> = self
+                        .rand_ohv_e_field(slot)
+                        .iter()
+                        .map(|s| s.a)
+                        .collect();
+                    fwht_in_place(&mut g_hat);
+                    g_hat
+                })
+                .collect();
             let inv_k = F::from(self.K as u64)
                 .inverse()
                 .expect("K invertible in field");
@@ -267,33 +333,39 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                         .entered();
 
                         // Public aggregation of bases by masked index `c` within this chunk.
-                        let mut s: Vec<G> = vec![G::zero(); self.K];
+                        let mut s_by_slot: Vec<Vec<G>> =
+                            (0..self.num_rotation_slots()).map(|_| vec![G::zero(); self.K]).collect();
                         {
                             let _guard = tracing::trace_span!("aggregate_bases").entered();
                             let chunk_start = chunk_index * row_len;
                             for col in 0..row_len {
                                 let idx_t = chunk_start + col;
                                 if let Some(c) = self.masked_indices_c[idx_t] {
-                                    s[c as usize] += bases_group[col];
+                                    let slot = self.rotation_slot(idx_t).expect("active slot");
+                                    s_by_slot[slot][c as usize] += bases_group[col];
                                 }
                             }
                         }
 
-                        // Compute all rows for this chunk via FWHT XOR-convolution:
-                        // out[k] = Σ_c s[c] * g_hat_fwht[c XOR k].
+                        let mut rows = vec![G::zero(); self.K];
                         {
                             let _guard = tracing::trace_span!("fwht").entered();
-                            fwht_in_place(&mut s);
-                            for (si, &gi) in s.iter_mut().zip(g_hat.iter()) {
-                                *si = *si * gi;
-                            }
-                            fwht_in_place(&mut s);
-                            for si in s.iter_mut() {
-                                *si = *si * inv_k;
+                            for (slot, s) in s_by_slot.iter_mut().enumerate() {
+                                fwht_in_place(s);
+                                for (si, &gi) in s.iter_mut().zip(g_hat_by_slot[slot].iter()) {
+                                    *si = *si * gi;
+                                }
+                                fwht_in_place(s);
+                                for si in s.iter_mut() {
+                                    *si = *si * inv_k;
+                                }
+                                for (dst, src) in rows.iter_mut().zip(s.iter()) {
+                                    *dst += *src;
+                                }
                             }
                         }
 
-                        Ok(s)
+                        Ok(rows)
                     })
                     .collect::<eyre::Result<Vec<_>>>()?
             };
@@ -335,7 +407,8 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                     let Some(c) = self.masked_indices_c[t_idx] else {
                         continue;
                     };
-                    scalars[col] = self.rand_ohv_e_field[(c ^ (k as u8)) as usize].a;
+                    let slot = self.rotation_slot(t_idx).expect("active slot");
+                    scalars[col] = self.rand_ohv_e_field(slot)[(c ^ (k as u8)) as usize].a;
                 }
 
                 *out_row = {
@@ -380,37 +453,49 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
 
             // FWHT of the E_field .a shares (computed once, reused for all row_offsets).
-            let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
-            let mut g_hat = g;
-            fwht_in_place(&mut g_hat);
+            let g_hat_by_slot: Vec<Vec<F>> = (0..self.num_rotation_slots())
+                .map(|slot| {
+                    let mut g_hat: Vec<F> = self
+                        .rand_ohv_e_field(slot)
+                        .iter()
+                        .map(|s| s.a)
+                        .collect();
+                    fwht_in_place(&mut g_hat);
+                    g_hat
+                })
+                .collect();
             let inv_k = F::from(self.K as u64)
                 .inverse()
                 .expect("K invertible in field");
 
             // For each row_offset, compute conv[c] = Σ_k g[k XOR c] * l_vec[k * rows_per_k + row_offset]
             // via FWHT XOR-convolution: conv = IFWHT(FWHT(g) · FWHT(h)) / K
-            let convolutions: Vec<Vec<F>> = (0..rows_per_k)
+            let convolutions_by_slot: Vec<Vec<Vec<F>>> = (0..rows_per_k)
                 .into_par_iter()
                 .map(|row_offset| {
-                    let mut h: Vec<F> = (0..self.K)
-                        .map(|k| {
-                            let row_index = k * rows_per_k + row_offset;
-                            if row_index < l_vec.len() {
-                                l_vec[row_index]
-                            } else {
-                                F::zero()
+                    (0..self.num_rotation_slots())
+                        .map(|slot| {
+                            let mut h: Vec<F> = (0..self.K)
+                                .map(|k| {
+                                    let row_index = k * rows_per_k + row_offset;
+                                    if row_index < l_vec.len() {
+                                        l_vec[row_index]
+                                    } else {
+                                        F::zero()
+                                    }
+                                })
+                                .collect();
+                            fwht_in_place(&mut h);
+                            for (hi, &gi) in h.iter_mut().zip(g_hat_by_slot[slot].iter()) {
+                                *hi *= gi;
                             }
+                            fwht_in_place(&mut h);
+                            for hi in h.iter_mut() {
+                                *hi *= inv_k;
+                            }
+                            h
                         })
-                        .collect();
-                    fwht_in_place(&mut h);
-                    for (hi, &gi) in h.iter_mut().zip(g_hat.iter()) {
-                        *hi *= gi;
-                    }
-                    fwht_in_place(&mut h);
-                    for hi in h.iter_mut() {
-                        *hi *= inv_k;
-                    }
-                    h
+                        .collect()
                 })
                 .collect();
 
@@ -419,13 +504,15 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                 .par_iter_mut()
                 .enumerate()
                 .for_each(|(col_index, dest)| {
-                    let mut col_dot_product = F::zero();
-                    for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
-                        if let Some(c) = self.masked_indices_c[t_idx] {
-                            col_dot_product += convolutions[row_offset][c as usize];
+                        let mut col_dot_product = F::zero();
+                        for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
+                            if let Some(c) = self.masked_indices_c[t_idx] {
+                                let slot = self.rotation_slot(t_idx).expect("active slot");
+                                col_dot_product +=
+                                    convolutions_by_slot[row_offset][slot][c as usize];
+                            }
                         }
-                    }
-                    *dest += coeff * col_dot_product;
+                        *dest += coeff * col_dot_product;
                 });
         } else {
             // T < row_len case
@@ -448,7 +535,10 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                                     let e_idx = k ^ (*c as usize);
                                     if row_index < l_vec.len() {
                                         chunk[col_index % chunk_size] += coeff
-                                            * self.rand_ohv_e_field[e_idx].a
+                                            * self.rand_ohv_e_field(
+                                                self.rotation_slot(t_idx).expect("active slot"),
+                                            )[e_idx]
+                                                .a
                                             * l_vec[row_index];
                                     }
                                 }
@@ -476,14 +566,15 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // Precompute shifted EQ table once:
         //   shifted[c] = eq_addr[r XOR c]  (in shares), where r is the RandOHV mask.
         // This turns per-cycle masked selection from O(K) to O(1).
-        let shifted = shifted_table_from_rand_ohv(&eq_addr, &self.rand_ohv_e_field);
+        let shifted_tables = self.shifted_tables_from_public_table(&eq_addr);
 
         self.masked_indices_c
             .par_iter()
             .enumerate()
             .fold(Rep3PrimeFieldShare::zero_share, |mut acc, (j, opt_c)| {
                 let Some(c) = opt_c else { return acc };
-                acc += shifted[*c as usize] * eq_cycle[j];
+                let slot = self.rotation_slot(j).expect("active slot");
+                acc += shifted_tables[slot][*c as usize] * eq_cycle[j];
                 acc
             })
             .reduce(Rep3PrimeFieldShare::zero_share, |mut a, b| {
@@ -771,10 +862,12 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 let eq_u = self.eq_address_state.F.clone_values();
                 assert_eq!(eq_u.len(), self.polynomial.K);
 
-                let table_shifted =
-                    shifted_table_from_rand_ohv(&eq_u, &self.polynomial.rand_ohv_e_field);
-                *self.polynomial.H.write().unwrap() =
-                    Rep3RaPolynomial::new(self.polynomial.masked_indices_c.clone(), table_shifted);
+                let shifted_tables = self.polynomial.shifted_tables_from_public_table(&eq_u);
+                *self.polynomial.H.write().unwrap() = Rep3RaPolynomial::new_banked(
+                    self.polynomial.masked_indices_c.clone(),
+                    self.polynomial.rotation_slot_by_cycle.clone(),
+                    shifted_tables,
+                );
                 self.polynomial.G.clear();
             }
         } else {
@@ -798,7 +891,13 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
     eq_cycle: &[F],
 ) -> Vec<Rep3PrimeFieldShare<F>> {
     assert_eq!(eq_cycle.len(), polynomial.masked_indices_c.len());
-    assert_eq!(polynomial.rand_ohv_e_field.len(), polynomial.K);
+    assert!(
+        !polynomial.rand_ohv_e_field_bank.is_empty()
+            && polynomial
+                .rand_ohv_e_field_bank
+                .iter()
+                .all(|e| e.len() == polynomial.K)
+    );
 
     // Histogram in masked index space.
     let k_len = polynomial.K;
@@ -813,21 +912,24 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, chunk)| {
-            let mut local = vec![F::zero(); k_len];
+            let mut local = vec![vec![F::zero(); k_len]; polynomial.num_rotation_slots()];
             let chunk_start = chunk_index * chunk_size;
             for (offset, opt_c) in chunk.iter().enumerate() {
                 let j = chunk_start + offset;
                 if let Some(c) = opt_c {
-                    local[*c as usize] += eq_cycle[j];
+                    let slot = polynomial.rotation_slot(j).expect("active slot");
+                    local[slot][*c as usize] += eq_cycle[j];
                 }
             }
             local
         })
         .reduce(
-            || vec![F::zero(); k_len],
+            || vec![vec![F::zero(); k_len]; polynomial.num_rotation_slots()],
             |mut a, b| {
-                for (ai, bi) in a.iter_mut().zip(b.into_iter()) {
-                    *ai += bi;
+                for (slot_a, slot_b) in a.iter_mut().zip(b.into_iter()) {
+                    for (ai, bi) in slot_a.iter_mut().zip(slot_b.into_iter()) {
+                        *ai += bi;
+                    }
                 }
                 a
             },
@@ -838,9 +940,12 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
         .into_par_iter()
         .map(|k| {
             let mut acc = Rep3PrimeFieldShare::zero_share();
-            for c in 0..polynomial.K {
-                let idx = (c as u8) ^ (k as u8);
-                acc += polynomial.rand_ohv_e_field[idx as usize] * g_c[c];
+            for (slot, g_c_slot) in g_c.iter().enumerate() {
+                let e_field = polynomial.rand_ohv_e_field(slot);
+                for c in 0..polynomial.K {
+                    let idx = (c as u8) ^ (k as u8);
+                    acc += e_field[idx as usize] * g_c_slot[c];
+                }
             }
             acc
         })
@@ -852,7 +957,13 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
     eq_cycle: &[F],
 ) -> [Arc<Vec<Rep3PrimeFieldShare<F>>>; D] {
     debug_assert_eq!(eq_cycle.len(), polynomials[0].masked_indices_c.len());
-    debug_assert_eq!(polynomials[0].rand_ohv_e_field.len(), polynomials[0].K);
+    debug_assert!(
+        !polynomials[0].rand_ohv_e_field_bank.is_empty()
+            && polynomials[0]
+                .rand_ohv_e_field_bank
+                .iter()
+                .all(|e| e.len() == polynomials[0].K)
+    );
 
     let t = eq_cycle.len();
     let k_len = polynomials[0].K;
@@ -865,9 +976,9 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
             "masked indices length mismatch"
         );
         debug_assert_eq!(
-            polynomials[i].rand_ohv_e_field.len(),
-            k_len,
-            "E_field length mismatch"
+            polynomials[i].num_rotation_slots(),
+            polynomials[0].num_rotation_slots(),
+            "RandOHV bank size mismatch"
         );
     }
 
@@ -878,29 +989,38 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
         .max(1);
     let chunk_size = (t / num_chunks).max(1);
 
-    let g_c: [Vec<F>; D] = (0..num_chunks)
+    let g_c: [Vec<Vec<F>>; D] = (0..num_chunks)
         .into_par_iter()
         .map(|chunk_index| {
             let start = chunk_index * chunk_size;
             let end = ((chunk_index + 1) * chunk_size).min(t);
 
-            let mut local: [Vec<F>; D] = std::array::from_fn(|_| vec![F::zero(); k_len]);
+            let mut local: [Vec<Vec<F>>; D] = std::array::from_fn(|_| {
+                vec![vec![F::zero(); k_len]; polynomials[0].num_rotation_slots()]
+            });
             for j in start..end {
                 let eq = eq_cycle[j];
                 for i in 0..D {
                     if let Some(c) = polynomials[i].masked_indices_c[j] {
-                        local[i][c as usize] += eq;
+                        let slot = polynomials[i].rotation_slot(j).expect("active slot");
+                        local[i][slot][c as usize] += eq;
                     }
                 }
             }
             local
         })
         .reduce(
-            || std::array::from_fn(|_| vec![F::zero(); k_len]),
+            || {
+                std::array::from_fn(|_| {
+                    vec![vec![F::zero(); k_len]; polynomials[0].num_rotation_slots()]
+                })
+            },
             |mut a, b| {
                 for i in 0..D {
-                    for (ai, bi) in a[i].iter_mut().zip(b[i].iter()) {
-                        *ai += *bi;
+                    for (slot_a, slot_b) in a[i].iter_mut().zip(b[i].iter()) {
+                        for (ai, bi) in slot_a.iter_mut().zip(slot_b.iter()) {
+                            *ai += *bi;
+                        }
                     }
                 }
                 a
@@ -910,14 +1030,16 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
     // Convert to k-space: G[k] = Σ_c G_c[c] * E_field[c XOR k].
     std::array::from_fn(|i| {
         let g_c_i = &g_c[i];
-        let e_field = &polynomials[i].rand_ohv_e_field;
         let g_i: Vec<Rep3PrimeFieldShare<F>> = (0..k_len)
             .into_par_iter()
             .map(|k| {
                 let mut acc = Rep3PrimeFieldShare::zero_share();
-                for c in 0..k_len {
-                    let idx = (c as u8) ^ (k as u8);
-                    acc += e_field[idx as usize] * g_c_i[c];
+                for (slot, g_c_slot) in g_c_i.iter().enumerate() {
+                    let e_field = polynomials[i].rand_ohv_e_field(slot);
+                    for c in 0..k_len {
+                        let idx = (c as u8) ^ (k as u8);
+                        acc += e_field[idx as usize] * g_c_slot[c];
+                    }
                 }
                 acc
             })
@@ -1037,11 +1159,14 @@ mod tests {
             std::array::from_fn(|pid| Rep3OneHotPolynomial {
                 K: k,
                 masked_indices_c: masked_indices_c.clone(),
-                rand_ohv_e_field: e_field_party[pid].clone(),
+                rotation_slot_by_cycle: Arc::new(
+                    masked_indices_c.iter().map(|opt| opt.map(|_| 0u8)).collect(),
+                ),
+                rand_ohv_e_field_bank: Arc::new(vec![e_field_party[pid].clone()]),
                 num_variables_bound: 0,
                 G: vec![],
                 H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
-                r_share: Rep3RingShare::default(),
+                r_shares: vec![Rep3RingShare::default()],
             });
 
         (nonzero_indices_plain, vanilla_poly, rep3_polys)
@@ -1073,15 +1198,16 @@ mod tests {
         let polys: [Rep3OneHotPolynomial<F>; 3] = std::array::from_fn(|pid| Rep3OneHotPolynomial {
             K,
             masked_indices_c: masked_indices_c.clone(),
-            rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
+            rotation_slot_by_cycle: Arc::new(vec![Some(0)]),
+            rand_ohv_e_field_bank: Arc::new(vec![Arc::new(e_field_party[pid].clone())]),
             num_variables_bound: 0,
             G: vec![],
             H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
-            r_share: Rep3RingShare::default(),
+            r_shares: vec![Rep3RingShare::default()],
         });
 
         let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| {
-            let shifted = shifted_table_from_rand_ohv(&table, &polys[pid].rand_ohv_e_field);
+            let shifted = shifted_table_from_rand_ohv(&table, polys[pid].rand_ohv_e_field(0));
             shifted[c as usize]
         });
 
@@ -1137,11 +1263,14 @@ mod tests {
         let polys: [Rep3OneHotPolynomial<F>; 3] = std::array::from_fn(|pid| Rep3OneHotPolynomial {
             K,
             masked_indices_c: Arc::new(masked_indices_c.clone()),
-            rand_ohv_e_field: Arc::new(e_field_party[pid].clone()),
+            rotation_slot_by_cycle: Arc::new(
+                masked_indices_c.iter().map(|opt| opt.map(|_| 0u8)).collect(),
+            ),
+            rand_ohv_e_field_bank: Arc::new(vec![Arc::new(e_field_party[pid].clone())]),
             num_variables_bound: 0,
             G: vec![],
             H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
-            r_share: Rep3RingShare::default(),
+            r_shares: vec![Rep3RingShare::default()],
         });
 
         // Random challenge points.

@@ -7,7 +7,7 @@ pub mod binary;
 pub mod casts;
 pub mod conversion;
 pub mod preprocessing;
-pub use preprocessing::{daPoint, dabits, edabits, wrap_mask};
+pub use preprocessing::{daPoint, dabits, edabits, rand_ohv, wrap_mask};
 mod detail;
 pub mod gadgets;
 pub mod lut;

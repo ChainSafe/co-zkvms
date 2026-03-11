@@ -135,6 +135,7 @@ fn dag_correct() {
                     &pool_dir,
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
+                    budget.rand_ohvs_u8_k4,
                     &mut io_ctx,
                 )?;
                 #[cfg(feature = "ring-msm")]
@@ -142,6 +143,7 @@ fn dag_correct() {
                     &pool_dir,
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
+                    budget.rand_ohvs_u8_k4,
                     budget.wrap_masks,
                     budget.ring_edabits_u66,
                     &mut io_ctx,
