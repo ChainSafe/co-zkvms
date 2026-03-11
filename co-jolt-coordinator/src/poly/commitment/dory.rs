@@ -23,10 +23,10 @@ use jolt_core::poly::commitment::dory::{
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use mpc_core::protocols::rep3::share_field_elements;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+use mpc_core::protocols::rep3::share_field_elements;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::MaybeShared;
 use rayon::prelude::*;
 use tracing::info_span;
@@ -45,37 +45,6 @@ type DoryInitShareMsg = (usize, Vec<G1Affine>);
 struct RowMaskState {
     raw_masks: Vec<Fr>,
     folded_masks: Vec<Fr>,
-}
-
-#[derive(Clone, Copy)]
-enum BlockedGtStrategy {
-    CoordinatorRecompute,
-    #[allow(dead_code)]
-    MpcCorrection,
-}
-
-struct BlockedGtTerms {
-    c: Fq12,
-    c_plus: Fq12,
-    c_minus: Fq12,
-}
-
-#[allow(dead_code)]
-struct BlockedVmvCorrectionInput<'a> {
-    row_mask_scalars: &'a [Fr],
-    worker_shared_v_vec_len: usize,
-}
-
-#[allow(dead_code)]
-struct BlockedSecondCorrectionInput<'a> {
-    row_mask_scalars: &'a [Fr],
-    worker_shared_folded_v2_len: usize,
-    split_index: usize,
-}
-
-#[inline]
-fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
 }
 
 #[cfg(feature = "zk")]
@@ -98,252 +67,6 @@ struct ZkAccumBlinds {
     e2: Fr,
 }
 
-#[cfg(feature = "zk")]
-fn sample_fr() -> Fr {
-    let mut rng = ark_std::rand::thread_rng();
-    Fr::rand(&mut rng)
-}
-
-#[cfg(feature = "zk")]
-fn mask_gt(base: Fq12, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkGT {
-    let ark_blind = jolt_to_ark(&blind);
-    ArkGT((ArkGT(base) + setup.ht.scale(&ark_blind)).0)
-}
-
-#[cfg(feature = "zk")]
-fn mask_g1(base: G1Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG1 {
-    ArkG1(base + setup.h1.0 * blind)
-}
-
-#[cfg(feature = "zk")]
-fn mask_g2(base: G2Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG2 {
-    ArkG2(base + setup.h2.0 * blind)
-}
-
-#[cfg(feature = "zk")]
-fn sample_round_blinds() -> ZkRoundBlinds {
-    ZkRoundBlinds {
-        d1: [sample_fr(), sample_fr()],
-        d2: [sample_fr(), sample_fr()],
-        c: [sample_fr(), sample_fr()],
-        e1: [sample_fr(), sample_fr()],
-        e2: [sample_fr(), sample_fr()],
-    }
-}
-
-fn blocked_gt_strategy() -> BlockedGtStrategy {
-    BlockedGtStrategy::MpcCorrection
-}
-
-fn row_masks_for_commitments(len: usize) -> Vec<Fr> {
-    #[cfg(feature = "zk")]
-    {
-        (0..len).map(|_| sample_fr()).collect()
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        vec![Fr::zero(); len]
-    }
-}
-
-fn mask_row_commitments(
-    row_commitments: &[G1Projective],
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> (Vec<G1Affine>, Vec<Fr>) {
-    let mask_scalars = row_masks_for_commitments(row_commitments.len());
-    let masked_rows = row_commitments
-        .iter()
-        .zip(mask_scalars.iter())
-        .map(|(row, mask)| (*row + setup.h1.0 * *mask).into_affine())
-        .collect();
-    (masked_rows, mask_scalars)
-}
-
-fn dot_scalars(lhs: &[Fr], rhs: &[Fr]) -> Fr {
-    lhs.iter().zip(rhs.iter()).fold(Fr::zero(), |acc, (l, r)| acc + (*l * *r))
-}
-
-fn correct_masked_g1_term(
-    masked: G1Affine,
-    mask_scalars: &[Fr],
-    public_scalars: &[Fr],
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> G1Affine {
-    let correction = setup.h1.0 * dot_scalars(mask_scalars, public_scalars);
-    (masked.into_group() - correction).into_affine()
-}
-
-fn correct_masked_d1_term(
-    masked: Fq12,
-    mask_scalars: &[Fr],
-    g2_affine: &[G2Affine],
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> Fq12 {
-    if mask_scalars.iter().all(|mask| mask.is_zero()) {
-        return masked;
-    }
-    let correction_g2 = msm_g2_affine(g2_affine, mask_scalars);
-    let correction = Bn254::pairing(setup.h1.0, correction_g2.into_affine()).0;
-    masked * correction.inverse().expect("pairing correction must be invertible")
-}
-
-fn fold_mask_scalars(mask_scalars: &mut Vec<Fr>, alpha: Fr, n2: usize) {
-    let (left, right) = mask_scalars.split_at(n2);
-    let next: Vec<Fr> = (0..n2).into_par_iter().map(|i| left[i] * alpha + right[i]).collect();
-    *mask_scalars = next;
-}
-
-fn prepare_blocked_affine(v1_pub: &[G1Projective], v2: &[G2Projective]) -> (Vec<G1Affine>, Vec<G2Affine>) {
-    rayon::join(
-        || {
-            let _span = tracing::trace_span!("blocked_v1_affine_prep").entered();
-            G1Projective::normalize_batch(v1_pub)
-        },
-        || {
-            let _span = tracing::trace_span!("blocked_v2_affine_prep").entered();
-            G2Projective::normalize_batch(v2)
-        },
-    )
-}
-
-fn compute_blocked_vmv_c_from_affine(v1_affine: &[G1Affine], v2_affine: &[G2Affine]) -> Fq12 {
-    let _span = tracing::trace_span!("blocked_vmv_c").entered();
-    multi_pairing_both_affine(v1_affine, v2_affine)
-}
-
-fn compute_blocked_vmv_c(
-    strategy: BlockedGtStrategy,
-    v1_pub: &[G1Projective],
-    v2: &[G2Projective],
-    _mpc_input: Option<BlockedVmvCorrectionInput<'_>>,
-) -> eyre::Result<Fq12> {
-    match strategy {
-        BlockedGtStrategy::CoordinatorRecompute => {
-            let (v1_affine, v2_affine) = prepare_blocked_affine(v1_pub, v2);
-            Ok(compute_blocked_vmv_c_from_affine(&v1_affine, &v2_affine))
-        }
-        BlockedGtStrategy::MpcCorrection => Err(eyre::eyre!("blocked GT MPC correction path not implemented")),
-    }
-}
-
-fn correct_blocked_vmv_c_from_mpc(
-    masked_c: Fq12,
-    correction_scalar: Fr,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> eyre::Result<Fq12> {
-    let _span = tracing::trace_span!("blocked_vmv_c_mpc").entered();
-    let correction = Bn254::pairing(setup.h1.0 * correction_scalar, setup.g2_vec[0].0).0;
-    Ok(masked_c * correction.inverse().expect("vmv correction pairing must be invertible"))
-}
-
-fn compute_blocked_second_c_plus_from_affine(
-    v1_l_aff: &[G1Affine],
-    v2_r_aff: &[G2Affine],
-) -> Fq12 {
-    let _span = tracing::trace_span!("blocked_second_c_plus").entered();
-    multi_pairing_both_affine(v1_l_aff, v2_r_aff)
-}
-
-fn compute_blocked_second_c_minus_from_affine(
-    v1_r_aff: &[G1Affine],
-    v2_l_aff: &[G2Affine],
-) -> Fq12 {
-    let _span = tracing::trace_span!("blocked_second_c_minus").entered();
-    multi_pairing_both_affine(v1_r_aff, v2_l_aff)
-}
-
-fn compute_blocked_second_terms(
-    strategy: BlockedGtStrategy,
-    v1_pub: &[G1Projective],
-    v2: &[G2Projective],
-    n2: usize,
-    _mpc_input: Option<BlockedSecondCorrectionInput<'_>>,
-) -> eyre::Result<(Fq12, Fq12)> {
-    match strategy {
-        BlockedGtStrategy::CoordinatorRecompute => {
-            let (v1_affine, v2_affine) = prepare_blocked_affine(v1_pub, v2);
-            let (v1_l_aff, v1_r_aff) = v1_affine.split_at(n2);
-            let (v2_l_aff, v2_r_aff) = v2_affine.split_at(n2);
-            Ok(rayon::join(
-                || compute_blocked_second_c_plus_from_affine(v1_l_aff, v2_r_aff),
-                || compute_blocked_second_c_minus_from_affine(v1_r_aff, v2_l_aff),
-            ))
-        }
-        BlockedGtStrategy::MpcCorrection => Err(eyre::eyre!("blocked GT MPC correction path not implemented")),
-    }
-}
-
-fn correct_blocked_second_term_from_mpc(
-    label: &'static str,
-    masked: Fq12,
-    correction_point: G2Projective,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> eyre::Result<Fq12> {
-    match label {
-        "blocked_second_c_plus_mpc" => {
-            let _span = tracing::trace_span!("blocked_second_c_plus_mpc").entered();
-            let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
-            Ok(masked * correction.inverse().expect("second-round correction pairing must be invertible"))
-        }
-        "blocked_second_c_minus_mpc" => {
-            let _span = tracing::trace_span!("blocked_second_c_minus_mpc").entered();
-            let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
-            Ok(masked * correction.inverse().expect("second-round correction pairing must be invertible"))
-        }
-        _ => unreachable!("unexpected blocked second correction label"),
-    }
-}
-
-fn share_mask_scalars(mask_scalars: &[Fr]) -> [Vec<Rep3PrimeFieldShare<Fr>>; 3] {
-    let mut rng = ark_std::rand::thread_rng();
-    share_field_elements(mask_scalars, &mut rng)
-}
-
-#[cfg(feature = "zk")]
-fn scalar_product_proof<ProofTranscript: Transcript>(
-    transcript: &mut JoltToDoryTranscript<'_, ProofTranscript>,
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-    v1: G1Projective,
-    v2: G2Projective,
-    blinds: ZkAccumBlinds,
-) -> (ScalarProductProof<ArkG1, ArkG2, jolt_core::poly::commitment::dory::ArkFr, ArkGT>, Fr) {
-    let sd1 = sample_fr();
-    let sd2 = sample_fr();
-    let d1 = setup.g1_vec[0].0 * sd1;
-    let d2 = setup.g2_vec[0].0 * sd2;
-
-    let rp1 = sample_fr();
-    let rp2 = sample_fr();
-    let rq = sample_fr();
-    let rr = sample_fr();
-
-    let p1 = ArkGT(Bn254::pairing(d1, setup.g2_vec[0].0).0) + setup.ht.scale(&jolt_to_ark(&rp1));
-    let p2 = ArkGT(Bn254::pairing(setup.g1_vec[0].0, d2).0) + setup.ht.scale(&jolt_to_ark(&rp2));
-    let q = ArkGT(Bn254::pairing(d1, v2).0) + ArkGT(Bn254::pairing(v1, d2).0) + setup.ht.scale(&jolt_to_ark(&rq));
-    let r = ArkGT(Bn254::pairing(d1, d2).0) + setup.ht.scale(&jolt_to_ark(&rr));
-
-    for (label, value) in [(b"sigma_p1" as &[u8], &p1), (b"sigma_p2", &p2), (b"sigma_q", &q), (b"sigma_r", &r)] {
-        transcript.append_serde(label, value);
-    }
-    let sigma_c_ark = transcript.challenge_scalar(b"sigma_c");
-    let sigma_c = ark_to_jolt(&sigma_c_ark);
-
-    (
-        ScalarProductProof {
-            p1,
-            p2,
-            q,
-            r,
-            e1: ArkG1(d1 + v1 * sigma_c),
-            e2: ArkG2(d2 + v2 * sigma_c),
-            r1: jolt_to_ark(&(rp1 + sigma_c * blinds.d1)),
-            r2: jolt_to_ark(&(rp2 + sigma_c * blinds.d2)),
-            r3: jolt_to_ark(&(rr + sigma_c * rq + sigma_c.square() * blinds.c)),
-        },
-        sigma_c,
-    )
-}
-
 impl<ProofTranscript> Rep3CommitmentScheme<Fr, ProofTranscript> for DoryCommitmentScheme
 where
     ProofTranscript: Transcript,
@@ -355,7 +78,7 @@ where
         network: &mut Network,
         opening_point: &[<Fr as jolt_core::field::JoltField>::Challenge],
         claimed_opening: &Fr,
-        commitment: &Self::Commitment,
+        _commitment: &Self::Commitment,
         commitment_blinding: Option<Fr>,
     ) -> eyre::Result<(Self::Proof, Option<Fr>)>
     where
@@ -367,14 +90,8 @@ where
 
         let sigma = DoryGlobals::get_num_columns().log_2();
         let g1_all = setup_g1_projective(setup);
-        let g2_all = setup_g2_projective(setup);
         let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
-        let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << sigma)]);
-        let blocked_gt_strategy = blocked_gt_strategy();
-        eyre::ensure!(
-            matches!(blocked_gt_strategy, BlockedGtStrategy::MpcCorrection),
-            "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
-        );
+        let g2_affine_all = G2Projective::normalize_batch(&setup_g2_projective(setup)[..(1 << sigma)]);
         let (row_commitments, row_mask_state, nu, l_vec, r_vec) = {
             let _span = info_span!("init_receive_reconstruct").entered();
             let init_msgs: Vec<DoryInitShareMsg> = {
@@ -422,16 +139,7 @@ where
             let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
             let l_vec: Vec<Fr> = l_vec_w.iter().map(ark_to_jolt).collect();
             let r_vec: Vec<Fr> = r_vec_w.iter().map(ark_to_jolt).collect();
-            (
-                row_commitments,
-                RowMaskState {
-                    raw_masks,
-                    folded_masks,
-                },
-                nu,
-                l_vec,
-                r_vec,
-            )
+            (row_commitments, RowMaskState { raw_masks, folded_masks }, nu, l_vec, r_vec)
         };
 
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
@@ -452,17 +160,9 @@ where
             network.receive_responses()?
         };
         let ((vmv_c_masked, d2), e1_masked, vmv_c_correction_scalar) = combine_vmv_shares(&vmv_shares)?;
-        let blocked_vmv_c = match blocked_gt_strategy {
-            BlockedGtStrategy::CoordinatorRecompute => {
-                let _span = info_span!("vmv_local_recompute").entered();
-                let _ = vmv_c_masked;
-                return Err(eyre::eyre!(
-                    "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
-                ));
-            }
-            BlockedGtStrategy::MpcCorrection => correct_blocked_vmv_c_from_mpc(vmv_c_masked, vmv_c_correction_scalar, setup)?,
-        };
-        let e1 = correct_masked_g1_term(e1_masked, &row_mask_state.raw_masks, &s2[..row_mask_state.raw_masks.len()], setup);
+        let blocked_vmv_c = correct_blocked_vmv_c_from_mpc(vmv_c_masked, vmv_c_correction_scalar, setup);
+        let e1 =
+            correct_masked_g1_term(e1_masked, &row_mask_state.raw_masks, &s2[..row_mask_state.raw_masks.len()], setup);
 
         #[cfg(feature = "zk")]
         let mut zk_blinds = ZkAccumBlinds {
@@ -480,7 +180,8 @@ where
             e1: mask_g1(e1.into_group(), zk_blinds.e1, setup),
         };
         #[cfg(not(feature = "zk"))]
-        let vmv_message = VMVMessage::<ArkG1, ArkGT> { c: ArkGT(blocked_vmv_c), d2: ArkGT(d2), e1: ArkG1(e1.into_group()) };
+        let vmv_message =
+            VMVMessage::<ArkG1, ArkGT> { c: ArkGT(blocked_vmv_c), d2: ArkGT(d2), e1: ArkG1(e1.into_group()) };
         dory_transcript.append_serde(b"vmv_c", &vmv_message.c);
         dory_transcript.append_serde(b"vmv_d2", &vmv_message.d2);
         dory_transcript.append_serde(b"vmv_e1", &vmv_message.e1);
@@ -577,7 +278,6 @@ where
             {
                 let _span = tracing::trace_span!("coordinator_v1v2_update", n2).entered();
                 jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
-                let _ = (&g2_all, beta_inv);
             }
 
             let second_msgs: Vec<DorySecondReduceShareMsg> = {
@@ -589,31 +289,11 @@ where
                 (e2_plus, e2_minus),
                 (e1_plus_masked, e1_minus_masked),
                 (c_plus_correction_point, c_minus_correction_point),
-            ) =
-                combine_second_reduce_shares(&second_msgs)?;
-            let (blocked_c_plus, blocked_c_minus) = match blocked_gt_strategy {
-                BlockedGtStrategy::CoordinatorRecompute => {
-                    let _span = tracing::trace_span!("second_round_local_recompute", n2).entered();
-                    let _ = (combined_c_plus, combined_c_minus);
-                    return Err(eyre::eyre!(
-                        "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
-                    ));
-                }
-                BlockedGtStrategy::MpcCorrection => (
-                    correct_blocked_second_term_from_mpc(
-                        "blocked_second_c_plus_mpc",
-                        combined_c_plus,
-                        c_plus_correction_point,
-                        setup,
-                    )?,
-                    correct_blocked_second_term_from_mpc(
-                        "blocked_second_c_minus_mpc",
-                        combined_c_minus,
-                        c_minus_correction_point,
-                        setup,
-                    )?,
-                ),
-            };
+            ) = combine_second_reduce_shares(&second_msgs)?;
+            let blocked_c_plus =
+                correct_blocked_second_c_plus_from_mpc(combined_c_plus, c_plus_correction_point, setup);
+            let blocked_c_minus =
+                correct_blocked_second_c_minus_from_mpc(combined_c_minus, c_minus_correction_point, setup);
             let (s2_l, s2_r) = s2.split_at(n2);
             let (mask_left, mask_right) = row_mask_state.folded_masks.split_at(n2);
             let e1_plus = correct_masked_g1_term(e1_plus_masked, mask_left, s2_r, setup);
@@ -731,7 +411,6 @@ where
         dory_transcript.append_serde(b"final_e2", &final_message.e2);
         let _d: jolt_core::poly::commitment::dory::ArkFr = dory_transcript.challenge_scalar(b"d");
 
-        let _ = commitment;
         Ok((
             DoryProofData {
                 sigma,
@@ -822,6 +501,182 @@ where
             _ => unreachable!(),
         }
     }
+}
+
+#[inline]
+fn compute_nu(num_vars: usize, sigma: usize) -> usize {
+    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
+}
+
+#[cfg(feature = "zk")]
+fn sample_fr() -> Fr {
+    let mut rng = ark_std::rand::thread_rng();
+    Fr::rand(&mut rng)
+}
+
+#[cfg(feature = "zk")]
+fn mask_gt(base: Fq12, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkGT {
+    let ark_blind = jolt_to_ark(&blind);
+    ArkGT((ArkGT(base) + setup.ht.scale(&ark_blind)).0)
+}
+
+#[cfg(feature = "zk")]
+fn mask_g1(base: G1Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG1 {
+    ArkG1(base + setup.h1.0 * blind)
+}
+
+#[cfg(feature = "zk")]
+fn mask_g2(base: G2Projective, blind: Fr, setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> ArkG2 {
+    ArkG2(base + setup.h2.0 * blind)
+}
+
+#[cfg(feature = "zk")]
+fn sample_round_blinds() -> ZkRoundBlinds {
+    ZkRoundBlinds {
+        d1: [sample_fr(), sample_fr()],
+        d2: [sample_fr(), sample_fr()],
+        c: [sample_fr(), sample_fr()],
+        e1: [sample_fr(), sample_fr()],
+        e2: [sample_fr(), sample_fr()],
+    }
+}
+
+fn row_masks_for_commitments(len: usize) -> Vec<Fr> {
+    #[cfg(feature = "zk")]
+    {
+        (0..len).map(|_| sample_fr()).collect()
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        vec![Fr::zero(); len]
+    }
+}
+
+fn mask_row_commitments(
+    row_commitments: &[G1Projective],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> (Vec<G1Affine>, Vec<Fr>) {
+    let mask_scalars = row_masks_for_commitments(row_commitments.len());
+    let masked_rows = row_commitments
+        .iter()
+        .zip(mask_scalars.iter())
+        .map(|(row, mask)| (*row + setup.h1.0 * *mask).into_affine())
+        .collect();
+    (masked_rows, mask_scalars)
+}
+
+fn dot_scalars(lhs: &[Fr], rhs: &[Fr]) -> Fr {
+    lhs.iter().zip(rhs.iter()).fold(Fr::zero(), |acc, (l, r)| acc + (*l * *r))
+}
+
+fn correct_masked_g1_term(
+    masked: G1Affine,
+    mask_scalars: &[Fr],
+    public_scalars: &[Fr],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> G1Affine {
+    let correction = setup.h1.0 * dot_scalars(mask_scalars, public_scalars);
+    (masked.into_group() - correction).into_affine()
+}
+
+fn correct_masked_d1_term(
+    masked: Fq12,
+    mask_scalars: &[Fr],
+    g2_affine: &[G2Affine],
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> Fq12 {
+    if mask_scalars.iter().all(|mask| mask.is_zero()) {
+        return masked;
+    }
+    let correction_g2 = msm_g2_affine(g2_affine, mask_scalars);
+    let correction = Bn254::pairing(setup.h1.0, correction_g2.into_affine()).0;
+    masked * correction.inverse().expect("pairing correction must be invertible")
+}
+
+fn correct_blocked_vmv_c_from_mpc(
+    masked_c: Fq12,
+    correction_scalar: Fr,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_vmv_c_mpc").entered();
+    let correction = Bn254::pairing(setup.h1.0 * correction_scalar, setup.g2_vec[0].0).0;
+    masked_c * correction.inverse().expect("vmv correction pairing must be invertible")
+}
+
+fn correct_blocked_second_c_plus_from_mpc(
+    masked: Fq12,
+    correction_point: G2Projective,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_second_c_plus_mpc").entered();
+    let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
+    masked * correction.inverse().expect("second-round correction pairing must be invertible")
+}
+
+fn correct_blocked_second_c_minus_from_mpc(
+    masked: Fq12,
+    correction_point: G2Projective,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+) -> Fq12 {
+    let _span = tracing::trace_span!("blocked_second_c_minus_mpc").entered();
+    let correction = Bn254::pairing(setup.h1.0, correction_point.into_affine()).0;
+    masked * correction.inverse().expect("second-round correction pairing must be invertible")
+}
+
+fn share_mask_scalars(mask_scalars: &[Fr]) -> [Vec<Rep3PrimeFieldShare<Fr>>; 3] {
+    let mut rng = ark_std::rand::thread_rng();
+    share_field_elements(mask_scalars, &mut rng)
+}
+
+fn fold_mask_scalars(mask_scalars: &mut Vec<Fr>, alpha: Fr, n2: usize) {
+    let (left, right) = mask_scalars.split_at(n2);
+    let next: Vec<Fr> = (0..n2).into_par_iter().map(|i| left[i] * alpha + right[i]).collect();
+    *mask_scalars = next;
+}
+
+#[cfg(feature = "zk")]
+fn scalar_product_proof<ProofTranscript: Transcript>(
+    transcript: &mut JoltToDoryTranscript<'_, ProofTranscript>,
+    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    v1: G1Projective,
+    v2: G2Projective,
+    blinds: ZkAccumBlinds,
+) -> (ScalarProductProof<ArkG1, ArkG2, jolt_core::poly::commitment::dory::ArkFr, ArkGT>, Fr) {
+    let sd1 = sample_fr();
+    let sd2 = sample_fr();
+    let d1 = setup.g1_vec[0].0 * sd1;
+    let d2 = setup.g2_vec[0].0 * sd2;
+
+    let rp1 = sample_fr();
+    let rp2 = sample_fr();
+    let rq = sample_fr();
+    let rr = sample_fr();
+
+    let p1 = ArkGT(Bn254::pairing(d1, setup.g2_vec[0].0).0) + setup.ht.scale(&jolt_to_ark(&rp1));
+    let p2 = ArkGT(Bn254::pairing(setup.g1_vec[0].0, d2).0) + setup.ht.scale(&jolt_to_ark(&rp2));
+    let q = ArkGT(Bn254::pairing(d1, v2).0) + ArkGT(Bn254::pairing(v1, d2).0) + setup.ht.scale(&jolt_to_ark(&rq));
+    let r = ArkGT(Bn254::pairing(d1, d2).0) + setup.ht.scale(&jolt_to_ark(&rr));
+
+    for (label, value) in [(b"sigma_p1" as &[u8], &p1), (b"sigma_p2", &p2), (b"sigma_q", &q), (b"sigma_r", &r)] {
+        transcript.append_serde(label, value);
+    }
+    let sigma_c_ark = transcript.challenge_scalar(b"sigma_c");
+    let sigma_c = ark_to_jolt(&sigma_c_ark);
+
+    (
+        ScalarProductProof {
+            p1,
+            p2,
+            q,
+            r,
+            e1: ArkG1(d1 + v1 * sigma_c),
+            e2: ArkG2(d2 + v2 * sigma_c),
+            r1: jolt_to_ark(&(rp1 + sigma_c * blinds.d1)),
+            r2: jolt_to_ark(&(rp2 + sigma_c * blinds.d2)),
+            r3: jolt_to_ark(&(rr + sigma_c * rq + sigma_c.square() * blinds.c)),
+        },
+        sigma_c,
+    )
 }
 
 fn take_owned_public_term<T: Clone>(values: &[Option<T>], owner: PartyID, label: &str) -> eyre::Result<T> {

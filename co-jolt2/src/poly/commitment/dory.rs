@@ -15,8 +15,8 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
 #[cfg(feature = "ring-msm")]
@@ -46,77 +46,6 @@ type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
 type DoryInitShareMsg = (usize, Vec<G1Affine>);
-
-fn owns_public_vmv_e1(party_id: PartyID) -> bool {
-    party_id == PartyID::ID0
-}
-
-fn owns_first_reduce_d1_left(party_id: PartyID) -> bool {
-    party_id == PartyID::ID0
-}
-
-fn owns_first_reduce_d1_right(party_id: PartyID) -> bool {
-    party_id == PartyID::ID1
-}
-
-fn owns_first_reduce_e_betas(party_id: PartyID) -> bool {
-    party_id == PartyID::ID2
-}
-
-fn owns_second_reduce_e1_plus(party_id: PartyID) -> bool {
-    party_id == PartyID::ID0
-}
-
-fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
-    party_id == PartyID::ID1
-}
-
-#[inline]
-fn compute_nu(num_vars: usize, sigma: usize) -> usize {
-    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
-}
-
-fn fold_mask_shares(mask_shares: &mut Vec<Rep3PrimeFieldShare<Fr>>, alpha: Fr, n2: usize) {
-    let (left, right) = mask_shares.split_at(n2);
-    let next: Vec<_> = (0..n2)
-        .into_par_iter()
-        .map(|i| Rep3PrimeFieldShare::new(left[i].a * alpha + right[i].a, left[i].b * alpha + right[i].b))
-        .collect();
-    *mask_shares = next;
-}
-
-fn local_masked_scalar_inner_product<N: Rep3NetworkWorker>(
-    network: &mut N,
-    mask_shares: &[Rep3PrimeFieldShare<Fr>],
-    additive_values: &[Fr],
-) -> eyre::Result<Fr> {
-    let replicated_prev_values = {
-        let _span = tracing::trace_span!("blocked_vmv_c_exchange").entered();
-        network.reshare_many(additive_values)?
-    };
-    Ok(mask_shares
-        .par_iter()
-        .zip(additive_values.par_iter())
-        .zip(replicated_prev_values.par_iter())
-        .map(|((mask_share, self_share), prev_share)| {
-            (mask_share.a * *self_share) + (mask_share.a * *prev_share) + (mask_share.b * *self_share)
-        })
-        .reduce(Fr::zero, |acc, value| acc + value))
-}
-
-fn accumulate_masked_g2_msm(
-    mask_shares: &[Rep3PrimeFieldShare<Fr>],
-    additive_points_affine: &[G2Affine],
-    replicated_prev_points: &[G2Affine],
-) -> G2Projective {
-    let self_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a + mask_share.b).collect();
-    let prev_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a).collect();
-    let (self_term, prev_term) = rayon::join(
-        || msm_g2_affine(additive_points_affine, &self_scalars),
-        || msm_g2_affine(replicated_prev_points, &prev_scalars),
-    );
-    self_term + prev_term
-}
 
 // =============================================================================
 // Rep3CommitmentScheme implementation
@@ -490,16 +419,17 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                         },
                     )
                 };
-                (((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)), public_second_round, blocked_second_corrections)
+                (
+                    ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)),
+                    public_second_round,
+                    blocked_second_corrections,
+                )
             };
 
             network.send_response((
                 share_second_round,
                 public_second_round,
-                (
-                    blocked_second_corrections.0.into_affine(),
-                    blocked_second_corrections.1.into_affine(),
-                ),
+                (blocked_second_corrections.0.into_affine(), blocked_second_corrections.1.into_affine()),
             ))?;
 
             // Receive alpha challenge from coordinator
@@ -585,6 +515,77 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
         DoryOpeningProofHint::new(rlc_hint)
     }
+}
+
+fn owns_public_vmv_e1(party_id: PartyID) -> bool {
+    party_id == PartyID::ID0
+}
+
+fn owns_first_reduce_d1_left(party_id: PartyID) -> bool {
+    party_id == PartyID::ID0
+}
+
+fn owns_first_reduce_d1_right(party_id: PartyID) -> bool {
+    party_id == PartyID::ID1
+}
+
+fn owns_first_reduce_e_betas(party_id: PartyID) -> bool {
+    party_id == PartyID::ID2
+}
+
+fn owns_second_reduce_e1_plus(party_id: PartyID) -> bool {
+    party_id == PartyID::ID0
+}
+
+fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
+    party_id == PartyID::ID1
+}
+
+#[inline]
+fn compute_nu(num_vars: usize, sigma: usize) -> usize {
+    num_vars.checked_sub(sigma).expect("Dory opening point must have at least sigma coordinates")
+}
+
+fn fold_mask_shares(mask_shares: &mut Vec<Rep3PrimeFieldShare<Fr>>, alpha: Fr, n2: usize) {
+    let (left, right) = mask_shares.split_at(n2);
+    let next: Vec<_> = (0..n2)
+        .into_par_iter()
+        .map(|i| Rep3PrimeFieldShare::new(left[i].a * alpha + right[i].a, left[i].b * alpha + right[i].b))
+        .collect();
+    *mask_shares = next;
+}
+
+fn local_masked_scalar_inner_product<N: Rep3NetworkWorker>(
+    network: &mut N,
+    mask_shares: &[Rep3PrimeFieldShare<Fr>],
+    additive_values: &[Fr],
+) -> eyre::Result<Fr> {
+    let replicated_prev_values = {
+        let _span = tracing::trace_span!("blocked_vmv_c_exchange").entered();
+        network.reshare_many(additive_values)?
+    };
+    Ok(mask_shares
+        .par_iter()
+        .zip(additive_values.par_iter())
+        .zip(replicated_prev_values.par_iter())
+        .map(|((mask_share, self_share), prev_share)| {
+            (mask_share.a * *self_share) + (mask_share.a * *prev_share) + (mask_share.b * *self_share)
+        })
+        .reduce(Fr::zero, |acc, value| acc + value))
+}
+
+fn accumulate_masked_g2_msm(
+    mask_shares: &[Rep3PrimeFieldShare<Fr>],
+    additive_points_affine: &[G2Affine],
+    replicated_prev_points: &[G2Affine],
+) -> G2Projective {
+    let self_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a + mask_share.b).collect();
+    let prev_scalars: Vec<Fr> = mask_shares.iter().map(|mask_share| mask_share.a).collect();
+    let (self_term, prev_term) = rayon::join(
+        || msm_g2_affine(additive_points_affine, &self_scalars),
+        || msm_g2_affine(replicated_prev_points, &prev_scalars),
+    );
+    self_term + prev_term
 }
 
 fn compute_open_params(
