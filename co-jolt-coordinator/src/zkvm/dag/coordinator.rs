@@ -156,6 +156,7 @@ impl Rep3JoltDag {
                 &mut state.transcript,
                 network,
             )?;
+        state.stage5_y_blinding = reduced.y_blinding;
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
             ProofData::ReducedOpeningProof(ReducedOpeningProof {

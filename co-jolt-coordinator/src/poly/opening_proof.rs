@@ -219,7 +219,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             .map(|(g, c)| *g * *c)
             .sum();
 
-        let joint_opening_proof =
+        let (joint_opening_proof, y_blinding) =
             <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::coordinate_prove(
                 pcs_setup,
                 transcript,
@@ -233,6 +233,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             sumcheck_proof,
             sumcheck_claims,
             joint_opening_proof,
+            y_blinding,
         })
     }
 }
@@ -251,6 +252,7 @@ pub struct ReducedOpeningProof<
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
+    pub y_blinding: Option<F>,
 }
 
 pub struct Rep3CoordinatorReductionSumcheck<F: JoltField> {

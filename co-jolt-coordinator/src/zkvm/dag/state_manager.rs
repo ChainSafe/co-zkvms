@@ -28,6 +28,7 @@ pub struct StateManager<
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub pcs_setup: Option<&'a PCS::ProverSetup>,
     pub accumulator: Rep3OpeningAccumulator<F>,
+    pub stage5_y_blinding: Option<F>,
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
@@ -55,6 +56,7 @@ where
             preprocessing,
             pcs_setup: None,
             accumulator: Rep3OpeningAccumulator::new(),
+            stage5_y_blinding: None,
         }
     }
 

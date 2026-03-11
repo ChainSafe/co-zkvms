@@ -16,7 +16,7 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         opening_point: &[<F as jolt_core::field::JoltField>::Challenge],
         claimed_opening: &F,
         commitment: &Self::Commitment,
-    ) -> eyre::Result<Self::Proof>
+    ) -> eyre::Result<(Self::Proof, Option<F>)>
     where
         Network: Rep3NetworkCoordinator;
 

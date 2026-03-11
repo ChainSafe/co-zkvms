@@ -93,7 +93,7 @@ name = "fwht"
 harness = false
 
 [features]
-default = ["std", "debug"]
+default = ["std", "debug", "zk"]
 std = [
     "ark-ff/std",
     "ark-poly/std",
@@ -108,3 +108,4 @@ rv32 = []
 rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
 ring-msm = ["mpc-core/ring-msm"]
 jemalloc-stats = ["dep:tikv-jemalloc-ctl"]
+zk = ["jolt-core/zk", "co-jolt-coordinator/zk"]

@@ -86,12 +86,15 @@ where
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[<Self::Field as JoltField>::Challenge],
-        _: Self::OpeningProofHint,
+        _: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        MockProof {
+    ) -> (Self::Proof, Option<Self::Field>) {
+        (
+            MockProof {
             opening_point: opening_point.to_owned(),
-        }
+            },
+            None,
+        )
     }
 
     fn verify<ProofTranscript: Transcript>(

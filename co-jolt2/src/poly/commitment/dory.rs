@@ -8,7 +8,10 @@ use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
-use dory::Polynomial;
+use dory::primitives::{
+    arithmetic::PairingCurve,
+    poly::compute_left_right_vectors,
+};
 use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -66,6 +69,15 @@ fn owns_second_reduce_e1_plus(party_id: PartyID) -> bool {
 
 fn owns_second_reduce_e1_minus(party_id: PartyID) -> bool {
     party_id == PartyID::ID1
+}
+
+#[inline]
+fn compute_nu(num_vars: usize, sigma: usize) -> usize {
+    if num_vars <= sigma * 2 {
+        sigma
+    } else {
+        num_vars - sigma
+    }
 }
 
 // =============================================================================
@@ -211,14 +223,16 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let g1_all = setup_g1_projective(setup);
             let g2_all = setup_g2_projective(setup);
 
-            // Pre-compute affine generators once (used for pairing/MSM across all rounds)
-            let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << params.2)]);
-            let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << params.2)]);
+            // The MPC opening path folds across the column dimension `sigma`.
+            // For short polynomials (num_vars < sigma), row commitments and left vectors
+            // are padded out to length 2^sigma with zeros, mirroring the old local logic.
+            let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << params.0)]);
+            let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << params.0)]);
             (params, g1_all, g2_all, g1_affine_all, g2_affine_all)
         };
 
         // 1) Compute row commitment shares — dispatch based on variant + hint
-        let num_rows_target = 1usize << nu;
+        let num_rows_target = 1usize << sigma;
         let num_columns = 1usize << sigma;
         let row_commit_shares: Vec<G1Projective> = {
             let _span = tracing::info_span!("row_commits").entered();
@@ -303,7 +317,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             rayon::join(
                 || {
                     let t_vec_v = msm_g1_affine(&row_commitments_affine, &v_vec_share);
-                    let g_fin_affine = setup.core.g_fin.0.into_affine();
+                    let g_fin_affine = setup.g2_vec[0].0.into_affine();
                     let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
 
                     let mut v_vec_padded = v_vec_share.clone();
@@ -329,11 +343,11 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         let mut s2 = l_vec;
 
         let mut v1_pub: Vec<G1Projective> = row_commitments_affine.iter().map(|a| a.into_group()).collect();
-        let mut curr_nu = nu;
+        let mut curr_rounds = sigma;
 
         let _loop_span = tracing::info_span!("reduction_loop").entered();
-        while curr_nu > 0 {
-            let n2 = 1usize << (curr_nu - 1);
+        while curr_rounds > 0 {
+            let n2 = 1usize << (curr_rounds - 1);
 
             // First message: d2_left/d2_right pairings (parallel)
             let (d2_share_round, public_first_round) = {
@@ -357,7 +371,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                             &g2_affine_all,
                             &s1,
                             &s2,
-                            curr_nu,
+                            curr_rounds,
                         )
                     },
                 )
@@ -371,12 +385,12 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             // Update v1/v2 with generators
             {
                 let _span = tracing::trace_span!("v1v2_update", n2).entered();
-                jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_nu)], beta);
+                jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
 
                 if party_id == PartyID::ID0 {
                     jolt_optimizations::vector_add_scalar_mul_g2_online(
                         &mut v2_share,
-                        &g2_all[..(1 << curr_nu)],
+                        &g2_all[..(1 << curr_rounds)],
                         beta_inv,
                     );
                 }
@@ -439,7 +453,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                 s2 = s2_next;
             }
 
-            curr_nu -= 1;
+            curr_rounds -= 1;
         }
         drop(_loop_span);
 
@@ -460,18 +474,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
         // Mirror vanilla combine_hints pattern: Horner-style accumulation using
         // the fused GLV-accelerated `v[i] = scalar * v[i] + gamma[i]`.
-        let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
+        let mut rlc_hint = vec![ArkG1(G1Projective::zero()); num_rows];
         for (coeff, hint) in coeffs.iter().zip(hints.into_iter()) {
             // Determine the effective hint for this polynomial.
             // Public(None) → skip (this worker didn't commit this public poly).
             // Public(Some(h)) → this worker committed it; add its hint.
             let mut effective_hint = match hint {
-                MaybeShared::Shared(h) => h,
-                MaybeShared::Public(Some(h)) => h,
+                MaybeShared::Shared(h) => h.into_rows(),
+                MaybeShared::Public(Some(h)) => h.into_rows(),
                 _ => continue,
             };
 
-            effective_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
+            effective_hint.resize(num_rows, ArkG1(G1Projective::zero()));
 
             // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
             let row_commitments: &mut [G1Projective] = unsafe {
@@ -490,7 +504,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let _ = std::mem::replace(&mut rlc_hint, effective_hint);
         }
 
-        rlc_hint
+        DoryOpeningProofHint::new(rlc_hint)
     }
 }
 
@@ -500,14 +514,21 @@ fn compute_open_params(
 ) -> DoryOpenParams {
     let sigma = DoryGlobals::get_num_columns().log_2();
     let num_vars = poly.get_num_vars();
-    let nu = dory::vmv::compute_nu(num_vars, sigma);
+    let nu = compute_nu(num_vars, sigma);
 
     // Dory uses opposite endian-ness to Jolt.
-    let point_wrapped: Vec<JoltFieldWrapper<Fr>> =
-        opening_point.iter().rev().map(|c| JoltFieldWrapper((*c).into())).collect();
-    let (l_vec_w, r_vec_w) = dory::compute_left_right_vec(&point_wrapped, sigma, nu);
-    let l_vec = l_vec_w.into_iter().map(|x| x.0).collect();
-    let r_vec = r_vec_w.into_iter().map(|x| x.0).collect();
+    let point_wrapped: Vec<_> = opening_point
+        .iter()
+        .rev()
+        .map(|c| {
+            let c_fr: Fr = (*c).into();
+            jolt_to_ark(&c_fr)
+        })
+        .collect();
+    let (l_vec_w, r_vec_w) = compute_left_right_vectors(&point_wrapped, nu, sigma);
+    let mut l_vec: Vec<Fr> = l_vec_w.into_iter().map(|x| ark_to_jolt(&x)).collect();
+    let r_vec = r_vec_w.into_iter().map(|x| ark_to_jolt(&x)).collect();
+    l_vec.resize(1 << sigma, Fr::zero());
 
     (sigma, num_vars, nu, l_vec, r_vec)
 }
@@ -603,7 +624,7 @@ pub fn commit_local_rep3<ProofTranscript: Transcript>(
             let num_columns = DoryGlobals::get_num_columns();
             let (num_vars, row_commitments_share) = match shared_poly {
                 Rep3SharedPoly::Dense(poly) => {
-                    let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+                    let nu = compute_nu(poly.get_num_vars(), sigma);
                     (poly.get_num_vars(), compute_row_commitment_shares_a(poly, setup, nu))
                 }
                 Rep3SharedPoly::OneHot(poly) => {
@@ -639,7 +660,7 @@ fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
 
     let (num_vars, row_commitments_share) = match shared_poly {
         Rep3SharedPoly::Dense(poly) => {
-            let nu = dory::vmv::compute_nu(poly.get_num_vars(), sigma);
+            let nu = compute_nu(poly.get_num_vars(), sigma);
             (poly.get_num_vars(), compute_row_commitment_shares_a(poly, setup, nu))
         }
         Rep3SharedPoly::OneHot(poly) => {
@@ -650,7 +671,7 @@ fn commit_shared<ProofTranscript: Transcript, N: Rep3NetworkWorker>(
         }
         #[cfg(feature = "ring-msm")]
         Rep3SharedPoly::CompactRing(poly_ring) => {
-            let nu = dory::vmv::compute_nu(poly_ring.get_num_vars(), sigma);
+            let nu = compute_nu(poly_ring.get_num_vars(), sigma);
             let rows = compute_row_commitment_shares_ring(poly_ring, setup, nu, _io_ctx, _preproc)?;
             (poly_ring.get_num_vars(), rows)
         }
@@ -676,53 +697,36 @@ fn rows_to_commitment(
     MaybeShared<<DoryCommitmentScheme as CommitmentScheme>::OpeningProofHint>,
 )> {
     let _span = tracing::trace_span!("combine_rows").entered();
-    let nu = dory::vmv::compute_nu(num_vars, sigma);
+    let nu = compute_nu(num_vars, sigma);
     let num_rows_target = 1usize << nu;
 
     let mut row_commitments = row_commitments_share;
     row_commitments.resize(num_rows_target, G1Projective::zero());
-
-    let row_commitments_aff = G1Projective::normalize_batch(&row_commitments);
+    let row_commitments_wrapped: Vec<ArkG1> = row_commitments.into_iter().map(ArkG1).collect();
 
     let _pairing_span = tracing::trace_span!("multi_pairing").entered();
-    let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
-        let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
-        let num_chunks = rayon::current_num_threads();
-        let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
-        let ml_result = row_commitments_aff
-            .par_chunks(chunk_size)
-            .zip(g2_entries.par_chunks(chunk_size))
-            .map(|(g1_chunk, g2_chunk)| bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk))
-            .product();
-        PairingOutput(
-            Bn254::final_exponentiation(MillerLoopOutput(ml_result)).expect("final exponentiation should not fail").0,
-        )
-    } else {
-        let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
-        let g2_aff = G2Projective::normalize_batch(g2_proj);
-        Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
-    };
+    let commitment_share =
+        <BN254 as PairingCurve>::multi_pair_g2_setup(&row_commitments_wrapped, &setup.g2_vec[..row_commitments_wrapped.len()]);
     drop(_pairing_span);
 
-    // Safety: JoltGroupWrapper<G1Projective> is #[repr(transparent)]
-    let hint_share: Vec<JoltG1Wrapper> = unsafe {
-        let mut v = std::mem::ManuallyDrop::new(row_commitments);
-        Vec::from_raw_parts(v.as_mut_ptr() as *mut JoltG1Wrapper, v.len(), v.capacity())
-    };
+    let hint_share = DoryOpeningProofHint::new(row_commitments_wrapped);
 
-    Ok((MaybeShared::Shared(DoryCommitment(commitment_share.into())), MaybeShared::Shared(hint_share)))
+    Ok((
+        MaybeShared::Shared(DoryCommitment(commitment_share)),
+        MaybeShared::Shared(hint_share),
+    ))
 }
 
 /// Zero-copy view of `setup.core.g1_vec` as `&[G1Projective]`.
 /// Safety: `JoltGroupWrapper<G1Projective>` is `#[repr(transparent)]`.
 pub fn setup_g1_projective(setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> &[G1Projective] {
-    unsafe { std::slice::from_raw_parts(setup.core.g1_vec.as_ptr() as *const G1Projective, setup.core.g1_vec.len()) }
+    unsafe { std::slice::from_raw_parts(setup.g1_vec.as_ptr() as *const G1Projective, setup.g1_vec.len()) }
 }
 
 /// Zero-copy view of `setup.core.g2_vec` as `&[G2Projective]`.
 /// Safety: `JoltGroupWrapper<G2Projective>` is `#[repr(transparent)]`.
 pub fn setup_g2_projective(setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup) -> &[G2Projective] {
-    unsafe { std::slice::from_raw_parts(setup.core.g2_vec.as_ptr() as *const G2Projective, setup.core.g2_vec.len()) }
+    unsafe { std::slice::from_raw_parts(setup.g2_vec.as_ptr() as *const G2Projective, setup.g2_vec.len()) }
 }
 
 #[cfg(feature = "ring-msm")]
@@ -777,44 +781,8 @@ fn rep3_local_coeffs_a(poly: &Rep3DensePolynomial<Fr>) -> (usize, Vec<Fr>) {
 fn commit_public(
     poly: &jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<Fr>,
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
-) -> (DoryCommitment, Vec<JoltG1Wrapper>) {
-    let sigma = DoryGlobals::get_num_columns().log_2();
-    let num_columns = 1usize << sigma;
-
-    let num_vars = poly.get_num_vars();
-    let nu = dory::vmv::compute_nu(num_vars, sigma);
-    let num_rows_target = 1usize << nu;
-
-    // Tier 1: row commitments (no pairing yet).
-    let mut row_commitments: Vec<JoltG1Wrapper> =
-        poly.commit_rows::<JoltMsmG1>(&setup.core.g1_vec[..num_columns], num_columns);
-    row_commitments.resize(num_rows_target, JoltGroupWrapper(G1Projective::zero()));
-
-    // Tier 2: combine rows with cached prepared G2 coefficients when available.
-    let row_commitments_proj: &[G1Projective] =
-        unsafe { std::slice::from_raw_parts(row_commitments.as_ptr() as *const G1Projective, row_commitments.len()) };
-    let row_commitments_aff = G1Projective::normalize_batch(row_commitments_proj);
-
-    let commitment_share = if let Some(g2_cache) = setup.g2_cache.as_ref() {
-        let g2_entries = &g2_cache.entries[..row_commitments_aff.len()];
-        let num_chunks = rayon::current_num_threads();
-        let chunk_size = (row_commitments_aff.len() / num_chunks.max(1)).max(1);
-        let ml_result = row_commitments_aff
-            .par_chunks(chunk_size)
-            .zip(g2_entries.par_chunks(chunk_size))
-            .map(|(g1_chunk, g2_chunk)| bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk))
-            .product();
-        PairingOutput(
-            Bn254::final_exponentiation(MillerLoopOutput(ml_result)).expect("final exponentiation should not fail").0,
-        )
-    } else {
-        // Fallback: prepare G2 affines on the fly (slower and typically higher-churn).
-        let g2_proj = &setup_g2_projective(setup)[..row_commitments_aff.len()];
-        let g2_aff = G2Projective::normalize_batch(g2_proj);
-        Bn254::multi_pairing(&row_commitments_aff, &g2_aff)
-    };
-
-    (DoryCommitment(commitment_share.into()), row_commitments)
+) -> (DoryCommitment, DoryOpeningProofHint) {
+    DoryCommitmentScheme::commit(poly, setup)
 }
 
 #[tracing::instrument(skip_all, name = "dense::commit_rows", level = "trace")]
@@ -1052,12 +1020,11 @@ fn fixed_base_vector_msm_g2(
         return vec![];
     }
 
-    if let Some(glv_tables) = setup.g2_cache.as_ref().and_then(|cache| cache.get_g_fin_glv_tables()) {
-        scalars.par_iter().map(|&scalar| jolt_optimizations::glv_four_scalar_mul(glv_tables, scalar)[0]).collect()
-    } else {
-        let g_fin = setup.core.g_fin.0;
-        scalars.par_iter().map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[g_fin])[0]).collect()
-    }
+    let g_fin = setup.g2_vec[0].0;
+    scalars
+        .par_iter()
+        .map(|&scalar| jolt_optimizations::glv_four_scalar_mul_online(scalar, &[g_fin])[0])
+        .collect()
 }
 
 pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
@@ -1074,64 +1041,9 @@ fn bn254_ell(f: &mut Fq12, coeffs: &Bn254EllCoeff, p: &G1Affine) {
     f.mul_by_034(&c0, &c1, &c2);
 }
 
-fn bn254_miller_loop_from_cached_g2_chunk(ps_aff: &[G1Affine], qs: &[dory::curve::G2CacheEntry]) -> Fq12 {
+fn bn254_miller_loop_from_cached_g2_chunk(ps_aff: &[G1Affine], qs: &[G2Affine]) -> Fq12 {
     debug_assert_eq!(ps_aff.len(), qs.len());
-
-    struct PairState<'a> {
-        p: G1Affine,
-        coeffs: &'a [Bn254EllCoeff],
-        idx: usize,
-    }
-
-    let mut pairs: Vec<PairState<'_>> = Vec::with_capacity(ps_aff.len());
-    for (p, q) in ps_aff.iter().zip(qs.iter()) {
-        if p.is_zero() || q.prepared.infinity {
-            continue;
-        }
-        pairs.push(PairState { p: *p, coeffs: &q.prepared.ell_coeffs, idx: 0 });
-    }
-
-    if pairs.is_empty() {
-        return Fq12::one();
-    }
-
-    // Mirror arkworks BN multi_miller_loop, but borrow cached `ell_coeffs` instead of consuming them.
-    let ate_loop = <jolt_core::ark_bn254::Config as ArkBnConfig>::ATE_LOOP_COUNT;
-
-    let mut f = Fq12::one();
-    for i in (1..ate_loop.len()).rev() {
-        if i != ate_loop.len() - 1 {
-            f.square_in_place();
-        }
-
-        for pair in pairs.iter_mut() {
-            bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
-            pair.idx += 1;
-        }
-
-        let bit = ate_loop[i - 1];
-        if bit == 1 || bit == -1 {
-            for pair in pairs.iter_mut() {
-                bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
-                pair.idx += 1;
-            }
-        }
-    }
-
-    if <jolt_core::ark_bn254::Config as ArkBnConfig>::X_IS_NEGATIVE {
-        f.cyclotomic_inverse_in_place();
-    }
-
-    // Two final ell evaluations.
-    for _ in 0..2 {
-        for pair in pairs.iter_mut() {
-            bn254_ell(&mut f, &pair.coeffs[pair.idx], &pair.p);
-            pair.idx += 1;
-        }
-    }
-
-    debug_assert!(pairs.iter().all(|p| p.idx == p.coeffs.len()));
-    f
+    Bn254::multi_pairing(ps_aff, qs).0
 }
 
 fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
@@ -1150,19 +1062,7 @@ fn multi_pairing_setup_g2_cached_affine(
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     g2_affine_all: &[G2Affine],
 ) -> Fq12 {
-    if let Some(g2_cache) = setup.g2_cache.as_ref() {
-        let g2_entries = &g2_cache.entries[..ps_aff.len()];
-        let num_chunks = rayon::current_num_threads();
-        let chunk_size = (ps_aff.len() / num_chunks.max(1)).max(1);
-        let ml_result = ps_aff
-            .par_chunks(chunk_size)
-            .zip(g2_entries.par_chunks(chunk_size))
-            .map(|(g1_chunk, g2_chunk)| bn254_miller_loop_from_cached_g2_chunk(g1_chunk, g2_chunk))
-            .product();
-        Bn254::final_exponentiation(MillerLoopOutput(ml_result)).expect("final exponentiation should not fail").0
-    } else {
-        Bn254::multi_pairing(ps_aff, &g2_affine_all[..ps_aff.len()]).0
-    }
+    Bn254::multi_pairing(ps_aff, &g2_affine_all[..ps_aff.len()]).0
 }
 
 /// Pairing with pre-computed G1 affine bases.
@@ -1226,7 +1126,7 @@ mod tests {
         std::array::from_fn(|pid| Rep3DensePolynomial::new(party_coeffs[pid].clone()))
     }
 
-    fn unwrap_shared_hint(hint: MaybeShared<Vec<JoltG1Wrapper>>) -> Vec<JoltG1Wrapper> {
+    fn unwrap_shared_hint(hint: MaybeShared<DoryOpeningProofHint>) -> DoryOpeningProofHint {
         match hint {
             MaybeShared::Shared(hint) => hint,
             _ => panic!("expected shared hint"),
@@ -1277,7 +1177,26 @@ mod tests {
 
         let setup = Arc::new(<DoryCommitmentScheme as CommitmentScheme>::setup_prover((2 * sigma).max(num_vars)));
         let verifier_setup = <DoryCommitmentScheme as CommitmentScheme>::setup_verifier(&setup);
-        let (commitment, _) = <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
+        let (commitment, row_commitments) = <DoryCommitmentScheme as CommitmentScheme>::commit(&public_poly, &setup);
+
+        let mut direct_transcript = Blake2bTranscript::new(b"dory_open_dense_direct");
+        let (direct_proof, _direct_y_blinding) = <DoryCommitmentScheme as CommitmentScheme>::prove(
+            &setup,
+            &public_poly,
+            &opening_point,
+            Some(row_commitments),
+            &mut direct_transcript,
+        );
+        let mut direct_verify_transcript = Blake2bTranscript::new(b"dory_open_dense_direct");
+        <DoryCommitmentScheme as CommitmentScheme>::verify(
+            &direct_proof,
+            &verifier_setup,
+            &mut direct_verify_transcript,
+            &opening_point,
+            &claim,
+            &commitment,
+        )
+        .expect("direct dory opening should verify");
 
         let shared_polys = share_poly_rep3(&coeffs, &mut rng);
         let worker_inputs: [Rep3MultilinearPolynomial<Fr>; 3] =
@@ -1312,6 +1231,7 @@ mod tests {
                 >>::coordinate_prove(
                     &coord_setup, &mut transcript, net, &coord_point, &coord_claim, &coord_commitment
                 )
+                .map(|(proof, _y_blinding)| proof)
             },
         );
 
@@ -1407,6 +1327,7 @@ mod tests {
                 >>::coordinate_prove(
                     &coord_setup, &mut transcript, net, &coord_point, &coord_claim, &coord_commitment
                 )
+                .map(|(proof, _y_blinding)| proof)
             },
         );
 
@@ -1617,8 +1538,8 @@ mod tests {
         let single_1 = commit_local_rep3::<Blake2bTranscript>(&polys[1], &setup, true).unwrap();
 
         fn assert_commit_and_hint_eq(
-            a: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
-            b: &(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>),
+            a: &(MaybeShared<DoryCommitment>, MaybeShared<DoryOpeningProofHint>),
+            b: &(MaybeShared<DoryCommitment>, MaybeShared<DoryOpeningProofHint>),
         ) {
             match (&a.0, &b.0) {
                 (MaybeShared::Public(Some(ca)), MaybeShared::Public(Some(cb))) => {
