@@ -120,7 +120,7 @@ impl<F: JoltField, T: Transcript> BatchedSumcheckInstance<F, T> {
 pub struct Rep3BatchedSumcheck;
 
 impl Rep3BatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "BatchedSumcheck::prove")]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[Box<dyn Rep3SumcheckInstance<F, ProofTranscript>>],
         accumulator: &mut Rep3OpeningAccumulator<F>,
@@ -218,7 +218,7 @@ type HybridRoundMsg<F> = (Vec<AdditiveShare<F>>, Option<Vec<F>>);
 type HybridOpeningsMsg<F> = Vec<(Vec<AdditiveShare<F>>, Option<Vec<F>>)>;
 
 impl HybridBatchedSumcheck {
-    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove", level = "trace")]
+    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove")]
     pub fn prove<F, ProofTranscript, N>(
         instances: &[BatchedSumcheckInstance<F, ProofTranscript>],
         accumulator: &mut Rep3OpeningAccumulator<F>,

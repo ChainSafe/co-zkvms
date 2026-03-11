@@ -70,7 +70,7 @@ where
     PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
     N: Rep3NetworkCoordinator,
 {
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage2_instances")]
     fn stage2_instances(
         &mut self,
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -146,7 +146,7 @@ where
         Ok(stage2_instances)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage3_instances")]
     fn stage3_instances(
         &mut self,
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -310,7 +310,7 @@ where
         ])
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage4_instances")]
     fn stage4_instances(
         &mut self,
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,

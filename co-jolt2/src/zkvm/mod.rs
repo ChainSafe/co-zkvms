@@ -62,6 +62,7 @@ where
 // ---------------------------------------------------------------------------
 
 impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
+    #[tracing::instrument(skip_all, name = "jolt_preprocess")]
     fn preprocess(
         bytecode: Vec<tracer::instruction::Instruction>,
         memory_layout: jolt_common::jolt_device::MemoryLayout,

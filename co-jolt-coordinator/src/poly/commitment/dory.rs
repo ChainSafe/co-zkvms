@@ -17,6 +17,7 @@ use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::MaybeShared;
 use rayon::prelude::*;
+use tracing::info_span;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
@@ -92,6 +93,7 @@ where
         let mut s1 = r_vec;
         let mut s2 = l_vec;
 
+        let _dory_loop = info_span!("dory_reduction_loop", nu).entered();
         let mut curr_nu = nu;
         while curr_nu > 0 {
             let n2 = 1usize << (curr_nu - 1);
@@ -148,7 +150,9 @@ where
             s2 = s2_next;
             curr_nu -= 1;
         }
+        drop(_dory_loop);
 
+        let _dory_final = info_span!("dory_final_scalar_product").entered();
         let (gamma_chal, b4) = builder.challenge_fold_scalars();
         let (_d_chal, b5) =
             <DoryProofBuilderRef<'_, ProofTranscript> as ProofBuilder>::challenge_scalar_product_scalars(b4);
@@ -174,6 +178,8 @@ where
             e2: JoltGroupWrapper(e2_final),
         };
         builder = builder.append_scalar_product_message(final_msg, None, None);
+
+        drop(_dory_final);
 
         let _ = (claimed_opening, commitment);
         Ok(DoryProofData { sigma, dory_proof_data: builder.build() })
