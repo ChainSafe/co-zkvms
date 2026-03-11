@@ -1500,6 +1500,8 @@ mod tests {
                     0,
                     len,
                     len,
+                    0,
+                    0,
                     &mut io_ctx,
                 )?;
 
@@ -1636,6 +1638,8 @@ mod tests {
                     0,
                     len,
                     len,
+                    0,
+                    0,
                     &mut io_ctx,
                 )?;
 

@@ -10,7 +10,8 @@ use jolt_core::zkvm::instruction::InstructionLookup;
 use jolt_core::zkvm::lookup_table::LookupTables;
 use mpc_core::protocols::rep3::network::{IoContext, Rep3Network};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::upcast_many_from_binary;
+use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
+use mpc_core::protocols::rep3_ring::preprocessing::edabits;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
 
@@ -584,17 +585,22 @@ impl_rep3_lookup_query! {
 }
 
 /// Populate arithmetic representations for all shared operands across the trace
-/// in a single batched `upcast_many_from_binary` call.
+/// in a single batched `upcast_many_from_binary` call using ring-domain edaBits.
 ///
 /// Mirrors v1's `Rep3JoltInstructionSet::populate_operands_casts`:
 /// 1. Collect all `Shared { arithmetic: None }` operands and their binary shares
-/// 2. Single batched `upcast_many_from_binary`
+/// 2. Single batched edaBits-aided `upcast_many_from_binary` (2 rounds)
 /// 3. Write arithmetic shares back
 #[tracing::instrument(skip_all, name = "populate_operands_casts")]
-pub fn populate_operands_casts<N: Rep3Network>(
+pub fn populate_operands_casts<F, N>(
     trace: &mut [Rep3Cycle],
     io_ctx: &mut IoContext<N>,
-) -> eyre::Result<()> {
+    preproc: &mut PreprocessingPool<F>,
+) -> eyre::Result<()>
+where
+    F: jolt_core::field::JoltField,
+    N: Rep3Network,
+{
     let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
@@ -612,7 +618,8 @@ pub fn populate_operands_casts<N: Rep3Network>(
         return Ok(());
     }
 
-    let arithmetic = upcast_many_from_binary(&binary, io_ctx)?;
+    let batch = preproc.take_ring_edabits::<ArithmeticWideInt>(binary.len())?;
+    let arithmetic = edabits::upcast_many_from_binary(&binary, &batch, io_ctx)?;
 
     operands
         .into_par_iter()

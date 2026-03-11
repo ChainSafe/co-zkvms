@@ -213,8 +213,14 @@ fn prove_loop(
                     let deficit_counts: [usize; 5] =
                         std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    let deficit_re64 = budget
+                        .ring_edabits_u64
+                        .saturating_sub(pool.remaining_ring_edabits_u64());
+                    let deficit_re128 = budget
+                        .ring_edabits_u128
+                        .saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re) = (
+                    let (deficit_wm, deficit_re66) = (
                         budget
                             .wrap_masks
                             .saturating_sub(pool.remaining_wrap_masks()),
@@ -224,20 +230,24 @@ fn prove_loop(
                     );
 
                     let need_extend =
-                        deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                        deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
+                            || deficit_re64 > 0 || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+                    let need_extend = need_extend || deficit_wm > 0 || deficit_re66 > 0;
 
                     if need_extend {
                         info!(
                             ?deficit_counts,
-                            deficit_dabits, "extending preprocessing pool"
+                            deficit_dabits, deficit_re64, deficit_re128,
+                            "extending preprocessing pool"
                         );
                         #[cfg(not(feature = "ring-msm"))]
                         edabits::extend_pool_batched(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_re64,
+                            deficit_re128,
                             io_ctx,
                         )?;
                         #[cfg(feature = "ring-msm")]
@@ -246,7 +256,9 @@ fn prove_loop(
                             deficit_counts,
                             deficit_dabits,
                             deficit_wm,
-                            deficit_re,
+                            deficit_re66,
+                            deficit_re64,
+                            deficit_re128,
                             io_ctx,
                         )?;
                         pool.save(&pool_dir).ok();
@@ -263,6 +275,8 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
+                            budget.ring_edabits_u64,
+                            budget.ring_edabits_u128,
                             io_ctx,
                         )?
                     }
@@ -274,6 +288,8 @@ fn prove_loop(
                             num_dabits,
                             budget.wrap_masks,
                             budget.ring_edabits_u66,
+                            budget.ring_edabits_u64,
+                            budget.ring_edabits_u128,
                             io_ctx,
                         )?
                     }
