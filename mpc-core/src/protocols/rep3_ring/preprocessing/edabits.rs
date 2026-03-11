@@ -633,7 +633,7 @@ where
 }
 
 // PreprocessingPool generation/extension moved to `super::pool`.
-pub use super::pool::{preprocess_pool, extend_pool_batched};
+pub use super::pool::{extend_pool_batched, preprocess_pool};
 
 /// Convert an arithmetic ring share `[x]` over `Z_{2^K}` into an arithmetic
 /// field share `[x]` over `Fp`, using a masked opening.

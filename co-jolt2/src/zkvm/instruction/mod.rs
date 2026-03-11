@@ -30,15 +30,11 @@ pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
     #[cfg(not(feature = "rv64"))]
     {
         let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            &truncated, io_ctx,
-        )?)
+        Ok(rep3_ring::casts::ring_to_field_many_selector(&truncated, io_ctx)?)
     }
     #[cfg(feature = "rv64")]
     {
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            shares, io_ctx,
-        )?)
+        Ok(rep3_ring::casts::ring_to_field_many_selector(shares, io_ctx)?)
     }
 }
 
@@ -60,8 +56,7 @@ use rayon::prelude::*;
 // ── Rep3RISCVCycle ──────────────────────────────────────────────────────────
 
 /// Shorthand: the Rep3RegisterState type for an instruction T
-pub type Rep3RegState<T> =
-    <<T as RISCVInstruction>::Format as Rep3InstructionFormat>::Rep3RegisterState;
+pub type Rep3RegState<T> = <<T as RISCVInstruction>::Format as Rep3InstructionFormat>::Rep3RegisterState;
 
 /// Rep3 version of RISCVCycle.
 /// Register state type derived from instruction's Format (same pattern as vanilla).
@@ -88,17 +83,11 @@ where
     /// Build from vanilla RISCVCycle using pre-generated binary shares.
     /// `shares` must yield operands in the same order as `shared_operands_mut`:
     /// register state operands first, then RAM operands.
-    pub fn from_cycle_shared(
-        cycle: &RISCVCycle<T>,
-        shares: &mut impl Iterator<Item = Rep3Operand>,
-    ) -> Self {
+    pub fn from_cycle_shared(cycle: &RISCVCycle<T>, shares: &mut impl Iterator<Item = Rep3Operand>) -> Self {
         Self {
             instruction: cycle.instruction,
             register_state: Rep3RegState::<T>::from_shared(&cycle.register_state, shares),
-            ram_access: Rep3RAMAccess::from_shared(
-                Into::<RAMAccess>::into(cycle.ram_access),
-                shares,
-            ),
+            ram_access: Rep3RAMAccess::from_shared(Into::<RAMAccess>::into(cycle.ram_access), shares),
             advice: None,
         }
     }
@@ -136,10 +125,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
     /// - Mul-index: Pending(RingMulA2B(a, b)) — needs batch mul + A2B.
     ///
     /// Default: computes interleave from binary operands (Ready, no comms).
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = self.to_instruction_inputs();
         let left = operand_to_binary_wide(&left, party_id);
         let right = operand_to_binary_wide(&right, party_id);
@@ -243,13 +229,9 @@ use tracer::instruction::virtual_srai::VirtualSRAI;
 use tracer::instruction::virtual_srl::VirtualSRL;
 use tracer::instruction::virtual_srli::VirtualSRLI;
 use tracer::instruction::virtual_sw::VirtualSW;
-use tracer::instruction::virtual_xor_rot::{
-    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
-};
+use tracer::instruction::virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 #[cfg(feature = "rv64")]
-use tracer::instruction::virtual_xor_rotw::{
-    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
-};
+use tracer::instruction::virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 #[cfg(feature = "rv64")]
 use tracer::instruction::virtual_zero_extend_word::VirtualZeroExtendWord;
 use tracer::instruction::xor::XOR;
@@ -591,19 +573,12 @@ impl_rep3_lookup_query! {
 /// 2. Single batched `upcast_many_from_binary`
 /// 3. Write arithmetic shares back
 #[tracing::instrument(skip_all, name = "populate_operands_casts")]
-pub fn populate_operands_casts<N: Rep3Network>(
-    trace: &mut [Rep3Cycle],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<()> {
+pub fn populate_operands_casts<N: Rep3Network>(trace: &mut [Rep3Cycle], io_ctx: &mut IoContext<N>) -> eyre::Result<()> {
     let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
         .par_iter_mut()
         .flat_map(|cycle| cycle.shared_operands_mut())
         .filter_map(|op| match op {
-            Rep3Operand::Shared {
-                arithmetic: None,
-                binary,
-                ..
-            } => Some((*binary, op)),
+            Rep3Operand::Shared { arithmetic: None, binary, .. } => Some((*binary, op)),
             _ => None,
         })
         .unzip();
@@ -614,23 +589,16 @@ pub fn populate_operands_casts<N: Rep3Network>(
 
     let arithmetic = upcast_many_from_binary(&binary, io_ctx)?;
 
-    operands
-        .into_par_iter()
-        .zip(arithmetic)
-        .for_each(|(operand, arith)| match operand {
-            Rep3Operand::Shared {
-                arithmetic: None,
-                binary,
-                public,
-            } => {
-                *operand = Rep3Operand::Shared {
-                    binary: std::mem::take(binary),
-                    arithmetic: Some(arith),
-                    public: std::mem::take(public),
-                };
-            }
-            _ => panic!("Expected shared operand"),
-        });
+    operands.into_par_iter().zip(arithmetic).for_each(|(operand, arith)| match operand {
+        Rep3Operand::Shared { arithmetic: None, binary, public } => {
+            *operand = Rep3Operand::Shared {
+                binary: std::mem::take(binary),
+                arithmetic: Some(arith),
+                public: std::mem::take(public),
+            };
+        }
+        _ => panic!("Expected shared operand"),
+    });
 
     Ok(())
 }

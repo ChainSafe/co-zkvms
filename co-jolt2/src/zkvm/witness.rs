@@ -10,9 +10,7 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
 use jolt_core::utils::math::Math;
-use jolt_core::zkvm::instruction::{
-    CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
-};
+use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker};
 use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
@@ -90,10 +88,7 @@ where
         return Ok(());
     }
 
-    let chunk_size: usize = std::env::var("B2A_CHUNK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8192);
+    let chunk_size: usize = std::env::var("B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8192);
 
     for chunk in jobs.chunks(chunk_size) {
         let n = chunk.len();
@@ -139,16 +134,12 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
         let (l, r) = inputs;
         let l_val = match l {
             Rep3Operand::Public(v) => v,
-            Rep3Operand::Shared {
-                public: Some(v), ..
-            } => v as i128,
+            Rep3Operand::Shared { public: Some(v), .. } => v as i128,
             _ => return None,
         };
         let r_val = match r {
             Rep3Operand::Public(v) => v,
-            Rep3Operand::Shared {
-                public: Some(v), ..
-            } => v as i128,
+            Rep3Operand::Shared { public: Some(v), .. } => v as i128,
             _ => return None,
         };
         Some((l_val as XlenInt as LookupIndexInt) + (r_val as XlenInt as LookupIndexInt))
@@ -158,26 +149,14 @@ fn compute_public_index(cycle: &Rep3Cycle) -> Option<LookupIndexInt> {
         Rep3Cycle::LUI(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::AUIPC(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::JAL(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
-        Rep3Cycle::VirtualPow2(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualPow2I(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualPow2(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualPow2I(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         #[cfg(feature = "rv64")]
-        Rep3Cycle::VirtualPow2W(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualPow2W(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         #[cfg(feature = "rv64")]
-        Rep3Cycle::VirtualPow2IW(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualShiftRightBitmask(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualShiftRightBitmaskI(c) => {
-            try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualPow2IW(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualShiftRightBitmask(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualShiftRightBitmaskI(c) => try_public_add(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         _ => None,
     }
 }
@@ -196,33 +175,19 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
     let extract_right = |inputs: (Rep3Operand, Rep3Operand)| -> Option<u64> {
         match inputs.1 {
             Rep3Operand::Public(v) => Some(v as u64),
-            Rep3Operand::Shared {
-                public: Some(v), ..
-            } => Some(v as XlenInt as u64),
+            Rep3Operand::Shared { public: Some(v), .. } => Some(v as XlenInt as u64),
             _ => None,
         }
     };
     match cycle {
         // Shift/rotate — rs2 is public bitmask
-        Rep3Cycle::VirtualSRA(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualSRL(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualSRAI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualSRLI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
-        Rep3Cycle::VirtualROTRI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualSRA(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualSRL(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualSRAI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualSRLI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
+        Rep3Cycle::VirtualROTRI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         #[cfg(feature = "rv64")]
-        Rep3Cycle::VirtualROTRIW(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualROTRIW(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         // Immediate ALU — right operand is the immediate
         Rep3Cycle::ADDI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::ANDI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
@@ -230,9 +195,7 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
         Rep3Cycle::XORI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::SLTI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         Rep3Cycle::SLTIU(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
-        Rep3Cycle::VirtualMULI(c) => {
-            extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c))
-        }
+        Rep3Cycle::VirtualMULI(c) => extract_right(Rep3LookupQuery::<XLEN>::to_instruction_inputs(c)),
         _ => None,
     }
 }
@@ -301,15 +264,8 @@ where
 
     // Parallel pre-pass: compute discriminant per cycle for lookup-enabled instructions.
     // We still build the final groups deterministically in trace order.
-    let discriminants: Vec<Option<mem::Discriminant<Rep3Cycle>>> = trace
-        .par_iter()
-        .map(|cycle| {
-            cycle
-                .lookup_table()
-                .is_some()
-                .then_some(mem::discriminant(cycle))
-        })
-        .collect();
+    let discriminants: Vec<Option<mem::Discriminant<Rep3Cycle>>> =
+        trace.par_iter().map(|cycle| cycle.lookup_table().is_some().then_some(mem::discriminant(cycle))).collect();
 
     // Deterministic, first-seen grouping by instruction discriminant (reduces tiny batches).
     let mut disc_to_group: HashMap<mem::Discriminant<Rep3Cycle>, usize> = HashMap::new();
@@ -325,10 +281,8 @@ where
         group_ids[i] = Some(gid);
     }
 
-    let mut ops_by_instruction: Vec<(
-        Vec<&Rep3Cycle>,
-        Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
-    )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
+    let mut ops_by_instruction: Vec<(Vec<&Rep3Cycle>, Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>)> =
+        (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
 
     // TODO: parallelize
     for (i, (cycle, out)) in trace.iter().zip(output_futures.iter_mut()).enumerate() {
@@ -340,16 +294,12 @@ where
 
     // Process each instruction group via par_chunks
     let _span = tracing::info_span!("to_lookup_output_batched", num_groups = num_groups).entered();
-    io_ctx.par_chunks(
-        ops_by_instruction,
-        None,
-        |groups, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
-            for (steps, out) in groups {
-                Rep3LookupQuery::<XLEN>::to_lookup_output_batched(steps[0], &steps, io_ctx, out)?;
-            }
-            Ok(vec![()])
-        },
-    )?;
+    io_ctx.par_chunks(ops_by_instruction, None, |groups, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
+        for (steps, out) in groups {
+            Rep3LookupQuery::<XLEN>::to_lookup_output_batched(steps[0], &steps, io_ctx, out)?;
+        }
+        Ok(vec![()])
+    })?;
     drop(_span);
 
     // Fulfill all pending futures (batched casts via io_ctx)
@@ -378,10 +328,7 @@ where
     let party_id = state.party_id;
     let preprocessing = state.prover_state.preprocessing;
     let trace = state.trace_mut();
-    eyre::ensure!(
-        trace.len().is_power_of_two(),
-        "trace length must be power-of-two"
-    );
+    eyre::ensure!(trace.len().is_power_of_two(), "trace length must be power-of-two");
 
     // Ensure all shared operands have arithmetic representations (batched).
     populate_operands_casts(trace, io_ctx.main())?;
@@ -430,9 +377,7 @@ where
                 }
             }
         }
-        Rep3Operand::Shared {
-            public: Some(v), ..
-        } => {
+        Rep3Operand::Shared { public: Some(v), .. } => {
             let share = promote_to_trivial_share(party_id, F::from_u64(*v));
             unsafe {
                 match col {
@@ -446,11 +391,7 @@ where
             }
         }
         Rep3Operand::Shared { .. } => {
-            cast_jobs.push(SparseCastJob {
-                col,
-                row,
-                share: op.as_binary(),
-            });
+            cast_jobs.push(SparseCastJob { col, row, share: op.as_binary() });
         }
     };
 
@@ -503,9 +444,7 @@ where
                 maybe_push(
                     SparseCastCol::Advice,
                     t,
-                    c.advice
-                        .as_ref()
-                        .expect("VirtualAdvice shared advice payload missing"),
+                    c.advice.as_ref().expect("VirtualAdvice shared advice payload missing"),
                 );
             }
         }
@@ -537,9 +476,7 @@ where
     fill_field_from_operands_sparse::<F, N>(io_ctx, cast_jobs, Arc::clone(&shared_cols), preproc)?;
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
-    let shared_cols = Arc::try_unwrap(shared_cols)
-        .ok()
-        .expect("shared cols Arc should have single owner");
+    let shared_cols = Arc::try_unwrap(shared_cols).ok().expect("shared cols Arc should have single owner");
     let rs1_value = shared_cols.rs1.into_inner();
     let rs2_value = shared_cols.rs2.into_inner();
     let rd_write_value = shared_cols.rd_write.into_inner();
@@ -562,11 +499,7 @@ where
     );
     cw.update_stage3(crate::zkvm::dag::witness::Stage3Update {
         pc_sumcheck: Some((unexpanded_pc, flags_bits)),
-        read_raf_tables_and_masks: Some((
-            lookup_tables,
-            is_interleaved_operands,
-            right_operand_public_mask,
-        )),
+        read_raf_tables_and_masks: Some((lookup_tables, is_interleaved_operands, right_operand_public_mask)),
         read_raf_lookup_indices: None,
         product_inputs: None,
     });
@@ -617,18 +550,10 @@ where
     N: Rep3NetworkWorker,
     Standard: Distribution<u32> + Distribution<u64> + Distribution<u8> + Distribution<u128>,
 {
-    let fulfill_index_chunk: usize = std::env::var("FULFILL_INDEX_CHUNK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(16 * 1024);
-    let inc_b2a_chunk: usize = std::env::var("INC_B2A_CHUNK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8 * 1024);
-    let inc_b2a_max_forks: usize = std::env::var("INC_B2A_MAX_FORKS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
+    let fulfill_index_chunk: usize =
+        std::env::var("FULFILL_INDEX_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(16 * 1024);
+    let inc_b2a_chunk: usize = std::env::var("INC_B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
+    let inc_b2a_max_forks: usize = std::env::var("INC_B2A_MAX_FORKS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
 
     let party_id = state.party_id;
     let preprocessing: &JoltProverPreprocessing<F, PCS> = state.prover_state.preprocessing;
@@ -661,11 +586,7 @@ where
         None
     };
 
-    let dth_root_log = if ram_d > 0 {
-        Some(DTH_ROOT_OF_K.log_2())
-    } else {
-        None
-    };
+    let dth_root_log = if ram_d > 0 { Some(DTH_ROOT_OF_K.log_2()) } else { None };
 
     let instruction_ra_shifts: [usize; instruction_lookups::D] =
         array::from_fn(|i| instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i));
@@ -676,8 +597,7 @@ where
     //
     // Phase 1: Collect all data that doesn't require communication, plus
     //          FutureRep3Ring futures for instruction_ra indices.
-    let index_futures: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = (0
-        ..trace.len())
+    let index_futures: Vec<FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>>> = (0..trace.len())
         .into_par_iter()
         .map({
             let batch_cell = batch_cell.clone();
@@ -693,12 +613,11 @@ where
                 let circuit_flags = cycle.instruction().circuit_flags();
 
                 // WriteLookupOutputToRD (public)
-                batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
-                    * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
+                batch_ref.write_lookup_output_to_rd[i] =
+                    rd_write_flag * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
 
                 // WritePCtoRD (public)
-                batch_ref.write_pc_to_rd[i] =
-                    rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
+                batch_ref.write_pc_to_rd[i] = rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
 
                 // ShouldJump (public)
                 let is_jump = circuit_flags[CircuitFlags::Jump as usize] as u8;
@@ -726,16 +645,12 @@ where
                 }
 
                 if let Some(dth_log) = dth_root_log {
-                    let address_opt = remap_address(
-                        cycle.ram_access().address() as u64,
-                        &preprocessing.shared.memory_layout,
-                    );
+                    let address_opt =
+                        remap_address(cycle.ram_access().address() as u64, &preprocessing.shared.memory_layout);
 
                     for j in 0..ram_d {
-                        let index = address_opt.map(|address| {
-                            ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K)
-                                as u8
-                        });
+                        let index = address_opt
+                            .map(|address| ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K) as u8);
                         batch_ref.ram_ra[j][i] = index;
                     }
                 }
@@ -763,14 +678,8 @@ where
             if chunk.is_empty() {
                 break;
             }
-            let _chunk_span = info_span!(
-                "fulfill_index_futures_chunk",
-                chunk_id,
-                chunk_len = chunk.len()
-            )
-            .entered();
-            let resolved: Vec<Rep3RingShare<LookupIndexInt>> =
-                chunk.fulfill_batched(io_ctx, |r, ()| r)?;
+            let _chunk_span = info_span!("fulfill_index_futures_chunk", chunk_id, chunk_len = chunk.len()).entered();
+            let resolved: Vec<Rep3RingShare<LookupIndexInt>> = chunk.fulfill_batched(io_ctx, |r, ()| r)?;
             drop(_chunk_span);
             out.extend(resolved);
             chunk_id += 1;
@@ -784,17 +693,14 @@ where
     //
     // Match vanilla witness generation exactly: padded NoOp cycles contribute
     // lookup index 0, so all InstructionRa chunks are `Some(0)`.
-    indices
-        .par_iter()
-        .enumerate()
-        .for_each(|(i, lookup_index)| {
-            let batch_ref = unsafe { &mut *batch_cell.0.get() };
-            for j in 0..instruction_lookups::D {
-                let k = (*lookup_index >> instruction_ra_shifts[j])
-                    & RingElement(instruction_lookups::K_CHUNK as LookupIndexInt - 1);
-                batch_ref.instruction_ra[j][i] = Some(k.downcast());
-            }
-        });
+    indices.par_iter().enumerate().for_each(|(i, lookup_index)| {
+        let batch_ref = unsafe { &mut *batch_cell.0.get() };
+        for j in 0..instruction_lookups::D {
+            let k = (*lookup_index >> instruction_ra_shifts[j])
+                & RingElement(instruction_lookups::K_CHUNK as LookupIndexInt - 1);
+            batch_ref.instruction_ra[j][i] = Some(k.downcast());
+        }
+    });
 
     // Classify lookup indices as Either::Public or Either::Shared.
     // Public indices are for control-only instructions (LUI, AUIPC, JAL, VirtualPow2*, etc.)
@@ -809,21 +715,14 @@ where
         .collect();
 
     // Persist lookup indices for ReadRaf suffix evaluation
-    state
-        .prover_state
-        .cycle_witness
-        .update_stage3(crate::zkvm::dag::witness::Stage3Update {
-            pc_sumcheck: None,
-            read_raf_tables_and_masks: None,
-            read_raf_lookup_indices: Some(either_indices),
-            product_inputs: None,
-        });
+    state.prover_state.cycle_witness.update_stage3(crate::zkvm::dag::witness::Stage3Update {
+        pc_sumcheck: None,
+        read_raf_tables_and_masks: None,
+        read_raf_lookup_indices: Some(either_indices),
+        product_inputs: None,
+    });
 
-    let mut batch = Arc::try_unwrap(batch_cell)
-        .ok()
-        .expect("Arc should have single owner")
-        .0
-        .into_inner();
+    let mut batch = Arc::try_unwrap(batch_cell).ok().expect("Arc should have single owner").0.into_inner();
 
     // -- Convert to polynomials --
     let mut results = HashMap::with_capacity(polynomials.len());
@@ -831,17 +730,13 @@ where
 
     // should_branch[i] = lookup_output[i] * circuit_flags[Branch] (public scalar).
     // Compute this before RdInc/RamInc so we can borrow cycle_witness immutably (no cloning).
-    if polynomials
-        .iter()
-        .any(|p| matches!(p, CommittedPolynomial::ShouldBranch))
-    {
+    if polynomials.iter().any(|p| matches!(p, CommittedPolynomial::ShouldBranch)) {
         let lookup_outputs = state.prover_state.cycle_witness.stage1_lookup_output();
         let flags_bits = state.prover_state.cycle_witness.pc_sumcheck_flags_bits();
         debug_assert_eq!(lookup_outputs.len(), flags_bits.len());
 
         let branch_mask = 1u32 << (CircuitFlags::Branch as usize);
-        let mut should_branch: Vec<Rep3PrimeFieldShare<F>> =
-            Vec::with_capacity(lookup_outputs.len());
+        let mut should_branch: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(lookup_outputs.len());
         for (t, output) in lookup_outputs.iter().enumerate() {
             if (flags_bits[t] & branch_mask) != 0 {
                 should_branch.push(*output);
@@ -849,10 +744,7 @@ where
                 should_branch.push(Rep3PrimeFieldShare::zero_share());
             }
         }
-        results.insert(
-            CommittedPolynomial::ShouldBranch,
-            Rep3MultilinearPolynomial::from(should_branch),
-        );
+        results.insert(CommittedPolynomial::ShouldBranch, Rep3MultilinearPolynomial::from(should_branch));
     }
 
     // Build instruction input polynomials.
@@ -861,12 +753,10 @@ where
     #[cfg(feature = "ring-msm")]
     let mut right_ops: Vec<Rep3Operand> = Vec::new();
     #[cfg(feature = "ring-msm")]
-    if polynomials.iter().any(|p| {
-        matches!(
-            p,
-            CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput
-        )
-    }) {
+    if polynomials
+        .iter()
+        .any(|p| matches!(p, CommittedPolynomial::LeftInstructionInput | CommittedPolynomial::RightInstructionInput))
+    {
         let trace: &[Rep3Cycle] = state.trace_ref();
         let n = trace.len();
         left_ops = Vec::with_capacity(n);
@@ -884,24 +774,14 @@ where
                 #[cfg(feature = "ring-msm")]
                 {
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
-                    results.insert(
-                        *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)),
-                    );
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)));
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
                     let party_id = io_ctx.party_id();
                     let n = state.prover_state.cycle_witness.len();
                     let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
-                        .map(|t| {
-                            state
-                                .prover_state
-                                .cycle_witness
-                                .row_stage1(t)
-                                .to_instruction_inputs(party_id)
-                                .0
-                        })
+                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).0)
                         .collect();
                     results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
                 }
@@ -910,51 +790,32 @@ where
                 #[cfg(feature = "ring-msm")]
                 {
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
-                    results.insert(
-                        *poly,
-                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)),
-                    );
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)));
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
                     let party_id = io_ctx.party_id();
                     let n = state.prover_state.cycle_witness.len();
                     let field_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
-                        .map(|t| {
-                            state
-                                .prover_state
-                                .cycle_witness
-                                .row_stage1(t)
-                                .to_instruction_inputs(party_id)
-                                .1
-                        })
+                        .map(|t| state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id).1)
                         .collect();
                     results.insert(*poly, Rep3MultilinearPolynomial::from(field_shares));
                 }
             }
             CommittedPolynomial::WriteLookupOutputToRD => {
                 let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
-                results.insert(
-                    *poly,
-                    Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)),
-                );
+                results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)));
             }
             CommittedPolynomial::WritePCtoRD => {
                 let coeffs = std::mem::take(&mut batch.write_pc_to_rd);
-                results.insert(
-                    *poly,
-                    Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)),
-                );
+                results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)));
             }
             CommittedPolynomial::ShouldBranch => {
                 // Already computed above to avoid borrowing + cloning cycle_witness flags.
             }
             CommittedPolynomial::ShouldJump => {
                 let coeffs = std::mem::take(&mut batch.should_jump);
-                results.insert(
-                    *poly,
-                    Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)),
-                );
+                results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)));
             }
             CommittedPolynomial::RdInc => {
                 // rd_inc = rd_post - rd_pre in the field (binary shares → EdaBits B2A)
@@ -964,37 +825,23 @@ where
                 debug_assert_eq!(rd_pre.len(), n);
                 debug_assert_eq!(rd_post.len(), n);
 
-                let _span = info_span!(
-                    "rd_inc_b2a",
-                    n,
-                    chunk = inc_b2a_chunk,
-                    max_forks = inc_b2a_max_forks
-                )
-                .entered();
+                let _span = info_span!("rd_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
                 let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
-                        Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&rd_pre[off..end]);
                     combined.extend_from_slice(&rd_post[off..end]);
 
                     let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
-                            &combined,
-                            &batch_eda,
-                            io_ctx.main(),
-                        )?
+                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(
-                            combined,
-                            batch_eda,
-                            Some(chunk_size),
-                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
-                        )?
+                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
+                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
+                        })?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {
@@ -1003,10 +850,7 @@ where
                 }
                 drop(_span);
                 let dense = Rep3DensePolynomial::new(inc);
-                state
-                    .prover_state
-                    .cycle_witness
-                    .set_stage2_incs(Some(dense.clone()), None);
+                state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None);
                 results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::RamInc => {
@@ -1017,37 +861,24 @@ where
                 debug_assert_eq!(ram_pre.len(), n);
                 debug_assert_eq!(ram_post.len(), n);
 
-                let _span = info_span!(
-                    "ram_inc_b2a",
-                    n,
-                    chunk = inc_b2a_chunk,
-                    max_forks = inc_b2a_max_forks
-                )
-                .entered();
+                let _span =
+                    info_span!("ram_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
                 let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
                     let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> =
-                        Vec::with_capacity(2 * chunk_len);
+                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
                     combined.extend_from_slice(&ram_pre[off..end]);
                     combined.extend_from_slice(&ram_post[off..end]);
 
                     let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(
-                            &combined,
-                            &batch_eda,
-                            io_ctx.main(),
-                        )?
+                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(
-                            combined,
-                            batch_eda,
-                            Some(chunk_size),
-                            |xs, b, c| edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c),
-                        )?
+                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
+                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
+                        })?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
                     for i in 0..chunk_len {
@@ -1056,20 +887,14 @@ where
                 }
                 drop(_span);
                 let dense = Rep3DensePolynomial::new(inc);
-                state
-                    .prover_state
-                    .cycle_witness
-                    .set_stage2_incs(None, Some(dense.clone()));
+                state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()));
                 results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
             }
             CommittedPolynomial::InstructionRa(i) => {
                 if *i < instruction_lookups::D {
                     let indices = std::mem::take(&mut batch.instruction_ra[*i]);
-                    let one_hot = Rep3OneHotPolynomial::<F>::from_indices(
-                        indices,
-                        instruction_lookups::K_CHUNK,
-                        io_ctx.main(),
-                    )?;
+                    let one_hot =
+                        Rep3OneHotPolynomial::<F>::from_indices(indices, instruction_lookups::K_CHUNK, io_ctx.main())?;
                     results.insert(*poly, Rep3MultilinearPolynomial::shared_one_hot(one_hot));
                 }
             }
@@ -1081,20 +906,14 @@ where
                     let log_K_chunk = log_K.div_ceil(d);
                     let K_chunk = 1 << log_K_chunk;
                     let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
-                    results.insert(
-                        *poly,
-                        Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)),
-                    );
+                    results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)));
                 }
             }
             CommittedPolynomial::RamRa(i) => {
                 if *i < ram_d {
                     let indices = std::mem::take(&mut batch.ram_ra[*i]);
                     let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
-                    results.insert(
-                        *poly,
-                        Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)),
-                    );
+                    results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::OneHot(one_hot)));
                 }
             }
         }

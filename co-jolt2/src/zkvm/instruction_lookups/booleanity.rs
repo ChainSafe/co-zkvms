@@ -86,18 +86,10 @@ pub(crate) fn extend_degree_3_evals<F: JoltField>(
 }
 
 fn lagrange_coeffs_consecutive_3<F: JoltField>(x: F) -> [F; 4] {
-    let den0 = (F::from(0u64) - F::from(1u64))
-        * (F::from(0u64) - F::from(2u64))
-        * (F::from(0u64) - F::from(3u64));
-    let den1 = (F::from(1u64) - F::from(0u64))
-        * (F::from(1u64) - F::from(2u64))
-        * (F::from(1u64) - F::from(3u64));
-    let den2 = (F::from(2u64) - F::from(0u64))
-        * (F::from(2u64) - F::from(1u64))
-        * (F::from(2u64) - F::from(3u64));
-    let den3 = (F::from(3u64) - F::from(0u64))
-        * (F::from(3u64) - F::from(1u64))
-        * (F::from(3u64) - F::from(2u64));
+    let den0 = (F::from(0u64) - F::from(1u64)) * (F::from(0u64) - F::from(2u64)) * (F::from(0u64) - F::from(3u64));
+    let den1 = (F::from(1u64) - F::from(0u64)) * (F::from(1u64) - F::from(2u64)) * (F::from(1u64) - F::from(3u64));
+    let den2 = (F::from(2u64) - F::from(0u64)) * (F::from(2u64) - F::from(1u64)) * (F::from(2u64) - F::from(3u64));
+    let den3 = (F::from(3u64) - F::from(0u64)) * (F::from(3u64) - F::from(1u64)) * (F::from(3u64) - F::from(2u64));
 
     let num0 = (x - F::from(1u64)) * (x - F::from(2u64)) * (x - F::from(3u64));
     let num1 = (x - F::from(0u64)) * (x - F::from(2u64)) * (x - F::from(3u64));
@@ -156,9 +148,7 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                 eq_r_address: GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh),
                 eq_r_cycle: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
                 G,
-                masked_H_indices: std::array::from_fn(|i| {
-                    one_hot_polys[i].masked_indices_c.clone()
-                }),
+                masked_H_indices: std::array::from_fn(|i| one_hot_polys[i].masked_indices_c.clone()),
                 H: std::array::from_fn(|_| Rep3RaPolynomial::None),
                 F_table: {
                     let mut f = vec![F::zero(); K_CHUNK];
@@ -166,20 +156,14 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                     f
                 },
                 eq_r_r: F::zero(),
-                one_hot_e_fields: std::array::from_fn(|i| {
-                    one_hot_polys[i].rand_ohv_e_field.clone()
-                }),
+                one_hot_e_fields: std::array::from_fn(|i| one_hot_polys[i].rand_ohv_e_field.clone()),
             },
         }
     }
 
     /// Phase 1: address-variable rounds (0..LOG_K_CHUNK).
     /// All ops are `shared * public` — no MPC communication needed.
-    fn compute_phase1_message(
-        &self,
-        round: usize,
-        previous_claim: AdditiveShare<F>,
-    ) -> Vec<AdditiveShare<F>> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: AdditiveShare<F>) -> Vec<AdditiveShare<F>> {
         let p = &self.state;
         let m = round + 1;
         let B = &p.eq_r_address;
@@ -208,11 +192,8 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                                     * F_k;
 
                             let eval_infty = G_times_F * F_k;
-                            let eval_0 = if k_m == 0 {
-                                eval_infty - G_times_F
-                            } else {
-                                Rep3PrimeFieldShare::zero_share()
-                            };
+                            let eval_0 =
+                                if k_m == 0 { eval_infty - G_times_F } else { Rep3PrimeFieldShare::zero_share() };
                             [eval_0, eval_infty]
                         })
                         .reduce(
@@ -252,13 +233,12 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                                     let F_k = p.F_table[k % (1 << (m - 1))];
                                     let k_G = (k_prime << m) + k;
 
-                                    let G_times_F: Rep3PrimeFieldShare<F> = p
-                                        .G
-                                        .iter()
-                                        .zip(self.gamma.iter())
-                                        .map(|(g, gamma)| g[k_G] * *gamma)
-                                        .fold(Rep3PrimeFieldShare::zero_share(), |acc, x| acc + x)
-                                        * F_k;
+                                    let G_times_F: Rep3PrimeFieldShare<F> =
+                                        p.G.iter()
+                                            .zip(self.gamma.iter())
+                                            .map(|(g, gamma)| g[k_G] * *gamma)
+                                            .fold(Rep3PrimeFieldShare::zero_share(), |acc, x| acc + x)
+                                            * F_k;
 
                                     let eval_infty = G_times_F * F_k;
                                     let eval_0 = if k_m == 0 {
@@ -290,22 +270,12 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
 
         // Apply Gruen expansion: public algebra on shared quadratic coefficients.
         let [q0, q_inf] = quadratic_coeffs;
-        gruen_evals_deg_3(
-            &self.state.eq_r_address,
-            q0.into(),
-            q_inf.into(),
-            previous_claim,
-            self.party_id,
-        )
+        gruen_evals_deg_3(&self.state.eq_r_address, q0.into(), q_inf.into(), previous_claim, self.party_id)
     }
 
     /// Phase 2: cycle-variable rounds (LOG_K_CHUNK..LOG_K_CHUNK+log_T).
     /// h_0^2 uses rep3 * rep3 → additive share (local, no network).
-    fn compute_phase2_message(
-        &self,
-        _round: usize,
-        previous_claim: AdditiveShare<F>,
-    ) -> Vec<AdditiveShare<F>> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: AdditiveShare<F>) -> Vec<AdditiveShare<F>> {
         let p = &self.state;
         let D_poly = &p.eq_r_cycle;
 
@@ -330,10 +300,9 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                                 let quadratic = b_sq * *gamma;
                                 [booleanity, quadratic]
                             })
-                            .fold(
-                                [AdditiveShare::zero(), AdditiveShare::zero()],
-                                |running, new| [running[0] + new[0], running[1] + new[1]],
-                            );
+                            .fold([AdditiveShare::zero(), AdditiveShare::zero()], |running, new| {
+                                [running[0] + new[0], running[1] + new[1]]
+                            });
 
                     [coeffs[0] * D_eval, coeffs[1] * D_eval]
                 })
@@ -372,10 +341,9 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                                         let quadratic = b_sq * *gamma;
                                         [booleanity, quadratic]
                                     })
-                                    .fold(
-                                        [AdditiveShare::zero(), AdditiveShare::zero()],
-                                        |running, new| [running[0] + new[0], running[1] + new[1]],
-                                    );
+                                    .fold([AdditiveShare::zero(), AdditiveShare::zero()], |running, new| {
+                                        [running[0] + new[0], running[1] + new[1]]
+                                    });
 
                             [coeffs[0] * D_E_in_eval, coeffs[1] * D_E_in_eval]
                         })
@@ -401,17 +369,11 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
             adjusted_claim,
             self.party_id,
         );
-        vec![
-            gruen_evals[0] * p.eq_r_r,
-            gruen_evals[1] * p.eq_r_r,
-            gruen_evals[2] * p.eq_r_r,
-        ]
+        vec![gruen_evals[0] * p.eq_r_r, gruen_evals[1] * p.eq_r_r, gruen_evals[2] * p.eq_r_r]
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3BooleanitySumcheckWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3BooleanitySumcheckWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -454,13 +416,10 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             let r_j_f: F = r_j.into();
             let size = 1 << round;
             let (F_left, F_right) = ps.F_table.split_at_mut(size);
-            F_left
-                .par_iter_mut()
-                .zip(F_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r_j_f;
-                    *x -= *y;
-                });
+            F_left.par_iter_mut().zip(F_right.par_iter_mut()).for_each(|(x, y)| {
+                *y = *x * r_j_f;
+                *x -= *y;
+            });
 
             if round == LOG_K_CHUNK - 1 {
                 ps.eq_r_r = ps.eq_r_address.get_current_scalar();
@@ -468,8 +427,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
 
                 // Initialize H polynomials using shifted_table_from_rand_ohv
                 for i in 0..D {
-                    let shifted_table =
-                        shifted_table_from_rand_ohv(&f_table, &ps.one_hot_e_fields[i]);
+                    let shifted_table = shifted_table_from_rand_ohv(&f_table, &ps.one_hot_e_fields[i]);
                     ps.H[i] = Rep3RaPolynomial::new(ps.masked_H_indices[i].clone(), shifted_table);
                 }
 
@@ -479,15 +437,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         } else {
             // Phase 2: Bind cycle eq and H polynomials
             ps.eq_r_cycle.bind(r_j);
-            ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            ps.H.par_iter_mut().for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let (r_address, r_cycle) = opening_point.split_at(LOG_K_CHUNK);
         let mut r_big_endian: Vec<F::Challenge> = r_address.iter().rev().copied().collect();
         r_big_endian.extend(r_cycle.iter().copied().rev());
@@ -499,12 +453,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let ra_claims: Vec<Rep3PrimeFieldShare<F>> = self
-            .state
-            .H
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect();
+        let ra_claims: Vec<Rep3PrimeFieldShare<F>> = self.state.H.iter().map(|ra| ra.final_sumcheck_claim()).collect();
 
         accumulator.append_sparse(
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),

@@ -6,9 +6,7 @@ use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -51,10 +49,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 
     /// Construct a verifier-like instance from pre-extracted parts.
-    pub fn new_verifier_from_parts(
-        gamma_powers: Vec<F>,
-        log_K_chunk: usize,
-    ) -> Self {
+    pub fn new_verifier_from_parts(gamma_powers: Vec<F>, log_K_chunk: usize) -> Self {
         let d = gamma_powers.len();
         Self {
             gamma: gamma_powers,

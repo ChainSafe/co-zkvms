@@ -55,8 +55,7 @@ impl TlsCoordinatorClient {
             .with_custom_certificate_verifier(Arc::new(AcceptAnyCertVerifier))
             .with_no_client_auth();
 
-        let server_name = ServerName::try_from("enclave.local")
-            .expect("valid static server name");
+        let server_name = ServerName::try_from("enclave.local").expect("valid static server name");
         let tls_conn = rustls::ClientConnection::new(Arc::new(config), server_name)
             .context("creating TLS client connection")?;
         let mut stream = rustls::StreamOwned::new(tls_conn, tcp);
@@ -126,8 +125,7 @@ impl TlsCoordinatorClient {
                 Ok(Some(buf))
             }
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock
-                    || e.kind() == io::ErrorKind::TimedOut =>
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
             {
                 self.stream.sock.set_read_timeout(None)?;
                 Ok(None)

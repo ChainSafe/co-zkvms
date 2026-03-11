@@ -48,10 +48,8 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
         let K = sm.ram_K;
         let cycle_witness = &sm.prover_state.cycle_witness;
 
-        let (r_cycle_point, raf_claim_share) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_cycle_point, raf_claim_share) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter);
 
         let eq_r_cycle: Vec<F> = EqPolynomial::evals(&r_cycle_point.r);
 
@@ -78,10 +76,7 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
             .reduce(
                 || unsafe_allocate_zero_vec(K),
                 |mut running, new| {
-                    running
-                        .par_iter_mut()
-                        .zip(new.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
+                    running.par_iter_mut().zip(new.into_par_iter()).for_each(|(x, y)| *x += y);
                     running
                 },
             );
@@ -100,9 +95,7 @@ impl<F: JoltField> Rep3RafEvaluationWorker<F> {
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3RafEvaluationWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RafEvaluationWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -126,18 +119,11 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let base: [F; DEGREE] = (0..self.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals = self
-                    .ra
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let unmap_evals = self
-                    .unmap
-                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                let ra_evals = self.ra.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let unmap_evals = self.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
                 [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
             })
-            .reduce(
-                || [F::zero(); DEGREE],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
+            .reduce(|| [F::zero(); DEGREE], |running, new| [running[0] + new[0], running[1] + new[1]]);
 
         let y0 = additive::promote_to_trivial_share(base[0], self.party_id);
         let y2 = additive::promote_to_trivial_share(base[1], self.party_id);
@@ -176,10 +162,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         );
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -188,11 +171,9 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let r_cycle = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
-            .0;
-        let ra_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
+        let r_cycle =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter).0;
+        let ra_opening_point = OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
         let ra_claim = self.ra.final_sumcheck_claim();
 
@@ -204,10 +185,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             self.party_id,
         );
 
-        vec![rep3_arith::promote_to_trivial_share(
-            self.party_id,
-            ra_claim,
-        )]
+        vec![rep3_arith::promote_to_trivial_share(self.party_id, ra_claim)]
     }
 }
 

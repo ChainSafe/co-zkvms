@@ -438,7 +438,10 @@ impl MpcNetworkCoordinatorHandler {
             let mut ep = None;
             for attempt in 0..10 {
                 match quinn::Endpoint::server(server_config.clone(), our_socket_addr) {
-                    Ok(e) => { ep = Some(e); break; }
+                    Ok(e) => {
+                        ep = Some(e);
+                        break;
+                    }
                     Err(e) => {
                         if attempt < 9 {
                             tracing::warn!(

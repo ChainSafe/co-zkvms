@@ -17,14 +17,7 @@ pub struct Rep3ProgramIOInput {
 
 impl Rep3ProgramIOInput {
     pub fn generate_secret_shares<R: rand::Rng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
-        let JoltDevice {
-            inputs,
-            trusted_advice,
-            untrusted_advice,
-            outputs,
-            panic,
-            memory_layout,
-        } = program_io;
+        let JoltDevice { inputs, trusted_advice, untrusted_advice, outputs, panic, memory_layout } = program_io;
 
         let trusted_advice_shares = if trusted_advice.is_empty() {
             vec![vec![]; 3]
@@ -61,10 +54,7 @@ impl Rep3ProgramIOInput {
     }
 
     pub fn pack_advice_words(advice: &[Rep3RingShare<u8>]) -> Vec<Rep3RingShare<u64>> {
-        advice
-            .chunks(8)
-            .map(Rep3RingShare::<u64>::from_le_bytes)
-            .collect()
+        advice.chunks(8).map(Rep3RingShare::<u64>::from_le_bytes).collect()
     }
 }
 
@@ -89,8 +79,7 @@ mod tests {
 
         let mut rng = test_rng();
         let shares = Rep3ProgramIOInput::generate_secret_shares(program_io.clone(), &mut rng);
-        let [share0, share1, share2]: [Rep3ProgramIOInput; 3] =
-            shares.try_into().expect("expected 3 shares");
+        let [share0, share1, share2]: [Rep3ProgramIOInput; 3] = shares.try_into().expect("expected 3 shares");
 
         for share in [&share0, &share1, &share2] {
             assert_eq!(share.inputs, program_io.inputs);
@@ -119,9 +108,6 @@ mod tests {
             .zip(untrusted_words2)
             .map(|((w0, w1), w2)| combine_ring_element_binary(w0, w1, w2).0)
             .collect();
-        assert_eq!(
-            untrusted_reconstructed,
-            vec![0x3412_ffee_ddcc_bbaa, 0x0000_0000_0000_0056]
-        );
+        assert_eq!(untrusted_reconstructed, vec![0x3412_ffee_ddcc_bbaa, 0x0000_0000_0000_0056]);
     }
 }

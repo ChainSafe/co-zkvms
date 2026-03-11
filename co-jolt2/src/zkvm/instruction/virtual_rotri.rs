@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -19,10 +16,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
             let n = (r.as_public() % XLEN as u64) as u32;
             let x = l.as_binary_or_trivial(io_ctx.id);
             // Right rotation applied component-wise (bit permutation)
-            let rotated = Rep3RingShare::new_ring(
-                RingElement(x.a.0.rotate_right(n)),
-                RingElement(x.b.0.rotate_right(n)),
-            );
+            let rotated =
+                Rep3RingShare::new_ring(RingElement(x.a.0.rotate_right(n)), RingElement(x.b.0.rotate_right(n)));
             *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
         });
         Ok(())
@@ -32,10 +27,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
 #[cfg(feature = "rv64")]
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -49,14 +41,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> 
             let n = (r.as_public() % 32) as u32;
             let x: Rep3RingShare<u32> = downcast(l.as_binary_or_trivial(io_ctx.id));
             // W-variant: 32-bit right rotation
-            let rotated = Rep3RingShare::new_ring(
-                RingElement(x.a.0.rotate_right(n)),
-                RingElement(x.b.0.rotate_right(n)),
-            );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
-            );
+            let rotated =
+                Rep3RingShare::new_ring(RingElement(x.a.0.rotate_right(n)), RingElement(x.b.0.rotate_right(n)));
+            let rotated_u64 = Rep3RingShare::new_ring(RingElement(rotated.a.0 as u64), RingElement(rotated.b.0 as u64));
             *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
         });
         Ok(())

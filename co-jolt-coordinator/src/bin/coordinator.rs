@@ -56,12 +56,9 @@ fn main() -> eyre::Result<()> {
             .parse()
             .context("parsing VSOCK_PORT")?;
 
-        let mut network = VsockTlsCoordinator::accept(
-            vsock_port,
-            &identity,
-            attestation_doc.as_deref(),
-        )
-        .context("accepting vsock+TLS connections")?;
+        let mut network =
+            VsockTlsCoordinator::accept(vsock_port, &identity, attestation_doc.as_deref())
+                .context("accepting vsock+TLS connections")?;
 
         info!("accepted 3 worker connections, entering stand-by loop");
         prove_loop(&mut network)?;
@@ -79,12 +76,11 @@ fn main() -> eyre::Result<()> {
                 use mpc_net::rep3::quic::Rep3QuicNetCoordinator;
 
                 let config: NetworkConfigFile = toml::from_str(
-                    &std::fs::read_to_string(&config_file)
-                        .context("reading config file")?,
+                    &std::fs::read_to_string(&config_file).context("reading config file")?,
                 )
                 .context("parsing config file")?;
-                let config = NetworkConfig::try_from(config)
-                    .context("converting network config")?;
+                let config =
+                    NetworkConfig::try_from(config).context("converting network config")?;
 
                 info!("creating QUIC coordinator network");
                 let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
@@ -96,12 +92,11 @@ fn main() -> eyre::Result<()> {
                 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 
                 let config: NetworkConfigFile = toml::from_str(
-                    &std::fs::read_to_string(&config_file)
-                        .context("reading config file")?,
+                    &std::fs::read_to_string(&config_file).context("reading config file")?,
                 )
                 .context("parsing config file")?;
-                let config = NetworkConfig::try_from(config)
-                    .context("converting network config")?;
+                let config =
+                    NetworkConfig::try_from(config).context("converting network config")?;
 
                 info!("creating TLS coordinator network");
                 let mut network = TcpTlsCoordinator::accept(

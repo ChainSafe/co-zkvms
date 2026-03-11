@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
+use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
+use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::spartan::Rep3SpartanDag;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryGlobals;
 use jolt_core::poly::opening_proof::ReducedOpeningProof;
@@ -12,10 +16,6 @@ use jolt_core::zkvm::witness::{
 };
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::MaybeShared;
-use crate::subprotocols::sumcheck::{BatchedSumcheckInstance, HybridBatchedSumcheck};
-use crate::zkvm::dag::stage::{Rep3JoltDagStages, SumcheckStagesCoordinator};
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::spartan::Rep3SpartanDag;
 
 /// Coordinator side of the MPC DAG prover.
 ///
@@ -33,8 +33,7 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // --- Receive trace_length from workers ---
@@ -187,8 +186,7 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         // Receive commitment shares from all 3 parties
@@ -209,7 +207,9 @@ impl Rep3JoltDag {
                     .iter()
                     .map(|party_shares| &party_shares[i])
                     .collect();
-                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares)
+                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
+                    &shares,
+                )
             })
             .collect();
 
@@ -229,8 +229,7 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         N: Rep3NetworkCoordinator,
     {
         let commitments: Vec<Option<MaybeShared<PCS::Commitment>>> = network.receive_responses()?;
@@ -240,7 +239,8 @@ impl Rep3JoltDag {
             commitments.len()
         );
 
-        let present: Vec<MaybeShared<PCS::Commitment>> = commitments.into_iter().flatten().collect();
+        let present: Vec<MaybeShared<PCS::Commitment>> =
+            commitments.into_iter().flatten().collect();
         state.untrusted_advice_commitment = if present.is_empty() {
             None
         } else {
@@ -249,9 +249,11 @@ impl Rep3JoltDag {
                 "expected untrusted advice commitment shares from all 3 parties"
             );
             let shares: Vec<&MaybeShared<PCS::Commitment>> = present.iter().collect();
-            Some(<PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
-                &shares,
-            ))
+            Some(
+                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
+                    &shares,
+                ),
+            )
         };
         Ok(())
     }

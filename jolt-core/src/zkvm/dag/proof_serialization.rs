@@ -13,9 +13,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{
-            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId,
-        },
+        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
@@ -127,8 +125,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
-}
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {}
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
 

@@ -18,9 +18,7 @@ use crate::zkvm::instruction::Rep3Operand;
 
 /// Trait for Rep3 register state types holding Rep3Operand values.
 /// Mirrors vanilla `InstructionRegisterState` but with `Rep3Operand` instead of `u64`.
-pub trait Rep3RegisterState:
-    Default + Clone + Serialize + DeserializeOwned + Debug + Send + Sync
-{
+pub trait Rep3RegisterState: Default + Clone + Serialize + DeserializeOwned + Debug + Send + Sync {
     /// Get source register 1 operand
     fn rs1_operand(&self) -> Rep3Operand;
 

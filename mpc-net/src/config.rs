@@ -112,7 +112,9 @@ pub struct NetworkWorkerConfig {
 }
 
 /// Protocol used for the worker↔coordinator connection.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq, PartialOrd, Ord, Hash,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum CoordinatorProtocol {
     /// QUIC transport (default). Requires `cert_path` for pre-shared coordinator cert.

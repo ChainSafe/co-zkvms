@@ -38,15 +38,11 @@ pub struct Rep3ProductVirtualizationSumcheckWorker<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3ProductVirtualizationSumcheckWorker<F> {
-    pub fn new<PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerWorker<'_, F, PCS>,
-        input_claim: F,
-    ) -> Self {
+    pub fn new<PCS: CommitmentScheme<Field = F>>(sm: &mut StateManagerWorker<'_, F, PCS>, input_claim: F) -> Self {
         let party_id = sm.party_id;
 
-        let (r_cycle_point, _) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+        let (r_cycle_point, _) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         let log_T = r_cycle_point.r.len();
 
         let inputs = sm.prover_state.cycle_witness.take_product_inputs();
@@ -173,10 +169,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         );
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
@@ -189,10 +182,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let right_eval = self.right_input_poly.final_sumcheck_claim();
 
         accumulator.append_dense(
-            vec![
-                CommittedPolynomial::LeftInstructionInput,
-                CommittedPolynomial::RightInstructionInput,
-            ],
+            vec![CommittedPolynomial::LeftInstructionInput, CommittedPolynomial::RightInstructionInput],
             SumcheckId::ProductVirtualization,
             opening_point.r,
             &[left_eval, right_eval],

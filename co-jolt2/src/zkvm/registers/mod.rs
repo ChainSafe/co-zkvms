@@ -24,10 +24,7 @@ pub struct Rep3RegistersDagWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3RegistersDagWorker<F> {
     pub fn new() -> Self {
-        Self {
-            stage2: None,
-            stage3: None,
-        }
+        Self { stage2: None, stage3: None }
     }
 
     pub fn set_stage2_init(&mut self, gamma: F, input_claim: F) {
@@ -45,18 +42,15 @@ impl<F: JoltField> Default for Rep3RegistersDagWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3RegistersDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> SumcheckStagesWorker<F, PCS, N>
+    for Rep3RegistersDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut IoContextPool<N>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
-        let (gamma, input_claim) = self
-            .stage2
-            .take()
-            .expect("Rep3RegistersDagWorker stage2 init not set");
+        let (gamma, input_claim) = self.stage2.take().expect("Rep3RegistersDagWorker stage2 init not set");
         let rwc = Rep3RegistersReadWriteCheckingWorker::new(sm, gamma, input_claim);
         Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(rwc))])
     }
@@ -67,14 +61,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         _io_ctx: &mut IoContextPool<N>,
         _preproc: &mut PreprocessingPool<F>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
-        let val_claim = self
-            .stage3
-            .take()
-            .expect("Rep3RegistersDagWorker stage3 init not set");
+        let val_claim = self.stage3.take().expect("Rep3RegistersDagWorker stage3 init not set");
         let val_eval = Rep3ValEvaluationWorker::new(sm, val_claim);
-        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(
-            val_eval,
-        ))])
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(val_eval))])
     }
 }
 

@@ -31,12 +31,12 @@ impl<F: JoltField> InnerSumcheck<F> {
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();
 
-        let (outer_sumcheck_r, claim_az) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_bz) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_cz) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
+        let (outer_sumcheck_r, claim_az) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_bz) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_cz) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         let input_claim = claim_az + gamma * claim_bz + gamma.square() * claim_cz;
 
@@ -96,9 +96,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         let eval_c = self.key.evaluate_uniform_c_at_point(rx_var, r);
 
         let left = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
-        let eval_z = self
-            .key
-            .evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
+        let eval_z =
+            self.key
+                .evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
 
         left * eval_z
     }

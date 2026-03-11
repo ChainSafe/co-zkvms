@@ -95,22 +95,11 @@ impl<F: JoltField> Rep3R1CSCycleInputs<F> {
         let next_is_noop = row.next_is_noop();
         let should_jump = row.should_jump();
 
-        let should_branch = if row.flag(CircuitFlags::Branch) {
-            lookup_output
-        } else {
-            Rep3PrimeFieldShare::zero_share()
-        };
+        let should_branch =
+            if row.flag(CircuitFlags::Branch) { lookup_output } else { Rep3PrimeFieldShare::zero_share() };
 
-        let write_lookup_output_to_rd_addr = if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-            rd_addr
-        } else {
-            0
-        };
-        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) {
-            rd_addr
-        } else {
-            0
-        };
+        let write_lookup_output_to_rd_addr = if row.flag(CircuitFlags::WriteLookupOutputToRD) { rd_addr } else { 0 };
+        let write_pc_to_rd_addr = if row.flag(CircuitFlags::Jump) { rd_addr } else { 0 };
 
         Self {
             left_input,
@@ -162,10 +151,7 @@ where
     let cycle_witness = &state.prover_state.cycle_witness;
     let trace_len = cycle_witness.len();
     tracing::Span::current().record("trace_len", trace_len);
-    eyre::ensure!(
-        trace_len.is_power_of_two(),
-        "trace length must be power-of-two"
-    );
+    eyre::ensure!(trace_len.is_power_of_two(), "trace length must be power-of-two");
     eyre::ensure!(
         r_cycle.len() == trace_len.log_2(),
         "r_cycle length mismatch: got {}, expected {}",
@@ -188,12 +174,7 @@ where
     let mul_products: Vec<Rep3PrimeFieldShare<F>> = if !shared_mul_rows.is_empty() {
         let (lhs, rhs): (Vec<_>, Vec<_>) = shared_mul_rows
             .par_iter()
-            .map(|&t| {
-                (
-                    cycle_witness.row_stage1(t).rs1_value(),
-                    cycle_witness.row_stage1(t).rs2_value(),
-                )
-            })
+            .map(|&t| (cycle_witness.row_stage1(t).rs1_value(), cycle_witness.row_stage1(t).rs2_value()))
             .unzip();
 
         arithmetic::mul_vec_par(&lhs, &rhs, io_ctx.main())?
@@ -204,10 +185,7 @@ where
     // Eq tables for r_cycle (same nested structure as vanilla)
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
-    let (eq_one, eq_two) = rayon::join(
-        || EqPolynomial::<F>::evals(r2),
-        || EqPolynomial::<F>::evals(r1),
-    );
+    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::<F>::evals(r2), || EqPolynomial::<F>::evals(r1));
 
     let n_inputs = NUM_R1CS_INPUTS;
 
@@ -241,8 +219,7 @@ where
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
-            let mut inner: [Rep3Value<F>; NUM_R1CS_INPUTS] =
-                core::array::from_fn(|_| Rep3Value::<F>::zero_public());
+            let mut inner: [Rep3Value<F>; NUM_R1CS_INPUTS] = core::array::from_fn(|_| Rep3Value::<F>::zero_public());
 
             for x2 in 0..eq_two.len() {
                 let eq2_val = eq_two[x2];
@@ -252,10 +229,8 @@ where
 
                 // Public per-cycle values
                 inner[idx_pc].add_public_assign(F::from_u64(row.pc_index()) * eq2_val, party_id);
-                inner[idx_unexp_pc]
-                    .add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
-                inner[idx_rd]
-                    .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                inner[idx_unexp_pc].add_public_assign(F::from_u64(row.unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_rd].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 {
                     #[cfg(not(feature = "rv64"))]
                     let imm_val = if row.flag(CircuitFlags::Branch) {
@@ -267,43 +242,27 @@ where
                     let imm_val = F::from_i128(row.imm());
                     inner[idx_imm].add_public_assign(imm_val * eq2_val, party_id);
                 }
-                inner[idx_ram_addr]
-                    .add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
+                inner[idx_ram_addr].add_public_assign(F::from_u64(row.ram_addr()) * eq2_val, party_id);
 
-                inner[idx_next_unexp]
-                    .add_public_assign(F::from_u64(row.next_unexpanded_pc()) * eq2_val, party_id);
-                inner[idx_next_pc]
-                    .add_public_assign(F::from_u64(row.next_pc_index()) * eq2_val, party_id);
+                inner[idx_next_unexp].add_public_assign(F::from_u64(row.next_unexpanded_pc()) * eq2_val, party_id);
+                inner[idx_next_pc].add_public_assign(F::from_u64(row.next_pc_index()) * eq2_val, party_id);
                 let next_is_noop = row.next_is_noop();
-                inner[idx_next_is_noop]
-                    .add_public_assign(F::from_bool(next_is_noop) * eq2_val, party_id);
+                inner[idx_next_is_noop].add_public_assign(F::from_bool(next_is_noop) * eq2_val, party_id);
 
                 // Shared per-cycle values
                 let lookup_output = row.to_lookup_output();
-                inner[idx_lookup_output].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
-                    party_id,
-                );
-                inner[idx_rs1].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rs1_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_rs2].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rs2_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_rd_write].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.rd_write_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_ram_read].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_read_value(), eq2_val)),
-                    party_id,
-                );
-                inner[idx_ram_write].add_assign(
-                    &Rep3Value::Shared(arithmetic::mul_public(row.ram_write_value(), eq2_val)),
-                    party_id,
-                );
+                inner[idx_lookup_output]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)), party_id);
+                inner[idx_rs1]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rs1_value(), eq2_val)), party_id);
+                inner[idx_rs2]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rs2_value(), eq2_val)), party_id);
+                inner[idx_rd_write]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.rd_write_value(), eq2_val)), party_id);
+                inner[idx_ram_read]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.ram_read_value(), eq2_val)), party_id);
+                inner[idx_ram_write]
+                    .add_assign(&Rep3Value::Shared(arithmetic::mul_public(row.ram_write_value(), eq2_val)), party_id);
 
                 // Instruction inputs, product, and lookup operands.
                 // Vanilla computes Product = left * right for ALL rows unconditionally.
@@ -331,22 +290,17 @@ where
 
                 let fb = flags_bits[t];
                 if row.flag(CircuitFlags::WriteLookupOutputToRD) {
-                    inner[idx_write_lookup]
-                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                    inner[idx_write_lookup].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 let is_jump = row.flag(CircuitFlags::Jump);
                 if is_jump {
-                    inner[idx_write_pc]
-                        .add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
+                    inner[idx_write_pc].add_public_assign(F::from_u64(row.rd_addr() as u64) * eq2_val, party_id);
                 }
                 if row.flag(CircuitFlags::Branch) {
-                    inner[idx_should_branch].add_assign(
-                        &Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)),
-                        party_id,
-                    );
+                    inner[idx_should_branch]
+                        .add_assign(&Rep3Value::Shared(arithmetic::mul_public(lookup_output, eq2_val)), party_id);
                 }
-                inner[idx_should_jump]
-                    .add_public_assign(F::from_bool(is_jump && !next_is_noop) * eq2_val, party_id);
+                inner[idx_should_jump].add_public_assign(F::from_bool(is_jump && !next_is_noop) * eq2_val, party_id);
 
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
@@ -371,10 +325,7 @@ where
             },
         );
 
-    Ok(acc
-        .into_iter()
-        .map(|v| v.into_shared_rep3(party_id))
-        .collect())
+    Ok(acc.into_iter().map(|v| v.into_shared_rep3(party_id)).collect())
 }
 
 use crate::utils::send_ptr::SendPtr;
@@ -383,10 +334,7 @@ use crate::utils::send_ptr::SendPtr;
 ///
 /// - `shared_mul_rows` is in ascending `t` order (deterministic across parties).
 /// - `mul_map[t]` is the index of `t` in `shared_mul_rows`, or `u32::MAX` if not present.
-pub(crate) fn build_shared_mul_rows_and_map(
-    flags_bits: &[u32],
-    mask: u32,
-) -> (Vec<usize>, Vec<u32>) {
+pub(crate) fn build_shared_mul_rows_and_map(flags_bits: &[u32], mask: u32) -> (Vec<usize>, Vec<u32>) {
     let n = flags_bits.len();
 
     // For small traces, a single sequential pass is usually faster than Rayon overhead.
@@ -415,10 +363,7 @@ pub(crate) fn build_shared_mul_rows_and_map(
         .map(|i| {
             let start = i * CHUNK_SIZE;
             let end = core::cmp::min(start + CHUNK_SIZE, n);
-            flags_bits[start..end]
-                .iter()
-                .filter(|&&fb| (fb & mask) == mask)
-                .count()
+            flags_bits[start..end].iter().filter(|&&fb| (fb & mask) == mask).count()
         })
         .collect();
 

@@ -26,18 +26,14 @@ impl Rep3RegisterState for Rep3AssertAlignRegisterState {
     }
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
-        Self {
-            rs1: Rep3Operand::Public(public_state.rs1_value().into()),
-        }
+        Self { rs1: Rep3Operand::Public(public_state.rs1_value().into()) }
     }
 
     fn from_shared<T: InstructionRegisterState>(
         _public_state: &T,
         shares: &mut impl Iterator<Item = Rep3Operand>,
     ) -> Self {
-        Self {
-            rs1: shares.next().unwrap(),
-        }
+        Self { rs1: shares.next().unwrap() }
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {

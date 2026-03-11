@@ -23,8 +23,8 @@ impl<F: JoltField> ProductVirtualizationSumcheck<F> {
     ) -> Self {
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();
-        let (r_point, input_claim) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+        let (r_point, input_claim) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         Self {
             input_claim,
             log_T: r_point.r.len(),
@@ -53,8 +53,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         let accumulator = accumulator.unwrap();
         let acc = accumulator.borrow();
 
-        let (outer_sumcheck_opening, _) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+        let (outer_sumcheck_opening, _) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
         let (r_cycle, _) = outer_sumcheck_r.split_at(self.log_T);
 

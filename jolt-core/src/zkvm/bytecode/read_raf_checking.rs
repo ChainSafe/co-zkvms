@@ -191,7 +191,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
-    pub fn get_r_cycle(acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>) -> [Vec<F::Challenge>; STAGES] {
+    pub fn get_r_cycle(
+        acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>,
+    ) -> [Vec<F::Challenge>; STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);

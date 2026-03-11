@@ -25,30 +25,17 @@ pub enum Rep3Operand {
 
 impl Rep3Operand {
     pub fn from_binary(share: Rep3RingShare<XlenInt>) -> Self {
-        Rep3Operand::Shared {
-            binary: share,
-            arithmetic: None,
-            public: None,
-        }
+        Rep3Operand::Shared { binary: share, arithmetic: None, public: None }
     }
 
-    pub fn from_arithmetic(
-        binary: Rep3RingShare<XlenInt>,
-        arithmetic: Rep3RingShare<ArithmeticWideInt>,
-    ) -> Self {
-        Rep3Operand::Shared {
-            binary,
-            arithmetic: Some(arithmetic),
-            public: None,
-        }
+    pub fn from_arithmetic(binary: Rep3RingShare<XlenInt>, arithmetic: Rep3RingShare<ArithmeticWideInt>) -> Self {
+        Rep3Operand::Shared { binary, arithmetic: Some(arithmetic), public: None }
     }
 
     pub fn as_public(&self) -> u64 {
         match self {
             Rep3Operand::Public(x) => *x as u64,
-            Rep3Operand::Shared {
-                public: Some(x), ..
-            } => *x,
+            Rep3Operand::Shared { public: Some(x), .. } => *x,
             _ => panic!("Not a public operand"),
         }
     }
@@ -105,10 +92,9 @@ impl Rep3Operand {
             Rep3Operand::Shared { arithmetic, .. } => arithmetic.unwrap(),
             // Truncate to XlenInt first to match vanilla Jolt's `val as u32/u64`
             // truncation. For rv32, this drops the upper 32 bits of sign-extended imms.
-            Rep3Operand::Public(v) => rep3_ring::arithmetic::promote_to_trivial_share(
-                id,
-                RingElement(*v as XlenInt as ArithmeticWideInt),
-            ),
+            Rep3Operand::Public(v) => {
+                rep3_ring::arithmetic::promote_to_trivial_share(id, RingElement(*v as XlenInt as ArithmeticWideInt))
+            }
         }
     }
 

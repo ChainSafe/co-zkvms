@@ -43,9 +43,7 @@ where
         MixedBatch::Public(y_pubs) => {
             out.extend_b2a_ring::<T::Half>(
                 indices_iter,
-                xs.iter()
-                    .enumerate()
-                    .map(|(j, x)| local_fn(x, y_pubs[orig(j)])),
+                xs.iter().enumerate().map(|(j, x)| local_fn(x, y_pubs[orig(j)])),
             );
         }
         MixedBatch::Shared(ys) => {
@@ -104,17 +102,13 @@ pub(crate) fn eval_xor<T, F, N>(
             let i = orig(j);
             match right {
                 MixedBatch::Public(y_pubs) => {
-                    let mask = RingElement(
-                        T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()),
-                    );
+                    let mask = RingElement(T::Half::try_from(y_pubs[i] as u128).unwrap_or_else(|_| unreachable!()));
                     rep3_ring::binary::xor_public(x, &mask, party_id)
                 }
                 MixedBatch::Shared(ys) => *x ^ ys[i],
                 MixedBatch::Mixed(mixed) => match &mixed[i] {
                     Either::Public(yp) => {
-                        let mask = RingElement(
-                            T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()),
-                        );
+                        let mask = RingElement(T::Half::try_from(*yp as u128).unwrap_or_else(|_| unreachable!()));
                         rep3_ring::binary::xor_public(x, &mask, party_id)
                     }
                     Either::Shared(y) => *x ^ *y,

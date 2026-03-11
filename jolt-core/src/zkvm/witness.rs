@@ -10,9 +10,7 @@ use strum::IntoEnumIterator;
 
 use crate::{
     utils::math::Math,
-    zkvm::{
-        instruction_lookups, lookup_table::LookupTables,
-    },
+    zkvm::{instruction_lookups, lookup_table::LookupTables},
 };
 
 use super::instruction::CircuitFlags;
@@ -183,7 +181,6 @@ impl CommittedPolynomial {
                 .0
         }
     }
-
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

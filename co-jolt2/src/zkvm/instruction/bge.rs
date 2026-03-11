@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BGE> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "BGE::output", level = "trace")]
@@ -23,25 +20,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BGE> {
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
                 (
-                    rep3_ring::binary::xor_public(
-                        &l.as_binary_or_trivial(io_ctx.id),
-                        &sign_bit,
-                        io_ctx.id,
-                    ),
-                    rep3_ring::binary::xor_public(
-                        &r.as_binary_or_trivial(io_ctx.id),
-                        &sign_bit,
-                        io_ctx.id,
-                    ),
+                    rep3_ring::binary::xor_public(&l.as_binary_or_trivial(io_ctx.id), &sign_bit, io_ctx.id),
+                    rep3_ring::binary::xor_public(&r.as_binary_or_trivial(io_ctx.id), &sign_bit, io_ctx.id),
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::ge_many(&a, &b, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(x, out)| {
-                *out = FutureRep3Ring::bit_inject_to_field(x);
-            });
+        rep3_ring::arithmetic::ge_many(&a, &b, io_ctx)?.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureRep3Ring::bit_inject_to_field(x);
+        });
         Ok(())
     }
 }

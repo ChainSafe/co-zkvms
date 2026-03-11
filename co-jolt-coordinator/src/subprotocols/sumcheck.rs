@@ -132,7 +132,10 @@ impl Rep3BatchedSumcheck {
         ProofTranscript: Transcript,
         N: Rep3NetworkCoordinator,
     {
-        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
+        eyre::ensure!(
+            !instances.is_empty(),
+            "Batched sumcheck requires >= 1 instance"
+        );
 
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();
@@ -227,7 +230,10 @@ impl HybridBatchedSumcheck {
         ProofTranscript: Transcript,
         N: Rep3NetworkCoordinator,
     {
-        eyre::ensure!(!instances.is_empty(), "Batched sumcheck requires >= 1 instance");
+        eyre::ensure!(
+            !instances.is_empty(),
+            "Batched sumcheck requires >= 1 instance"
+        );
 
         let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
         let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();

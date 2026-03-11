@@ -10,9 +10,7 @@ use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
 const LOG_K: usize = D * LOG_K_CHUNK;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::additive::{self, AdditiveShare};
-use mpc_core::protocols::rep3::network::{
-    IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker,
-};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use rayon::prelude::*;
@@ -46,26 +44,18 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
     ) -> Self {
         assert_eq!(r_address.len(), LOG_K);
 
-        let r_address_chunks: Vec<Vec<F::Challenge>> =
-            r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
 
         let ra_i_polys: Vec<Rep3RaPolynomial<u8, F>> = (0..D)
             .into_par_iter()
             .map(|i| {
                 let eq_u = EqPolynomial::evals(&r_address_chunks[i]);
-                let shifted_table =
-                    shifted_table_from_rand_ohv(&eq_u, &one_hot_polys[i].rand_ohv_e_field);
+                let shifted_table = shifted_table_from_rand_ohv(&eq_u, &one_hot_polys[i].rand_ohv_e_field);
                 Rep3RaPolynomial::new(one_hot_polys[i].masked_indices_c.clone(), shifted_table)
             })
             .collect();
 
-        Self {
-            ra_i_polys,
-            r_cycle,
-            r_sumcheck: vec![],
-            input_claim,
-            r_address_chunks,
-        }
+        Self { ra_i_polys, r_cycle, r_sumcheck: vec![], input_claim, r_address_chunks }
     }
 
     /// Compute the prover's share of the round polynomial evaluations.
@@ -112,14 +102,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
             level3_len
         )
         .entered();
-        let sum_evals = compute_mles_product_16_rep3(
-            &eq_wl_evals,
-            &eq_wr_evals,
-            ra_i_polys,
-            half,
-            wl.len(),
-            io_ctx,
-        )?;
+        let sum_evals = compute_mles_product_16_rep3(&eq_wl_evals, &eq_wr_evals, ra_i_polys, half, wl.len(), io_ctx)?;
         drop(_span);
 
         // sum_evals[0..D] are evaluations at {1, 2, ..., 15, ∞} as AdditiveShare<F>.
@@ -130,8 +113,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
         let eq_eval_at_1: F = EqPolynomial::mle(&[F::one()], &[r_cycle[round]]);
 
         let eval_at_1 = sum_evals[0]; // point 1
-        let eval_at_0 =
-            (previous_claim - eval_at_1 * eq_eval_at_1) * eq_eval_at_0.inverse().unwrap();
+        let eval_at_0 = (previous_claim - eval_at_1 * eq_eval_at_1) * eq_eval_at_0.inverse().unwrap();
 
         // Toom-Cook interpolation: from evals at {0, 1, 2, ..., D-1, ∞} to coefficients.
         // The intermediate polynomial has degree D-1 = 15, evaluated at D+1 = 17 points.
@@ -161,9 +143,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
         let mut result = Vec::with_capacity(degree);
         result.push(AdditiveShare::from_fe(final_poly.evaluate::<F>(&F::zero())));
         for x in 2..=degree {
-            result.push(AdditiveShare::from_fe(
-                final_poly.evaluate::<F>(&F::from(x as u64)),
-            ));
+            result.push(AdditiveShare::from_fe(final_poly.evaluate::<F>(&F::from(x as u64))));
         }
 
         Ok(result)
@@ -184,16 +164,11 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
     }
 
     pub fn bind_inner(&mut self, r_j: F::Challenge) {
-        self.ra_i_polys
-            .par_iter_mut()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
+        self.ra_i_polys.par_iter_mut().for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
         self.r_sumcheck.push(r_j);
     }
 
-    pub fn normalize_opening_point_inner(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    pub fn normalize_opening_point_inner(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -202,11 +177,8 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let ra_claims: Vec<Rep3PrimeFieldShare<F>> = self
-            .ra_i_polys
-            .iter()
-            .map(|ra| ra.final_sumcheck_claim())
-            .collect();
+        let ra_claims: Vec<Rep3PrimeFieldShare<F>> =
+            self.ra_i_polys.iter().map(|ra| ra.final_sumcheck_claim()).collect();
 
         for (i, r_address_chunk) in self.r_address_chunks.iter().enumerate() {
             accumulator.append_sparse(
@@ -267,10 +239,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> crate::zkvm::dag::stage::Rep3SumcheckIn
         self.bind_inner(r_j);
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point_inner(opening_point)
     }
 
@@ -300,35 +269,24 @@ where
     let num_rounds = worker.num_rounds_inner();
     let degree = worker.degree_inner();
 
-    let mut claim: AdditiveShare<F> =
-        additive::promote_to_trivial_share(worker.input_claim_public(), party_id);
+    let mut claim: AdditiveShare<F> = additive::promote_to_trivial_share(worker.input_claim_public(), party_id);
     let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
 
     for round in 0..num_rounds {
         let msg = worker.compute_prover_message_share(round, claim, io_ctx)?;
 
-        let r_j: F::Challenge = io_ctx
-            .network()
-            .exchange(msg.clone())
-            .context("exchange RA round evals")?;
+        let r_j: F::Challenge = io_ctx.network().exchange(msg.clone()).context("exchange RA round evals")?;
         r_sumcheck.push(r_j);
 
         worker.bind_inner(r_j);
-        claim = crate::subprotocols::sumcheck::evaluate_univariate_at_share::<F>(
-            degree, claim, &msg, r_j,
-        )?;
+        claim = crate::subprotocols::sumcheck::evaluate_univariate_at_share::<F>(degree, claim, &msg, r_j)?;
     }
 
     let opening_point = worker.normalize_opening_point_inner(&r_sumcheck);
     let rep3_claims = worker.cache_openings_worker_inner(accumulator, opening_point);
-    let additive_claims: Vec<AdditiveShare<F>> = rep3_claims
-        .into_iter()
-        .map(Rep3PrimeFieldShare::into_additive)
-        .collect();
-    io_ctx
-        .network()
-        .send_response(vec![additive_claims])
-        .context("send RA opening claims")?;
+    let additive_claims: Vec<AdditiveShare<F>> =
+        rep3_claims.into_iter().map(Rep3PrimeFieldShare::into_additive).collect();
+    io_ctx.network().send_response(vec![additive_claims]).context("send RA opening claims")?;
 
     Ok(r_sumcheck)
 }

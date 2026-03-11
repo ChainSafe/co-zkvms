@@ -83,10 +83,7 @@ struct WorkerPayload {
 fn main() -> eyre::Result<()> {
     let args = Args::parse();
 
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(args.rayon_threads)
-        .build_global()
-        .ok();
+    rayon::ThreadPoolBuilder::new().num_threads(args.rayon_threads).build_global().ok();
 
     let config: NetworkConfigFile =
         toml::from_str(&std::fs::read_to_string(&args.config_file).context("opening config file")?)
@@ -97,19 +94,13 @@ fn main() -> eyre::Result<()> {
     let file = format!("trace_worker-{}_{}CPU.json", my_id, num_cpus::get());
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .ok();
+    rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
     // Start TLS listener for user connections
-    let user_listen_addr = config
-        .user_listen_addr
-        .ok_or_else(|| eyre::eyre!("worker config must have user_listen_addr"))?;
-    let user_listener = TlsWorkerListener::bind(
-        user_listen_addr,
-        config.parties[my_id].cert.clone(),
-        config.key.clone_key(),
-    )?;
+    let user_listen_addr =
+        config.user_listen_addr.ok_or_else(|| eyre::eyre!("worker config must have user_listen_addr"))?;
+    let user_listener =
+        TlsWorkerListener::bind(user_listen_addr, config.parties[my_id].cert.clone(), config.key.clone_key())?;
     info!(%user_listen_addr, "TLS user listener started");
 
     // Create worker network (QUIC ring + coordinator connection)
@@ -137,25 +128,11 @@ fn prove_loop(
         info!(peer = %user_conn.peer_addr(), "accepted user connection");
 
         let payload_bytes = user_conn.recv()?;
-        let payload: WorkerPayload =
-            bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
+        let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
-        let WorkerPayload {
-            mut trace,
-            memory,
-            program_io_share,
-            bytecode,
-            memory_init,
-            padded_len,
-            ram_k,
-        } = payload;
+        let WorkerPayload { mut trace, memory, program_io_share, bytecode, memory_init, padded_len, ram_k } = payload;
 
-        info!(
-            padded_len,
-            ram_k,
-            trace_len = trace.len(),
-            "received payload from user"
-        );
+        info!(padded_len, ram_k, trace_len = trace.len(), "received payload from user");
 
         // 2. Sync with coordinator (barrier: "we have shares, ready to prove")
         io_ctx.sync_with_coordinator()?;
@@ -172,20 +149,18 @@ fn prove_loop(
             outputs: program_io_share.outputs.clone(),
             panic: program_io_share.panic,
         };
-        let request_bytes =
-            bincode::serialize(&proof_request).context("serializing ProofRequest")?;
+        let request_bytes = bincode::serialize(&proof_request).context("serializing ProofRequest")?;
         io_ctx.network().send_response(request_bytes)?;
         info!("sent ProofRequest to coordinator");
 
         // 4. Build prover preprocessing
         info!("building preprocessing");
-        let preprocessing: JoltProverPreprocessing<F, PCS> =
-            <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
-                bytecode,
-                program_io_share.memory_layout.clone(),
-                memory_init,
-                padded_len,
-            );
+        let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
+            bytecode,
+            program_io_share.memory_layout.clone(),
+            memory_init,
+            padded_len,
+        );
 
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
         #[cfg(feature = "ring-msm")]
@@ -210,36 +185,22 @@ fn prove_loop(
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
                     let (rem_eda, rem_da) = pool.remaining_counts();
-                    let deficit_counts: [usize; 5] =
-                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
-                        budget
-                            .wrap_masks
-                            .saturating_sub(pool.remaining_wrap_masks()),
-                        budget
-                            .ring_edabits_u66
-                            .saturating_sub(pool.remaining_ring_edabits_u66()),
+                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
+                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
-                    let need_extend =
-                        deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
                     #[cfg(feature = "ring-msm")]
                     let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
                     if need_extend {
-                        info!(
-                            ?deficit_counts,
-                            deficit_dabits, "extending preprocessing pool"
-                        );
+                        info!(?deficit_counts, deficit_dabits, "extending preprocessing pool");
                         #[cfg(not(feature = "ring-msm"))]
-                        edabits::extend_pool_batched(
-                            &mut pool,
-                            deficit_counts,
-                            deficit_dabits,
-                            io_ctx,
-                        )?;
+                        edabits::extend_pool_batched(&mut pool, deficit_counts, deficit_dabits, io_ctx)?;
                         #[cfg(feature = "ring-msm")]
                         edabits::extend_pool_batched(
                             &mut pool,
@@ -259,12 +220,7 @@ fn prove_loop(
                     info!("no cached preprocessing ({e}); running preprocessing...");
                     #[cfg(not(feature = "ring-msm"))]
                     {
-                        edabits::preprocess_pool::<F, _>(
-                            &pool_dir,
-                            counts,
-                            num_dabits,
-                            io_ctx,
-                        )?
+                        edabits::preprocess_pool::<F, _>(&pool_dir, counts, num_dabits, io_ctx)?
                     }
                     #[cfg(feature = "ring-msm")]
                     {
@@ -290,10 +246,7 @@ fn prove_loop(
                     budget.dapoints / 2,
                     dory_num_columns,
                 );
-                let lazy_dp =
-                    mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(
-                        &qs, io_ctx,
-                    )?;
+                let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
             }
         }

@@ -27,21 +27,14 @@ impl Rep3RegisterState for Rep3RegisterStateFormatU {
 
     fn from_public<T: InstructionRegisterState>(public_state: &T) -> Self {
         let (old, new) = public_state.rd_values();
-        Self {
-            rd: (
-                Rep3Operand::Public(old.into()),
-                Rep3Operand::Public(new.into()),
-            ),
-        }
+        Self { rd: (Rep3Operand::Public(old.into()), Rep3Operand::Public(new.into())) }
     }
 
     fn from_shared<T: InstructionRegisterState>(
         _public_state: &T,
         shares: &mut impl Iterator<Item = Rep3Operand>,
     ) -> Self {
-        Self {
-            rd: (shares.next().unwrap(), shares.next().unwrap()),
-        }
+        Self { rd: (shares.next().unwrap(), shares.next().unwrap()) }
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {

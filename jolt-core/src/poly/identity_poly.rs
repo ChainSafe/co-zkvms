@@ -432,7 +432,8 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        self.int_poly.final_sumcheck_claim().mul_u64(self.word_size) + F::from_u64(self.start_address - self.word_size)
+        self.int_poly.final_sumcheck_claim().mul_u64(self.word_size)
+            + F::from_u64(self.start_address - self.word_size)
     }
 }
 
@@ -442,7 +443,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        self.int_poly.evaluate(r).mul_u64(self.word_size) + F::from_u64(self.start_address - self.word_size)
+        self.int_poly.evaluate(r).mul_u64(self.word_size)
+            + F::from_u64(self.start_address - self.word_size)
     }
 
     fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>

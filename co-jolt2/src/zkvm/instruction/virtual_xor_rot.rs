@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT32> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -31,10 +28,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT32
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT24> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -60,10 +54,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT24
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT16> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -89,10 +80,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT16
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROT63> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
