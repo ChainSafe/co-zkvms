@@ -13,7 +13,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // divisor (left), quotient (right)
         // if divisor == 0: check quotient == MAX, else: return 1
@@ -49,7 +49,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
             });
         Ok(())
     }

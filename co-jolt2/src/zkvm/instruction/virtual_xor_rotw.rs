@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         const N_ROT: u32 = 16 % 32;
         itertools::izip!(steps, out).for_each(|(step, out)| {
@@ -24,11 +24,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
+            let rotated_xlen = Rep3RingShare::new_ring(
+                RingElement(rotated.a.0 as XlenInt),
+                RingElement(rotated.b.0 as XlenInt),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
     }
@@ -46,7 +46,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         const N_ROT: u32 = 12 % 32;
         itertools::izip!(steps, out).for_each(|(step, out)| {
@@ -58,11 +58,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
+            let rotated_xlen = Rep3RingShare::new_ring(
+                RingElement(rotated.a.0 as XlenInt),
+                RingElement(rotated.b.0 as XlenInt),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
     }
@@ -80,7 +80,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW8
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         const N_ROT: u32 = 8 % 32;
         itertools::izip!(steps, out).for_each(|(step, out)| {
@@ -92,11 +92,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW8
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
+            let rotated_xlen = Rep3RingShare::new_ring(
+                RingElement(rotated.a.0 as XlenInt),
+                RingElement(rotated.b.0 as XlenInt),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
     }
@@ -114,7 +114,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW7
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         const N_ROT: u32 = 7 % 32;
         itertools::izip!(steps, out).for_each(|(step, out)| {
@@ -126,11 +126,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW7
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
+            let rotated_xlen = Rep3RingShare::new_ring(
+                RingElement(rotated.a.0 as XlenInt),
+                RingElement(rotated.b.0 as XlenInt),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
     }

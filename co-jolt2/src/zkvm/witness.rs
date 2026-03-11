@@ -293,9 +293,9 @@ pub fn compute_lookup_outputs<F, N>(
 where
     F: JoltField,
     N: Rep3NetworkWorker,
-    Standard: Distribution<u64>,
+    Standard: Distribution<XlenInt>,
 {
-    let mut output_futures: Vec<FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>> =
+    let mut output_futures: Vec<FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>> =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); trace.len()];
 
     let _span = tracing::trace_span!("group_by_table").entered();
@@ -328,7 +328,7 @@ where
 
     let mut ops_by_instruction: Vec<(
         Vec<&Rep3Cycle>,
-        Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        Vec<&mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
 
     // TODO: parallelize

@@ -13,7 +13,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BLTU> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // ge_many's internal unsigned_ge_many expects binary (XOR-domain) shares
         let (a, b): (Vec<Rep3RingShare<XlenInt>>, Vec<Rep3RingShare<XlenInt>>) = steps

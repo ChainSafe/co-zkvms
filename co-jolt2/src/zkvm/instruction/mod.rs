@@ -15,33 +15,6 @@ use mpc_core::protocols::rep3_ring::preprocessing::edabits;
 // Re-exported for child instruction modules (used via `use super::*`)
 pub use mpc_core::protocols::rep3_ring::casts::downcast;
 
-/// Zero-extend a binary-domain share to u64 (the lookup output ring).
-/// Unlike `downcast`, this handles both T=u64 (no-op) and T=u32→u64 (zero-extend).
-/// Safe for binary (XOR-domain) shares because `as` extension preserves XOR secret sharing.
-pub fn binary_to_output<T>(share: Rep3RingShare<T>) -> Rep3RingShare<u64>
-where
-    T: mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k + num_traits::AsPrimitive<u64>,
-{
-    Rep3RingShare::new_ring(RingElement(share.a.0.as_()), RingElement(share.b.0.as_()))
-}
-pub fn cast_wrapped_lookup_output_many<F: JoltField, N: Rep3Network>(
-    shares: &[Rep3RingShare<u64>],
-    io_ctx: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    #[cfg(not(feature = "rv64"))]
-    {
-        let truncated: Vec<Rep3RingShare<XlenInt>> = shares.iter().copied().map(downcast).collect();
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            &truncated, io_ctx,
-        )?)
-    }
-    #[cfg(feature = "rv64")]
-    {
-        Ok(rep3_ring::casts::ring_to_field_many_selector(
-            shares, io_ctx,
-        )?)
-    }
-}
 
 pub use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 pub use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -151,7 +124,7 @@ pub trait Rep3LookupQuery<const XLEN: usize> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()>;
 }
 
@@ -526,7 +499,7 @@ macro_rules! impl_rep3_lookup_query {
                 &self,
                 steps: &[&impl Rep3LookupQuery<XLEN>],
                 io_ctx: &mut IoContext<N>,
-                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+                out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
             ) -> eyre::Result<()> {
                 match self {
                     Rep3Cycle::NoOp => {
@@ -618,8 +591,17 @@ where
         return Ok(());
     }
 
-    let batch = preproc.take_ring_edabits::<ArithmeticWideInt>(binary.len())?;
-    let arithmetic = edabits::upcast_many_from_binary(&binary, &batch, io_ctx)?;
+    let chunk_size: usize = std::env::var("B2A_CHUNK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8192);
+
+    let mut arithmetic: Vec<Rep3RingShare<ArithmeticWideInt>> = Vec::with_capacity(binary.len());
+    for chunk in binary.chunks(chunk_size) {
+        let batch = preproc.take_ring_edabits::<ArithmeticWideInt>(chunk.len())?;
+        let results = edabits::upcast_many_from_binary(chunk, &batch, io_ctx)?;
+        arithmetic.extend(results);
+    }
 
     operands
         .into_par_iter()

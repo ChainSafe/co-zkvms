@@ -22,20 +22,16 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ADD> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
-        let sums: Vec<_> = steps
-            .iter()
-            .map(|step| {
-                let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
+        steps.iter().zip(out).for_each(|(step, out)| {
+            let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
+            let result: Rep3RingShare<XlenInt> = downcast(
                 l.as_arithmetic_or_trivial::<u64>(io_ctx.id)
-                    + r.as_arithmetic_or_trivial::<u64>(io_ctx.id)
-            })
-            .collect();
-        cast_wrapped_lookup_output_many(&sums, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(share, out)| *out = FutureRep3Ring::Ready(share));
+                    + r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
+            );
+            *out = FutureRep3Ring::cast_to_field(result);
+        });
         Ok(())
     }
 }

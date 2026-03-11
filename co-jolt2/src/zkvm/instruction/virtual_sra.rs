@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         use crate::utils::instruction_utils::operand_to_binary_wide;
 
@@ -37,36 +37,36 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRA> {
             }
 
             // Compute SRL entry (same as VirtualSRL)
-            let num_ones = (bitmask as u64).count_ones();
+            let num_ones = (bitmask as XlenInt).count_ones();
             let mut ones_seen = 0u32;
 
             let mut srl_result = Rep3RingShare::default();
             for i in 0..XLEN {
                 let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1 as LookupIndexInt);
-                let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
+                let x_i_xlen: Rep3RingShare<XlenInt> = downcast(x_i);
 
                 if y_bits[i] {
-                    let weight = RingElement(1u64 << (num_ones - 1 - ones_seen));
-                    srl_result = srl_result + &x_i_u64 * weight;
+                    let weight = RingElement((1 as XlenInt) << (num_ones - 1 - ones_seen));
+                    srl_result = srl_result + &x_i_xlen * weight;
                     ones_seen += 1;
                 }
             }
 
             // Compute sign extension: sum_{i=1..XLEN} (1 << i) * (1 - y_i)
             // Since y_bits are public, this is a constant.
-            let mut sign_extension = 0u64;
+            let mut sign_extension = 0 as XlenInt;
             for i in 1..XLEN {
                 if !y_bits[i] {
-                    sign_extension += 1u64 << i;
+                    sign_extension += (1 as XlenInt) << i;
                 }
             }
 
             // sign_bit is the MSB of x (shared binary bit)
             let sign_bit = (x_bits >> (XLEN - 1)) & RingElement(1 as LookupIndexInt);
-            let sign_bit_u64: Rep3RingShare<u64> = downcast(sign_bit);
+            let sign_bit_xlen: Rep3RingShare<XlenInt> = downcast(sign_bit);
 
             // result = srl_result + sign_bit * sign_extension
-            let result = srl_result + &sign_bit_u64 * RingElement(sign_extension);
+            let result = srl_result + &sign_bit_xlen * RingElement(sign_extension);
 
             *out = FutureRep3Ring::cast_to_field_b2a(result);
         });

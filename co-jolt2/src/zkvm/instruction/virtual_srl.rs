@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         use crate::utils::instruction_utils::operand_to_binary_wide;
 
@@ -31,17 +31,17 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSRL> {
             let bitmask = r.as_public();
             let x_bits = operand_to_binary_wide(&l, io_ctx.id);
 
-            let num_ones = (bitmask as u64).count_ones();
+            let num_ones = (bitmask as XlenInt).count_ones();
             let mut ones_seen = 0u32;
 
             let mut result = Rep3RingShare::default();
             for i in 0..XLEN {
                 let y_i = ((bitmask >> (XLEN - 1 - i)) & 1) != 0;
                 if y_i {
-                    let weight = RingElement(1u64 << (num_ones - 1 - ones_seen));
+                    let weight = RingElement((1 as XlenInt) << (num_ones - 1 - ones_seen));
                     let x_i = (x_bits >> (XLEN - 1 - i)) & RingElement(1 as LookupIndexInt);
-                    let x_i_u64: Rep3RingShare<u64> = downcast(x_i);
-                    result = result + &x_i_u64 * weight;
+                    let x_i_xlen: Rep3RingShare<XlenInt> = downcast(x_i);
+                    result = result + &x_i_xlen * weight;
                     ones_seen += 1;
                 }
             }

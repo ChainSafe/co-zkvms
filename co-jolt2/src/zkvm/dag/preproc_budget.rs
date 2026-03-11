@@ -177,9 +177,9 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     // - rd_inc/ram_inc (2 pre + 2 post × n): 4n EdaBits
     add_to_budget(&mut budget, XLEN, 9 * n);
 
-    // Lookup output fulfill: CastToFieldB2A futures use u64 ring (R=u64 in FutureRep3Ring).
-    // Worst case: all n cycles emit CastToFieldB2A.
-    add_to_budget(&mut budget, 64, n);
+    // Lookup output fulfill: CastToField + CastToFieldB2A futures use XlenInt ring.
+    // Worst case: all n cycles emit CastToField or CastToFieldB2A.
+    add_to_budget(&mut budget, XLEN, n);
 
     // Ring edaBits for populate_operands_casts upcast (binary XlenInt → arithmetic ArithmeticWideInt).
     // Worst case: 5 operand columns per cycle (rs1, rs2, rd_write, ram_read, ram_write).

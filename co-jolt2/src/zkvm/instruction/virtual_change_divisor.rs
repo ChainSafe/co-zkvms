@@ -13,7 +13,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // if divisor == -1 (0xFFFFFFFF) && dividend == INT_MIN: return 1, else: return divisor
         let (dividends, divisors): (Vec<_>, Vec<_>) = steps
@@ -52,7 +52,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
             });
         Ok(())
     }
@@ -72,7 +72,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // if divisor == -1 (0xFFFFFFFF) && dividend == INT_MIN: return 1, else: return divisor
         let (dividends, divisors): (Vec<_>, Vec<_>) = steps
@@ -111,7 +111,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .into_iter()
             .zip(out)
             .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
             });
         Ok(())
     }

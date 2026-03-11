@@ -12,7 +12,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
@@ -23,7 +23,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
                 RingElement(x.a.0.rotate_right(n)),
                 RingElement(x.b.0.rotate_right(n)),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(rotated));
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated);
         });
         Ok(())
     }
@@ -42,7 +42,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> 
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
@@ -53,11 +53,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> 
                 RingElement(x.a.0.rotate_right(n)),
                 RingElement(x.b.0.rotate_right(n)),
             );
-            let rotated_u64 = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as u64),
-                RingElement(rotated.b.0 as u64),
+            let rotated_xlen = Rep3RingShare::new_ring(
+                RingElement(rotated.a.0 as XlenInt),
+                RingElement(rotated.b.0 as XlenInt),
             );
-            *out = FutureRep3Ring::cast_to_field_b2a(rotated_u64);
+            *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
     }

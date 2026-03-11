@@ -23,7 +23,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         let (a, b): (Vec<_>, Vec<_>) = steps
             .iter()
@@ -39,7 +39,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<MULHU> {
         let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
         binary_products.into_iter().zip(out).for_each(|(product, out)| {
             let upper: Rep3RingShare<XlenInt> = downcast(product >> XLEN);
-            *out = FutureRep3Ring::cast_to_field_b2a(binary_to_output(upper));
+            *out = FutureRep3Ring::cast_to_field_b2a(upper);
         });
         Ok(())
     }

@@ -306,6 +306,9 @@ where
         bit_idx: Vec<usize>,
         bit_x: Vec<Rep3RingShare<Bit>>,
         bit_args: Vec<Args>,
+        cast_idx: Vec<usize>,
+        cast_x: Vec<Rep3RingShare<R>>,
+        cast_args: Vec<Args>,
         b2a_idx: Vec<usize>,
         b2a_x: Vec<Rep3RingShare<R>>,
         b2a_args: Vec<Args>,
@@ -319,6 +322,9 @@ where
                 bit_idx: Vec::new(),
                 bit_x: Vec::new(),
                 bit_args: Vec::new(),
+                cast_idx: Vec::new(),
+                cast_x: Vec::new(),
+                cast_args: Vec::new(),
                 b2a_idx: Vec::new(),
                 b2a_x: Vec::new(),
                 b2a_args: Vec::new(),
@@ -330,6 +336,9 @@ where
             self.bit_idx.extend(other.bit_idx);
             self.bit_x.extend(other.bit_x);
             self.bit_args.extend(other.bit_args);
+            self.cast_idx.extend(other.cast_idx);
+            self.cast_x.extend(other.cast_x);
+            self.cast_args.extend(other.cast_args);
             self.b2a_idx.extend(other.b2a_idx);
             self.b2a_x.extend(other.b2a_x);
             self.b2a_args.extend(other.b2a_args);
@@ -349,6 +358,11 @@ where
                     acc.bit_idx.push(i);
                     acc.bit_x.push(x);
                     acc.bit_args.push(args);
+                }
+                FutureRep3Ring::Pending(FutureOp::CastToField(x), args) => {
+                    acc.cast_idx.push(i);
+                    acc.cast_x.push(x);
+                    acc.cast_args.push(args);
                 }
                 FutureRep3Ring::Pending(FutureOp::CastToFieldB2A(x), args) => {
                     acc.b2a_idx.push(i);
@@ -382,6 +396,24 @@ where
         })?;
         for k in 0..c.len() {
             out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
+        }
+    }
+
+    // Cast A→F (arithmetic ring → field) via A2B (Kogge-Stone) then B2A (edaBits)
+    if !buckets.cast_x.is_empty() {
+        // Step 1: A2B (parallel across forks)
+        let binary: Vec<Rep3RingShare<R>> =
+            io_ctx.par_chunks(buckets.cast_x, None, |xs, ctx| {
+                rep3_ring::conversion::a2b_many(&xs, ctx).map_err(eyre::Error::from)
+            })?;
+        // Step 2: B2A via edaBits (1 broadcast round)
+        let batch = preproc.take_edabits::<R>(binary.len())?;
+        let shares =
+            io_ctx.par_chunks_preproc(binary, batch, None, |xs, batch, ctx| {
+                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
+            })?;
+        for k in 0..shares.len() {
+            out[buckets.cast_idx[k]] = map(shares[k], buckets.cast_args[k]);
         }
     }
 
